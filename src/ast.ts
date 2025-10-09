@@ -19,49 +19,158 @@ export type Pattern =
   | ({ kind: "constructor" } & NodeBase & { name: string; args: Pattern[] })
   | ({ kind: "tuple" } & NodeBase & { elements: Pattern[] });
 
-export type Expr =
-  | ({ kind: "var" } & NodeBase & { name: string })
-  | ({ kind: "lambda" } & NodeBase & { param: string; body: Expr })
-  | ({ kind: "apply" } & NodeBase & { fn: Expr; argument: Expr })
-  | ({ kind: "let" } & NodeBase & { name: string; value: Expr; body: Expr })
-  | ({ kind: "match" } & NodeBase & { value?: Expr; cases: MatchCase[] })
-  | ({ kind: "literal" } & NodeBase & { literal: Literal })
-  | ({ kind: "constructor" } & NodeBase & { name: string; args: Expr[] })
-  | ({ kind: "tuple" } & NodeBase & { elements: Expr[] });
+export interface Parameter extends NodeBase {
+  kind: "parameter";
+  name: string;
+  annotation?: TypeExpr;
+}
 
-export interface MatchCase {
+export interface BlockExpr extends NodeBase {
+  kind: "block";
+  statements: BlockStatement[];
+  result?: Expr;
+}
+
+export type BlockStatement = LetStatement | ExprStatement;
+
+export interface LetStatement extends NodeBase {
+  kind: "let_statement";
+  declaration: LetDeclaration;
+}
+
+export interface ExprStatement extends NodeBase {
+  kind: "expr_statement";
+  expression: Expr;
+}
+
+export interface MatchArm extends NodeBase {
   pattern: Pattern;
   body: Expr;
+  hasTrailingComma: boolean;
+}
+
+export type Expr =
+  | IdentifierExpr
+  | LiteralExpr
+  | ConstructorExpr
+  | TupleExpr
+  | CallExpr
+  | ArrowFunctionExpr
+  | BlockExpr
+  | MatchExpr
+  | MatchFunctionExpr;
+
+export interface IdentifierExpr extends NodeBase {
+  kind: "identifier";
+  name: string;
+}
+
+export interface LiteralExpr extends NodeBase {
+  kind: "literal";
+  literal: Literal;
+}
+
+export interface ConstructorExpr extends NodeBase {
+  kind: "constructor";
+  name: string;
+  args: Expr[];
+}
+
+export interface TupleExpr extends NodeBase {
+  kind: "tuple";
+  elements: Expr[];
+}
+
+export interface CallExpr extends NodeBase {
+  kind: "call";
+  callee: Expr;
+  arguments: Expr[];
+}
+
+export interface ArrowFunctionExpr extends NodeBase {
+  kind: "arrow";
+  parameters: Parameter[];
+  body: BlockExpr;
+}
+
+export interface MatchExpr extends NodeBase {
+  kind: "match";
+  scrutinee: Expr;
+  arms: MatchArm[];
+}
+
+export interface MatchFunctionExpr extends NodeBase {
+  kind: "match_fn";
+  parameters: Expr[];
+  arms: MatchArm[];
 }
 
 export type TypeExpr =
-  | ({ kind: "var" } & NodeBase & { name: string })
-  | ({ kind: "func" } & NodeBase & { from: TypeExpr; to: TypeExpr })
-  | ({ kind: "constructor" } & NodeBase & { name: string; args: TypeExpr[] })
-  | ({ kind: "tuple" } & NodeBase & { elements: TypeExpr[] })
-  | ({ kind: "unit" } & NodeBase);
+  | TypeVariable
+  | TypeFunction
+  | TypeReference
+  | TypeTuple
+  | TypeUnit;
 
-export interface ConstructorDecl extends NodeBase {
+export interface TypeVariable extends NodeBase {
+  kind: "type_var";
+  name: string;
+}
+
+export interface TypeFunction extends NodeBase {
+  kind: "type_fn";
+  parameters: TypeExpr[];
+  result: TypeExpr;
+}
+
+export interface TypeReference extends NodeBase {
+  kind: "type_ref";
+  name: string;
+  typeArgs: TypeExpr[];
+}
+
+export interface TypeTuple extends NodeBase {
+  kind: "type_tuple";
+  elements: TypeExpr[];
+}
+
+export interface TypeUnit extends NodeBase {
+  kind: "type_unit";
+}
+
+export type TypeAliasMember = ConstructorAlias | TypeAliasExprMember;
+
+export interface ConstructorAlias extends NodeBase {
   kind: "constructor";
   name: string;
-  args: TypeExpr[];
+  typeArgs: TypeExpr[];
+}
+
+export interface TypeAliasExprMember extends NodeBase {
+  kind: "alias";
+  type: TypeExpr;
+}
+
+export interface TypeParameter extends NodeBase {
+  name: string;
 }
 
 export interface TypeDeclaration extends NodeBase {
   kind: "type";
   name: string;
-  parameters: string[];
-  constructors: ConstructorDecl[];
+  typeParams: TypeParameter[];
+  members: TypeAliasMember[];
 }
 
 export interface LetDeclaration extends NodeBase {
   kind: "let";
   name: string;
-  value: Expr;
+  parameters: Parameter[];
   annotation?: TypeExpr;
+  body: BlockExpr;
 }
 
-export type TopLevel = TypeDeclaration | LetDeclaration;
+export type TopLevel = LetDeclaration | TypeDeclaration;
 
 export interface Program {
   declarations: TopLevel[];

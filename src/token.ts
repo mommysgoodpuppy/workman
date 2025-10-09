@@ -17,18 +17,16 @@ export interface Token {
 export const keywords = new Set([
   "let",
   "type",
-  "fn",
   "match",
-  "with",
-  "in",
-  "true",
-  "false",
+  "case",
 ]);
 
 export const symbols = new Set([
+  "=>",
+  "->",
+  "()",
   "=",
   "|",
-  "->",
   ":",
   ",",
   ";",
@@ -36,5 +34,9 @@ export const symbols = new Set([
   ")",
   "{",
   "}",
+  "[",
+  "]",
+  "<",
+  ">",
   "_",
 ]);

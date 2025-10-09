@@ -1,0 +1,1 @@
+Project goal: update tinyhm language syntax to TS-like surface, removing old grammar, no nested let blocks yet, match only single argument initially.
