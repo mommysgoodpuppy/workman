@@ -18,7 +18,6 @@ export const keywords = new Set([
   "let",
   "type",
   "match",
-  "case",
 ]);
 
 export const symbols = new Set([

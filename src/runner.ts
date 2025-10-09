@@ -1,5 +1,5 @@
 import { lex } from "./lexer.ts";
-import { parse, ParseError } from "./parser.ts";
+import { parseSurfaceProgram, ParseError } from "./parser.ts";
 import { inferProgram, InferError } from "./infer.ts";
 import { formatScheme } from "./type_printer.ts";
 
@@ -19,7 +19,7 @@ export interface RunResult {
 export function runFile(source: string, _options: RunOptions = {}): RunResult {
   try {
     const tokens = lex(source);
-    const program = parse(tokens);
+    const program = parseSurfaceProgram(tokens);
     const inference = inferProgram(program);
     const types = inference.summaries.map((entry) => ({
       name: entry.name,

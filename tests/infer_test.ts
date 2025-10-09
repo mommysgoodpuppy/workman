@@ -27,8 +27,8 @@ Deno.test("infers constructors and ADT match", () => {
     type Option<T> = None | Some<T>;
     let mapOption = (f, opt) => {
       match(opt) {
-        case Some(x) => Some(f(x)),
-        case None => None
+        Some(x) => { Some(f(x)) },
+        None => { None }
       }
     };
   `;
@@ -45,7 +45,7 @@ Deno.test("rejects non-exhaustive match", () => {
     type Option<T> = None | Some<T>;
     let bad = (opt) => {
       match(opt) {
-        case Some(x) => x
+        Some(x) => { x }
       }
     };
   `;
@@ -80,7 +80,7 @@ Deno.test("infers tuple pattern matches", () => {
     type Pair<A, B> = Pair<A, B>;
     let fst = (pair) => {
       match(pair) {
-        case Pair(x, _) => x
+        Pair(x, _) => { x }
       }
     };
   `;
@@ -97,7 +97,7 @@ Deno.test("rejects duplicate pattern bindings", () => {
     type Pair<A, B> = Pair<A, B>;
     let bad = (pair) => {
       match(pair) {
-        case Pair(x, x) => x
+        Pair(x, x) => { x }
       }
     };
   `;
@@ -145,8 +145,8 @@ Deno.test("first-class match builds pattern functions", () => {
     let toBoolean = () => {
       (value) => {
         match(value) {
-          case Some(_) => true,
-          case None => false
+          Some(_) => { true },
+          None => { false }
         }
       }
     };

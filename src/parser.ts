@@ -15,7 +15,7 @@ import type {
 } from "./ast.ts";
 import type { Pattern, SourceSpan } from "./ast.ts";
 
-export class SurfaceParseError extends Error {
+export class ParseError extends Error {
   constructor(message: string, readonly token: Token) {
     super(`${message} at position ${token.start}`);
     this.name = "SurfaceParseError";
@@ -64,8 +64,39 @@ class SurfaceParser {
     const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
     this.expectSymbol("=");
     const initializer = this.parseExpression();
+    
+    // Handle first-class match: match(x) { ... } desugars to (x) => { match(x) { ... } }
+    if (initializer.kind === "match") {
+      const scrutinee = initializer.scrutinee;
+      // Extract parameter name from scrutinee (must be a simple identifier)
+      if (scrutinee.kind !== "identifier") {
+        throw this.error("First-class match scrutinee must be a simple parameter name", this.previous());
+      }
+      const paramName = scrutinee.name;
+      const parameters: Parameter[] = [{
+        kind: "parameter",
+        name: paramName,
+        annotation: undefined,
+        span: scrutinee.span,
+      }];
+      const body: BlockExpr = {
+        kind: "block",
+        statements: [],
+        result: initializer,
+        span: initializer.span,
+      };
+      return {
+        kind: "let",
+        name: nameToken.value,
+        parameters,
+        annotation,
+        body,
+        span: this.spanFrom(letToken.start, body.span.end),
+      };
+    }
+    
     if (initializer.kind !== "arrow") {
-      throw this.error("Let declarations must be assigned an arrow function", this.previous());
+      throw this.error("Let declarations must be assigned an arrow function or first-class match", this.previous());
     }
     const { parameters, body } = initializer;
     return {
@@ -564,12 +595,18 @@ class SurfaceParser {
 
     if (!this.checkSymbol("}")) {
       while (true) {
-        const caseToken = this.expectKeyword("case");
+        const patternStart = this.peek();
         const pattern = this.parsePattern();
         this.expectSymbol("=>");
         const body = this.parseExpression();
+        
+        // Enforce that match arm bodies must be block expressions
+        if (body.kind !== "block") {
+          throw this.error("Match arm body must be a block expression (use { })", this.previous());
+        }
+        
         const hasComma = this.matchSymbol(",");
-        const span = this.spanFrom(caseToken.start, body.span.end);
+        const span = this.spanFrom(patternStart.start, body.span.end);
         arms.push({ pattern, body, hasTrailingComma: hasComma, span });
         if (!hasComma || this.checkSymbol("}")) {
           break;
@@ -579,7 +616,7 @@ class SurfaceParser {
 
     const close = this.expectSymbol("}");
     if (arms.length === 0) {
-      throw this.error("Match block requires at least one case", close);
+      throw this.error("Match block requires at least one arm", close);
     }
     return { arms, span: this.spanFrom(open.start, close.end) };
   }
@@ -669,7 +706,7 @@ class SurfaceParser {
     return this.peek().kind === "eof";
   }
 
-  private error(message: string, token: Token = this.peek()): SurfaceParseError {
-    return new SurfaceParseError(message, token);
+  private error(message: string, token: Token = this.peek()): ParseError {
+    return new ParseError(message, token);
   }
 }

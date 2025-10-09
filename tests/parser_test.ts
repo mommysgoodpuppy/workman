@@ -41,8 +41,8 @@ Deno.test("parses match expression with constructors", () => {
   const source = `
 let example = (input) => {
   match(input) {
-    case Some(x) => x,
-    case None => 0
+    Some(x) => { x },
+    None => { 0 }
   }
 };
 `;
