@@ -1,0 +1,169 @@
+{
+  "scriptId": "337",
+  "url": "file:///C:/Git/tinyhm/src/type_printer.ts",
+  "functions": [
+    {
+      "functionName": "",
+      "ranges": [
+        {
+          "startOffset": 0,
+          "endOffset": 1706,
+          "count": 1
+        }
+      ],
+      "isBlockCoverage": true
+    },
+    {
+      "functionName": "formatScheme",
+      "ranges": [
+        {
+          "startOffset": 82,
+          "endOffset": 370,
+          "count": 9
+        },
+        {
+          "startOffset": 288,
+          "endOffset": 322,
+          "count": 6
+        }
+      ],
+      "isBlockCoverage": true
+    },
+    {
+      "functionName": "",
+      "ranges": [
+        {
+          "startOffset": 241,
+          "endOffset": 254,
+          "count": 2
+        }
+      ],
+      "isBlockCoverage": true
+    },
+    {
+      "functionName": "formatType",
+      "ranges": [
+        {
+          "startOffset": 371,
+          "endOffset": 1274,
+          "count": 30
+        },
+        {
+          "startOffset": 439,
+          "endOffset": 493,
+          "count": 10
+        },
+        {
+          "startOffset": 498,
+          "endOffset": 733,
+          "count": 7
+        },
+        {
+          "startOffset": 700,
+          "endOffset": 715,
+          "count": 1
+        },
+        {
+          "startOffset": 716,
+          "endOffset": 724,
+          "count": 6
+        },
+        {
+          "startOffset": 738,
+          "endOffset": 972,
+          "count": 6
+        },
+        {
+          "startOffset": 802,
+          "endOffset": 841,
+          "count": 0
+        },
+        {
+          "startOffset": 977,
+          "endOffset": 1127,
+          "count": 0
+        },
+        {
+          "startOffset": 1132,
+          "endOffset": 1163,
+          "count": 0
+        },
+        {
+          "startOffset": 1168,
+          "endOffset": 1199,
+          "count": 4
+        },
+        {
+          "startOffset": 1204,
+          "endOffset": 1237,
+          "count": 3
+        },
+        {
+          "startOffset": 1242,
+          "endOffset": 1268,
+          "count": 0
+        }
+      ],
+      "isBlockCoverage": true
+    },
+    {
+      "functionName": "",
+      "ranges": [
+        {
+          "startOffset": 877,
+          "endOffset": 911,
+          "count": 7
+        }
+      ],
+      "isBlockCoverage": true
+    },
+    {
+      "functionName": "",
+      "ranges": [
+        {
+          "startOffset": 1042,
+          "endOffset": 1074,
+          "count": 0
+        }
+      ],
+      "isBlockCoverage": false
+    },
+    {
+      "functionName": "ensureName",
+      "ranges": [
+        {
+          "startOffset": 1275,
+          "endOffset": 1502,
+          "count": 16
+        },
+        {
+          "startOffset": 1368,
+          "endOffset": 1394,
+          "count": 10
+        },
+        {
+          "startOffset": 1394,
+          "endOffset": 1501,
+          "count": 6
+        }
+      ],
+      "isBlockCoverage": true
+    },
+    {
+      "functionName": "nextName",
+      "ranges": [
+        {
+          "startOffset": 1503,
+          "endOffset": 1705,
+          "count": 6
+        },
+        {
+          "startOffset": 1678,
+          "endOffset": 1702,
+          "count": 0
+        }
+      ],
+      "isBlockCoverage": true
+    }
+  ]
+}

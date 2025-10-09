@@ -1,0 +1,17 @@
+{
+  "scriptId": "339",
+  "url": "file:///C:/Git/tinyhm/src/token.ts",
+  "functions": [
+    {
+      "functionName": "",
+      "ranges": [
+        {
+          "startOffset": 0,
+          "endOffset": 217,
+          "count": 1
+        }
+      ],
+      "isBlockCoverage": true
+    }
+  ]
+}
