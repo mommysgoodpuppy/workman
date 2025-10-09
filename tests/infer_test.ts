@@ -1,18 +1,22 @@
 import { lex } from "../src/lexer.ts";
-import { parse } from "../src/parser.ts";
+import { parseSurfaceProgram } from "../src/surface_parser.ts";
 import { inferProgram, InferError } from "../src/infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
 
 function inferTypes(source: string) {
   const tokens = lex(source);
-  const program = parse(tokens);
+  const program = parseSurfaceProgram(tokens);
   const result = inferProgram(program);
   return result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
 }
 
 Deno.test("infers polymorphic identity function", () => {
-  const source = `let id = fn x -> x;`;
+  const source = `
+    let id(x) = {
+      x
+    };
+  `;
   const summaries = inferTypes(source);
   assertEquals(summaries.length, 1);
   assertEquals(summaries[0], { name: "id", type: "'a -> 'a" });
@@ -20,10 +24,13 @@ Deno.test("infers polymorphic identity function", () => {
 
 Deno.test("infers constructors and ADT match", () => {
   const source = `
-    type Option a = None | Some a;
-    let mapOption = fn f -> fn opt -> match opt with
-      | Some x -> Some (f x)
-      | None -> None;
+    type Option<T> = None | Some<T>;
+    let mapOption(f, opt) = {
+      match(opt) {
+        case Some(x) => Some(f(x)),
+        case None => None
+      }
+    };
   `;
   const summaries = inferTypes(source);
   const binding = summaries.find((entry) => entry.name === "mapOption");
@@ -35,9 +42,12 @@ Deno.test("infers constructors and ADT match", () => {
 
 Deno.test("rejects non-exhaustive match", () => {
   const source = `
-    type Option a = None | Some a;
-    let bad = fn opt -> match opt with
-      | Some x -> x;
+    type Option<T> = None | Some<T>;
+    let bad(opt) = {
+      match(opt) {
+        case Some(x) => x
+      }
+    };
   `;
   assertThrows(
     () => inferTypes(source),
@@ -48,8 +58,12 @@ Deno.test("rejects non-exhaustive match", () => {
 
 Deno.test("supports annotated let bindings", () => {
   const source = `
-    let id : Int -> Int = fn x -> x;
-    let three = id 3;
+    let id(x: Int): Int = {
+      x
+    };
+    let three() = {
+      id(3)
+    };
   `;
   const summaries = inferTypes(source);
   const idBinding = summaries.find((entry) => entry.name === "id");
@@ -63,9 +77,12 @@ Deno.test("supports annotated let bindings", () => {
 
 Deno.test("infers tuple pattern matches", () => {
   const source = `
-    type Pair a b = Pair a b;
-    let fst = fn pair -> match pair with
-      | Pair x _ -> x;
+    type Pair<A, B> = Pair<A, B>;
+    let fst(pair) = {
+      match(pair) {
+        case Pair(x, _) => x
+      }
+    };
   `;
   const summaries = inferTypes(source);
   const binding = summaries.find((entry) => entry.name === "fst");
@@ -77,9 +94,12 @@ Deno.test("infers tuple pattern matches", () => {
 
 Deno.test("rejects duplicate pattern bindings", () => {
   const source = `
-    type Pair a b = Pair a b;
-    let bad = fn pair -> match pair with
-      | Pair x x -> x;
+    type Pair<A, B> = Pair<A, B>;
+    let bad(pair) = {
+      match(pair) {
+        case Pair(x, x) => x
+      }
+    };
   `;
   assertThrows(
     () => inferTypes(source),
@@ -90,7 +110,9 @@ Deno.test("rejects duplicate pattern bindings", () => {
 
 Deno.test("rejects annotation mismatches", () => {
   const source = `
-    let tricky : Int -> Bool = fn x -> x;
+    let tricky(x: Int): Bool = {
+      x
+    };
   `;
   assertThrows(
     () => inferTypes(source),
@@ -100,8 +122,12 @@ Deno.test("rejects annotation mismatches", () => {
 
 Deno.test("supports list prelude constructors", () => {
   const source = `
-    let singleton = Cons 1 Nil;
-    let two = Cons true Nil;
+    let singleton() = {
+      Cons(1, Nil)
+    };
+    let two() = {
+      Cons(true, Nil)
+    };
   `;
   const summaries = inferTypes(source);
   const singleton = summaries.find((entry) => entry.name === "singleton");
@@ -115,11 +141,18 @@ Deno.test("supports list prelude constructors", () => {
 
 Deno.test("first-class match builds pattern functions", () => {
   const source = `
-    type Option a = None | Some a;
-    let toBoolean = match with
-      | Some _ -> true
-      | None -> false;
-    let value = toBoolean (Some 42);
+    type Option<T> = None | Some<T>;
+    let toBoolean() = {
+      (value) => {
+        match(value) {
+          case Some(_) => true,
+          case None => false
+        }
+      }
+    };
+    let value() = {
+      toBoolean()(Some(42))
+    };
   `;
   const summaries = inferTypes(source);
   const convert = summaries.find((entry) => entry.name === "toBoolean");

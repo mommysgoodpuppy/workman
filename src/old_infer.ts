@@ -1,18 +1,11 @@
 import {
-  BlockExpr,
-  BlockStatement,
-  ConstructorAlias,
   Expr,
-  ExprStatement,
   LetDeclaration,
-  LetStatement,
-  Literal,
-  MatchArm,
-  Parameter,
   Pattern,
   Program,
   TypeDeclaration,
   TypeExpr,
+  Literal,
 } from "./ast.ts";
 import {
   ConstructorInfo,
@@ -50,16 +43,6 @@ interface Context {
   subst: Substitution;
 }
 
-function withScopedEnv<T>(ctx: Context, fn: () => T): T {
-  const previous = ctx.env;
-  ctx.env = new Map(ctx.env);
-  try {
-    return fn();
-  } finally {
-    ctx.env = previous;
-  }
-}
-
 export function inferProgram(program: Program): InferResult {
   resetTypeVarCounter();
   const env: TypeEnv = new Map();
@@ -95,10 +78,10 @@ function registerTypeDeclaration(ctx: Context, decl: TypeDeclaration) {
     throw new InferError(`Type '${decl.name}' is already defined`);
   }
 
-  const parameterTypes = decl.typeParams.map(() => freshTypeVar());
+  const parameterTypes = decl.parameters.map(() => freshTypeVar());
   const typeScope = new Map<string, Type>();
-  decl.typeParams.forEach((param, index) => {
-    typeScope.set(param.name, parameterTypes[index]);
+  decl.parameters.forEach((param, index) => {
+    typeScope.set(param, parameterTypes[index]);
   });
 
   const parameterIds = parameterTypes
@@ -113,49 +96,29 @@ function registerTypeDeclaration(ctx: Context, decl: TypeDeclaration) {
   ctx.adtEnv.set(decl.name, adtInfo);
 
   const constructors: ConstructorInfo[] = [];
-  for (const member of decl.members) {
-    if (member.kind !== "constructor") {
-      throw new InferError(
-        `Type '${decl.name}' only supports constructor members in this version (found alias member)`,
-      );
-    }
-    const info = buildConstructorInfo(ctx, decl.name, parameterTypes, member, typeScope);
+  for (const ctor of decl.constructors) {
+    const ctorResult = makeDataConstructor(decl.name, parameterTypes);
+    const ctorType = ctor.args.reduceRight<Type>((acc, arg) => {
+      const argType = convertTypeExpr(ctx, arg, new Map(typeScope));
+      return { kind: "func", from: argType, to: acc };
+    }, ctorResult);
+    const quantifiers = parameterTypes
+      .map((type) => (type.kind === "var" ? type.id : null))
+      .filter((id): id is number => id !== null);
+    const scheme: TypeScheme = {
+      quantifiers,
+      type: ctorType,
+    };
+    const info: ConstructorInfo = {
+      name: ctor.name,
+      arity: ctor.args.length,
+      scheme,
+    };
     constructors.push(info);
-    ctx.env.set(member.name, info.scheme);
+    ctx.env.set(ctor.name, scheme);
   }
 
   adtInfo.constructors.push(...constructors);
-}
-
-function buildConstructorInfo(
-  ctx: Context,
-  typeName: string,
-  parameterTypes: Type[],
-  ctor: ConstructorAlias,
-  scope: Map<string, Type>,
-): ConstructorInfo {
-  const ctorResult = makeDataConstructor(typeName, parameterTypes);
-  const args = ctor.typeArgs.map((arg) => convertTypeExpr(ctx, arg, new Map(scope)));
-  const ctorType = args.reduceRight<Type>((acc, argType) => ({
-    kind: "func",
-    from: argType,
-    to: acc,
-  }), ctorResult);
-
-  const quantifiers = parameterTypes
-    .map((type) => (type.kind === "var" ? type.id : null))
-    .filter((id): id is number => id !== null);
-
-  const scheme: TypeScheme = {
-    quantifiers,
-    type: ctorType,
-  };
-
-  return {
-    name: ctor.name,
-    arity: ctor.typeArgs.length,
-    scheme,
-  };
 }
 
 function registerPrelude(ctx: Context) {
@@ -203,10 +166,86 @@ function registerPrelude(ctx: Context) {
 }
 
 function inferLetDeclaration(ctx: Context, decl: LetDeclaration): TypeScheme {
-  const fnType = inferLetBinding(ctx, decl.parameters, decl.body, decl.annotation);
-  const scheme = generalizeInContext(ctx, fnType);
+  const inferredType = inferExpr(ctx, decl.value);
+
+  if (decl.annotation) {
+    const annotated = convertTypeExpr(ctx, decl.annotation);
+    unify(ctx, inferredType, annotated);
+  }
+
+  const scheme = generalizeInContext(ctx, inferredType);
   ctx.env.set(decl.name, scheme);
   return scheme;
+}
+
+function inferExpr(ctx: Context, expr: Expr): Type {
+  switch (expr.kind) {
+    case "var": {
+      const scheme = lookupEnv(ctx, expr.name);
+      return instantiateAndApply(ctx, scheme);
+    }
+    case "constructor": {
+      const scheme = lookupEnv(ctx, expr.name);
+      const ctorType = instantiateAndApply(ctx, scheme);
+      if (expr.args.length === 0) {
+        return ctorType;
+      }
+      let result = ctorType;
+      for (const arg of expr.args) {
+        const argType = inferExpr(ctx, arg);
+        const fnType = expectFunctionType(ctx, result, `Constructor ${expr.name}`);
+        unify(ctx, fnType.from, argType);
+        result = fnType.to;
+      }
+      return applyCurrentSubst(ctx, result);
+    }
+    case "literal":
+      return literalType(expr.literal);
+    case "tuple": {
+      const elements = expr.elements.map((el) => inferExpr(ctx, el));
+      return applyCurrentSubst(ctx, {
+        kind: "tuple",
+        elements: elements.map((t) => applyCurrentSubst(ctx, t)),
+      });
+    }
+    case "lambda": {
+      const paramType = freshTypeVar();
+      const previousEnv = ctx.env;
+      ctx.env = new Map(ctx.env);
+      ctx.env.set(expr.param, { quantifiers: [], type: paramType });
+      const bodyType = inferExpr(ctx, expr.body);
+      const funcType: Type = {
+        kind: "func",
+        from: applyCurrentSubst(ctx, paramType),
+        to: applyCurrentSubst(ctx, bodyType),
+      };
+      ctx.env = previousEnv;
+      return funcType;
+    }
+    case "apply": {
+      const fnType = inferExpr(ctx, expr.fn);
+      const argType = inferExpr(ctx, expr.argument);
+      const resultType = freshTypeVar();
+      unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
+      return applyCurrentSubst(ctx, resultType);
+    }
+    case "let": {
+      const valueType = inferExpr(ctx, expr.value);
+      const scheme = generalizeInContext(ctx, valueType);
+      const previousEnv = ctx.env;
+      ctx.env = new Map(ctx.env);
+      ctx.env.set(expr.name, scheme);
+      const bodyType = inferExpr(ctx, expr.body);
+      ctx.env = previousEnv;
+      return applyCurrentSubst(ctx, bodyType);
+    }
+    case "match": {
+      const valueType = expr.value ? inferExpr(ctx, expr.value) : freshTypeVar();
+      return inferMatchExpression(ctx, expr, valueType);
+    }
+    default:
+      throw new InferError(`Unsupported expression kind ${(expr as Expr).kind}`);
+  }
 }
 
 function convertTypeExpr(
@@ -215,31 +254,21 @@ function convertTypeExpr(
   scope: Map<string, Type> = new Map(),
 ): Type {
   switch (typeExpr.kind) {
-    case "type_var": {
+    case "var": {
       const existing = scope.get(typeExpr.name);
-      if (existing) {
-        return existing;
-      }
+      if (existing) return existing;
       const fresh = freshTypeVar();
       scope.set(typeExpr.name, fresh);
       return fresh;
     }
-    case "type_fn": {
-      if (typeExpr.parameters.length === 0) {
-        throw new InferError("Function type must include at least one parameter");
-      }
-      const result = convertTypeExpr(ctx, typeExpr.result, new Map(scope));
-      return typeExpr.parameters.reduceRight<Type>((acc, param) => {
-        const paramType = convertTypeExpr(ctx, param, new Map(scope));
-        return {
-          kind: "func",
-          from: paramType,
-          to: acc,
-        };
-      }, result);
-    }
-    case "type_ref": {
-      if (typeExpr.typeArgs.length === 0) {
+    case "func":
+      return {
+        kind: "func",
+        from: convertTypeExpr(ctx, typeExpr.from, scope),
+        to: convertTypeExpr(ctx, typeExpr.to, scope),
+      };
+    case "constructor": {
+      if (typeExpr.args.length === 0) {
         switch (typeExpr.name) {
           case "Int":
             return { kind: "int" };
@@ -249,7 +278,7 @@ function convertTypeExpr(
             return { kind: "unit" };
         }
       }
-      const args = typeExpr.typeArgs.map((arg) => convertTypeExpr(ctx, arg, new Map(scope)));
+      const args = typeExpr.args.map((arg) => convertTypeExpr(ctx, arg, new Map(scope)));
       if (!ctx.adtEnv.has(typeExpr.name)) {
         throw new InferError(`Unknown type constructor '${typeExpr.name}'`);
       }
@@ -259,13 +288,12 @@ function convertTypeExpr(
         args,
       };
     }
-    case "type_tuple": {
+    case "tuple":
       return {
         kind: "tuple",
-        elements: typeExpr.elements.map((el) => convertTypeExpr(ctx, el, new Map(scope))),
+        elements: typeExpr.elements.map((el) => convertTypeExpr(ctx, el, scope)),
       };
-    }
-    case "type_unit":
+    case "unit":
       return { kind: "unit" };
     default:
       throw new InferError("Unsupported type expression");
@@ -278,218 +306,6 @@ function makeDataConstructor(name: string, parameters: Type[]): Type {
     name,
     args: parameters,
   };
-}
-
-function inferLetBinding(
-  ctx: Context,
-  parameters: Parameter[],
-  body: BlockExpr,
-  annotation: TypeExpr | undefined,
-): Type {
-  const paramTypes = parameters.map((param) => (
-    param.annotation ? convertTypeExpr(ctx, param.annotation) : freshTypeVar()
-  ));
-
-  return withScopedEnv(ctx, () => {
-    parameters.forEach((param, index) => {
-      ctx.env.set(param.name, {
-        quantifiers: [],
-        type: paramTypes[index],
-      });
-    });
-
-    let inferred = inferBlockExpr(ctx, body);
-
-    if (annotation) {
-      const annotated = convertTypeExpr(ctx, annotation);
-      unify(ctx, inferred, annotated);
-      inferred = applyCurrentSubst(ctx, annotated);
-    }
-
-    return paramTypes.reduceRight<Type>((acc, paramType) => ({
-      kind: "func",
-      from: applyCurrentSubst(ctx, paramType),
-      to: acc,
-    }), inferred);
-  });
-}
-
-function inferBlockExpr(ctx: Context, block: BlockExpr): Type {
-  return withScopedEnv(ctx, () => {
-    for (const statement of block.statements) {
-      inferBlockStatement(ctx, statement);
-    }
-
-    if (block.result) {
-      const resultType = inferExpr(ctx, block.result);
-      return applyCurrentSubst(ctx, resultType);
-    }
-
-    return { kind: "unit" };
-  });
-}
-
-function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
-  switch (statement.kind) {
-    case "let_statement": {
-      const { declaration } = statement;
-      const bindingType = applyCurrentSubst(
-        ctx,
-        inferLetBinding(ctx, declaration.parameters, declaration.body, declaration.annotation),
-      );
-      ctx.env.set(declaration.name, { quantifiers: [], type: bindingType });
-      break;
-    }
-    case "expr_statement": {
-      inferExpr(ctx, statement.expression);
-      break;
-    }
-    default:
-      throw new InferError(`Unknown block statement kind ${(statement as BlockStatement).kind}`);
-  }
-}
-
-function inferExpr(ctx: Context, expr: Expr): Type {
-  switch (expr.kind) {
-    case "identifier": {
-      const scheme = lookupEnv(ctx, expr.name);
-      return instantiateAndApply(ctx, scheme);
-    }
-    case "literal":
-      return literalType(expr.literal);
-    case "constructor": {
-      const scheme = lookupEnv(ctx, expr.name);
-      const ctorType = instantiateAndApply(ctx, scheme);
-      let result = ctorType;
-      for (const arg of expr.args) {
-        const argType = inferExpr(ctx, arg);
-        const fnType = expectFunctionType(ctx, result, `Constructor ${expr.name}`);
-        unify(ctx, fnType.from, argType);
-        result = fnType.to;
-      }
-      return applyCurrentSubst(ctx, result);
-    }
-    case "tuple": {
-      const elements = expr.elements.map((el) => inferExpr(ctx, el));
-      return applyCurrentSubst(ctx, {
-        kind: "tuple",
-        elements: elements.map((t) => applyCurrentSubst(ctx, t)),
-      });
-    }
-    case "call": {
-      let fnType = inferExpr(ctx, expr.callee);
-      for (const arg of expr.arguments) {
-        const argType = inferExpr(ctx, arg);
-        const resultType = freshTypeVar();
-        unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
-        fnType = applyCurrentSubst(ctx, resultType);
-      }
-      return applyCurrentSubst(ctx, fnType);
-    }
-    case "arrow":
-      return inferArrowFunction(ctx, expr.parameters, expr.body);
-    case "block":
-      return inferBlockExpr(ctx, expr);
-    case "match":
-      return inferMatchExpression(ctx, expr.scrutinee, expr.arms);
-    case "match_fn":
-      return inferMatchFunction(ctx, expr.parameters, expr.arms);
-    default:
-      throw new InferError(`Unsupported expression kind ${(expr as Expr).kind}`);
-  }
-}
-
-function inferArrowFunction(ctx: Context, parameters: Parameter[], body: BlockExpr): Type {
-  return withScopedEnv(ctx, () => {
-    const paramTypes = parameters.map((param) => (
-      param.annotation ? convertTypeExpr(ctx, param.annotation) : freshTypeVar()
-    ));
-
-    parameters.forEach((param, index) => {
-      ctx.env.set(param.name, {
-        quantifiers: [],
-        type: paramTypes[index],
-      });
-    });
-
-    const bodyType = inferBlockExpr(ctx, body);
-    return paramTypes.reduceRight<Type>((acc, paramType) => ({
-      kind: "func",
-      from: applyCurrentSubst(ctx, paramType),
-      to: acc,
-    }), applyCurrentSubst(ctx, bodyType));
-  });
-}
-
-function inferMatchExpression(ctx: Context, scrutinee: Expr, arms: MatchArm[]): Type {
-  const scrutineeType = inferExpr(ctx, scrutinee);
-  return inferMatchBranches(ctx, scrutineeType, arms);
-}
-
-function inferMatchFunction(ctx: Context, parameters: Expr[], arms: MatchArm[]): Type {
-  if (parameters.length !== 1) {
-    throw new InferError("Match functions currently support exactly one argument");
-  }
-  const parameterType = inferExpr(ctx, parameters[0]);
-  const resultType = inferMatchBranches(ctx, parameterType, arms);
-  return {
-    kind: "func",
-    from: applyCurrentSubst(ctx, parameterType),
-    to: applyCurrentSubst(ctx, resultType),
-  };
-}
-
-function inferMatchBranches(
-  ctx: Context,
-  scrutineeType: Type,
-  arms: MatchArm[],
-): Type {
-  let resultType: Type | null = null;
-  const coverageMap = new Map<string, Set<string>>();
-  let hasWildcard = false;
-
-  for (const arm of arms) {
-    const expected = applyCurrentSubst(ctx, scrutineeType);
-    const patternInfo = inferPattern(ctx, arm.pattern, expected);
-    if (patternInfo.coverage.kind === "wildcard") {
-      hasWildcard = true;
-    } else if (patternInfo.coverage.kind === "constructor") {
-      const key = patternInfo.coverage.typeName;
-      const set = coverageMap.get(key) ?? new Set<string>();
-      set.add(patternInfo.coverage.ctor);
-      coverageMap.set(key, set);
-    }
-
-    const bodyType = withScopedEnv(ctx, () => {
-      for (const [name, type] of patternInfo.bindings.entries()) {
-        ctx.env.set(name, { quantifiers: [], type: applyCurrentSubst(ctx, type) });
-      }
-      return inferExpr(ctx, arm.body);
-    });
-
-    if (!resultType) {
-      resultType = bodyType;
-    } else {
-      unify(ctx, resultType, bodyType);
-      resultType = applyCurrentSubst(ctx, resultType);
-    }
-  }
-
-  ensureExhaustive(ctx, applyCurrentSubst(ctx, scrutineeType), hasWildcard, coverageMap);
-
-  if (!resultType) {
-    resultType = freshTypeVar();
-  }
-
-  return applyCurrentSubst(ctx, resultType);
-}
-
-function expectFunctionType(ctx: Context, type: Type, description: string): { from: Type; to: Type } {
-  const resolved = applyCurrentSubst(ctx, type);
-  if (resolved.kind !== "func") {
-    throw new InferError(`${description} is not fully applied`);
-  }
-  return resolved;
 }
 
 export function unify(ctx: Context, a: Type, b: Type) {
@@ -527,13 +343,64 @@ function literalType(literal: Literal): Type {
   }
 }
 
-function mergeBindings(target: Map<string, Type>, source: Map<string, Type>) {
-  for (const [name, type] of source.entries()) {
-    if (target.has(name)) {
-      throw new InferError(`Duplicate variable '${name}' in pattern`);
-    }
-    target.set(name, type);
+function expectFunctionType(ctx: Context, type: Type, description: string): {
+  from: Type;
+  to: Type;
+} {
+  const resolved = applyCurrentSubst(ctx, type);
+  if (resolved.kind !== "func") {
+    throw new InferError(`${description} is not fully applied`);
   }
+  return resolved;
+}
+
+function inferMatchExpression(ctx: Context, expr: Expr & { kind: "match" }, initial: Type): Type {
+  const scrutineeType = initial;
+
+  let resultType: Type | null = null;
+  const coverageMap = new Map<string, Set<string>>();
+  let hasWildcard = false;
+
+  for (const matchCase of expr.cases) {
+    const expected = applyCurrentSubst(ctx, scrutineeType);
+    const patternInfo = inferPattern(ctx, matchCase.pattern, expected);
+    if (patternInfo.coverage.kind === "wildcard") {
+      hasWildcard = true;
+    } else if (patternInfo.coverage.kind === "constructor") {
+      const key = patternInfo.coverage.typeName;
+      const set = coverageMap.get(key) ?? new Set<string>();
+      set.add(patternInfo.coverage.ctor);
+      coverageMap.set(key, set);
+    }
+
+    const previousEnv = ctx.env;
+    ctx.env = new Map(ctx.env);
+    for (const [name, type] of patternInfo.bindings.entries()) {
+      ctx.env.set(name, { quantifiers: [], type: applyCurrentSubst(ctx, type) });
+    }
+    const bodyType = inferExpr(ctx, matchCase.body);
+    ctx.env = previousEnv;
+
+    if (!resultType) {
+      resultType = bodyType;
+    } else {
+      unify(ctx, resultType, bodyType);
+      resultType = applyCurrentSubst(ctx, resultType);
+    }
+  }
+
+  const finalScrutinee = applyCurrentSubst(ctx, scrutineeType);
+  ensureExhaustive(ctx, finalScrutinee, hasWildcard, coverageMap);
+
+  const finalResult = resultType ? applyCurrentSubst(ctx, resultType) : freshTypeVar();
+  if (expr.value) {
+    return finalResult;
+  }
+  return {
+    kind: "func",
+    from: finalScrutinee,
+    to: finalResult,
+  };
 }
 
 type PatternCoverage =
@@ -619,6 +486,15 @@ function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternIn
     }
     default:
       throw new InferError("Unsupported pattern kind");
+  }
+}
+
+function mergeBindings(target: Map<string, Type>, source: Map<string, Type>) {
+  for (const [name, type] of source.entries()) {
+    if (target.has(name)) {
+      throw new InferError(`Duplicate variable '${name}' in pattern`);
+    }
+    target.set(name, type);
   }
 }
 

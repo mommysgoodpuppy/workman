@@ -1,18 +1,18 @@
 import { Token } from "./token.ts";
 import type {
-  SurfaceBlockExpr,
-  SurfaceBlockStatement,
-  SurfaceExpr,
-  SurfaceLetDeclaration,
-  SurfaceMatchArm,
-  SurfaceParameter,
-  SurfaceProgram,
-  SurfaceTopLevel,
-  SurfaceTypeAliasMember,
-  SurfaceTypeDeclaration,
-  SurfaceTypeExpr,
-  SurfaceTypeParameter,
-} from "./surface_ast.ts";
+  BlockExpr,
+  BlockStatement,
+  Expr,
+  LetDeclaration,
+  MatchArm,
+  Parameter,
+  Program,
+  TopLevel,
+  TypeAliasMember,
+  TypeDeclaration,
+  TypeExpr,
+  TypeParameter,
+} from "./ast.ts";
 import type { Pattern, SourceSpan } from "./ast.ts";
 
 export class SurfaceParseError extends Error {
@@ -22,7 +22,7 @@ export class SurfaceParseError extends Error {
   }
 }
 
-export function parseSurfaceProgram(tokens: Token[]): SurfaceProgram {
+export function parseSurfaceProgram(tokens: Token[]): Program {
   const parser = new SurfaceParser(tokens);
   return parser.parseProgram();
 }
@@ -32,8 +32,8 @@ class SurfaceParser {
 
   constructor(private readonly tokens: Token[]) {}
 
-  parseProgram(): SurfaceProgram {
-    const declarations: SurfaceTopLevel[] = [];
+  parseProgram(): Program {
+    const declarations: TopLevel[] = [];
     while (!this.isEOF()) {
       declarations.push(this.parseTopLevel());
       if (!this.isEOF()) {
@@ -43,7 +43,7 @@ class SurfaceParser {
     return { declarations };
   }
 
-  private parseTopLevel(): SurfaceTopLevel {
+  private parseTopLevel(): TopLevel {
     const token = this.peek();
     if (token.kind === "keyword") {
       switch (token.value) {
@@ -58,7 +58,7 @@ class SurfaceParser {
     throw this.error("Expected top-level declaration");
   }
 
-  private parseLetDeclaration(): SurfaceLetDeclaration {
+  private parseLetDeclaration(): LetDeclaration {
     const letToken = this.expectKeyword("let");
     const nameToken = this.expectIdentifier();
     const parameters = this.parseParameterList();
@@ -75,9 +75,9 @@ class SurfaceParser {
     };
   }
 
-  private parseParameterList(): SurfaceParameter[] {
+  private parseParameterList(): Parameter[] {
     this.expectSymbol("(");
-    const params: SurfaceParameter[] = [];
+    const params: Parameter[] = [];
     if (!this.checkSymbol(")")) {
       do {
         const nameToken = this.expectIdentifier();
@@ -98,16 +98,23 @@ class SurfaceParser {
     return params;
   }
 
-  private parseBlockExpr(): SurfaceBlockExpr {
+  private parseBlockExpr(): BlockExpr {
     const open = this.expectSymbol("{");
-    const statements: SurfaceBlockStatement[] = [];
-    let result: SurfaceExpr | undefined;
+    const statements: BlockStatement[] = [];
+    let result: Expr | undefined;
 
     while (!this.checkSymbol("}")) {
-      const startToken = this.peek();
-      if (startToken.kind === "keyword" && startToken.value === "let") {
-        throw this.error("Nested let bindings are not supported yet", startToken);
+      if (this.checkKeyword("let")) {
+        const declaration = this.parseLetDeclaration();
+        statements.push({
+          kind: "let_statement",
+          declaration,
+          span: declaration.span,
+        });
+        this.expectSymbol(";");
+        continue;
       }
+
       const expression = this.parseExpression();
       if (this.matchSymbol(";")) {
         statements.push({
@@ -126,7 +133,7 @@ class SurfaceParser {
     return { kind: "block", statements, result, span };
   }
 
-  private parseTypeDeclaration(): SurfaceTypeDeclaration {
+  private parseTypeDeclaration(): TypeDeclaration {
     const typeToken = this.expectKeyword("type");
     const nameToken = this.expectTypeName();
     const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
@@ -142,8 +149,8 @@ class SurfaceParser {
     };
   }
 
-  private parseTypeParameters(): SurfaceTypeParameter[] {
-    const params: SurfaceTypeParameter[] = [];
+  private parseTypeParameters(): TypeParameter[] {
+    const params: TypeParameter[] = [];
     if (!this.checkSymbol(">")) {
       do {
         const ident = this.expectTypeParamName();
@@ -154,8 +161,8 @@ class SurfaceParser {
     return params;
   }
 
-  private parseTypeAliasMembers(): SurfaceTypeAliasMember[] {
-    const members: SurfaceTypeAliasMember[] = [];
+  private parseTypeAliasMembers(): TypeAliasMember[] {
+    const members: TypeAliasMember[] = [];
     members.push(this.parseTypeAliasMember());
     while (this.matchSymbol("|")) {
       members.push(this.parseTypeAliasMember());
@@ -163,7 +170,7 @@ class SurfaceParser {
     return members;
   }
 
-  private parseTypeAliasMember(): SurfaceTypeAliasMember {
+  private parseTypeAliasMember(): TypeAliasMember {
     const token = this.peek();
     if (token.kind === "constructor") {
       const ctor = this.consume();
@@ -179,8 +186,8 @@ class SurfaceParser {
     return { kind: "alias", type, span: type.span };
   }
 
-  private parseTypeArguments(): SurfaceTypeExpr[] {
-    const args: SurfaceTypeExpr[] = [];
+  private parseTypeArguments(): TypeExpr[] {
+    const args: TypeExpr[] = [];
     if (!this.checkSymbol(">")) {
       do {
         args.push(this.parseTypeExpr());
@@ -190,17 +197,17 @@ class SurfaceParser {
     return args;
   }
 
-  private parseExpression(): SurfaceExpr {
+  private parseExpression(): Expr {
     return this.parseMatchExpression();
   }
 
-  private parseMatchExpression(): SurfaceExpr {
+  private parseMatchExpression(): Expr {
     const token = this.peek();
     if (token.kind === "keyword" && token.value === "match") {
       const matchToken = this.expectKeyword("match");
       this.expectSymbol("(");
 
-      const args: SurfaceExpr[] = [];
+      const args: Expr[] = [];
       if (!this.checkSymbol(")")) {
         args.push(this.parseExpression());
         if (this.matchSymbol(",")) {
@@ -234,7 +241,7 @@ class SurfaceParser {
     return this.parseArrowOrLower();
   }
 
-  private parseArrowOrLower(): SurfaceExpr {
+  private parseArrowOrLower(): Expr {
     const token = this.peek();
     if (token.kind === "symbol" && token.value === "(") {
       const snapshot = this.index;
@@ -257,10 +264,10 @@ class SurfaceParser {
     return this.parseCallExpression();
   }
 
-  private tryParseArrowParameters(): SurfaceParameter[] | null {
+  private tryParseArrowParameters(): Parameter[] | null {
     const startIndex = this.index;
     this.expectSymbol("(");
-    const params: SurfaceParameter[] = [];
+    const params: Parameter[] = [];
     if (!this.checkSymbol(")")) {
       do {
         const ident = this.expectIdentifier();
@@ -285,11 +292,11 @@ class SurfaceParser {
     return params;
   }
 
-  private parseCallExpression(): SurfaceExpr {
+  private parseCallExpression(): Expr {
     let expr = this.parsePrimaryExpression();
     while (this.matchSymbol("(")) {
       const open = this.previous();
-      const args: SurfaceExpr[] = [];
+      const args: Expr[] = [];
       if (!this.checkSymbol(")")) {
         do {
           args.push(this.parseExpression());
@@ -315,12 +322,12 @@ class SurfaceParser {
     return expr;
   }
 
-  private parsePrimaryExpression(): SurfaceExpr {
+  private parsePrimaryExpression(): Expr {
     const token = this.peek();
     switch (token.kind) {
       case "identifier": {
         const ident = this.consume();
-        return { kind: "identifier", name: ident.value, span: this.createSpan(ident, ident) } as SurfaceExpr;
+        return { kind: "identifier", name: ident.value, span: this.createSpan(ident, ident) } as Expr;
       }
       case "constructor": {
         const ctor = this.consume();
@@ -332,7 +339,7 @@ class SurfaceParser {
           kind: "literal",
           literal: { kind: "int", value: Number(num.value), span: this.createSpan(num, num) },
           span: this.createSpan(num, num),
-        } as SurfaceExpr;
+        } as Expr;
       }
       case "bool": {
         const bool = this.consume();
@@ -340,7 +347,7 @@ class SurfaceParser {
           kind: "literal",
           literal: { kind: "bool", value: bool.value === "true", span: this.createSpan(bool, bool) },
           span: this.createSpan(bool, bool),
-        } as SurfaceExpr;
+        } as Expr;
       }
       case "symbol": {
         if (token.value === "(") {
@@ -354,9 +361,9 @@ class SurfaceParser {
     throw this.error("Expected expression", token);
   }
 
-  private parseParenExpression(): SurfaceExpr {
+  private parseParenExpression(): Expr {
     const open = this.expectSymbol("(");
-    const elements: SurfaceExpr[] = [];
+    const elements: Expr[] = [];
     if (!this.checkSymbol(")")) {
       elements.push(this.parseExpression());
       while (this.matchSymbol(",")) {
@@ -370,28 +377,28 @@ class SurfaceParser {
         kind: "literal",
         literal: { kind: "unit", span },
         span,
-      } as SurfaceExpr;
+      } as Expr;
     }
     if (elements.length === 1) {
-      return { ...elements[0], span: this.spanFrom(open.start, close.end) } as SurfaceExpr;
+      return { ...elements[0], span: this.spanFrom(open.start, close.end) } as Expr;
     }
     return {
       kind: "tuple",
       elements,
       span: this.spanFrom(open.start, close.end),
-    } as SurfaceExpr;
+    } as Expr;
   }
 
-  private parseTypeExpr(): SurfaceTypeExpr {
+  private parseTypeExpr(): TypeExpr {
     return this.parseTypeArrow();
   }
 
-  private parseTypeArrow(): SurfaceTypeExpr {
+  private parseTypeArrow(): TypeExpr {
     const snapshot = this.index;
     const open = this.peek();
     if (open.kind === "symbol" && open.value === "(") {
       this.consume();
-      const parameters: SurfaceTypeExpr[] = [];
+      const parameters: TypeExpr[] = [];
       if (!this.checkSymbol(")")) {
         do {
           parameters.push(this.parseTypeExpr());
@@ -412,7 +419,7 @@ class SurfaceParser {
     return this.parseTypePrimary();
   }
 
-  private parseTypePrimary(): SurfaceTypeExpr {
+  private parseTypePrimary(): TypeExpr {
     const token = this.peek();
     if (token.kind === "symbol" && token.value === "()") {
       const unit = this.consume();
@@ -447,14 +454,14 @@ class SurfaceParser {
     throw this.error("Expected type expression", token);
   }
 
-  private parseTypeTupleOrGrouping(): SurfaceTypeExpr {
+  private parseTypeTupleOrGrouping(): TypeExpr {
     const open = this.expectSymbol("(");
     if (this.checkSymbol(")")) {
       const close = this.expectSymbol(")");
       return { kind: "type_unit", span: this.spanFrom(open.start, close.end) };
     }
 
-    const elements: SurfaceTypeExpr[] = [];
+    const elements: TypeExpr[] = [];
     elements.push(this.parseTypeExpr());
     while (this.matchSymbol(",")) {
       elements.push(this.parseTypeExpr());
@@ -559,9 +566,9 @@ class SurfaceParser {
     throw this.error("Expected pattern", token);
   }
 
-  private parseMatchBlock(): { arms: SurfaceMatchArm[]; span: SourceSpan } {
+  private parseMatchBlock(): { arms: MatchArm[]; span: SourceSpan } {
     const open = this.expectSymbol("{");
-    const arms: SurfaceMatchArm[] = [];
+    const arms: MatchArm[] = [];
 
     if (!this.checkSymbol("}")) {
       while (true) {

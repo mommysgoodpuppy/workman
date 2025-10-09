@@ -1,26 +1,21 @@
 -- Generic data helpers for an analytics pipeline.
 
 -- Wrap any reading in a diagnostic structure using a first-class match.
-let wrapAsDiagnostic =
-  match with
-    | (buildMessage, reading) -> buildMessage reading;
+let wrapAsDiagnostic = {
+  (buildMessage, reading) => buildMessage(reading)
+};
 
 -- Compose enrichment and normalization into a single processing step.
-let buildProcessor =
-  fn enrich ->
-    fn normalize ->
-      fn reading ->
-        enrich (normalize reading);
+let buildProcessor(enrich, normalize) = {
+  (reading) => enrich(normalize(reading))
+};
 
 -- Apply a transformation twice: useful for stabilizing noisy sensor data.
-let smoothReading =
-  fn transform ->
-    fn reading ->
-      transform (transform reading);
+let smoothReading(transform) = {
+  (reading) => transform(transform(reading))
+};
 
 -- Swap handler argument order so we can partially apply downstream services.
-let routeAlert =
-  fn handler ->
-    fn severity ->
-      fn payload ->
-        handler payload severity;
+let routeAlert(handler) = {
+  (severity) => (payload) => handler(payload, severity)
+};
