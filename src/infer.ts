@@ -240,6 +240,10 @@ function convertTypeExpr(
     }
     case "type_ref": {
       if (typeExpr.typeArgs.length === 0) {
+        const scoped = scope.get(typeExpr.name);
+        if (scoped) {
+          return scoped;
+        }
         switch (typeExpr.name) {
           case "Int":
             return { kind: "int" };

@@ -58,14 +58,6 @@ export function lex(source: string): Token[] {
       continue;
     }
 
-    if (char === "(") {
-      if (source[index + 1] === ")") {
-        tokens.push({ kind: "symbol", value: "()", start, end: index + 2 });
-        index += 2;
-        continue;
-      }
-    }
-
     if (char === "-" && source[index + 1] === ">") {
       tokens.push({ kind: "symbol", value: "->", start, end: index + 2 });
       index += 2;

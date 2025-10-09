@@ -1,5 +1,5 @@
 import { lex } from "../src/lexer.ts";
-import { parseSurfaceProgram } from "../src/surface_parser.ts";
+import { parseSurfaceProgram } from "../src/parser.ts";
 import { inferProgram, InferError } from "../src/infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
@@ -13,19 +13,19 @@ function inferTypes(source: string) {
 
 Deno.test("infers polymorphic identity function", () => {
   const source = `
-    let id(x) = {
+    let id = (x) => {
       x
     };
   `;
   const summaries = inferTypes(source);
   assertEquals(summaries.length, 1);
-  assertEquals(summaries[0], { name: "id", type: "'a -> 'a" });
+  assertEquals(summaries[0], { name: "id", type: "T -> T" });
 });
 
 Deno.test("infers constructors and ADT match", () => {
   const source = `
     type Option<T> = None | Some<T>;
-    let mapOption(f, opt) = {
+    let mapOption = (f, opt) => {
       match(opt) {
         case Some(x) => Some(f(x)),
         case None => None
@@ -37,13 +37,13 @@ Deno.test("infers constructors and ADT match", () => {
   if (!binding) {
     throw new Error("expected mapOption binding");
   }
-  assertEquals(binding.type, "('a -> 'b) -> Option<'a> -> Option<'b>");
+  assertEquals(binding.type, "(T -> U) -> Option<T> -> Option<U>");
 });
 
 Deno.test("rejects non-exhaustive match", () => {
   const source = `
     type Option<T> = None | Some<T>;
-    let bad(opt) = {
+    let bad = (opt) => {
       match(opt) {
         case Some(x) => x
       }
@@ -58,10 +58,10 @@ Deno.test("rejects non-exhaustive match", () => {
 
 Deno.test("supports annotated let bindings", () => {
   const source = `
-    let id(x: Int): Int = {
+    let id = (x: Int) => {
       x
     };
-    let three() = {
+    let three = () => {
       id(3)
     };
   `;
@@ -78,7 +78,7 @@ Deno.test("supports annotated let bindings", () => {
 Deno.test("infers tuple pattern matches", () => {
   const source = `
     type Pair<A, B> = Pair<A, B>;
-    let fst(pair) = {
+    let fst = (pair) => {
       match(pair) {
         case Pair(x, _) => x
       }
@@ -89,13 +89,13 @@ Deno.test("infers tuple pattern matches", () => {
   if (!binding) {
     throw new Error("expected fst binding");
   }
-  assertEquals(binding.type, "Pair<'a, 'b> -> 'a");
+  assertEquals(binding.type, "Pair<T, U> -> T");
 });
 
 Deno.test("rejects duplicate pattern bindings", () => {
   const source = `
     type Pair<A, B> = Pair<A, B>;
-    let bad(pair) = {
+    let bad = (pair) => {
       match(pair) {
         case Pair(x, x) => x
       }
@@ -110,7 +110,7 @@ Deno.test("rejects duplicate pattern bindings", () => {
 
 Deno.test("rejects annotation mismatches", () => {
   const source = `
-    let tricky(x: Int): Bool = {
+    let tricky: Bool = (x: Int) => {
       x
     };
   `;
@@ -122,10 +122,10 @@ Deno.test("rejects annotation mismatches", () => {
 
 Deno.test("supports list prelude constructors", () => {
   const source = `
-    let singleton() = {
+    let singleton = () => {
       Cons(1, Nil)
     };
-    let two() = {
+    let two = () => {
       Cons(true, Nil)
     };
   `;
@@ -142,7 +142,7 @@ Deno.test("supports list prelude constructors", () => {
 Deno.test("first-class match builds pattern functions", () => {
   const source = `
     type Option<T> = None | Some<T>;
-    let toBoolean() = {
+    let toBoolean = () => {
       (value) => {
         match(value) {
           case Some(_) => true,
@@ -150,7 +150,7 @@ Deno.test("first-class match builds pattern functions", () => {
         }
       }
     };
-    let value() = {
+    let value = () => {
       toBoolean()(Some(42))
     };
   `;
@@ -160,6 +160,6 @@ Deno.test("first-class match builds pattern functions", () => {
   if (!convert || !value) {
     throw new Error("expected toBoolean and value bindings");
   }
-  assertEquals(convert.type, "Option<'a> -> Bool");
+  assertEquals(convert.type, "Option<T> -> Bool");
   assertEquals(value.type, "Bool");
 });

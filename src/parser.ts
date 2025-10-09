@@ -61,10 +61,13 @@ class SurfaceParser {
   private parseLetDeclaration(): LetDeclaration {
     const letToken = this.expectKeyword("let");
     const nameToken = this.expectIdentifier();
-    const parameters = this.parseParameterList();
     const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
     this.expectSymbol("=");
-    const body = this.parseBlockExpr();
+    const initializer = this.parseExpression();
+    if (initializer.kind !== "arrow") {
+      throw this.error("Let declarations must be assigned an arrow function", this.previous());
+    }
+    const { parameters, body } = initializer;
     return {
       kind: "let",
       name: nameToken.value,
@@ -331,7 +334,7 @@ class SurfaceParser {
       }
       case "constructor": {
         const ctor = this.consume();
-        return { kind: "constructor", name: ctor.value, args: [], span: this.createSpan(ctor, ctor) } as SurfaceExpr;
+        return { kind: "constructor", name: ctor.value, args: [], span: this.createSpan(ctor, ctor) } as Expr;
       }
       case "number": {
         const num = this.consume();
@@ -421,11 +424,6 @@ class SurfaceParser {
 
   private parseTypePrimary(): TypeExpr {
     const token = this.peek();
-    if (token.kind === "symbol" && token.value === "()") {
-      const unit = this.consume();
-      return { kind: "type_unit", span: this.createSpan(unit, unit) };
-    }
-
     if (token.kind === "symbol" && token.value === "(") {
       return this.parseTypeTupleOrGrouping();
     }
@@ -517,12 +515,6 @@ class SurfaceParser {
         value: bool.value === "true",
         span: this.createSpan(bool, bool),
       };
-      return { kind: "literal", literal, span: literal.span };
-    }
-
-    if (token.kind === "symbol" && token.value === "()") {
-      const unit = this.consume();
-      const literal = { kind: "unit" as const, span: this.createSpan(unit, unit) };
       return { kind: "literal", literal, span: literal.span };
     }
 
@@ -644,6 +636,11 @@ class SurfaceParser {
   private checkSymbol(value: string): boolean {
     const token = this.peek();
     return token.kind === "symbol" && token.value === value;
+  }
+
+  private checkKeyword(value: string): boolean {
+    const token = this.peek();
+    return token.kind === "keyword" && token.value === value;
   }
 
   private consume(): Token {

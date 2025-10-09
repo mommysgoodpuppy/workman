@@ -24,7 +24,6 @@ export const keywords = new Set([
 export const symbols = new Set([
   "=>",
   "->",
-  "()",
   "=",
   "|",
   ":",

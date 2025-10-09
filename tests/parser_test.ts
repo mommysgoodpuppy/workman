@@ -1,5 +1,5 @@
 import { lex } from "../src/lexer.ts";
-import { parseSurfaceProgram } from "../src/surface_parser.ts";
+import { parseSurfaceProgram } from "../src/parser.ts";
 import { assertEquals } from "https://deno.land/std/assert/mod.ts";
 
 Deno.test("parses simple type declaration", () => {
@@ -19,21 +19,27 @@ Deno.test("parses simple type declaration", () => {
   assertEquals(decl.members.length, 2);
 
   const none = decl.members[0];
+  if (none.kind !== "constructor") {
+    throw new Error("expected constructor member for None");
+  }
   assertEquals(none.name, "None");
   assertEquals(none.typeArgs.length, 0);
 
   const some = decl.members[1];
+  if (some.kind !== "constructor") {
+    throw new Error("expected constructor member for Some");
+  }
   assertEquals(some.name, "Some");
   assertEquals(some.typeArgs.length, 1);
-  assertEquals(some.typeArgs[0].kind, "type_var");
-  if (some.typeArgs[0].kind === "type_var") {
+  assertEquals(some.typeArgs[0].kind, "type_ref");
+  if (some.typeArgs[0].kind === "type_ref") {
     assertEquals(some.typeArgs[0].name, "T");
   }
 });
 
 Deno.test("parses match expression with constructors", () => {
   const source = `
-let example(input) = {
+let example = (input) => {
   match(input) {
     case Some(x) => x,
     case None => 0
