@@ -60,6 +60,25 @@ class SurfaceParser {
 
   private parseLetDeclaration(): LetDeclaration {
     const letToken = this.expectKeyword("let");
+    const isRecursive = this.matchKeyword("rec");
+    
+    const firstBinding = this.parseLetBinding(letToken.start, isRecursive);
+    
+    // Parse mutual bindings with "and"
+    const mutualBindings: LetDeclaration[] = [];
+    while (this.matchKeyword("and")) {
+      const andStart = this.previous().start;
+      mutualBindings.push(this.parseLetBinding(andStart, true));
+    }
+    
+    if (mutualBindings.length > 0) {
+      firstBinding.mutualBindings = mutualBindings;
+    }
+    
+    return firstBinding;
+  }
+
+  private parseLetBinding(startPos: number, isRecursive: boolean): LetDeclaration {
     const nameToken = this.expectIdentifier();
     const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
     this.expectSymbol("=");
@@ -91,7 +110,8 @@ class SurfaceParser {
         parameters,
         annotation,
         body,
-        span: this.spanFrom(letToken.start, body.span.end),
+        isRecursive,
+        span: this.spanFrom(startPos, body.span.end),
       };
     }
     
@@ -105,8 +125,18 @@ class SurfaceParser {
       parameters,
       annotation,
       body,
-      span: this.spanFrom(letToken.start, body.span.end),
+      isRecursive,
+      span: this.spanFrom(startPos, body.span.end),
     };
+  }
+
+  private matchKeyword(value: string): boolean {
+    const token = this.peek();
+    if (token.kind === "keyword" && token.value === value) {
+      this.consume();
+      return true;
+    }
+    return false;
   }
 
   private parseParameterList(): Parameter[] {

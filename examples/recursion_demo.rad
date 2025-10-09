@@ -1,0 +1,25 @@
+-- Demonstration of recursive functions with HM inference
+
+type Option<T> = None | Some<T>;
+
+-- Simple recursion: count nested options
+let rec countNesting = match(opt) {
+  Some(None) => { 1 },
+  None => { 0 }
+};
+
+-- Mutual recursion: even and odd
+let rec isEven = match(n) {
+  0 => { true },
+  _ => { isOdd(0) }
+}
+and isOdd = match(n) {
+  0 => { false },
+  _ => { isEven(0) }
+};
+
+-- Recursive list processing
+let rec listLength = match(list) {
+  Cons(_, rest) => { listLength(rest) },
+  Nil => { 0 }
+};

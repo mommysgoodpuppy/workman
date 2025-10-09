@@ -77,8 +77,10 @@ export function inferProgram(program: Program): InferResult {
 
   for (const decl of program.declarations) {
     if (decl.kind === "let") {
-      const scheme = inferLetDeclaration(ctx, decl);
-      summaries.push({ name: decl.name, scheme: applySubstitutionScheme(scheme, ctx.subst) });
+      const results = inferLetDeclaration(ctx, decl);
+      for (const { name, scheme } of results) {
+        summaries.push({ name, scheme: applySubstitutionScheme(scheme, ctx.subst) });
+      }
     }
   }
 
@@ -202,11 +204,58 @@ function registerPrelude(ctx: Context) {
   }
 }
 
-function inferLetDeclaration(ctx: Context, decl: LetDeclaration): TypeScheme {
-  const fnType = inferLetBinding(ctx, decl.parameters, decl.body, decl.annotation);
-  const scheme = generalizeInContext(ctx, fnType);
-  ctx.env.set(decl.name, scheme);
-  return scheme;
+function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string; scheme: TypeScheme }[] {
+  // Non-recursive case
+  if (!decl.isRecursive) {
+    const fnType = inferLetBinding(ctx, decl.parameters, decl.body, decl.annotation);
+    const scheme = generalizeInContext(ctx, fnType);
+    ctx.env.set(decl.name, scheme);
+    return [{ name: decl.name, scheme }];
+  }
+
+  // Recursive case (with optional mutual bindings)
+  const allBindings = [decl, ...(decl.mutualBindings || [])];
+  
+  // STEP 1: Pre-bind all names with fresh type variables
+  const preBoundTypes = new Map<string, Type>();
+  for (const binding of allBindings) {
+    const freshVar = freshTypeVar();
+    preBoundTypes.set(binding.name, freshVar);
+    // Add to environment with empty quantifiers so recursive calls can find it
+    ctx.env.set(binding.name, { quantifiers: [], type: freshVar });
+  }
+  
+  // STEP 2: Infer each body with all names in scope
+  const inferredTypes = new Map<string, Type>();
+  for (const binding of allBindings) {
+    const inferredType = inferLetBinding(ctx, binding.parameters, binding.body, binding.annotation);
+    inferredTypes.set(binding.name, inferredType);
+  }
+  
+  // STEP 3: Unify pre-bound types with inferred types
+  for (const binding of allBindings) {
+    const preBound = preBoundTypes.get(binding.name)!;
+    const inferred = inferredTypes.get(binding.name)!;
+    unify(ctx, preBound, inferred);
+    
+    // Also check annotation if present
+    if (binding.annotation) {
+      const annotationType = convertTypeExpr(ctx, binding.annotation, new Map());
+      unify(ctx, inferred, annotationType);
+    }
+  }
+  
+  // STEP 4: Apply substitutions and generalize
+  const results: { name: string; scheme: TypeScheme }[] = [];
+  for (const binding of allBindings) {
+    const inferredType = inferredTypes.get(binding.name)!;
+    const resolvedType = applyCurrentSubst(ctx, inferredType);
+    const scheme = generalizeInContext(ctx, resolvedType);
+    ctx.env.set(binding.name, scheme);
+    results.push({ name: binding.name, scheme });
+  }
+  
+  return results;
 }
 
 function convertTypeExpr(

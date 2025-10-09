@@ -16,6 +16,8 @@ export interface Token {
 
 export const keywords = new Set([
   "let",
+  "rec",
+  "and",
   "type",
   "match",
 ]);

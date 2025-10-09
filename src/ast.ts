@@ -168,6 +168,8 @@ export interface LetDeclaration extends NodeBase {
   parameters: Parameter[];
   annotation?: TypeExpr;
   body: BlockExpr;
+  isRecursive: boolean;
+  mutualBindings?: LetDeclaration[];
 }
 
 export type TopLevel = LetDeclaration | TypeDeclaration;
