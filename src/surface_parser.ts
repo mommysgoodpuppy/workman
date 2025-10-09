@@ -296,12 +296,21 @@ class SurfaceParser {
         } while (this.matchSymbol(","));
       }
       const close = this.expectSymbol(")");
-      expr = {
-        kind: "call",
-        callee: expr,
-        arguments: args,
-        span: this.spanFrom(expr.span.start, close.end),
-      };
+
+      if (expr.kind === "constructor") {
+        expr = {
+          ...expr,
+          args,
+          span: this.spanFrom(expr.span.start, close.end),
+        };
+      } else {
+        expr = {
+          kind: "call",
+          callee: expr,
+          arguments: args,
+          span: this.spanFrom(expr.span.start, close.end),
+        };
+      }
     }
     return expr;
   }
