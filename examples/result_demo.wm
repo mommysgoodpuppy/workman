@@ -36,6 +36,19 @@ let loadSnapshot = (status) => {
   }
 };
 
+-- Recursive function to sum all readings in a Result.
+
+let rec sumReadings = match(result) {
+  Ok(Cons(x, rest)) => {
+    match(sumReadings(Ok(rest))) {
+      Ok(sum) => { Ok(0) },
+      Err(e) => { Err(e) }
+    }
+  },
+  Ok(Nil) => { Ok(0) },
+  Err(e) => { Err(e) }
+};
+
 -- Example inputs drive inference toward Result<List<Int>, IoError>.
 
 let healthyFeed = () => {
