@@ -1,0 +1,19 @@
+-- Test file for error diagnostics
+-- NOTE: Only the FIRST error will be shown due to current limitations
+-- The parser and type checker stop on first error
+
+type Option<T> = None | Some<T>;
+
+-- ERROR: Parse error - missing arrow
+let badSyntax = (x) { 42 };
+
+-- To see more errors, fix the above and uncomment below:
+
+-- -- ERROR: Type checker - duplicate type definition
+-- type Option<T> = None | Some<T>;
+
+-- -- ERROR: Type checker - undefined variable
+-- let undefined = (x) => { y };
+
+-- CORRECT: This should work
+let correct = (x) => { x };

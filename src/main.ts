@@ -4,15 +4,15 @@ import { InferError } from "./infer.ts";
 
 if (import.meta.main) {
   if (Deno.args.length === 0) {
-    console.error("Usage: tinyhm <file.rad> [...file.rad]");
+    console.error("Usage: workman <file.wm> [...file.wm]");
     Deno.exit(1);
   }
 
   let hadError = false;
 
   for (const path of Deno.args) {
-    if (!path.endsWith(".rad")) {
-      console.error(`Skipping '${path}': expected a .rad source file.`);
+    if (!path.endsWith(".wm")) {
+      console.error(`Skipping '${path}': expected a .wm source file.`);
       hadError = true;
       continue;
     }

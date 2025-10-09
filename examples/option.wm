@@ -1,0 +1,33 @@
+-- Optional values used for fallible lookups.
+type Option<T> = None | Some<T>;
+
+-- Build a list of known user ids.
+let sampleIds = () => {
+  Cons(1, Cons(42, Nil))
+};
+
+-- Extract the first user id if it exists.
+let firstUserId = match(list) {
+  Cons(id, _) => { Some(id) },
+  Nil => { None }
+};
+
+-- Choose a fallback user id when none is present.
+let pickUserId = (fallback) => {
+  (maybeId) => {
+    match(maybeId) {
+      Some(id) => { id },
+      None => { fallback }
+    }
+  }
+};
+
+-- Transform the contained value of an option.
+let mapOption = (transform) => {
+  (maybeValue) => {
+    match(maybeValue) {
+      Some(value) => { Some(transform(value)) },
+      None => { None }
+    }
+  }
+};

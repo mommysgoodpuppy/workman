@@ -1,0 +1,40 @@
+-- Demonstration of nested HM inference with user-defined types.
+type Result<T, E> = Ok<T> | Err<E>;
+type IoError = Timeout | Disconnected;
+
+-- Ensure sensor feeds always have at least one reading.
+let ensureRecent = match(readings) {
+  Cons(first, rest) => { Ok(Cons(first, rest)) },
+  Nil => { Err(Timeout) }
+};
+
+-- Inspect connectivity and propagate detailed errors. 
+let connect = match(status) {
+  true => { Ok(Cons(0, Nil)) },
+  false => { Err(Disconnected) }
+};
+
+-- First-class binder for Result values.
+let bindResult = match(tuple) {
+  (Ok(value), onOk) => { onOk(value) },
+  (Err(error), _) => { Err(error) }
+};
+
+-- Combine connectivity and readings into a single Result value.
+let loadSnapshot = (status) => {
+  (readings) => {
+    bindResult((connect(status), (seed) => {
+      bindResult((ensureRecent(readings), (latest) => {
+        Ok(Cons(0, latest))
+      }))
+    }))
+  }
+};
+
+-- Example inputs drive inference toward Result<List<Int>, IoError>.
+let healthyFeed = () => {
+  loadSnapshot(true)(Cons(7, Cons(4, Nil)))
+};
+let offlineFeed = () => {
+  loadSnapshot(false)(Nil)
+};

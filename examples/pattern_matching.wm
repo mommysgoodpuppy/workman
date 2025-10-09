@@ -1,0 +1,35 @@
+-- Inventory tracking with tagged lists and order records.
+type Option<T> = None | Some<T>;
+type Order = Order<Int, Int>; -- order id, quantity
+
+-- Retrieve the most recent stock quantity if we have any entries.
+let latestStockLevel = match(list) {
+  Cons(stock, _) => { Some(stock) },
+  Nil => { None }
+};
+
+-- Extract the quantity from an order using pattern matching.
+let orderQuantity = match(order) {
+  Order(_, quantity) => { quantity }
+};
+
+-- Decide how to respond to inventory state using first-class matches.
+type Alert = Restock<Int> | Monitor;
+
+let planNextStep = (target) => {
+  (tuple) => {
+    match(tuple) {
+      (Some(stock), _) => { Monitor },
+      (None, _) => { Restock(target) }
+    }
+  }
+};
+
+let evaluateInventory = (target) => {
+  (stockHistory) => {
+    let status = () => {
+      latestStockLevel(stockHistory)
+    };
+    planNextStep(target)((status(), stockHistory))
+  }
+};
