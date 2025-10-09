@@ -24,7 +24,7 @@ export type Expr =
   | ({ kind: "lambda" } & NodeBase & { param: string; body: Expr })
   | ({ kind: "apply" } & NodeBase & { fn: Expr; argument: Expr })
   | ({ kind: "let" } & NodeBase & { name: string; value: Expr; body: Expr })
-  | ({ kind: "match" } & NodeBase & { value: Expr; cases: MatchCase[] })
+  | ({ kind: "match" } & NodeBase & { value?: Expr; cases: MatchCase[] })
   | ({ kind: "literal" } & NodeBase & { literal: Literal })
   | ({ kind: "constructor" } & NodeBase & { name: string; args: Expr[] })
   | ({ kind: "tuple" } & NodeBase & { elements: Expr[] });

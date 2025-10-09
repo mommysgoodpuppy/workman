@@ -50,6 +50,8 @@ export function inferProgram(program: Program): InferResult {
   const ctx: Context = { env, adtEnv, subst: new Map() };
   const summaries: { name: string; scheme: TypeScheme }[] = [];
 
+  registerPrelude(ctx);
+
   for (const decl of program.declarations) {
     if (decl.kind === "type") {
       registerTypeDeclaration(ctx, decl);
@@ -72,11 +74,26 @@ export function inferProgram(program: Program): InferResult {
 }
 
 function registerTypeDeclaration(ctx: Context, decl: TypeDeclaration) {
+  if (ctx.adtEnv.has(decl.name)) {
+    throw new InferError(`Type '${decl.name}' is already defined`);
+  }
+
   const parameterTypes = decl.parameters.map(() => freshTypeVar());
   const typeScope = new Map<string, Type>();
   decl.parameters.forEach((param, index) => {
     typeScope.set(param, parameterTypes[index]);
   });
+
+  const parameterIds = parameterTypes
+    .map((type) => (type.kind === "var" ? type.id : -1))
+    .filter((id) => id >= 0);
+
+  const adtInfo = {
+    name: decl.name,
+    parameters: parameterIds,
+    constructors: [] as ConstructorInfo[],
+  };
+  ctx.adtEnv.set(decl.name, adtInfo);
 
   const constructors: ConstructorInfo[] = [];
   for (const ctor of decl.constructors) {
@@ -101,13 +118,51 @@ function registerTypeDeclaration(ctx: Context, decl: TypeDeclaration) {
     ctx.env.set(ctor.name, scheme);
   }
 
-  ctx.adtEnv.set(decl.name, {
-    name: decl.name,
-    parameters: parameterTypes
-      .map((type) => (type.kind === "var" ? type.id : -1))
-      .filter((id) => id >= 0),
-    constructors,
-  });
+  adtInfo.constructors.push(...constructors);
+}
+
+function registerPrelude(ctx: Context) {
+  if (!ctx.adtEnv.has("List")) {
+    const elementVar = freshTypeVar();
+    if (elementVar.kind !== "var") {
+      throw new InferError("Internal error: expected fresh type variable");
+    }
+    const elementId = elementVar.id;
+    const varA = (): Type => ({ kind: "var", id: elementId });
+    const listOfA = (): Type => ({ kind: "constructor", name: "List", args: [varA()] });
+
+    const nilScheme: TypeScheme = {
+      quantifiers: [elementId],
+      type: listOfA(),
+    };
+
+    const consScheme: TypeScheme = {
+      quantifiers: [elementId],
+      type: {
+        kind: "func",
+        from: varA(),
+        to: {
+          kind: "func",
+          from: listOfA(),
+          to: listOfA(),
+        },
+      },
+    };
+
+    const constructors: ConstructorInfo[] = [
+      { name: "Nil", arity: 0, scheme: nilScheme },
+      { name: "Cons", arity: 2, scheme: consScheme },
+    ];
+
+    ctx.adtEnv.set("List", {
+      name: "List",
+      parameters: [elementId],
+      constructors,
+    });
+
+    ctx.env.set("Nil", nilScheme);
+    ctx.env.set("Cons", consScheme);
+  }
 }
 
 function inferLetDeclaration(ctx: Context, decl: LetDeclaration): TypeScheme {
@@ -185,7 +240,8 @@ function inferExpr(ctx: Context, expr: Expr): Type {
       return applyCurrentSubst(ctx, bodyType);
     }
     case "match": {
-      return inferMatchExpression(ctx, expr);
+      const valueType = expr.value ? inferExpr(ctx, expr.value) : freshTypeVar();
+      return inferMatchExpression(ctx, expr, valueType);
     }
     default:
       throw new InferError(`Unsupported expression kind ${(expr as Expr).kind}`);
@@ -298,16 +354,16 @@ function expectFunctionType(ctx: Context, type: Type, description: string): {
   return resolved;
 }
 
-function inferMatchExpression(ctx: Context, expr: Expr & { kind: "match" }): Type {
-  const scrutineeType = inferExpr(ctx, expr.value);
-  const resolvedScrutinee = applyCurrentSubst(ctx, scrutineeType);
+function inferMatchExpression(ctx: Context, expr: Expr & { kind: "match" }, initial: Type): Type {
+  const scrutineeType = initial;
 
   let resultType: Type | null = null;
   const coverageMap = new Map<string, Set<string>>();
   let hasWildcard = false;
 
   for (const matchCase of expr.cases) {
-    const patternInfo = inferPattern(ctx, matchCase.pattern, resolvedScrutinee);
+    const expected = applyCurrentSubst(ctx, scrutineeType);
+    const patternInfo = inferPattern(ctx, matchCase.pattern, expected);
     if (patternInfo.coverage.kind === "wildcard") {
       hasWildcard = true;
     } else if (patternInfo.coverage.kind === "constructor") {
@@ -333,10 +389,18 @@ function inferMatchExpression(ctx: Context, expr: Expr & { kind: "match" }): Typ
     }
   }
 
-  const finalScrutinee = applyCurrentSubst(ctx, resolvedScrutinee);
+  const finalScrutinee = applyCurrentSubst(ctx, scrutineeType);
   ensureExhaustive(ctx, finalScrutinee, hasWildcard, coverageMap);
 
-  return resultType ? applyCurrentSubst(ctx, resultType) : freshTypeVar();
+  const finalResult = resultType ? applyCurrentSubst(ctx, resultType) : freshTypeVar();
+  if (expr.value) {
+    return finalResult;
+  }
+  return {
+    kind: "func",
+    from: finalScrutinee,
+    to: finalResult,
+  };
 }
 
 type PatternCoverage =

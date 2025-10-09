@@ -1,0 +1,34 @@
+-- Demonstration of nested HM inference with user-defined types.
+type Result ok err = Ok ok | Err err;
+type IoError = Timeout | Disconnected;
+
+-- Ensure sensor feeds always have at least one reading.
+let ensureRecent =
+  fn readings ->
+    match readings with
+      | Cons first rest -> Ok (Cons first rest)
+      | Nil -> Err Timeout;
+
+-- Inspect connectivity and propagate detailed errors.
+let connect =
+  fn status ->
+    match status with
+      | true -> Ok (Cons 0 Nil)
+      | false -> Err Disconnected;
+
+-- First-class binder for Result values.
+let bindResult =
+  match with
+    | (Ok value, onOk) -> onOk value
+    | (Err error, _) -> Err error;
+
+-- Combine connectivity and readings into a single Result value.
+let loadSnapshot =
+  fn status ->
+    fn readings ->
+      bindResult (connect status, fn seed ->
+        bindResult (ensureRecent readings, fn latest -> Ok (Cons 0 latest)));
+
+-- Example inputs drive inference toward Result<List<Int>, IoError>.
+let healthyFeed = loadSnapshot true (Cons 7 (Cons 4 Nil));
+let offlineFeed = loadSnapshot false Nil;

@@ -102,8 +102,13 @@ class Parser {
   private parseMatchExpression(): Expr {
     if (this.matchKeyword("match")) {
       const matchToken = this.previous();
-      const value = this.parseExpression();
-      this.expectKeyword("with");
+      let value: Expr | undefined;
+      if (this.checkKeyword("with")) {
+        this.consume();
+      } else {
+        value = this.parseExpression();
+        this.expectKeyword("with");
+      }
       const cases = this.parseMatchArms();
       return {
         kind: "match",
@@ -117,7 +122,9 @@ class Parser {
 
   private parseMatchArms() {
     const cases = [] as { pattern: Pattern; body: Expr }[];
-    this.matchSymbol("|");
+    if (!this.matchSymbol("|")) {
+      throw this.error("Expected '|' to start match arm");
+    }
     do {
       const pattern = this.parsePattern();
       this.expectSymbol("->");
@@ -426,6 +433,14 @@ class Parser {
 
     if (token.kind === "constructor") {
       const ctor = this.consume();
+      if (this.isPrimitiveType(ctor.value)) {
+        return {
+          kind: "constructor",
+          name: ctor.value,
+          args: [],
+          span: this.createSpan(ctor, ctor),
+        };
+      }
       const args: TypeExpr[] = [];
       while (this.isTypeExprStart(this.peek())) {
         args.push(this.parseTypeAtom());
@@ -476,6 +491,10 @@ class Parser {
       return token.value === "(" || token.value === "()";
     }
     return false;
+  }
+
+  private isPrimitiveType(name: string): boolean {
+    return name === "Int" || name === "Bool" || name === "Unit";
   }
 
   private consume(): Token {
@@ -532,6 +551,11 @@ class Parser {
       return true;
     }
     return false;
+  }
+
+  private checkKeyword(value: string): boolean {
+    const token = this.peek();
+    return token.kind === "keyword" && token.value === value;
   }
 
   private matchSymbol(value: string): boolean {

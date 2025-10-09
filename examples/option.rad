@@ -1,15 +1,14 @@
 -- Optional values used for fallible lookups.
 type Option value = None | Some value;
 
--- Minimal linked list to model ordered user identifiers.
-type List item = Empty | Node item (List item);
+-- Build a list of known user ids.
+let sampleIds = Cons 1 (Cons 42 Nil);
 
 -- Extract the first user id if it exists.
 let firstUserId =
-  fn ids ->
-    match ids with
-      | Node id _ -> Some id
-      | Empty -> None;
+  match with
+    | Cons id _ -> Some id
+    | Nil -> None;
 
 -- Choose a fallback user id when none is present.
 let pickUserId =

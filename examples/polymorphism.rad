@@ -1,10 +1,9 @@
 -- Generic data helpers for an analytics pipeline.
 
--- Wrap any reading in a diagnostic structure.
+-- Wrap any reading in a diagnostic structure using a first-class match.
 let wrapAsDiagnostic =
-  fn buildMessage ->
-    fn reading ->
-      buildMessage reading;
+  match with
+    | (buildMessage, reading) -> buildMessage reading;
 
 -- Compose enrichment and normalization into a single processing step.
 let buildProcessor =

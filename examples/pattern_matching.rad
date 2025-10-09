@@ -1,24 +1,29 @@
 -- Inventory tracking with tagged lists and order records.
-type List item = Nil | Cons item (List item);
+type Option value = None | Some value;
 type Order = Order Int Int; -- order id, quantity
 
--- Retrieve the current stock level from the top of the list.
-let currentStock =
-  fn items ->
-    match items with
-      | Cons stock _ -> stock
-      | Nil -> 0;
+-- Retrieve the most recent stock quantity if we have any entries.
+let latestStockLevel =
+  match with
+    | Cons stock _ -> Some stock
+    | Nil -> None;
 
--- Compute total quantity sold for a single order pair.
+-- Extract the quantity from an order using pattern matching.
 let orderQuantity =
-  fn order ->
-    match order with
-      | Order _ quantity -> quantity;
+  match with
+    | Order _ quantity -> quantity;
 
--- Decide whether to reorder using pattern matching on inventory state.
-let needsReorder =
-  fn threshold ->
-    fn items ->
-      match items with
-        | Cons stock _ -> stock < threshold
-        | Nil -> true;
+-- Decide how to respond to inventory state using first-class matches.
+type Alert = Restock Int | Monitor;
+
+let planNextStep =
+  fn target ->
+    match with
+      | (Some stock, _) -> Monitor
+      | (None, _) -> Restock target;
+
+let evaluateInventory =
+  fn target ->
+    fn stockHistory ->
+      let status = latestStockLevel stockHistory in
+      planNextStep target (status, stockHistory);

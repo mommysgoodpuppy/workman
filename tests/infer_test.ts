@@ -97,3 +97,36 @@ Deno.test("rejects annotation mismatches", () => {
     InferError,
   );
 });
+
+Deno.test("supports list prelude constructors", () => {
+  const source = `
+    let singleton = Cons 1 Nil;
+    let two = Cons true Nil;
+  `;
+  const summaries = inferTypes(source);
+  const singleton = summaries.find((entry) => entry.name === "singleton");
+  const two = summaries.find((entry) => entry.name === "two");
+  if (!singleton || !two) {
+    throw new Error("expected singleton and two bindings");
+  }
+  assertEquals(singleton.type, "List<Int>");
+  assertEquals(two.type, "List<Bool>");
+});
+
+Deno.test("first-class match builds pattern functions", () => {
+  const source = `
+    type Option a = None | Some a;
+    let toBoolean = match with
+      | Some _ -> true
+      | None -> false;
+    let value = toBoolean (Some 42);
+  `;
+  const summaries = inferTypes(source);
+  const convert = summaries.find((entry) => entry.name === "toBoolean");
+  const value = summaries.find((entry) => entry.name === "value");
+  if (!convert || !value) {
+    throw new Error("expected toBoolean and value bindings");
+  }
+  assertEquals(convert.type, "Option<'a> -> Bool");
+  assertEquals(value.type, "Bool");
+});

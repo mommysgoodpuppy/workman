@@ -5,7 +5,7 @@ interface PrintContext {
   next: number;
 }
 
-const LETTERS = "abcdefghijklmnopqrstuvwxyz";
+const GENERIC_NAMES = ["T", "U", "V", "W", "X", "Y", "Z"];
 
 export function formatScheme(scheme: TypeScheme): string {
   const context: PrintContext = { names: new Map(), next: 0 };
@@ -53,14 +53,14 @@ function ensureName(context: PrintContext, id: number): string {
   if (existing) {
     return existing;
   }
-  const name = `'${nextName(context.next)}`;
+  const name = nextName(context.next);
   context.names.set(id, name);
   context.next += 1;
   return name;
 }
 
 function nextName(index: number): string {
-  const letter = LETTERS[index % LETTERS.length];
-  const suffix = Math.floor(index / LETTERS.length);
-  return suffix === 0 ? letter : `${letter}${suffix}`;
+  const base = GENERIC_NAMES[index % GENERIC_NAMES.length];
+  const suffix = Math.floor(index / GENERIC_NAMES.length);
+  return suffix === 0 ? base : `${base}${suffix + 1}`;
 }
