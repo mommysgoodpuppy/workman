@@ -1,0 +1,28 @@
+-- Optional values used for fallible lookups.
+type Option value = None | Some value;
+
+-- Minimal linked list to model ordered user identifiers.
+type List item = Empty | Node item (List item);
+
+-- Extract the first user id if it exists.
+let firstUserId =
+  fn ids ->
+    match ids with
+      | Node id _ -> Some id
+      | Empty -> None;
+
+-- Choose a fallback user id when none is present.
+let pickUserId =
+  fn fallback ->
+    fn maybeId ->
+      match maybeId with
+        | Some id -> id
+        | None -> fallback;
+
+-- Transform the contained value of an option.
+let mapOption =
+  fn transform ->
+    fn maybeValue ->
+      match maybeValue with
+        | Some value -> Some (transform value)
+        | None -> None;

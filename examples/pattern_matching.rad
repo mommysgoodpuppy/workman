@@ -1,0 +1,24 @@
+-- Inventory tracking with tagged lists and order records.
+type List item = Nil | Cons item (List item);
+type Order = Order Int Int; -- order id, quantity
+
+-- Retrieve the current stock level from the top of the list.
+let currentStock =
+  fn items ->
+    match items with
+      | Cons stock _ -> stock
+      | Nil -> 0;
+
+-- Compute total quantity sold for a single order pair.
+let orderQuantity =
+  fn order ->
+    match order with
+      | Order _ quantity -> quantity;
+
+-- Decide whether to reorder using pattern matching on inventory state.
+let needsReorder =
+  fn threshold ->
+    fn items ->
+      match items with
+        | Cons stock _ -> stock < threshold
+        | Nil -> true;

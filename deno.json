@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "strict": true
+  },
+  "tasks": {
+    "run": "deno run --allow-read src/main.ts",
+    "test": "deno test"
+  }
+}
