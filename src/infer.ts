@@ -137,7 +137,7 @@ function buildConstructorInfo(
   scope: Map<string, Type>,
 ): ConstructorInfo {
   const ctorResult = makeDataConstructor(typeName, parameterTypes);
-  const args = ctor.typeArgs.map((arg) => convertTypeExpr(ctx, arg, new Map(scope)));
+  const args = ctor.typeArgs.map((arg) => convertTypeExpr(ctx, arg, scope, { allowNewVariables: false }));
   const ctorType = args.reduceRight<Type>((acc, argType) => ({
     kind: "func",
     from: argType,
@@ -258,16 +258,24 @@ function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string
   return results;
 }
 
+interface ConvertTypeOptions {
+  allowNewVariables: boolean;
+}
+
 function convertTypeExpr(
   ctx: Context,
   typeExpr: TypeExpr,
   scope: Map<string, Type> = new Map(),
+  options: ConvertTypeOptions = { allowNewVariables: true },
 ): Type {
   switch (typeExpr.kind) {
     case "type_var": {
       const existing = scope.get(typeExpr.name);
       if (existing) {
         return existing;
+      }
+      if (!options.allowNewVariables) {
+        throw new InferError(`Unknown type variable '${typeExpr.name}'`);
       }
       const fresh = freshTypeVar();
       scope.set(typeExpr.name, fresh);
@@ -277,9 +285,9 @@ function convertTypeExpr(
       if (typeExpr.parameters.length === 0) {
         throw new InferError("Function type must include at least one parameter");
       }
-      const result = convertTypeExpr(ctx, typeExpr.result, new Map(scope));
+      const result = convertTypeExpr(ctx, typeExpr.result, scope, options);
       return typeExpr.parameters.reduceRight<Type>((acc, param) => {
-        const paramType = convertTypeExpr(ctx, param, new Map(scope));
+        const paramType = convertTypeExpr(ctx, param, scope, options);
         return {
           kind: "func",
           from: paramType,
@@ -288,24 +296,62 @@ function convertTypeExpr(
       }, result);
     }
     case "type_ref": {
-      if (typeExpr.typeArgs.length === 0) {
-        const scoped = scope.get(typeExpr.name);
-        if (scoped) {
-          return scoped;
-        }
-        switch (typeExpr.name) {
-          case "Int":
-            return { kind: "int" };
-          case "Bool":
-            return { kind: "bool" };
-          case "Unit":
-            return { kind: "unit" };
-        }
+      const scoped = scope.get(typeExpr.name);
+      if (scoped && typeExpr.typeArgs.length === 0) {
+        return scoped;
       }
-      const args = typeExpr.typeArgs.map((arg) => convertTypeExpr(ctx, arg, new Map(scope)));
-      if (!ctx.adtEnv.has(typeExpr.name)) {
+      switch (typeExpr.name) {
+        case "Int":
+          if (typeExpr.typeArgs.length > 0) {
+            throw new InferError("Type constructor 'Int' does not accept arguments");
+          }
+          return { kind: "int" };
+        case "Bool":
+          if (typeExpr.typeArgs.length > 0) {
+            throw new InferError("Type constructor 'Bool' does not accept arguments");
+          }
+          return { kind: "bool" };
+        case "Unit":
+          if (typeExpr.typeArgs.length > 0) {
+            throw new InferError("Type constructor 'Unit' does not accept arguments");
+          }
+          return { kind: "unit" };
+      }
+
+      const typeInfo = ctx.adtEnv.get(typeExpr.name);
+
+      if (typeExpr.typeArgs.length === 0) {
+        if (typeInfo) {
+          if (typeInfo.parameters.length > 0) {
+            throw new InferError(
+              `Type constructor '${typeExpr.name}' expects ${typeInfo.parameters.length} type argument(s)`,
+            );
+          }
+          return {
+            kind: "constructor",
+            name: typeExpr.name,
+            args: [],
+          };
+        }
+        if (options.allowNewVariables) {
+          const fresh = freshTypeVar();
+          scope.set(typeExpr.name, fresh);
+          return fresh;
+        }
         throw new InferError(`Unknown type constructor '${typeExpr.name}'`);
       }
+
+      if (!typeInfo) {
+        throw new InferError(`Unknown type constructor '${typeExpr.name}'`);
+      }
+
+      if (typeInfo.parameters.length !== typeExpr.typeArgs.length) {
+        throw new InferError(
+          `Type constructor '${typeExpr.name}' expects ${typeInfo.parameters.length} type argument(s)`,
+        );
+      }
+
+      const args = typeExpr.typeArgs.map((arg) => convertTypeExpr(ctx, arg, scope, options));
       return {
         kind: "constructor",
         name: typeExpr.name,
@@ -315,7 +361,7 @@ function convertTypeExpr(
     case "type_tuple": {
       return {
         kind: "tuple",
-        elements: typeExpr.elements.map((el) => convertTypeExpr(ctx, el, new Map(scope))),
+        elements: typeExpr.elements.map((el) => convertTypeExpr(ctx, el, scope, options)),
       };
     }
     case "type_unit":
@@ -339,8 +385,9 @@ function inferLetBinding(
   body: BlockExpr,
   annotation: TypeExpr | undefined,
 ): Type {
+  const annotationScope = new Map<string, Type>();
   const paramTypes = parameters.map((param) => (
-    param.annotation ? convertTypeExpr(ctx, param.annotation) : freshTypeVar()
+    param.annotation ? convertTypeExpr(ctx, param.annotation, annotationScope) : freshTypeVar()
   ));
 
   return withScopedEnv(ctx, () => {
@@ -354,16 +401,22 @@ function inferLetBinding(
     let inferred = inferBlockExpr(ctx, body);
 
     if (annotation) {
-      const annotated = convertTypeExpr(ctx, annotation);
+      const annotated = convertTypeExpr(ctx, annotation, annotationScope);
       unify(ctx, inferred, annotated);
       inferred = applyCurrentSubst(ctx, annotated);
+    }
+
+    const resolved = applyCurrentSubst(ctx, inferred);
+
+    if (parameters.length === 0) {
+      return resolved;
     }
 
     return paramTypes.reduceRight<Type>((acc, paramType) => ({
       kind: "func",
       from: applyCurrentSubst(ctx, paramType),
       to: acc,
-    }), inferred);
+    }), resolved);
   });
 }
 
@@ -390,7 +443,8 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
         ctx,
         inferLetBinding(ctx, declaration.parameters, declaration.body, declaration.annotation),
       );
-      ctx.env.set(declaration.name, { quantifiers: [], type: bindingType });
+      const scheme = generalizeInContext(ctx, bindingType);
+      ctx.env.set(declaration.name, scheme);
       break;
     }
     case "expr_statement": {
@@ -420,7 +474,11 @@ function inferExpr(ctx: Context, expr: Expr): Type {
         unify(ctx, fnType.from, argType);
         result = fnType.to;
       }
-      return applyCurrentSubst(ctx, result);
+      const applied = applyCurrentSubst(ctx, result);
+      if (applied.kind === "func") {
+        throw new InferError(`Constructor ${expr.name} is not fully applied`);
+      }
+      return applied;
     }
     case "tuple": {
       const elements = expr.elements.map((el) => inferExpr(ctx, el));
@@ -465,12 +523,17 @@ function inferArrowFunction(ctx: Context, parameters: Parameter[], body: BlockEx
       });
     });
 
-    const bodyType = inferBlockExpr(ctx, body);
+    const bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
+
+    if (parameters.length === 0) {
+      return bodyType;
+    }
+
     return paramTypes.reduceRight<Type>((acc, paramType) => ({
       kind: "func",
       from: applyCurrentSubst(ctx, paramType),
       to: acc,
-    }), applyCurrentSubst(ctx, bodyType));
+    }), bodyType);
   });
 }
 
@@ -499,6 +562,7 @@ function inferMatchBranches(
 ): Type {
   let resultType: Type | null = null;
   const coverageMap = new Map<string, Set<string>>();
+  const booleanCoverage = new Set<"true" | "false">();
   let hasWildcard = false;
 
   for (const arm of arms) {
@@ -511,6 +575,8 @@ function inferMatchBranches(
       const set = coverageMap.get(key) ?? new Set<string>();
       set.add(patternInfo.coverage.ctor);
       coverageMap.set(key, set);
+    } else if (patternInfo.coverage.kind === "bool") {
+      booleanCoverage.add(patternInfo.coverage.value ? "true" : "false");
     }
 
     const bodyType = withScopedEnv(ctx, () => {
@@ -528,7 +594,7 @@ function inferMatchBranches(
     }
   }
 
-  ensureExhaustive(ctx, applyCurrentSubst(ctx, scrutineeType), hasWildcard, coverageMap);
+  ensureExhaustive(ctx, applyCurrentSubst(ctx, scrutineeType), hasWildcard, coverageMap, booleanCoverage);
 
   if (!resultType) {
     resultType = freshTypeVar();
@@ -592,6 +658,7 @@ function mergeBindings(target: Map<string, Type>, source: Map<string, Type>) {
 type PatternCoverage =
   | { kind: "wildcard" }
   | { kind: "constructor"; typeName: string; ctor: string }
+  | { kind: "bool"; value: boolean }
   | { kind: "none" };
 
 interface PatternInfo {
@@ -618,7 +685,10 @@ function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternIn
       return {
         type: applyCurrentSubst(ctx, litType),
         bindings: new Map(),
-        coverage: { kind: "none" },
+        coverage:
+          pattern.literal.kind === "bool"
+            ? { kind: "bool", value: pattern.literal.value }
+            : { kind: "none" },
       };
     }
     case "tuple": {
@@ -680,9 +750,19 @@ function ensureExhaustive(
   scrutineeType: Type,
   hasWildcard: boolean,
   coverageMap: Map<string, Set<string>>,
+  booleanCoverage: Set<"true" | "false">,
 ) {
   if (hasWildcard) return;
   const resolved = applyCurrentSubst(ctx, scrutineeType);
+  if (resolved.kind === "bool") {
+    const missing: string[] = [];
+    if (!booleanCoverage.has("true")) missing.push("true");
+    if (!booleanCoverage.has("false")) missing.push("false");
+    if (missing.length > 0) {
+      throw new InferError(`Non-exhaustive patterns, missing: ${missing.join(", ")}`);
+    }
+    return;
+  }
   if (resolved.kind !== "constructor") {
     return;
   }

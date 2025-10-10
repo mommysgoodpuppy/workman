@@ -92,6 +92,65 @@ Deno.test("infers tuple pattern matches", () => {
   assertEquals(binding.type, "Pair<T, U> -> T");
 });
 
+Deno.test("block let generalization allows multiple instantiations", () => {
+  const source = `
+    let useId = () => {
+      let id = (x) => { x };
+      (id(1), id(true))
+    };
+  `;
+  const summaries = inferTypes(source);
+  const binding = summaries.find((entry) => entry.name === "useId");
+  if (!binding) {
+    throw new Error("expected useId binding");
+  }
+  assertEquals(binding.type, "(Int, Bool)");
+});
+
+Deno.test("type annotation reuses named variables", () => {
+  const source = `
+    let choose = (a: T, b: T) => {
+      match(true) {
+        true => { a },
+        false => { b }
+      }
+    };
+  `;
+  const summaries = inferTypes(source);
+  const choose = summaries.find((entry) => entry.name === "choose");
+  if (!choose) {
+    throw new Error("expected choose binding");
+  }
+  assertEquals(choose.type, "T -> T -> T");
+});
+
+Deno.test("occurs check triggers on ill-typed recursion", () => {
+  const source = `
+    let rec loop = match(x) {
+      _ => { loop(loop) }
+    };
+  `;
+  assertThrows(
+    () => inferTypes(source),
+    InferError,
+    "Occurs check failed",
+  );
+});
+
+Deno.test("constructor arity mismatch fails", () => {
+  const source = `
+    type Pair<A, B> = Pair<A, B>;
+    let bad = () => {
+      Pair(1)
+    };
+  `;
+  assertThrows(
+    () => inferTypes(source),
+    InferError,
+    "not fully applied",
+  );
+});
+
 Deno.test("rejects duplicate pattern bindings", () => {
   const source = `
     type Pair<A, B> = Pair<A, B>;

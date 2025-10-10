@@ -22,21 +22,25 @@ interface LSPMessage {
 class WorkmanLanguageServer {
   private documents = new Map<string, string>();
   private diagnostics = new Map<string, any[]>();
-  private logFile: Deno.FsFile | null = null;
   private writeLock = false;
   private writeQueue: Array<() => Promise<void>> = [];
 
   private log(message: string) {
-    // Log to a file instead of stderr to avoid interfering with LSP protocol
-    try {
-      if (!this.logFile) {
-        this.logFile = Deno.openSync("workman-lsp.log", { write: true, create: true, append: true });
-      }
-      const timestamp = new Date().toISOString();
-      this.logFile.writeSync(new TextEncoder().encode(`${timestamp} ${message}\n`));
-    } catch {
-      // Ignore logging errors
-    }
+    const timestamp = new Date().toISOString();
+    const fullMessage = `${timestamp} ${message}`;
+    const notification = {
+      jsonrpc: "2.0",
+      method: "window/logMessage",
+      params: {
+        type: 4, // Log
+        message: fullMessage,
+      },
+    };
+
+    this.writeMessage(notification).catch(() => {
+      // As a fallback, emit to stderr without breaking LSP output on stdout
+      console.error(fullMessage);
+    });
   }
 
   private async writeMessage(message: any) {
@@ -49,21 +53,20 @@ class WorkmanLanguageServer {
           const header = `Content-Length: ${messageStr.length}\r\n\r\n`;
           const fullMessage = header + messageStr;
           const bytes = encoder.encode(fullMessage);
-          
-          // Write all bytes at once to prevent splitting
+
           let written = 0;
           while (written < bytes.length) {
             const n = await Deno.stdout.write(bytes.subarray(written));
             written += n;
           }
-          
+
           resolve();
         } catch (error) {
-          this.log(`[LSP] Write error: ${error}`);
+          console.error(`[LSP] Write error: ${error}`);
           reject(error);
         }
       });
-      
+
       this.processWriteQueue();
     });
   }
@@ -78,7 +81,7 @@ class WorkmanLanguageServer {
     try {
       await writer();
     } catch (error) {
-      this.log(`[LSP] Queue processing error: ${error}`);
+      console.error(`[LSP] Queue processing error: ${error}`);
     }
     this.writeLock = false;
     
@@ -308,8 +311,6 @@ class WorkmanLanguageServer {
       method,
       params,
     };
-    
-    this.log(`[LSP] Sending notification: ${method}`);
     await this.writeMessage(notification);
   }
 

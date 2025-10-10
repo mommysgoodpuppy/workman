@@ -266,3 +266,123 @@ Deno.test("nested tuple patterns", () => {
   assertEquals(extractType?.includes("->"), true);
   assertEquals(extractType?.includes("("), true);
 });
+
+// ============================================================================
+// Let-Polymorphism & Annotation Edge Cases
+// ============================================================================
+
+Deno.test("block let generalization supports polymorphic reuse", () => {
+  const source = `
+    let pair = () => {
+      let id = (x) => { x };
+      (id(3), id(true))
+    };
+  `;
+  const summaries = inferTypes(source);
+  const fn = summaries.find((s) => s.name === "pair");
+  assertEquals(fn?.type, "(Int, Bool)");
+});
+
+Deno.test("parameter annotations share scope", () => {
+  const source = `
+    let same = (x: T, y: T) => {
+      match(true) {
+        true => { x },
+        false => { y }
+      }
+    };
+  `;
+  const summaries = inferTypes(source);
+  const fn = summaries.find((s) => s.name === "same");
+  assertEquals(fn?.type, "T -> T -> T");
+});
+
+Deno.test("recursive annotation enforces consistency", () => {
+  const source = `
+    let rec length = match(list) {
+      Nil => { 0 },
+      Cons(_, rest) => { length(rest) }
+    };
+  `;
+  const summaries = inferTypes(source);
+  const fn = summaries.find((s) => s.name === "length");
+  assertEquals(fn?.type, "List<T> -> Int");
+});
+
+Deno.test("mutual recursion respects shared annotations", () => {
+  const source = `
+    type Tree<T> = Leaf<T> | Node<Tree<T>, Tree<T>>;
+    let rec walk = match(tree) {
+      Leaf(_) => { true },
+      Node(left, right) => { both(left, right) }
+    }
+    and both = (left, right) => {
+      walk(left)
+    };
+  `;
+  const summaries = inferTypes(source);
+  const walk = summaries.find((s) => s.name === "walk");
+  const both = summaries.find((s) => s.name === "both");
+  assertEquals(walk?.type, "Tree<T> -> Bool");
+  assertEquals(both?.type, "Tree<T> -> Tree<T> -> Bool");
+});
+
+// ============================================================================
+// Exhaustiveness & Constructor Application Errors
+// ============================================================================
+
+Deno.test("non-exhaustive match on polymorphic input is rejected", () => {
+  const source = `
+    type Option<T> = None | Some<T>;
+    let bad = (opt) => {
+      match(opt) {
+        Some(_) => { true }
+      }
+    };
+  `;
+  assertThrows(
+    () => inferTypes(source),
+    InferError,
+    "Non-exhaustive patterns"
+  );
+});
+
+Deno.test("constructor partially applied triggers error", () => {
+  const source = `
+    type Pair<A, B> = Pair<A, B>;
+    let bad = () => {
+      Pair(1)
+    };
+  `;
+  assertThrows(
+    () => inferTypes(source),
+    InferError,
+    "not fully applied"
+  );
+});
+
+Deno.test("occurs check failure surfaces error", () => {
+  const source = `
+    let rec self = match(x) {
+      _ => { self(self) }
+    };
+  `;
+  assertThrows(
+    () => inferTypes(source),
+    InferError,
+    "Occurs check failed"
+  );
+});
+
+Deno.test("annotation mismatch within block let is rejected", () => {
+  const source = `
+    let bad = () => {
+      let id: (Int) => Int = (x) => { x };
+      id(true)
+    };
+  `;
+  assertThrows(
+    () => inferTypes(source),
+    InferError
+  );
+});
