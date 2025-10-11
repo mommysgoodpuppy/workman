@@ -1,0 +1,53 @@
+let orderingIsLT = match(ordering) {
+  LT => { true },
+  _ => { false }
+};
+
+let orderingIsEQ = match(ordering) {
+  EQ => { true },
+  _ => { false }
+};
+
+let orderingIsGT = match(ordering) {
+  GT => { true },
+  _ => { false }
+};
+
+let orderingLt = (cmp, left, right) => {
+  match(cmp(left, right)) {
+    LT => { true },
+    _ => { false }
+  }
+};
+
+let orderingLte = (cmp, left, right) => {
+  match(cmp(left, right)) {
+    GT => { false },
+    _ => { true }
+  }
+};
+
+let orderingGt = (cmp, left, right) => {
+  match(cmp(left, right)) {
+    GT => { true },
+    _ => { false }
+  }
+};
+
+let orderingGte = (cmp, left, right) => {
+  match(cmp(left, right)) {
+    LT => { false },
+    _ => { true }
+  }
+};
+
+let orderingEq = (cmp, left, right) => {
+  orderingIsEQ(cmp(left, right))
+};
+
+let orderingNeq = (cmp, left, right) => {
+  match(orderingEq(cmp, left, right)) {
+    true => { false },
+    false => { true }
+  }
+};

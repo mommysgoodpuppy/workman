@@ -1,0 +1,35 @@
+type Option<T> = None | Some<T>;
+
+let map = match(tuple) {
+  (f, Some(value)) => { Some(f(value)) },
+  (_, None) => { None }
+};
+
+let flatMap = match(tuple) {
+  (f, Some(value)) => { f(value) },
+  (_, None) => { None }
+};
+
+let withDefault = match(tuple) {
+  (defaultValue, Some(value)) => { value },
+  (defaultValue, None) => { defaultValue }
+};
+
+let orElse = match(tuple) {
+  (fallback, Some(value)) => { Some(value) },
+  (fallback, None) => { fallback() }
+};
+
+let fromBool = match(tuple) {
+  (condition, value) => {
+    match(condition) {
+      true => { Some(value) },
+      false => { None }
+    }
+  }
+};
+
+let toList = match(option) {
+  Some(value) => { Cons(value, Nil) },
+  None => { Nil }
+};

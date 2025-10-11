@@ -1,0 +1,25 @@
+let not = match(value) {
+  true => { false },
+  false => { true }
+};
+
+let and = match(tuple) {
+  (true, true) => { true },
+  _ => { false }
+};
+
+let or = match(tuple) {
+  (false, false) => { false },
+  _ => { true }
+};
+
+let xor = match(tuple) {
+  (true, true) => { false },
+  (false, false) => { false },
+  _ => { true }
+};
+
+let ifThenElse = match(tuple) {
+  (true, thenBranch, _) => { thenBranch() },
+  (false, _, elseBranch) => { elseBranch() }
+};

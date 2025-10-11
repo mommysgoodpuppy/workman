@@ -203,11 +203,52 @@ function registerPrelude(ctx: Context) {
     ctx.env.set("Cons", consScheme);
   }
 
+  if (!ctx.adtEnv.has("Ordering")) {
+    const orderingType: Type = {
+      kind: "constructor",
+      name: "Ordering",
+      args: [],
+    };
+
+    const constructors: ConstructorInfo[] = [
+      { name: "LT", arity: 0, scheme: { quantifiers: [], type: orderingType } },
+      { name: "EQ", arity: 0, scheme: { quantifiers: [], type: orderingType } },
+      { name: "GT", arity: 0, scheme: { quantifiers: [], type: orderingType } },
+    ];
+
+    ctx.adtEnv.set("Ordering", {
+      name: "Ordering",
+      parameters: [],
+      constructors,
+    });
+
+    for (const ctor of constructors) {
+      ctx.env.set(ctor.name, ctor.scheme);
+    }
+  }
+
+  registerCmpIntPrimitive(ctx);
   registerIntBinaryPrimitive(ctx, "add");
   registerIntBinaryPrimitive(ctx, "sub");
   registerIntBinaryPrimitive(ctx, "mul");
   registerIntBinaryPrimitive(ctx, "div");
   registerPrintPrimitive(ctx);
+}
+
+function registerCmpIntPrimitive(ctx: Context) {
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: { kind: "int" },
+      to: {
+        kind: "func",
+        from: { kind: "int" },
+        to: { kind: "constructor", name: "Ordering", args: [] },
+      },
+    },
+  };
+  ctx.env.set("cmpInt", scheme);
 }
 
 function registerIntBinaryPrimitive(ctx: Context, name: string) {

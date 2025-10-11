@@ -293,6 +293,8 @@ function registerPreludeRuntime(env: Environment, options: EvalOptions): void {
     }));
   }
 
+  bindOrderingRuntime(env);
+  bindCmpIntNative(env);
   bindPrintNative(env, options.onPrint);
   bindIntBinaryNative(env, "add", (a, b) => a + b);
   bindIntBinaryNative(env, "sub", (a, b) => a - b);
@@ -353,6 +355,44 @@ function bindIntBinaryNative(
     return { kind: "int", value: impl(left, right, span) } satisfies IntValue;
   });
   bindValue(env, name, native);
+}
+
+function bindOrderingRuntime(env: Environment): void {
+  bindOrderingConstructor(env, "LT");
+  bindOrderingConstructor(env, "EQ");
+  bindOrderingConstructor(env, "GT");
+}
+
+function bindOrderingConstructor(env: Environment, name: "LT" | "EQ" | "GT"): void {
+  if (hasBinding(env, name)) {
+    return;
+  }
+  bindValue(env, name, createOrderingValue(name));
+}
+
+function createOrderingValue(name: "LT" | "EQ" | "GT"): DataValue {
+  return { kind: "data", constructor: name, fields: [] } satisfies DataValue;
+}
+
+function bindCmpIntNative(env: Environment): void {
+  if (hasBinding(env, "cmpInt")) {
+    return;
+  }
+  const lt = createOrderingValue("LT");
+  const eq = createOrderingValue("EQ");
+  const gt = createOrderingValue("GT");
+  const native = createNativeFunction("cmpInt", 2, (args, span) => {
+    const left = expectInt(args[0], span, "cmpInt");
+    const right = expectInt(args[1], span, "cmpInt");
+    if (left < right) {
+      return lt;
+    }
+    if (left > right) {
+      return gt;
+    }
+    return eq;
+  });
+  bindValue(env, "cmpInt", native);
 }
 
 function bindPrintNative(env: Environment, onPrint?: (text: string) => void): void {

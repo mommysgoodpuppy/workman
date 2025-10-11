@@ -1,0 +1,70 @@
+let rec listLength = match(list) {
+  Nil => { 0 },
+  Cons(_, rest) => { add(1, listLength(rest)) }
+};
+
+let rec listAppend = match(tuple) {
+  (Nil, ys) => { ys },
+  (Cons(x, rest), ys) => { Cons(x, listAppend((rest, ys))) }
+};
+
+let rec listMap = match(tuple) {
+  (f, Nil) => { Nil },
+  (f, Cons(x, rest)) => { Cons(f(x), listMap((f, rest))) }
+};
+
+let rec listFilter = match(tuple) {
+  (predicate, Nil) => { Nil },
+  (predicate, Cons(x, rest)) => {
+    match(predicate(x)) {
+      true => { Cons(x, listFilter((predicate, rest))) },
+      false => { listFilter((predicate, rest)) }
+    }
+  }
+};
+
+let rec listFoldl = match(tuple) {
+  (f, acc, Nil) => { acc },
+  (f, acc, Cons(x, rest)) => { listFoldl((f, f((acc, x)), rest)) }
+};
+
+let rec listFoldr = match(tuple) {
+  (f, acc, Nil) => { acc },
+  (f, acc, Cons(x, rest)) => { f((x, listFoldr((f, acc, rest)))) }
+};
+
+let listReverse = (list) => {
+  let rec reverseAcc = match(tuple) {
+    (Nil, acc) => { acc },
+    (Cons(x, rest), acc) => { reverseAcc((rest, Cons(x, acc))) }
+  };
+  reverseAcc((list, Nil))
+};
+
+let rec listRange = match(tuple) {
+  (start, finish) => {
+    match(cmpInt(start, finish)) {
+      GT => { Nil },
+      _ => { Cons(start, listRange((add(start, 1), finish))) }
+    }
+  }
+};
+
+let rec listInsertBy = match(tuple) {
+  (cmp, value, Nil) => { Cons(value, Nil) },
+  (cmp, value, Cons(x, rest)) => {
+    match(cmp(value, x)) {
+      GT => { Cons(x, listInsertBy((cmp, value, rest))) },
+      _ => { Cons(value, Cons(x, rest)) }
+    }
+  }
+};
+
+let rec listInsertionSortBy = match(tuple) {
+  (cmp, Nil) => { Nil },
+  (cmp, Cons(x, rest)) => { listInsertBy((cmp, x, listInsertionSortBy((cmp, rest)))) }
+};
+
+let listSortInt = (list) => {
+  listInsertionSortBy((cmpInt, list))
+};
