@@ -1,0 +1,67 @@
+{
+  "name": "workman-language",
+  "displayName": "Workman Language",
+  "description": "Language support for Workman - a minimal ML with Hindley-Milner type inference",
+  "version": "0.0.1",
+  "publisher": "workman",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/workman"
+  },
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "workman",
+    "ml",
+    "functional",
+    "hindley-milner",
+    "type-inference"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:wm"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "wm",
+      "aliases": ["Workman", "workman"],
+      "extensions": [".wm"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "wm",
+      "scopeName": "source.workman",
+      "path": "./syntaxes/wm.tmLanguage.json"
+    }],
+    "configuration": {
+      "type": "object",
+      "title": "Workman",
+      "properties": {
+        "workman.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "1.99.0",
+    "typescript": "^5.0.0"
+  }
+}

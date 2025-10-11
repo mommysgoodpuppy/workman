@@ -1,0 +1,67 @@
+-- Workman Language Example
+-- This file demonstrates syntax highlighting
+
+-- Type declarations
+type Option<T> = None | Some<T>;
+type Result<T, E> = Ok<T> | Err<E>;
+
+-- Note: List<T> with Cons and Nil is built-in
+
+-- Simple function
+let identity = (x) => { x };
+
+-- First-class match
+let firstUserId = match(list) {
+  Cons(id, _) => { Some(id) },
+  Nil => { None }
+};
+
+-- Recursive function
+let rec length = match(list) {
+  Cons(_, rest) => { length(rest) },
+  Nil => { 0 }
+};
+
+-- Mutual recursion
+let rec isEven = match(n) {
+  0 => { true },
+  _ => { isOdd(0) }
+}
+and isOdd = match(n) {
+  0 => { false },
+  _ => { isEven(0) }
+};
+
+-- Curried function
+let rec map = (f) => {
+  (list) => {
+    match(list) {
+      Cons(x, rest) => { Cons(f(x), map(f)(rest)) },
+      Nil => { Nil }
+    }
+  }
+};
+
+-- Pattern matching with tuples
+let fst = match(pair) {
+  (x, _) => { x }
+};
+
+-- Nested patterns
+let unwrap = match( opt) {
+  Some(Some(x)) => { x },
+  Some(None) => { 0 },
+  None => { 0 }
+};
+
+-- Boolean literals
+let not = match(b) {
+  true => { false },
+  false => { true }
+};
+
+-- Integer literals
+let isZero = match(n) {
+  0 => { true },
+  _ => { false }
+};
