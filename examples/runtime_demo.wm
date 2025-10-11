@@ -1,0 +1,52 @@
+type Status = Empty | NonEmpty;
+
+let rec factorial = (n) => {
+  match(n) {
+    0 => { 1 },
+    _ => { mul(n, factorial(sub(n, 1))) }
+  }
+};
+
+let rec countdown = (n) => {
+  match(n) {
+    0 => { Cons(0, Nil) },
+    _ => { Cons(n, countdown(sub(n, 1))) }
+  }
+};
+
+let rec sumList = (list) => {
+  match(list) {
+    Nil => { 0 },
+    Cons(x, rest) => { add(x, sumList(rest)) }
+  }
+};
+
+let rec mapFactorial = (list) => {
+  match(list) {
+    Nil => { Nil },
+    Cons(x, rest) => { Cons(factorial(x), mapFactorial(rest)) }
+  }
+};
+
+let describeList = match(list) {
+  Nil => { Empty },
+  Cons(_, _) => { NonEmpty }
+};
+
+let buildDemo = (numbers) => {
+  match(mapFactorial(numbers)) {
+    totals => {
+      (
+        numbers,
+        totals,
+        sumList(numbers),
+        factorial(5),
+        describeList(totals)
+      )
+    }
+  }
+};
+
+let demo = {
+  print(buildDemo(countdown(5)))
+};

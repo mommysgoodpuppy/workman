@@ -202,6 +202,46 @@ function registerPrelude(ctx: Context) {
     ctx.env.set("Nil", nilScheme);
     ctx.env.set("Cons", consScheme);
   }
+
+  registerIntBinaryPrimitive(ctx, "add");
+  registerIntBinaryPrimitive(ctx, "sub");
+  registerIntBinaryPrimitive(ctx, "mul");
+  registerIntBinaryPrimitive(ctx, "div");
+  registerPrintPrimitive(ctx);
+}
+
+function registerIntBinaryPrimitive(ctx: Context, name: string) {
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: { kind: "int" },
+      to: {
+        kind: "func",
+        from: { kind: "int" },
+        to: { kind: "int" },
+      },
+    },
+  };
+  ctx.env.set(name, scheme);
+}
+
+function registerPrintPrimitive(ctx: Context) {
+  const typeVar = freshTypeVar();
+  if (typeVar.kind !== "var") {
+    throw new Error("Expected fresh type variable");
+  }
+
+  const scheme: TypeScheme = {
+    quantifiers: [typeVar.id],
+    type: {
+      kind: "func",
+      from: typeVar,
+      to: { kind: "unit" },
+    },
+  };
+
+  ctx.env.set("print", scheme);
 }
 
 function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string; scheme: TypeScheme }[] {

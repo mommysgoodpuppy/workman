@@ -115,8 +115,26 @@ class SurfaceParser {
       };
     }
     
+    if (initializer.kind === "block") {
+      if (isRecursive) {
+        throw this.error("Recursive let declarations must use arrow syntax", this.previous());
+      }
+      return {
+        kind: "let",
+        name: nameToken.value,
+        parameters: [],
+        annotation,
+        body: initializer,
+        isRecursive,
+        span: this.spanFrom(startPos, initializer.span.end),
+      };
+    }
+
     if (initializer.kind !== "arrow") {
-      throw this.error("Let declarations must be assigned an arrow function or first-class match", this.previous());
+      throw this.error(
+        "Let declarations must be assigned an arrow function, block expression, or first-class match",
+        this.previous(),
+      );
     }
     const { parameters, body } = initializer;
     return {
