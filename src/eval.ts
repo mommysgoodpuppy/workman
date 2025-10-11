@@ -32,6 +32,7 @@ import { formatRuntimeValue } from "./value_printer.ts";
 
 export interface EvalOptions {
   sourceName?: string;
+  onPrint?: (text: string) => void;
 }
 
 export interface EvalSummary {
@@ -44,9 +45,9 @@ export interface EvalResult {
   summaries: EvalSummary[];
 }
 
-export function evaluateProgram(program: Program, _options: EvalOptions = {}): EvalResult {
+export function evaluateProgram(program: Program, options: EvalOptions = {}): EvalResult {
   const globalEnv = createEnvironment(null);
-  registerPreludeRuntime(globalEnv);
+  registerPreludeRuntime(globalEnv, options);
 
   for (const decl of program.declarations) {
     if (decl.kind === "type") {
@@ -79,7 +80,7 @@ function evaluateLetDeclaration(env: Environment, decl: LetDeclaration): Runtime
   return value;
 }
 
-function createClosure(env: Environment, decl: LetDeclaration, closureEnv: Environment): ClosureValue {
+function createClosure(_env: Environment, decl: LetDeclaration, closureEnv: Environment): ClosureValue {
   return {
     kind: "closure",
     parameters: decl.parameters,
@@ -273,7 +274,7 @@ function registerTypeConstructorsRuntime(env: Environment, decl: TypeDeclaration
   }
 }
 
-function registerPreludeRuntime(env: Environment): void {
+function registerPreludeRuntime(env: Environment, options: EvalOptions): void {
   if (!hasBinding(env, "Nil")) {
     bindValue(env, "Nil", createConstructorValue({
       kind: "constructor",
@@ -292,7 +293,7 @@ function registerPreludeRuntime(env: Environment): void {
     }));
   }
 
-  bindPrintNative(env);
+  bindPrintNative(env, options.onPrint);
   bindIntBinaryNative(env, "add", (a, b) => a + b);
   bindIntBinaryNative(env, "sub", (a, b) => a - b);
   bindIntBinaryNative(env, "mul", (a, b) => a * b);
@@ -354,13 +355,18 @@ function bindIntBinaryNative(
   bindValue(env, name, native);
 }
 
-function bindPrintNative(env: Environment): void {
+function bindPrintNative(env: Environment, onPrint?: (text: string) => void): void {
   if (hasBinding(env, "print")) {
     return;
   }
   const native = createNativeFunction("print", 1, (args) => {
     const value = args[0];
-    console.log(formatRuntimeValue(value));
+    const text = formatRuntimeValue(value);
+    if (onPrint) {
+      onPrint(text);
+    } else {
+      console.log(text);
+    }
     return UNIT_VALUE;
   });
   bindValue(env, "print", native);
@@ -550,7 +556,7 @@ function isBoolValue(value: RuntimeValue, expected: boolean): value is BoolValue
   return value.kind === "bool" && value.value === expected;
 }
 
-function assertUnreachable(value: never, message: string, span?: SourceSpan): never {
+function assertUnreachable(_value: never, message: string, span?: SourceSpan): never {
   throw new RuntimeError(message, span);
 }
 

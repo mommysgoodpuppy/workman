@@ -30,12 +30,35 @@ if (import.meta.main) {
 
     try {
       const result = runFile(source, { sourceName: path });
+      console.log("\n## Types");
       if (result.types.length === 0) {
         console.log("(no top-level let bindings)");
       } else {
         for (const { name, type } of result.types) {
           console.log(`${name} : ${type}`);
         }
+      }
+
+      console.log("\n## Runtime");
+      const hasStdout = result.runtimeLogs.length > 0;
+      const hasValues = result.values.length > 0;
+      if (hasStdout) {
+        console.log("stdout:");
+        for (const entry of result.runtimeLogs) {
+          console.log(entry);
+        }
+      }
+      if (hasValues) {
+        if (hasStdout) {
+          console.log("");
+        }
+        console.log("values:");
+        for (const { name, value } of result.values) {
+          console.log(`${name} = ${value}`);
+        }
+      }
+      if (!hasStdout && !hasValues) {
+        console.log("(no runtime activity)");
       }
     } catch (error) {
       hadError = true;

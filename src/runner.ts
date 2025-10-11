@@ -7,6 +7,7 @@ import { formatRuntimeValue } from "./value_printer.ts";
 
 export interface RunOptions {
   sourceName?: string;
+  onPrint?: (text: string) => void;
 }
 
 export interface TypeSummary {
@@ -17,6 +18,7 @@ export interface TypeSummary {
 export interface RunResult {
   types: TypeSummary[];
   values: ValueSummary[];
+  runtimeLogs: string[];
 }
 
 export interface ValueSummary {
@@ -24,7 +26,7 @@ export interface ValueSummary {
   value: string;
 }
 
-export function runFile(source: string, _options: RunOptions = {}): RunResult {
+export function runFile(source: string, options: RunOptions = {}): RunResult {
   try {
     const tokens = lex(source);
     const program = parseSurfaceProgram(tokens);
@@ -34,13 +36,20 @@ export function runFile(source: string, _options: RunOptions = {}): RunResult {
       type: formatScheme(entry.scheme),
     }));
 
-    const evaluation = evaluateProgram(program);
+    const runtimeLogs: string[] = [];
+    const evaluation = evaluateProgram(program, {
+      sourceName: options.sourceName,
+      onPrint: (text) => {
+        runtimeLogs.push(text);
+        options.onPrint?.(text);
+      },
+    });
     const values = evaluation.summaries.map((summary) => ({
       name: summary.name,
       value: formatRuntimeValue(summary.value),
     }));
 
-    return { types, values };
+    return { types, values, runtimeLogs };
   } catch (error) {
     if (error instanceof ParseError || error instanceof InferError) {
       throw error;
@@ -61,16 +70,24 @@ if (import.meta.main) {
   const source = await Deno.readTextFile(path);
   try {
     const result = runFile(source, { sourceName: path });
-    if (result.types.length === 0) {
-      console.log("No value bindings inferred.");
-    } else {
+
+    if (result.types.length > 0) {
       for (const { name, type } of result.types) {
         console.log(`${name} : ${type}`);
       }
+    } else {
+      console.log("(no top-level let bindings)");
     }
 
-    if (result.values.length > 0) {
+    const hasRuntimeInfo = result.runtimeLogs.length > 0 || result.values.length > 0;
+    if (hasRuntimeInfo) {
       console.log("");
+      for (const entry of result.runtimeLogs) {
+        console.log(entry);
+      }
+      if (result.runtimeLogs.length > 0 && result.values.length > 0) {
+        console.log("");
+      }
       for (const { name, value } of result.values) {
         console.log(`${name} = ${value}`);
       }
