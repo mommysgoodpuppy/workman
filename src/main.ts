@@ -1,4 +1,4 @@
-import { runFile } from "./runner.ts";
+import { runEntryPath } from "./module_loader.ts";
 import { ParseError } from "./parser.ts";
 import { InferError } from "./infer.ts";
 
@@ -29,7 +29,7 @@ if (import.meta.main) {
     console.log(`\n# ${path}`);
 
     try {
-      const result = runFile(source, { sourceName: path });
+      const result = await runEntryPath(path);
       console.log("\n## Types");
       if (result.types.length === 0) {
         console.log("(no top-level let bindings)");

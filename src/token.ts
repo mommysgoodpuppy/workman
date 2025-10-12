@@ -3,6 +3,7 @@ export type TokenKind =
   | "constructor"
   | "number"
   | "bool"
+  | "string"
   | "keyword"
   | "symbol"
   | "eof";
@@ -20,6 +21,10 @@ export const keywords = new Set([
   "and",
   "type",
   "match",
+  "import",
+  "export",
+  "from",
+  "as",
 ]);
 
 export const symbols = new Set([
@@ -39,4 +44,5 @@ export const symbols = new Set([
   "<",
   ">",
   "_",
+  "*",
 ]);

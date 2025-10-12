@@ -11,7 +11,7 @@
 ## Design Considerations
 ### Modules
 - **Scope**: Pure source-level modules; defer packaging/bundling. Maintain compatibility with Deno CLI workflow.
-- **Syntax**: Default one module per file. Add `export` modifiers (`export let`, `export type`) and `import { name } from "path"` with optional namespace imports (`import * as List from "std/list"`).
+- **Syntax**: Default one module per file. Add `export` modifiers (`export let`, `export type`) and `from "path" import { name } ` with optional namespace imports (`from "std/list" import * as List`).
 - **Resolution**: Resolve module paths relative to the importing file, with extension inference (`.wm`). Support bare specifiers mapped to std search roots.
 - **Visibility**: Only exported bindings visible to importers; re-export allowed via `export { name } from ...` (optional Stage 2 enhancement).
 - **Type Sharing**: Type declarations respect export semantics; importing exposes both constructors and the nominal type.

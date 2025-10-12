@@ -3,8 +3,13 @@ import type {
   BlockExpr,
   BlockStatement,
   Expr,
+  ExportModifier,
+  ImportSpecifier,
   LetDeclaration,
   MatchArm,
+  ModuleImport,
+  NamedImport,
+  NamespaceImport,
   Parameter,
   Program,
   TopLevel,
@@ -33,48 +38,147 @@ class SurfaceParser {
   constructor(private readonly tokens: Token[]) {}
 
   parseProgram(): Program {
+    const imports: ModuleImport[] = [];
     const declarations: TopLevel[] = [];
     while (!this.isEOF()) {
-      declarations.push(this.parseTopLevel());
+      if (this.checkKeyword("from")) {
+        imports.push(this.parseImportDeclaration());
+      } else {
+        declarations.push(this.parseTopLevel());
+      }
       if (!this.isEOF()) {
         this.expectSymbol(";");
       }
     }
-    return { declarations };
+    return { imports, declarations };
+  }
+
+  private parseImportDeclaration(): ModuleImport {
+    const fromToken = this.expectKeyword("from");
+    const sourceToken = this.expectStringLiteral();
+    this.expectKeyword("import");
+    const { specifiers, endToken } = this.parseImportClause();
+    if (specifiers.length === 0) {
+      throw this.error("Import statement must include at least one specifier", this.peek());
+    }
+    return {
+      kind: "module_import",
+      source: sourceToken.value,
+      specifiers,
+      span: this.spanFrom(fromToken.start, endToken.end),
+    };
+  }
+
+  private parseImportClause(): { specifiers: ImportSpecifier[]; endToken: Token } {
+    if (this.matchSymbol("*")) {
+      const starToken = this.previous();
+      this.expectKeyword("as");
+      const aliasToken = this.expectImportBindingName();
+      const specifier: NamespaceImport = {
+        kind: "namespace",
+        local: aliasToken.value,
+        span: this.createSpan(starToken, aliasToken),
+      };
+      return { specifiers: [specifier], endToken: aliasToken };
+    }
+
+    const _open = this.expectSymbol("{");
+    const specifiers: ImportSpecifier[] = [];
+    if (!this.checkSymbol("}")) {
+      do {
+        const importedToken = this.expectImportableName();
+        let endToken = importedToken;
+        let localToken = importedToken;
+        if (this.matchKeyword("as")) {
+          localToken = this.expectImportBindingName();
+          endToken = localToken;
+        }
+        const specifier: NamedImport = {
+          kind: "named",
+          imported: importedToken.value,
+          local: localToken.value,
+          span: this.createSpan(importedToken, endToken),
+        };
+        specifiers.push(specifier);
+      } while (this.matchSymbol(","));
+    }
+    const close = this.expectSymbol("}");
+    return { specifiers, endToken: close };
+  }
+
+  private expectStringLiteral(): Token {
+    const token = this.consume();
+    if (token.kind !== "string") {
+      throw this.error("Expected string literal", token);
+    }
+    return token;
+  }
+
+  private expectImportableName(): Token {
+    const token = this.consume();
+    if (token.kind === "identifier" || token.kind === "constructor") {
+      return token;
+    }
+    throw this.error("Expected import name", token);
+  }
+
+  private expectImportBindingName(): Token {
+    const token = this.consume();
+    if (token.kind === "identifier" || token.kind === "constructor") {
+      return token;
+    }
+    throw this.error("Expected binding name", token);
   }
 
   private parseTopLevel(): TopLevel {
+    const exportToken = this.matchKeyword("export") ? this.previous() : undefined;
     const token = this.peek();
     if (token.kind === "keyword") {
       switch (token.value) {
         case "let":
-          return this.parseLetDeclaration();
+          return this.parseLetDeclaration(exportToken);
         case "type":
-          return this.parseTypeDeclaration();
+          return this.parseTypeDeclaration(exportToken);
         default:
           throw this.error(`Unexpected keyword '${token.value}' at top-level`, token);
       }
     }
-    throw this.error("Expected top-level declaration");
+    if (exportToken) {
+      throw this.error("Expected 'let' or 'type' after 'export'", token);
+    }
+    throw this.error("Expected top-level declaration", token);
   }
 
-  private parseLetDeclaration(): LetDeclaration {
+  private parseLetDeclaration(exportToken?: Token): LetDeclaration {
     const letToken = this.expectKeyword("let");
     const isRecursive = this.matchKeyword("rec");
-    
+
     const firstBinding = this.parseLetBinding(letToken.start, isRecursive);
-    
+
     // Parse mutual bindings with "and"
     const mutualBindings: LetDeclaration[] = [];
     while (this.matchKeyword("and")) {
       const andStart = this.previous().start;
       mutualBindings.push(this.parseLetBinding(andStart, true));
     }
-    
+
     if (mutualBindings.length > 0) {
       firstBinding.mutualBindings = mutualBindings;
     }
-    
+
+    if (exportToken) {
+      const modifier: ExportModifier = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+      firstBinding.export = modifier;
+      if (firstBinding.mutualBindings) {
+        for (const binding of firstBinding.mutualBindings) {
+          binding.export = modifier;
+        }
+      }
+    }
+
     return firstBinding;
   }
 
@@ -215,20 +319,27 @@ class SurfaceParser {
     return { kind: "block", statements, result, span };
   }
 
-  private parseTypeDeclaration(): TypeDeclaration {
+  private parseTypeDeclaration(exportToken?: Token): TypeDeclaration {
     const typeToken = this.expectKeyword("type");
     const nameToken = this.expectTypeName();
     const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
     this.expectSymbol("=");
     const members = this.parseTypeAliasMembers();
     const endToken = this.previous();
-    return {
+    const declaration: TypeDeclaration = {
       kind: "type",
       name: nameToken.value,
       typeParams,
       members,
       span: this.spanFrom(typeToken.start, endToken.end),
     };
+    if (exportToken) {
+      declaration.export = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+    }
+    return declaration;
   }
 
   private parseTypeParameters(): TypeParameter[] {
@@ -338,7 +449,7 @@ class SurfaceParser {
             span: this.spanFrom(params[0]?.span.start ?? this.previous().start, body.span.end),
           };
         }
-      } catch (error) {
+      } catch (_error) {
         this.index = snapshot;
       }
       this.index = snapshot;
@@ -377,27 +488,27 @@ class SurfaceParser {
   private parseCallExpression(): Expr {
     let expr = this.parsePrimaryExpression();
     while (this.matchSymbol("(")) {
-      const open = this.previous();
+      const _open = this.previous();
       const args: Expr[] = [];
       if (!this.checkSymbol(")")) {
         do {
           args.push(this.parseExpression());
         } while (this.matchSymbol(","));
       }
-      const close = this.expectSymbol(")");
+      const _close = this.expectSymbol(")");
 
       if (expr.kind === "constructor") {
         expr = {
           ...expr,
           args,
-          span: this.spanFrom(expr.span.start, close.end),
+          span: this.spanFrom(expr.span.start, _close.end),
         };
       } else {
         expr = {
           kind: "call",
           callee: expr,
           arguments: args,
-          span: this.spanFrom(expr.span.start, close.end),
+          span: this.spanFrom(expr.span.start, _close.end),
         };
       }
     }

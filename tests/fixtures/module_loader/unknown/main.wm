@@ -1,0 +1,5 @@
+from "./dep" import { missing };
+
+export let main = () => {
+  ok;
+};

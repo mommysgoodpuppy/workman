@@ -32,6 +32,13 @@ export function lex(source: string): Token[] {
       continue;
     }
 
+    if (char === '"') {
+      const { value, nextIndex } = readStringLiteral(source, index);
+      tokens.push({ kind: "string", value, start, end: nextIndex });
+      index = nextIndex;
+      continue;
+    }
+
     if (char === "_") {
       tokens.push({ kind: "symbol", value: "_", start, end: start + 1 });
       index++;
@@ -106,4 +113,52 @@ function isAlphaNumeric(char: string): boolean {
 
 function isUppercase(char: string): boolean {
   return char >= "A" && char <= "Z";
+}
+
+function readStringLiteral(source: string, start: number): { value: string; nextIndex: number } {
+  let index = start + 1;
+  let value = "";
+  const length = source.length;
+
+  while (index < length) {
+    const char = source[index];
+    if (char === '"') {
+      return { value, nextIndex: index + 1 };
+    }
+    if (char === "\\") {
+      if (index + 1 >= length) {
+        throw new Error("Unterminated string literal");
+      }
+      const escape = source[index + 1];
+      switch (escape) {
+        case '"':
+          value += '"';
+          break;
+        case "\\":
+          value += "\\";
+          break;
+        case "n":
+          value += "\n";
+          break;
+        case "r":
+          value += "\r";
+          break;
+        case "t":
+          value += "\t";
+          break;
+        default:
+          value += escape;
+          break;
+      }
+      index += 2;
+      continue;
+    }
+    if (char === "\n") {
+      throw new Error("Unterminated string literal");
+    }
+    value += char;
+    index++;
+  }
+
+  throw new Error("Unterminated string literal");
 }

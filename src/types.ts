@@ -157,6 +157,63 @@ export interface TypeInfo {
 
 export type TypeEnvADT = Map<string, TypeInfo>;
 
+export function cloneType(type: Type): Type {
+  switch (type.kind) {
+    case "var":
+      return { kind: "var", id: type.id };
+    case "func":
+      return {
+        kind: "func",
+        from: cloneType(type.from),
+        to: cloneType(type.to),
+      };
+    case "constructor":
+      return {
+        kind: "constructor",
+        name: type.name,
+        args: type.args.map(cloneType),
+      };
+    case "tuple":
+      return {
+        kind: "tuple",
+        elements: type.elements.map(cloneType),
+      };
+    case "unit":
+      return { kind: "unit" };
+    case "int":
+      return { kind: "int" };
+    case "bool":
+      return { kind: "bool" };
+    default: {
+      const _exhaustive: never = type;
+      return _exhaustive;
+    }
+  }
+}
+
+export function cloneTypeScheme(scheme: TypeScheme): TypeScheme {
+  return {
+    quantifiers: [...scheme.quantifiers],
+    type: cloneType(scheme.type),
+  };
+}
+
+export function cloneConstructorInfo(info: ConstructorInfo): ConstructorInfo {
+  return {
+    name: info.name,
+    arity: info.arity,
+    scheme: cloneTypeScheme(info.scheme),
+  };
+}
+
+export function cloneTypeInfo(info: TypeInfo): TypeInfo {
+  return {
+    name: info.name,
+    parameters: [...info.parameters],
+    constructors: info.constructors.map(cloneConstructorInfo),
+  };
+}
+
 function unionSets(a: Set<number>, b: Set<number>): Set<number> {
   const result = new Set(a);
   for (const value of b) {

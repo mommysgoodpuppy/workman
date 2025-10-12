@@ -33,6 +33,7 @@ import { formatRuntimeValue } from "./value_printer.ts";
 export interface EvalOptions {
   sourceName?: string;
   onPrint?: (text: string) => void;
+  initialBindings?: Map<string, RuntimeValue>;
 }
 
 export interface EvalSummary {
@@ -48,6 +49,12 @@ export interface EvalResult {
 export function evaluateProgram(program: Program, options: EvalOptions = {}): EvalResult {
   const globalEnv = createEnvironment(null);
   registerPreludeRuntime(globalEnv, options);
+
+  if (options.initialBindings) {
+    for (const [name, value] of options.initialBindings.entries()) {
+      bindValue(globalEnv, name, value);
+    }
+  }
 
   for (const decl of program.declarations) {
     if (decl.kind === "type") {

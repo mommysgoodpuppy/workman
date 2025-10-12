@@ -3,9 +3,7 @@ import {
   BlockStatement,
   ConstructorAlias,
   Expr,
-  ExprStatement,
   LetDeclaration,
-  LetStatement,
   Literal,
   MatchArm,
   Parameter,
@@ -23,6 +21,8 @@ import {
   TypeScheme,
   applySubstitution,
   applySubstitutionScheme,
+  cloneTypeInfo,
+  cloneTypeScheme,
   composeSubstitution,
   freshTypeVar,
   generalize,
@@ -36,6 +36,29 @@ export class InferError extends Error {
     super(message);
     this.name = "InferError";
   }
+}
+
+function cloneTypeEnv(source: TypeEnv): TypeEnv {
+  const clone: TypeEnv = new Map();
+  for (const [name, scheme] of source.entries()) {
+    clone.set(name, cloneTypeScheme(scheme));
+  }
+  return clone;
+}
+
+function cloneAdtEnv(source: TypeEnvADT): TypeEnvADT {
+  const clone: TypeEnvADT = new Map();
+  for (const [name, info] of source.entries()) {
+    clone.set(name, cloneTypeInfo(info));
+  }
+  return clone;
+}
+
+export interface InferOptions {
+  initialEnv?: TypeEnv;
+  initialAdtEnv?: TypeEnvADT;
+  registerPrelude?: boolean;
+  resetCounter?: boolean;
 }
 
 export interface InferResult {
@@ -60,14 +83,18 @@ function withScopedEnv<T>(ctx: Context, fn: () => T): T {
   }
 }
 
-export function inferProgram(program: Program): InferResult {
-  resetTypeVarCounter();
-  const env: TypeEnv = new Map();
-  const adtEnv: TypeEnvADT = new Map();
+export function inferProgram(program: Program, options: InferOptions = {}): InferResult {
+  if (options.resetCounter !== false) {
+    resetTypeVarCounter();
+  }
+  const env: TypeEnv = options.initialEnv ? cloneTypeEnv(options.initialEnv) : new Map();
+  const adtEnv: TypeEnvADT = options.initialAdtEnv ? cloneAdtEnv(options.initialAdtEnv) : new Map();
   const ctx: Context = { env, adtEnv, subst: new Map() };
   const summaries: { name: string; scheme: TypeScheme }[] = [];
 
-  registerPrelude(ctx);
+  if (options.registerPrelude !== false) {
+    registerPrelude(ctx);
+  }
 
   for (const decl of program.declarations) {
     if (decl.kind === "type") {

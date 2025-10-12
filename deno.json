@@ -2,6 +2,9 @@
   "compilerOptions": {
     "strict": true
   },
+  "imports": {
+    "std/": "https://deno.land/std@0.224.0/"
+  },
   "tasks": {
     "run": "deno run --allow-read src/main.ts",
     "test": "deno test"

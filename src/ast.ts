@@ -19,6 +19,30 @@ export type Pattern =
   | ({ kind: "constructor" } & NodeBase & { name: string; args: Pattern[] })
   | ({ kind: "tuple" } & NodeBase & { elements: Pattern[] });
 
+export interface ModuleImport extends NodeBase {
+  kind: "module_import";
+  source: string;
+  specifiers: ImportSpecifier[];
+}
+
+export type ImportSpecifier = NamedImport | NamespaceImport;
+
+export interface NamedImport extends NodeBase {
+  kind: "named";
+  imported: string;
+  local: string;
+}
+
+export interface NamespaceImport extends NodeBase {
+  kind: "namespace";
+  local: string;
+}
+
+export interface ExportModifier {
+  kind: "export";
+  span: SourceSpan;
+}
+
 export interface Parameter extends NodeBase {
   kind: "parameter";
   name: string;
@@ -160,6 +184,7 @@ export interface TypeDeclaration extends NodeBase {
   name: string;
   typeParams: TypeParameter[];
   members: TypeAliasMember[];
+  export?: ExportModifier;
 }
 
 export interface LetDeclaration extends NodeBase {
@@ -170,10 +195,12 @@ export interface LetDeclaration extends NodeBase {
   body: BlockExpr;
   isRecursive: boolean;
   mutualBindings?: LetDeclaration[];
+  export?: ExportModifier;
 }
 
 export type TopLevel = LetDeclaration | TypeDeclaration;
 
 export interface Program {
+  imports: ModuleImport[];
   declarations: TopLevel[];
 }
