@@ -1,0 +1,19 @@
+export let intAdd = (left, right) => {
+  nativeAdd(left, right)
+};
+
+export let intSub = (left, right) => {
+  nativeSub(left, right)
+};
+
+export let intMul = (left, right) => {
+  nativeMul(left, right)
+};
+
+export let intDiv = (left, right) => {
+  nativeDiv(left, right)
+};
+
+export let intCompare = (left, right) => {
+  nativeCmpInt(left, right)
+};

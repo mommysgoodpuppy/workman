@@ -1,24 +1,26 @@
+from "std/core/int" import { intAdd, intSub, intMul, intDiv, intCompare };
+
 export type List<T> = Nil | Cons<T, List<T>>;
 export type Ordering = LT | EQ | GT;
 
 export let add = (left, right) => {
-  nativeAdd(left, right)
+  intAdd(left, right)
 };
 
 export let sub = (left, right) => {
-  nativeSub(left, right)
+  intSub(left, right)
 };
 
 export let mul = (left, right) => {
-  nativeMul(left, right)
+  intMul(left, right)
 };
 
 export let div = (left, right) => {
-  nativeDiv(left, right)
+  intDiv(left, right)
 };
 
 export let cmpInt = (left, right) => {
-  nativeCmpInt(left, right)
+  intCompare(left, right)
 };
 
 export let print = (value) => {

@@ -1,6 +1,8 @@
+from "std/core/int" import { intAdd, intCompare };
+
 export let rec listLength = match(list) {
   Nil => { 0 },
-  Cons(_, rest) => { add(1, listLength(rest)) }
+  Cons(_, rest) => { intAdd(1, listLength(rest)) }
 };
 
 export let rec listAppend = match(tuple) {
@@ -43,9 +45,9 @@ export let listReverse = (list) => {
 
 export let rec listRange = match(tuple) {
   (start, finish) => {
-    match(cmpInt(start, finish)) {
+    match(intCompare(start, finish)) {
       GT => { Nil },
-      _ => { Cons(start, listRange((add(start, 1), finish))) }
+      _ => { Cons(start, listRange((intAdd(start, 1), finish))) }
     }
   }
 };
@@ -66,5 +68,5 @@ export let rec listInsertionSortBy = match(tuple) {
 };
 
 export let listSortInt = (list) => {
-  listInsertionSortBy((cmpInt, list))
+  listInsertionSortBy((intCompare, list))
 };
