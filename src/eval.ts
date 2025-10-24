@@ -290,25 +290,6 @@ function registerTypeConstructorsRuntime(env: Environment, decl: TypeDeclaration
 }
 
 function registerPreludeRuntime(env: Environment, options: EvalOptions): void {
-  if (!hasBinding(env, "Nil")) {
-    bindValue(env, "Nil", createConstructorValue({
-      kind: "constructor",
-      name: "Nil",
-      typeArgs: [],
-      span: { start: 0, end: 0 },
-    }));
-  }
-
-  if (!hasBinding(env, "Cons")) {
-    bindValue(env, "Cons", createConstructorValue({
-      kind: "constructor",
-      name: "Cons",
-      typeArgs: [dummyTypeArg(), dummyTypeArg()],
-      span: { start: 0, end: 0 },
-    }));
-  }
-
-  bindOrderingRuntime(env);
   bindCmpIntNative(env);
   bindPrintNative(env, options.onPrint);
   bindIntBinaryNative(env, "add", (a, b) => a + b);
@@ -348,14 +329,6 @@ function createNativeFunction(
   };
 }
 
-function dummyTypeArg(): ConstructorAlias["typeArgs"][number] {
-  return {
-    kind: "type_var",
-    name: "_",
-    span: { start: 0, end: 0 },
-  };
-}
-
 function bindIntBinaryNative(
   env: Environment,
   name: string,
@@ -370,19 +343,6 @@ function bindIntBinaryNative(
     return { kind: "int", value: impl(left, right, span) } satisfies IntValue;
   });
   bindValue(env, name, native);
-}
-
-function bindOrderingRuntime(env: Environment): void {
-  bindOrderingConstructor(env, "LT");
-  bindOrderingConstructor(env, "EQ");
-  bindOrderingConstructor(env, "GT");
-}
-
-function bindOrderingConstructor(env: Environment, name: "LT" | "EQ" | "GT"): void {
-  if (hasBinding(env, name)) {
-    return;
-  }
-  bindValue(env, name, createOrderingValue(name));
 }
 
 function createOrderingValue(name: "LT" | "EQ" | "GT"): DataValue {

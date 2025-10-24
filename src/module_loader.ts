@@ -13,10 +13,12 @@ import { formatRuntimeValue } from "./value_printer.ts";
 
 export interface ModuleLoaderOptions {
   stdRoots?: string[];
+  preludeModule?: string;
 }
 
 export interface ModuleGraph {
   entry: string;
+  prelude?: string;
   order: string[];
   nodes: Map<string, ModuleNode>;
 }
@@ -73,17 +75,26 @@ export class ModuleLoaderError extends Error {
 
 export async function loadModuleGraph(entryPath: string, options: ModuleLoaderOptions = {}): Promise<ModuleGraph> {
   const normalizedEntry = resolveEntryPath(entryPath);
+  const normalizedOptions = normalizeOptions(options);
   const ctx: LoaderContext = {
-    options: normalizeOptions(options),
+    options: normalizedOptions,
     programCache: new Map(),
     visitState: new Map(),
     stack: [],
     nodes: new Map(),
     order: [],
   };
+
+  let preludePath: string | undefined;
+  if (normalizedOptions.preludeModule) {
+    preludePath = resolveModuleSpecifier(normalizedEntry, normalizedOptions.preludeModule, normalizedOptions);
+    await visitModule(preludePath, ctx);
+  }
+
   await visitModule(normalizedEntry, ctx);
   return {
     entry: normalizedEntry,
+    prelude: preludePath,
     order: ctx.order,
     nodes: ctx.nodes,
   };
@@ -97,6 +108,8 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
   const graph = await loadModuleGraph(entryPath, options);
   const moduleSummaries = new Map<string, ModuleSummary>();
   const runtimeLogs: string[] = [];
+  const preludePath = graph.prelude;
+  let preludeSummary: ModuleSummary | undefined = undefined;
 
   for (const path of graph.order) {
     const node = graph.nodes.get(path);
@@ -114,6 +127,24 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
         throw new ModuleLoaderError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
       }
       applyImports(record, provider, initialEnv, initialAdtEnv, initialBindings);
+    }
+
+    if (preludeSummary && path !== preludePath) {
+      for (const [name, scheme] of preludeSummary.exports.values.entries()) {
+        if (!initialEnv.has(name)) {
+          initialEnv.set(name, cloneTypeScheme(scheme));
+        }
+      }
+      for (const [name, info] of preludeSummary.exports.types.entries()) {
+        if (!initialAdtEnv.has(name)) {
+          initialAdtEnv.set(name, cloneTypeInfo(info));
+        }
+      }
+      for (const [name, value] of preludeSummary.runtime.entries()) {
+        if (!initialBindings.has(name)) {
+          initialBindings.set(name, value);
+        }
+      }
     }
 
     let inference;
@@ -209,6 +240,10 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
       letRuntime,
       letValueOrder,
     });
+
+    if (path === preludePath) {
+      preludeSummary = moduleSummaries.get(path);
+    }
   }
 
   const entryNode = graph.nodes.get(graph.entry);
@@ -236,10 +271,11 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
 }
 
 function normalizeOptions(options: ModuleLoaderOptions): ModuleLoaderOptions {
-  if (options.stdRoots && options.stdRoots.length > 0) {
-    return { stdRoots: options.stdRoots.map((root) => resolve(root)) };
-  }
-  return { stdRoots: [resolve("std")] };
+  const stdRoots = options.stdRoots && options.stdRoots.length > 0
+    ? options.stdRoots.map((root) => resolve(root))
+    : [resolve("std")];
+  const preludeModule = options.preludeModule ?? "std/prelude";
+  return { stdRoots, preludeModule };
 }
 
 function resolveEntryPath(path: string): string {

@@ -4,8 +4,13 @@ import { inferProgram, InferError } from "../src/infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
 
+const TEST_PRELUDE_SOURCE = `
+  type List<T> = Nil | Cons<T, List<T>>;
+  type Ordering = LT | EQ | GT;
+`;
+
 function inferTypes(source: string) {
-  const tokens = lex(source);
+  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
   const program = parseSurfaceProgram(tokens);
   const result = inferProgram(program);
   return result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
