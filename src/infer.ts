@@ -424,6 +424,11 @@ function convertTypeExpr(
             throw new InferError("Type constructor 'Unit' does not accept arguments");
           }
           return { kind: "unit" };
+        case "String":
+          if (typeExpr.typeArgs.length > 0) {
+            throw new InferError("Type constructor 'String' does not accept arguments");
+          }
+          return { kind: "string" };
       }
 
       const typeInfo = ctx.adtEnv.get(typeExpr.name);
@@ -749,6 +754,8 @@ function literalType(literal: Literal): Type {
       return { kind: "bool" };
     case "unit":
       return { kind: "unit" };
+    case "string":
+      return { kind: "string" };
     default:
       throw new InferError("Unsupported literal");
   }

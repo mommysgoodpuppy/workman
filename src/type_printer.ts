@@ -38,11 +38,13 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       return `(${elements})`;
     }
     case "unit":
-      return "()";
+      return "Unit";
     case "int":
       return "Int";
     case "bool":
       return "Bool";
+    case "string":
+      return "String";
     default:
       return "?";
   }

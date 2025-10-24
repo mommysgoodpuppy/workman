@@ -5,7 +5,8 @@ export type Type =
   | { kind: "tuple"; elements: Type[] }
   | { kind: "unit" }
   | { kind: "int" }
-  | { kind: "bool" };
+  | { kind: "bool" }
+  | { kind: "string" };
 
 export interface TypeScheme {
   quantifiers: number[];
@@ -184,6 +185,8 @@ export function cloneType(type: Type): Type {
       return { kind: "int" };
     case "bool":
       return { kind: "bool" };
+    case "string":
+      return { kind: "string" };
     default: {
       const _exhaustive: never = type;
       return _exhaustive;

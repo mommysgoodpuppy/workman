@@ -38,16 +38,22 @@ class SurfaceParser {
   constructor(private readonly tokens: Token[]) {}
 
   parseProgram(): Program {
+
     const imports: ModuleImport[] = [];
     const declarations: TopLevel[] = [];
     while (!this.isEOF()) {
+      const val = this.peek(this.index)
+      //console.log(val, this.index);
       if (this.checkKeyword("from")) {
         imports.push(this.parseImportDeclaration());
       } else {
         declarations.push(this.parseTopLevel());
       }
+      if (this.matchSymbol(";")) {
+        continue;
+      }
       if (!this.isEOF()) {
-        this.expectSymbol(";");
+        this.expectSymbol(";"); //cause of error
       }
     }
     return { imports, declarations };
@@ -161,7 +167,6 @@ class SurfaceParser {
       const andStart = this.previous().start;
       mutualBindings.push(this.parseLetBinding(andStart, true));
     }
-
     if (mutualBindings.length > 0) {
       firstBinding.mutualBindings = mutualBindings;
     }
@@ -234,17 +239,34 @@ class SurfaceParser {
       };
     }
 
-    if (initializer.kind !== "arrow") {
-      throw this.error(
-        "Let declarations must be assigned an arrow function, block expression, or first-class match",
-        this.previous(),
-      );
+    if (initializer.kind === "arrow") {
+      const { parameters, body } = initializer;
+      return {
+        kind: "let",
+        name: nameToken.value,
+        parameters,
+        annotation,
+        body,
+        isRecursive,
+        span: this.spanFrom(startPos, body.span.end),
+      };
     }
-    const { parameters, body } = initializer;
+
+    if (isRecursive) {
+      throw this.error("Recursive let declarations must use arrow syntax", this.previous());
+    }
+
+    const body: BlockExpr = {
+      kind: "block",
+      statements: [],
+      result: initializer,
+      span: initializer.span,
+    };
+
     return {
       kind: "let",
       name: nameToken.value,
-      parameters,
+      parameters: [],
       annotation,
       body,
       isRecursive,
@@ -438,21 +460,24 @@ class SurfaceParser {
     const token = this.peek();
     if (token.kind === "symbol" && token.value === "(") {
       const snapshot = this.index;
+      let params: Parameter[] | null = null;
       try {
-        const params = this.tryParseArrowParameters();
-        if (params) {
-          const body = this.parseBlockExpr();
-          return {
-            kind: "arrow",
-            parameters: params,
-            body,
-            span: this.spanFrom(params[0]?.span.start ?? this.previous().start, body.span.end),
-          };
-        }
+        params = this.tryParseArrowParameters();
       } catch (_error) {
+        // Only failures while scanning arrow parameters should backtrack.
         this.index = snapshot;
       }
-      this.index = snapshot;
+      // If params is null, tryParseArrowParameters either restored the index itself
+      // or we restored it in the catch above. In that case, fall through.
+      if (params) {
+        const body = this.parseBlockExpr();
+        return {
+          kind: "arrow",
+          parameters: params,
+          body,
+          span: this.spanFrom(params[0]?.span.start ?? this.previous().start, body.span.end),
+        };
+      }
     }
     return this.parseCallExpression();
   }
@@ -532,6 +557,14 @@ class SurfaceParser {
           kind: "literal",
           literal: { kind: "int", value: Number(num.value), span: this.createSpan(num, num) },
           span: this.createSpan(num, num),
+        } as Expr;
+      }
+      case "string": {
+        const str = this.consume();
+        return {
+          kind: "literal",
+          literal: { kind: "string", value: str.value, span: this.createSpan(str, str) },
+          span: this.createSpan(str, str),
         } as Expr;
       }
       case "bool": {
@@ -843,7 +876,9 @@ class SurfaceParser {
     if (this.isEOF()) {
       throw this.error("Unexpected end of input", this.peek(-1));
     }
-    return this.tokens[this.index++];
+    const index = this.index++;
+    //console.log("CONSUME at", index, this.tokens[index])
+    return this.tokens[index];
   }
 
   private peek(offset = 0): Token {

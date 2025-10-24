@@ -3,6 +3,7 @@ import type { BlockExpr, Parameter, SourceSpan } from "./ast.ts";
 export type RuntimeValue =
   | IntValue
   | BoolValue
+  | StringValue
   | UnitValue
   | TupleValue
   | DataValue
@@ -17,6 +18,11 @@ export interface IntValue {
 export interface BoolValue {
   kind: "bool";
   value: boolean;
+}
+
+export interface StringValue {
+  kind: "string";
+  value: string;
 }
 
 export interface UnitValue {
