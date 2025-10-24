@@ -290,17 +290,23 @@ function registerTypeConstructorsRuntime(env: Environment, decl: TypeDeclaration
 }
 
 function registerPreludeRuntime(env: Environment, options: EvalOptions): void {
-  bindCmpIntNative(env);
-  bindPrintNative(env, options.onPrint);
-  bindIntBinaryNative(env, "add", (a, b) => a + b);
-  bindIntBinaryNative(env, "sub", (a, b) => a - b);
-  bindIntBinaryNative(env, "mul", (a, b) => a * b);
-  bindIntBinaryNative(env, "div", (a, b, span) => {
+  bindCmpIntNative(env, "nativeCmpInt");
+  bindNativeAlias(env, "cmpInt", "nativeCmpInt");
+  bindPrintNative(env, "nativePrint", options.onPrint);
+  bindNativeAlias(env, "print", "nativePrint");
+  bindIntBinaryNative(env, "nativeAdd", (a, b) => a + b);
+  bindNativeAlias(env, "add", "nativeAdd");
+  bindIntBinaryNative(env, "nativeSub", (a, b) => a - b);
+  bindNativeAlias(env, "sub", "nativeSub");
+  bindIntBinaryNative(env, "nativeMul", (a, b) => a * b);
+  bindNativeAlias(env, "mul", "nativeMul");
+  bindIntBinaryNative(env, "nativeDiv", (a, b, span) => {
     if (b === 0) {
       throw new RuntimeError("Division by zero", span);
     }
     return Math.trunc(a / b);
   });
+  bindNativeAlias(env, "div", "nativeDiv");
 }
 
 function createConstructorValue(ctor: ConstructorAlias): RuntimeValue {
@@ -345,20 +351,28 @@ function bindIntBinaryNative(
   bindValue(env, name, native);
 }
 
+function bindNativeAlias(env: Environment, alias: string, target: string): void {
+  if (hasBinding(env, alias) || !hasBinding(env, target)) {
+    return;
+  }
+  const value = lookupValue(env, target);
+  bindValue(env, alias, value);
+}
+
 function createOrderingValue(name: "LT" | "EQ" | "GT"): DataValue {
   return { kind: "data", constructor: name, fields: [] } satisfies DataValue;
 }
 
-function bindCmpIntNative(env: Environment): void {
-  if (hasBinding(env, "cmpInt")) {
+function bindCmpIntNative(env: Environment, name: string): void {
+  if (hasBinding(env, name)) {
     return;
   }
   const lt = createOrderingValue("LT");
   const eq = createOrderingValue("EQ");
   const gt = createOrderingValue("GT");
-  const native = createNativeFunction("cmpInt", 2, (args, span) => {
-    const left = expectInt(args[0], span, "cmpInt");
-    const right = expectInt(args[1], span, "cmpInt");
+  const native = createNativeFunction(name, 2, (args, span) => {
+    const left = expectInt(args[0], span, name);
+    const right = expectInt(args[1], span, name);
     if (left < right) {
       return lt;
     }
@@ -367,14 +381,14 @@ function bindCmpIntNative(env: Environment): void {
     }
     return eq;
   });
-  bindValue(env, "cmpInt", native);
+  bindValue(env, name, native);
 }
 
-function bindPrintNative(env: Environment, onPrint?: (text: string) => void): void {
-  if (hasBinding(env, "print")) {
+function bindPrintNative(env: Environment, name: string, onPrint?: (text: string) => void): void {
+  if (hasBinding(env, name)) {
     return;
   }
-  const native = createNativeFunction("print", 1, (args) => {
+  const native = createNativeFunction(name, 1, (args) => {
     const value = args[0];
     const text = formatRuntimeValue(value);
     if (onPrint) {
@@ -384,7 +398,7 @@ function bindPrintNative(env: Environment, onPrint?: (text: string) => void): vo
     }
     return UNIT_VALUE;
   });
-  bindValue(env, "print", native);
+  bindValue(env, name, native);
 }
 
 function evaluateRecursiveBindings(env: Environment, bindings: LetDeclaration[]): Map<string, RuntimeValue> {

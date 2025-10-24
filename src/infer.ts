@@ -199,15 +199,21 @@ function buildConstructorInfo(
 }
 
 function registerPrelude(ctx: Context) {
-  registerCmpIntPrimitive(ctx);
-  registerIntBinaryPrimitive(ctx, "add");
-  registerIntBinaryPrimitive(ctx, "sub");
-  registerIntBinaryPrimitive(ctx, "mul");
-  registerIntBinaryPrimitive(ctx, "div");
-  registerPrintPrimitive(ctx);
+  registerCmpIntPrimitive(ctx, "nativeCmpInt");
+  registerCmpIntPrimitive(ctx, "cmpInt", "nativeCmpInt");
+  registerIntBinaryPrimitive(ctx, "nativeAdd");
+  registerIntBinaryPrimitive(ctx, "add", "nativeAdd");
+  registerIntBinaryPrimitive(ctx, "nativeSub");
+  registerIntBinaryPrimitive(ctx, "sub", "nativeSub");
+  registerIntBinaryPrimitive(ctx, "nativeMul");
+  registerIntBinaryPrimitive(ctx, "mul", "nativeMul");
+  registerIntBinaryPrimitive(ctx, "nativeDiv");
+  registerIntBinaryPrimitive(ctx, "div", "nativeDiv");
+  registerPrintPrimitive(ctx, "nativePrint");
+  registerPrintPrimitive(ctx, "print", "nativePrint");
 }
 
-function registerCmpIntPrimitive(ctx: Context) {
+function registerCmpIntPrimitive(ctx: Context, name: string, aliasOf?: string) {
   const scheme: TypeScheme = {
     quantifiers: [],
     type: {
@@ -220,10 +226,10 @@ function registerCmpIntPrimitive(ctx: Context) {
       },
     },
   };
-  ctx.env.set("cmpInt", scheme);
+  bindTypeAlias(ctx, name, scheme, aliasOf);
 }
 
-function registerIntBinaryPrimitive(ctx: Context, name: string) {
+function registerIntBinaryPrimitive(ctx: Context, name: string, aliasOf?: string) {
   const scheme: TypeScheme = {
     quantifiers: [],
     type: {
@@ -236,10 +242,10 @@ function registerIntBinaryPrimitive(ctx: Context, name: string) {
       },
     },
   };
-  ctx.env.set(name, scheme);
+  bindTypeAlias(ctx, name, scheme, aliasOf);
 }
 
-function registerPrintPrimitive(ctx: Context) {
+function registerPrintPrimitive(ctx: Context, name: string, aliasOf?: string) {
   const typeVar = freshTypeVar();
   if (typeVar.kind !== "var") {
     throw new Error("Expected fresh type variable");
@@ -254,7 +260,15 @@ function registerPrintPrimitive(ctx: Context) {
     },
   };
 
-  ctx.env.set("print", scheme);
+  bindTypeAlias(ctx, name, scheme, aliasOf);
+}
+
+function bindTypeAlias(ctx: Context, name: string, scheme: TypeScheme, aliasOf?: string) {
+  if (aliasOf && ctx.env.has(name)) {
+    return;
+  }
+  const target = aliasOf ? ctx.env.get(aliasOf) : undefined;
+  ctx.env.set(name, aliasOf && target ? target : scheme);
 }
 
 function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string; scheme: TypeScheme }[] {

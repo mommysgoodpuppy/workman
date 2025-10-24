@@ -1,2 +1,26 @@
 export type List<T> = Nil | Cons<T, List<T>>;
 export type Ordering = LT | EQ | GT;
+
+export let add = (left, right) => {
+  nativeAdd(left, right)
+};
+
+export let sub = (left, right) => {
+  nativeSub(left, right)
+};
+
+export let mul = (left, right) => {
+  nativeMul(left, right)
+};
+
+export let div = (left, right) => {
+  nativeDiv(left, right)
+};
+
+export let cmpInt = (left, right) => {
+  nativeCmpInt(left, right)
+};
+
+export let print = (value) => {
+  nativePrint(value)
+};
