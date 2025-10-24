@@ -1,4 +1,4 @@
-from "std/result" import { Ok, Err, withDefault, fold };
+from "std/result" import { Ok, Err, map, mapError, andThen, withDefault, fold };
 
 export let defaultOk = () => {
   withDefault((0, Ok(5)))
@@ -10,4 +10,15 @@ export let foldOk = () => {
 
 export let foldErr = () => {
   fold(((err) => { add(err, 1) }, (val) => { val }, Err(3)))
+};
+
+export let mapChain = () => {
+  let base = Ok(7);
+  let mapped = map(((n) => { add(n, 1) }, base));
+  let chained = andThen(((n) => { Ok(add(n, n)) }, mapped));
+  withDefault((0, chained))
+};
+
+export let remapError = () => {
+  mapError(((n) => { add(n, 5) }, Err(2)))
 };

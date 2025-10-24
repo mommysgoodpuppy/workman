@@ -25,12 +25,14 @@ import {
   cloneTypeInfo,
   cloneTypeScheme,
   composeSubstitution,
+  freeTypeVars,
   freshTypeVar,
   generalize,
   instantiate,
   occursInType,
   resetTypeVarCounter,
 } from "./types.ts";
+import { formatScheme } from "./type_printer.ts";
 
 export class InferError extends Error {
   constructor(message: string) {
@@ -949,7 +951,9 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): Substitution {
     return subst;
   }
 
-  throw new InferError("Type mismatch");
+  const leftDesc = formatTypeForError(left);
+  const rightDesc = formatTypeForError(right);
+  throw new InferError(`Type mismatch: cannot unify ${leftDesc} with ${rightDesc}`);
 }
 
 function bindVar(id: number, type: Type, subst: Substitution): Substitution {
@@ -963,4 +967,9 @@ function bindVar(id: number, type: Type, subst: Substitution): Substitution {
   const next = new Map(subst);
   next.set(id, resolved);
   return next;
+}
+
+function formatTypeForError(type: Type): string {
+  const quantifiers = [...freeTypeVars(type)].sort((a, b) => a - b);
+  return formatScheme({ quantifiers, type });
 }

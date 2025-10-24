@@ -1,0 +1,15 @@
+from "std/list" import { listRange, listMap, listFoldl, listSortInt };
+let square = (n) => {
+  mul(n, n)
+};
+let addPair = match(tuple) {
+  (acc, value) => { add(acc, value) }
+};
+export let sumSquares = () => {
+  let numbers = listRange((1, 5));
+  let squares = listMap((square, numbers));
+  listFoldl((addPair, 0, squares))
+};
+export let sortedDemo = () => {
+  listSortInt(Cons(3, Cons(1, Cons(2, Nil))))
+};

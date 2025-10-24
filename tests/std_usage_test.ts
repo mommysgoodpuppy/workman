@@ -46,6 +46,12 @@ Deno.test({
 
   assertEquals(types.get("listExample"), "List<Int>");
   assertEquals(values.get("listExample"), "Cons 7 Nil");
+  assertEquals(types.get("nestedPipeline"), "Int");
+  assertEquals(values.get("nestedPipeline"), "7");
+  assertEquals(types.get("lazyFallback"), "Option<Int>");
+  assertEquals(values.get("lazyFallback"), "Some 8");
+  assertEquals(types.get("noneToList"), "List<Int>");
+  assertEquals(values.get("noneToList"), "Nil");
 });
 
 Deno.test({
@@ -63,5 +69,8 @@ Deno.test({
 
   assertEquals(types.get("foldErr"), "Int");
   assertEquals(values.get("foldErr"), "4");
+  assertEquals(types.get("mapChain"), "Int");
+  assertEquals(values.get("mapChain"), "16");
+  assertEquals(types.get("remapError"), "Result<T, Int>");
+  assertEquals(values.get("remapError"), "Err 7");
 });
-

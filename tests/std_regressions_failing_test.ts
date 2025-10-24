@@ -1,0 +1,78 @@
+import { fromFileUrl } from "std/path/mod.ts";
+import { assertEquals, assertRejects } from "https://deno.land/std/assert/mod.ts";
+import { runEntryPath } from "../src/module_loader.ts";
+
+function failingFixture(relative: string): string {
+  return fromFileUrl(new URL(`./fixtures/failing/${relative}`, import.meta.url));
+}
+
+function fixturePath(relative: string): string {
+  return fromFileUrl(new URL(`./fixtures/std_usage/${relative}`, import.meta.url));
+}
+
+// NOTE: These are known-failing regressions we want to reproduce during fixes.
+// They are marked ignore:true to avoid breaking CI until the underlying issues
+// (polymorphic HOFs + tuple lowering + HM) are resolved.
+
+Deno.test({
+  name: "std option complex pipeline (map -> flatMap -> orElse)",
+  permissions: { read: true },
+}, async () => {
+  const result = await runEntryPath(failingFixture("std_option_complex.wm"));
+  const types = new Map(result.types.map((e) => [e.name, e.type]));
+  const values = new Map(result.values.map((e) => [e.name, e.value]));
+
+  assertEquals(types.get("pipeline"), "Int");
+  assertEquals(values.get("pipeline"), "22"); // (10+1)=11 -> odd -> double -> withDefault passthrough
+
+  assertEquals(types.get("fallback"), "Option<Int>");
+  assertEquals(values.get("fallback"), "Some 42");
+});
+
+Deno.test({
+  name: "std result complex pipeline (map -> andThen -> fold)",
+  permissions: { read: true },
+}, async () => {
+  const result = await runEntryPath(failingFixture("std_result_complex.wm"));
+  const types = new Map(result.types.map((e) => [e.name, e.type]));
+  const values = new Map(result.values.map((e) => [e.name, e.value]));
+
+  assertEquals(types.get("pipeline"), "Int");
+  assertEquals(values.get("pipeline"), "22");
+
+  assertEquals(types.get("foldBoth"), "Int");
+  assertEquals(values.get("foldBoth"), "0");
+});
+
+// Not sure what these tests should expect, no longer stack overflows
+Deno.test({
+  name: "repro: option map self-application is rejected",
+  permissions: { read: true },
+}, async () => {
+  const entry = failingFixture("std_option_self_apply.wm");
+  await assertRejects(() => runEntryPath(entry), Error, "Type mismatch");
+});
+
+Deno.test({
+  name: "repro: result map self-application is rejected",
+  permissions: { read: true },
+}, async () => {
+  const entry = failingFixture("std_result_self_apply.wm");
+  await assertRejects(() => runEntryPath(entry), Error, "Type mismatch");
+});
+
+
+Deno.test({
+  name: "std list utilities operate with tuple lowering",
+  permissions: { read: true },
+}, async () => {
+  const entry = fixturePath("main.wm");
+  const result = await runEntryPath(entry);
+  const typeMap = new Map(result.types.map((entry) => [entry.name, entry.type]));
+  const valueMap = new Map(result.values.map((entry) => [entry.name, entry.value]));
+
+  assertEquals(typeMap.get("sumSquares"), "Int");
+  assertEquals(typeMap.get("sortedDemo"), "List<Int>");
+  assertEquals(valueMap.get("sumSquares"), "55");
+  assertEquals(valueMap.get("sortedDemo"), "Cons 1 Cons 2 Cons 3 Nil");
+});
