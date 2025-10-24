@@ -12,6 +12,7 @@ import {
   TypeDeclaration,
   TypeExpr,
 } from "./ast.ts";
+import { lowerTupleParameters } from "./lower_tuple_params.ts";
 import {
   ConstructorInfo,
   Substitution,
@@ -83,7 +84,15 @@ function withScopedEnv<T>(ctx: Context, fn: () => T): T {
   }
 }
 
+function expectParameterName(param: Parameter): string {
+  if (!param.name) {
+    throw new InferError("Internal error: missing parameter name after tuple lowering");
+  }
+  return param.name;
+}
+
 export function inferProgram(program: Program, options: InferOptions = {}): InferResult {
+  lowerTupleParameters(program);
   if (options.resetCounter !== false) {
     resetTypeVarCounter();
   }
@@ -505,7 +514,8 @@ function inferLetBinding(
 
   return withScopedEnv(ctx, () => {
     parameters.forEach((param, index) => {
-      ctx.env.set(param.name, {
+      const paramName = expectParameterName(param);
+      ctx.env.set(paramName, {
         quantifiers: [],
         type: paramTypes[index],
       });
@@ -552,12 +562,7 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
   switch (statement.kind) {
     case "let_statement": {
       const { declaration } = statement;
-      const bindingType = applyCurrentSubst(
-        ctx,
-        inferLetBinding(ctx, declaration.parameters, declaration.body, declaration.annotation),
-      );
-      const scheme = generalizeInContext(ctx, bindingType);
-      ctx.env.set(declaration.name, scheme);
+      inferLetDeclaration(ctx, declaration);
       break;
     }
     case "expr_statement": {
@@ -630,7 +635,8 @@ function inferArrowFunction(ctx: Context, parameters: Parameter[], body: BlockEx
     ));
 
     parameters.forEach((param, index) => {
-      ctx.env.set(param.name, {
+      const paramName = expectParameterName(param);
+      ctx.env.set(paramName, {
         quantifiers: [],
         type: paramTypes[index],
       });

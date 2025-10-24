@@ -13,6 +13,7 @@ import {
   SourceSpan,
   TypeDeclaration,
 } from "./ast.ts";
+import { lowerTupleParameters } from "./lower_tuple_params.ts";
 import {
   RuntimeValue,
   Environment,
@@ -47,6 +48,7 @@ export interface EvalResult {
 }
 
 export function evaluateProgram(program: Program, options: EvalOptions = {}): EvalResult {
+  lowerTupleParameters(program);
   const globalEnv = createEnvironment(null);
   registerPreludeRuntime(globalEnv, options);
 
@@ -227,15 +229,19 @@ function callClosure(closure: ClosureValue, args: RuntimeValue[], span: SourceSp
     );
   }
 
-  const frame = createEnvironment(closure.env);
-  for (let index = 0; index < closure.parameters.length; index += 1) {
-    const param = closure.parameters[index];
-    const value = args[index];
-    bindValue(frame, param.name, value);
-  }
+    const frame = createEnvironment(closure.env);
+    for (let index = 0; index < closure.parameters.length; index += 1) {
+      const param = closure.parameters[index];
+      const value = args[index];
+      const paramName = param.name;
+      if (!paramName) {
+        throw new RuntimeError("Internal error: missing parameter name after tuple lowering", param.span);
+      }
+      bindValue(frame, paramName, value);
+    }
 
-  return evaluateBlock(frame, closure.body);
-}
+    return evaluateBlock(frame, closure.body);
+  }
 
 function callNative(nativeFn: NativeFunctionValue, args: RuntimeValue[], span: SourceSpan | undefined): RuntimeValue {
   const collected = [...nativeFn.collectedArgs, ...args];

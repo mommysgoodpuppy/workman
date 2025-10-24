@@ -200,13 +200,19 @@ class SurfaceParser {
       if (scrutinee.kind !== "identifier") {
         throw this.error("First-class match scrutinee must be a simple parameter name", this.previous());
       }
-      const paramName = scrutinee.name;
-      const parameters: Parameter[] = [{
-        kind: "parameter",
-        name: paramName,
-        annotation: undefined,
-        span: scrutinee.span,
-      }];
+        const paramName = scrutinee.name;
+        const parameterPattern: Pattern = {
+          kind: "variable",
+          name: paramName,
+          span: scrutinee.span,
+        };
+        const parameters: Parameter[] = [{
+          kind: "parameter",
+          pattern: parameterPattern,
+          name: paramName,
+          annotation: undefined,
+          span: scrutinee.span,
+        }];
       const body: BlockExpr = {
         kind: "block",
         statements: [],
@@ -288,22 +294,43 @@ class SurfaceParser {
     const params: Parameter[] = [];
     if (!this.checkSymbol(")")) {
       do {
-        const nameToken = this.expectIdentifier();
-        let end = nameToken.end;
+        const pattern = this.parsePattern();
+        this.ensureValidParameterPattern(pattern);
         const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
-        if (annotation) {
-          end = annotation.span.end;
-        }
+        const spanEnd = annotation ? annotation.span.end : pattern.span.end;
         params.push({
           kind: "parameter",
-          name: nameToken.value,
+          pattern,
+          name: pattern.kind === "variable" ? pattern.name : undefined,
           annotation,
-          span: this.spanFrom(nameToken.start, end),
+          span: this.spanFrom(pattern.span.start, spanEnd),
         });
       } while (this.matchSymbol(","));
     }
     this.expectSymbol(")");
     return params;
+  }
+
+  private ensureValidParameterPattern(pattern: Pattern): void {
+    switch (pattern.kind) {
+      case "variable":
+      case "wildcard":
+        return;
+      case "tuple":
+        for (const element of pattern.elements) {
+          this.ensureValidParameterPattern(element);
+        }
+        return;
+      default:
+        throw this.error(
+          "Only identifier, wildcard, or tuple patterns are allowed in parameter lists",
+          this.syntheticToken(pattern.span),
+        );
+    }
+  }
+
+  private syntheticToken(span: SourceSpan): Token {
+    return { kind: "identifier", value: "<pattern>", start: span.start, end: span.end };
   }
 
   private parseBlockExpr(): BlockExpr {
@@ -484,30 +511,17 @@ class SurfaceParser {
 
   private tryParseArrowParameters(): Parameter[] | null {
     const startIndex = this.index;
-    this.expectSymbol("(");
-    const params: Parameter[] = [];
-    if (!this.checkSymbol(")")) {
-      do {
-        const ident = this.expectIdentifier();
-        let end = ident.end;
-        const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
-        if (annotation) {
-          end = annotation.span.end;
-        }
-        params.push({
-          kind: "parameter",
-          name: ident.value,
-          annotation,
-          span: this.spanFrom(ident.start, end),
-        });
-      } while (this.matchSymbol(","));
-    }
-    this.expectSymbol(")");
-    if (!this.matchSymbol("=>")) {
+    try {
+      const params = this.parseParameterList();
+      if (!this.matchSymbol("=>")) {
+        this.index = startIndex;
+        return null;
+      }
+      return params;
+    } catch (_error) {
       this.index = startIndex;
       return null;
     }
-    return params;
   }
 
   private parseCallExpression(): Expr {

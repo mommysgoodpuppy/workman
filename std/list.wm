@@ -1,19 +1,19 @@
-let rec listLength = match(list) {
+export let rec listLength = match(list) {
   Nil => { 0 },
   Cons(_, rest) => { add(1, listLength(rest)) }
 };
 
-let rec listAppend = match(tuple) {
+export let rec listAppend = match(tuple) {
   (Nil, ys) => { ys },
   (Cons(x, rest), ys) => { Cons(x, listAppend((rest, ys))) }
 };
 
-let rec listMap = match(tuple) {
+export let rec listMap = match(tuple) {
   (f, Nil) => { Nil },
   (f, Cons(x, rest)) => { Cons(f(x), listMap((f, rest))) }
 };
 
-let rec listFilter = match(tuple) {
+export let rec listFilter = match(tuple) {
   (predicate, Nil) => { Nil },
   (predicate, Cons(x, rest)) => {
     match(predicate(x)) {
@@ -23,17 +23,17 @@ let rec listFilter = match(tuple) {
   }
 };
 
-let rec listFoldl = match(tuple) {
+export let rec listFoldl = match(tuple) {
   (f, acc, Nil) => { acc },
   (f, acc, Cons(x, rest)) => { listFoldl((f, f((acc, x)), rest)) }
 };
 
-let rec listFoldr = match(tuple) {
+export let rec listFoldr = match(tuple) {
   (f, acc, Nil) => { acc },
   (f, acc, Cons(x, rest)) => { f((x, listFoldr((f, acc, rest)))) }
 };
 
-let listReverse = (list) => {
+export let listReverse = (list) => {
   let rec reverseAcc = match(tuple) {
     (Nil, acc) => { acc },
     (Cons(x, rest), acc) => { reverseAcc((rest, Cons(x, acc))) }
@@ -41,7 +41,7 @@ let listReverse = (list) => {
   reverseAcc((list, Nil))
 };
 
-let rec listRange = match(tuple) {
+export let rec listRange = match(tuple) {
   (start, finish) => {
     match(cmpInt(start, finish)) {
       GT => { Nil },
@@ -50,7 +50,7 @@ let rec listRange = match(tuple) {
   }
 };
 
-let rec listInsertBy = match(tuple) {
+export let rec listInsertBy = match(tuple) {
   (cmp, value, Nil) => { Cons(value, Nil) },
   (cmp, value, Cons(x, rest)) => {
     match(cmp(value, x)) {
@@ -60,11 +60,11 @@ let rec listInsertBy = match(tuple) {
   }
 };
 
-let rec listInsertionSortBy = match(tuple) {
+export let rec listInsertionSortBy = match(tuple) {
   (cmp, Nil) => { Nil },
   (cmp, Cons(x, rest)) => { listInsertBy((cmp, x, listInsertionSortBy((cmp, rest)))) }
 };
 
-let listSortInt = (list) => {
+export let listSortInt = (list) => {
   listInsertionSortBy((cmpInt, list))
 };

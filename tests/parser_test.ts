@@ -82,3 +82,40 @@ let example = (input) => {
     assertEquals(secondCase.pattern.args.length, 0);
   }
 });
+
+Deno.test("parses tuple parameter patterns", () => {
+  const source = `
+    let swap = ((a, b)) => {
+      (b, a)
+    };
+  `;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+
+  assertEquals(program.declarations.length, 1);
+  const decl = program.declarations[0];
+  if (decl.kind !== "let") {
+    throw new Error("expected let declaration");
+  }
+
+  assertEquals(decl.parameters.length, 1);
+  const param = decl.parameters[0];
+  assertEquals(param.name, undefined);
+  assertEquals(param.pattern.kind, "tuple");
+  if (param.pattern.kind !== "tuple") {
+    throw new Error("expected tuple pattern");
+  }
+  assertEquals(param.pattern.elements.length, 2);
+
+  const first = param.pattern.elements[0];
+  assertEquals(first.kind, "variable");
+  if (first.kind === "variable") {
+    assertEquals(first.name, "a");
+  }
+
+  const second = param.pattern.elements[1];
+  assertEquals(second.kind, "variable");
+  if (second.kind === "variable") {
+    assertEquals(second.name, "b");
+  }
+});

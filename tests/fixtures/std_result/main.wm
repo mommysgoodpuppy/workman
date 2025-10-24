@@ -1,0 +1,13 @@
+from "std/result" import { Ok, Err, withDefault, fold };
+
+export let defaultOk = () => {
+  withDefault((0, Ok(5)))
+};
+
+export let foldOk = () => {
+  fold(((err) => { err }, (val) => { add(val, 1) }, Ok(9)))
+};
+
+export let foldErr = () => {
+  fold(((err) => { add(err, 1) }, (val) => { val }, Err(3)))
+};

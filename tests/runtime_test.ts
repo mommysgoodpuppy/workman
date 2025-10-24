@@ -66,3 +66,29 @@ Deno.test("throws on non-exhaustive runtime match", () => {
   `;
   assertThrows(() => evaluateSource(source), InferError);
 });
+
+Deno.test("evaluates tuple parameter destructuring", () => {
+  const source = `
+    let swap = ((a, b)) => {
+      (b, a)
+    };
+    let result = {
+      swap((1, 2))
+    };
+  `;
+  const evaluation = evaluateSource(source);
+  const binding = evaluation.summaries.find((entry) => entry.name === "result");
+  if (!binding) {
+    throw new Error("expected result binding");
+  }
+  const value = binding.value;
+  if (value.kind !== "tuple") {
+    throw new Error("expected tuple result");
+  }
+  const [first, second] = value.elements;
+  if (first.kind !== "int" || second.kind !== "int") {
+    throw new Error("expected tuple of ints");
+  }
+  assertEquals(first.value, 2);
+  assertEquals(second.value, 1);
+});

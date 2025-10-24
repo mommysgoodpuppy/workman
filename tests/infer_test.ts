@@ -92,6 +92,58 @@ Deno.test("infers tuple pattern matches", () => {
   assertEquals(binding.type, "Pair<T, U> -> T");
 });
 
+Deno.test("infers tuple parameter destructuring", () => {
+  const source = `
+    let swap = ((a, b)) => {
+      (b, a)
+    };
+  `;
+  const summaries = inferTypes(source);
+  const swap = summaries.find((entry) => entry.name === "swap");
+  if (!swap) {
+    throw new Error("expected swap binding");
+  }
+  assertEquals(swap.type, "(T, U) -> (U, T)");
+});
+
+Deno.test("infers tuple literal types", () => {
+  const source = `
+    let pair = {
+      (1, true)
+    };
+  `;
+  const summaries = inferTypes(source);
+  const pair = summaries.find((entry) => entry.name === "pair");
+  if (!pair) {
+    throw new Error("expected pair binding");
+  }
+  assertEquals(pair.type, "(Int, Bool)");
+});
+
+Deno.test("generalizes tuple-producing functions", () => {
+  const source = `
+    let dup = (x) => {
+      (x, x)
+    };
+    let use = () => {
+      let ints = dup(1);
+      let bools = dup(true);
+      (ints, bools)
+    };
+  `;
+  const summaries = inferTypes(source);
+  const dup = summaries.find((entry) => entry.name === "dup");
+  if (!dup) {
+    throw new Error("expected dup binding");
+  }
+  assertEquals(dup.type, "T -> (T, T)");
+  const use = summaries.find((entry) => entry.name === "use");
+  if (!use) {
+    throw new Error("expected use binding");
+  }
+  assertEquals(use.type, "((Int, Int), (Bool, Bool))");
+});
+
 Deno.test("block let generalization allows multiple instantiations", () => {
   const source = `
     let useId = () => {

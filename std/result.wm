@@ -1,26 +1,26 @@
-type Result<T, E> = Ok<T> | Err<E>;
+export type Result<T, E> = Ok<T> | Err<E>;
 
-let map = match(tuple) {
+export let map = match(tuple) {
   (f, Ok(value)) => { Ok(f(value)) },
   (_, Err(error)) => { Err(error) }
 };
 
-let mapError = match(tuple) {
+export let mapError = match(tuple) {
   (f, Ok(value)) => { Ok(value) },
   (f, Err(error)) => { Err(f(error)) }
 };
 
-let andThen = match(tuple) {
+export let andThen = match(tuple) {
   (f, Ok(value)) => { f(value) },
   (_, Err(error)) => { Err(error) }
 };
 
-let withDefault = match(tuple) {
+export let withDefault = match(tuple) {
   (defaultValue, Ok(value)) => { value },
   (defaultValue, Err(_)) => { defaultValue }
 };
 
-let fold = match(tuple) {
+export let fold = match(tuple) {
   (onErr, onOk, Ok(value)) => { onOk(value) },
   (onErr, onOk, Err(error)) => { onErr(error) }
 };

@@ -46,7 +46,8 @@ export interface ExportModifier {
 
 export interface Parameter extends NodeBase {
   kind: "parameter";
-  name: string;
+  pattern: Pattern;
+  name?: string;
   annotation?: TypeExpr;
 }
 

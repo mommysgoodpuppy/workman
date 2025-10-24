@@ -1,0 +1,16 @@
+from "std/option" import { map, flatMap, withDefault, fromBool, toList };
+
+export let useOption = () => {
+  let base = fromBool((true, 10));
+  let mapped = map(((x) => { add(x, 5) }, base));
+  let chained = flatMap(((x) => { fromBool((true, add(x, 1))) }, mapped));
+  withDefault((0, chained))
+};
+
+export let boolExample = () => {
+  fromBool((true, 9))
+};
+
+export let listExample = () => {
+  toList(fromBool((true, 7)))
+};
