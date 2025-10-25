@@ -1,5 +1,4 @@
 -- Inventory tracking with tagged lists and order records.
-type Option<T> = None | Some<T>;
 type Order = Order<Int, Int>; -- order id, quantity
 
 -- Retrieve the most recent stock quantity if we have any entries.

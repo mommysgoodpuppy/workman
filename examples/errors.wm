@@ -2,8 +2,6 @@
 -- NOTE: Only the FIRST error will be shown due to current limitations
 -- The parser and type checker stop on first error
 
-type Option<T> = None | Some<T>;
-
 -- ERROR: Parse error - missing arrow
 let badSyntax = (x) { 42 };
 

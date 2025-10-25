@@ -12,7 +12,8 @@
     "vscode": "^1.99.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Themes"
   ],
   "keywords": [
     "workman",
@@ -30,13 +31,24 @@
       "id": "wm",
       "aliases": ["Workman", "workman"],
       "extensions": [".wm"],
-      "configuration": "./language-configuration.json"
+      "configuration": "./language-configuration.json",
+      "icon": {
+        "light": "./workman.svg",
+        "dark": "./workman.svg"
+      }
     }],
     "grammars": [{
       "language": "wm",
       "scopeName": "source.workman",
       "path": "./syntaxes/wm.tmLanguage.json"
     }],
+    "iconThemes": [
+      {
+        "id": "workman-icons",
+        "label": "Workman Icons",
+        "path": "./workman-icon-theme.json"
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "Workman",
@@ -67,7 +79,9 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "clean-server-bin": "node -e \"const fs=require('fs');const p=require('path');const base=process.cwd();const targets=[p.join(base,'server','workman-lsp.exe'),p.join(base,'server','workman-lsp')];for(const f of targets){try{fs.rmSync(f,{force:true});}catch(e){console.error('Failed to remove '+f+': '+e);process.exit(1);}}\"",
+    "build-server": "deno compile --allow-all --config=server/deno.json --output=server/workman-lsp server/src/server.ts",
+    "vscode:prepublish": "npm run clean-server-bin && npm run build-server && npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./"
   },

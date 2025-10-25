@@ -1,6 +1,5 @@
 -- Demonstration of nested HM inference with user-defined types.
 
-type Result<T, E> = Ok<T> | Err<E>;
 type IoError = Timeout | Disconnected;
 
 -- Ensure sensor feeds always have at least one reading.

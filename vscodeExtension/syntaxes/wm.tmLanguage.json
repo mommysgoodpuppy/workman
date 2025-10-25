@@ -37,7 +37,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.wm",
-					"match": "\\b(let|rec|and|type|match)\\b"
+					"match": "\\b(let|rec|and|type|match|from|import|export|as)\\b"
 				}
 			]
 		},
@@ -85,7 +85,7 @@
 				},
 				{
 					"name": "keyword.operator.wm",
-					"match": "\\+|-|\\*|/|==|<|>|&&|\\|\\||!"
+					"match": "\\+|-|\\*|/|==|<|>|&&|\\|\\||!|\\.\\."
 				}
 			]
 		},
