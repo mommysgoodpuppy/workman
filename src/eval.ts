@@ -291,22 +291,16 @@ function registerTypeConstructorsRuntime(env: Environment, decl: TypeDeclaration
 
 function registerPreludeRuntime(env: Environment, options: EvalOptions): void {
   bindCmpIntNative(env, "nativeCmpInt");
-  bindNativeAlias(env, "cmpInt", "nativeCmpInt");
   bindPrintNative(env, "nativePrint", options.onPrint);
-  bindNativeAlias(env, "print", "nativePrint");
   bindIntBinaryNative(env, "nativeAdd", (a, b) => a + b);
-  bindNativeAlias(env, "add", "nativeAdd");
   bindIntBinaryNative(env, "nativeSub", (a, b) => a - b);
-  bindNativeAlias(env, "sub", "nativeSub");
   bindIntBinaryNative(env, "nativeMul", (a, b) => a * b);
-  bindNativeAlias(env, "mul", "nativeMul");
   bindIntBinaryNative(env, "nativeDiv", (a, b, span) => {
     if (b === 0) {
       throw new RuntimeError("Division by zero", span);
     }
     return Math.trunc(a / b);
   });
-  bindNativeAlias(env, "div", "nativeDiv");
 }
 
 function createConstructorValue(ctor: ConstructorAlias): RuntimeValue {

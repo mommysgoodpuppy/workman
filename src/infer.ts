@@ -200,17 +200,11 @@ function buildConstructorInfo(
 
 function registerPrelude(ctx: Context) {
   registerCmpIntPrimitive(ctx, "nativeCmpInt");
-  registerCmpIntPrimitive(ctx, "cmpInt", "nativeCmpInt");
   registerIntBinaryPrimitive(ctx, "nativeAdd");
-  registerIntBinaryPrimitive(ctx, "add", "nativeAdd");
   registerIntBinaryPrimitive(ctx, "nativeSub");
-  registerIntBinaryPrimitive(ctx, "sub", "nativeSub");
   registerIntBinaryPrimitive(ctx, "nativeMul");
-  registerIntBinaryPrimitive(ctx, "mul", "nativeMul");
   registerIntBinaryPrimitive(ctx, "nativeDiv");
-  registerIntBinaryPrimitive(ctx, "div", "nativeDiv");
   registerPrintPrimitive(ctx, "nativePrint");
-  registerPrintPrimitive(ctx, "print", "nativePrint");
 }
 
 function registerCmpIntPrimitive(ctx: Context, name: string, aliasOf?: string) {
