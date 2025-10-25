@@ -2,7 +2,7 @@
   "name": "workman-language",
   "displayName": "Workman Language",
   "description": "Language support for Workman - a minimal ML with Hindley-Milner type inference",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "workman",
   "repository": {
     "type": "git",
@@ -47,6 +47,21 @@
           "enum": ["off", "messages", "verbose"],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server."
+        },
+        "workman.stdRoots": {
+          "scope": "window",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": ["std"],
+          "description": "Paths where the language server should search for the standard library (relative to workspace folders or absolute)."
+        },
+        "workman.preludeModule": {
+          "scope": "window",
+          "type": "string",
+          "default": "std/prelude",
+          "description": "Module specifier for the prelude module automatically injected into modules."
         }
       }
     }

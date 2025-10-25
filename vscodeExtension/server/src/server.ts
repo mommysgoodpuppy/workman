@@ -9,6 +9,9 @@ import { lex } from "@workman/lexer.ts";
 import { parseSurfaceProgram, ParseError } from "@workman/parser.ts";
 import { inferProgram, InferError } from "@workman/infer.ts";
 import { formatScheme } from "@workman/type_printer.ts";
+import { runEntryPath, ModuleLoaderError, loadModuleGraph } from "@workman/module_loader.ts";
+import { dirname, fromFileUrl, join, isAbsolute } from "std/path/mod.ts";
+import { TypeScheme, TypeInfo, cloneTypeInfo, cloneTypeScheme } from "@workman/types.ts";
 
 interface LSPMessage {
   jsonrpc: string;
@@ -24,6 +27,9 @@ class WorkmanLanguageServer {
   private diagnostics = new Map<string, any[]>();
   private writeLock = false;
   private writeQueue: Array<() => Promise<void>> = [];
+  private workspaceRoots: string[] = [];
+  private initStdRoots: string[] | undefined = undefined;
+  private preludeModule: string | undefined = undefined;
 
   private log(message: string) {
     const timestamp = new Date().toISOString();
@@ -159,10 +165,10 @@ class WorkmanLanguageServer {
         return await this.handleDidChange(message);
       
       case "textDocument/hover":
-        return this.handleHover(message);
+        return await this.handleHover(message);
       
       case "textDocument/inlayHint":
-        return this.handleInlayHint(message);
+        return await this.handleInlayHint(message);
       
       case "shutdown":
         return { jsonrpc: "2.0", id: message.id, result: null };
@@ -177,6 +183,33 @@ class WorkmanLanguageServer {
   }
 
   private handleInitialize(message: LSPMessage): LSPMessage {
+    try {
+      const params: any = message.params ?? {};
+      const roots: string[] = [];
+      if (typeof params.rootUri === "string") {
+        try { roots.push(fromFileUrl(params.rootUri)); } catch {}
+      } else if (typeof params.rootPath === "string") {
+        roots.push(params.rootPath);
+      }
+      if (Array.isArray(params.workspaceFolders)) {
+        for (const wf of params.workspaceFolders) {
+          if (wf && typeof wf.uri === "string") {
+            try { roots.push(fromFileUrl(wf.uri)); } catch {}
+          }
+        }
+      }
+      this.workspaceRoots = Array.from(new Set(roots));
+      this.log(`[LSP] Workspace roots: ${this.workspaceRoots.join(", ")}`);
+      const init = params.initializationOptions ?? {};
+      if (init && Array.isArray(init.stdRoots)) {
+        this.initStdRoots = init.stdRoots.filter((s: unknown) => typeof s === "string");
+      }
+      if (init && typeof init.preludeModule === "string") {
+        this.preludeModule = init.preludeModule;
+      }
+    } catch (e) {
+      this.log(`[LSP] Failed to parse workspace roots: ${e}`);
+    }
     return {
       jsonrpc: "2.0",
       id: message.id,
@@ -227,65 +260,49 @@ class WorkmanLanguageServer {
     this.log(`[LSP] Validating document: ${uri}`);
     
     try {
-      const tokens = lex(text);
-      this.log(`[LSP] Lexed ${tokens.length} tokens`);
-      
-      const program = parseSurfaceProgram(tokens);
-      this.log(`[LSP] Parsed ${program.declarations.length} declarations`);
-      
-      const result = inferProgram(program);
-      this.log(`[LSP] Type check OK: ${result.summaries.length} bindings`);
+      const entryPath = this.uriToFsPath(uri);
+      const stdRoots = this.computeStdRoots(entryPath);
+      await runEntryPath(entryPath, { stdRoots, preludeModule: this.preludeModule });
+      this.log(`[LSP] Module graph validated OK (${entryPath})`);
     } catch (error) {
       this.log(`[LSP] Validation error: ${error}`);
-      
-      if (error instanceof ParseError) {
+      if (error instanceof ModuleLoaderError) {
+        const msg = String(error.message);
+        const range = this.estimateRangeFromMessage(text, msg);
+        diagnostics.push({
+          range,
+          severity: 1,
+          message: msg,
+          source: "workman-modules",
+          code: "module-error",
+        });
+      } else if (error instanceof ParseError) {
         const position = this.offsetToPosition(text, error.token.start);
         const endPos = this.offsetToPosition(text, error.token.start + error.token.value.length);
         diagnostics.push({
-          range: {
-            start: position,
-            end: endPos,
-          },
-          severity: 1, // Error
+          range: { start: position, end: endPos },
+          severity: 1,
           message: error.message,
           source: "workman-parser",
-          code: "parse-error"
+          code: "parse-error",
         });
       } else if (error instanceof InferError) {
-        // Try to extract identifier from error message for better positioning
         const errorMsg = error.message;
-        let range = { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
-        
-        // Try to find the identifier mentioned in the error
-        const identMatch = errorMsg.match(/['"](\w+)['"]/);
-        if (identMatch) {
-          const ident = identMatch[1];
-          const identPos = text.indexOf(ident);
-          if (identPos !== -1) {
-            const start = this.offsetToPosition(text, identPos);
-            const end = this.offsetToPosition(text, identPos + ident.length);
-            range = { start, end };
-          }
-        }
-        
+        const range = this.estimateRangeFromMessage(text, errorMsg);
         diagnostics.push({
           range,
-          severity: 1, // Error
+          severity: 1,
           message: errorMsg,
           source: "workman-typechecker",
-          code: "type-error"
+          code: "type-error",
         });
       } else {
-        // Unknown error
         diagnostics.push({
-          range: {
-            start: { line: 0, character: 0 },
-            end: { line: 0, character: 1 },
-          },
-          severity: 1, // Error
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+          severity: 1,
           message: `Internal error: ${error}`,
           source: "workman",
-          code: "internal-error"
+          code: "internal-error",
         });
       }
     }
@@ -314,7 +331,7 @@ class WorkmanLanguageServer {
     await this.writeMessage(notification);
   }
 
-  private handleHover(message: LSPMessage): LSPMessage {
+  private async handleHover(message: LSPMessage): Promise<LSPMessage> {
     const { textDocument, position } = message.params;
     const uri = textDocument.uri;
     const text = this.documents.get(uri);
@@ -326,43 +343,36 @@ class WorkmanLanguageServer {
     }
     
     try {
-      const tokens = lex(text);
-      const program = parseSurfaceProgram(tokens);
-      const result = inferProgram(program);
-      
-      // Find binding at position
+      const entryPath = this.uriToFsPath(uri);
+      const stdRoots = this.computeStdRoots(entryPath);
+      const env = await this.buildModuleEnv(entryPath, stdRoots, this.preludeModule);
       const offset = this.positionToOffset(text, position);
       const word = this.getWordAtOffset(text, offset);
-      
       this.log(`[LSP] Word at cursor: '${word}'`);
-      
-      for (const { name, scheme } of result.summaries) {
-        if (name === word) {
-          const typeStr = formatScheme(scheme);
-          this.log(`[LSP] Found type for ${name}: ${typeStr}`);
-          return {
-            jsonrpc: "2.0",
-            id: message.id,
-            result: {
-              contents: {
-                kind: "markdown",
-                value: `\`\`\`workman\n${name} : ${typeStr}\n\`\`\``,
-              },
+      const scheme = env.get(word);
+      if (scheme) {
+        const typeStr = formatScheme(scheme);
+        this.log(`[LSP] Found type for ${word}: ${typeStr}`);
+        return {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            contents: {
+              kind: "markdown",
+              value: `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``,
             },
-          };
-        }
+          },
+        };
       }
-      
       this.log(`[LSP] No type found for '${word}'`);
     } catch (error) {
       this.log(`[LSP] Hover error: ${error}`);
       return { jsonrpc: "2.0", id: message.id, result: null };
     }
-    
     return { jsonrpc: "2.0", id: message.id, result: null };
   }
 
-  private handleInlayHint(message: LSPMessage): LSPMessage {
+  private async handleInlayHint(message: LSPMessage): Promise<LSPMessage> {
     const { textDocument } = message.params;
     const uri = textDocument.uri;
     const text = this.documents.get(uri);
@@ -374,34 +384,26 @@ class WorkmanLanguageServer {
     const hints: any[] = [];
     
     try {
-      const tokens = lex(text);
-      const program = parseSurfaceProgram(tokens);
-      const result = inferProgram(program);
-      
-      // Add type hints for each let binding
-      for (const { name, scheme } of result.summaries) {
-        const typeStr = formatScheme(scheme);
-        
-        // Find the position right after "let [rec] name"
-        const regex = new RegExp(`let\\s+(rec\\s+)?${name}\\b`, "g");
-        let match;
-        
+      const entryPath = this.uriToFsPath(uri);
+      const stdRoots = this.computeStdRoots(entryPath);
+      const env = await this.buildModuleEnv(entryPath, stdRoots, this.preludeModule);
+      for (const [name, scheme] of env.entries()) {
+        const regex = new RegExp(`\\blet\\s+(?:rec\\s+)?${name}\\b`, "g");
+        let match: RegExpExecArray | null;
         while ((match = regex.exec(text)) !== null) {
           const endPos = match.index + match[0].length;
           const position = this.offsetToPosition(text, endPos);
-          
+          const typeStr = formatScheme(scheme);
           hints.push({
             position,
             label: `: ${typeStr}`,
-            kind: 1, // Type
+            kind: 1,
             paddingLeft: true,
             paddingRight: false,
           });
-          
           this.log(`[LSP] Type hint: ${name} : ${typeStr} at line ${position.line}, char ${position.character}`);
         }
       }
-      
       this.log(`[LSP] Returning ${hints.length} inlay hints`);
     } catch (error) {
       this.log(`[LSP] Inlay hint error: ${error}`);
@@ -459,6 +461,203 @@ class WorkmanLanguageServer {
     }
     
     return text.substring(start, end);
+  }
+
+  private isStdCoreModule(path: string): boolean {
+    const normalized = path.replaceAll("\\", "/");
+    if (normalized.includes("/std/core/")) return true;
+    return normalized.endsWith("/std/list/core.wm")
+      || normalized.endsWith("/std/option/core.wm")
+      || normalized.endsWith("/std/result/core.wm");
+  }
+
+  private async buildModuleEnv(entryPath: string, stdRoots: string[], preludeModule?: string): Promise<Map<string, TypeScheme>> {
+    const graph = await loadModuleGraph(entryPath, { stdRoots, preludeModule });
+    const summaries = new Map<string, {
+      exportsValues: Map<string, TypeScheme>;
+      exportsTypes: Map<string, TypeInfo>;
+      env: Map<string, TypeScheme>;
+      adtEnv: Map<string, TypeInfo>;
+    }>();
+    const preludePath = graph.prelude;
+    let preludeSummary: { exportsValues: Map<string, TypeScheme>; exportsTypes: Map<string, TypeInfo> } | undefined = undefined;
+
+    for (const path of graph.order) {
+      const node = graph.nodes.get(path)!;
+      const initialEnv = new Map<string, TypeScheme>();
+      const initialAdtEnv = new Map<string, TypeInfo>();
+
+      for (const record of node.imports) {
+        const provider = summaries.get(record.sourcePath);
+        if (!provider) {
+          throw new ModuleLoaderError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
+        }
+        for (const spec of record.specifiers) {
+          const val = provider.exportsValues.get(spec.imported);
+          const typ = provider.exportsTypes.get(spec.imported);
+          if (!val && !typ) {
+            throw new ModuleLoaderError(`Module '${record.sourcePath}' does not export '${spec.imported}' (imported by '${record.importerPath}')`);
+          }
+          if (val) {
+            initialEnv.set(spec.local, cloneTypeScheme(val));
+          }
+          if (typ) {
+            if (spec.local !== spec.imported) {
+              throw new ModuleLoaderError(`Type import aliasing is not supported in Stage M1 (imported '${spec.imported}' as '${spec.local}')`);
+            }
+            if (initialAdtEnv.has(spec.imported)) {
+              throw new ModuleLoaderError(`Duplicate imported type '${spec.imported}' in module '${record.importerPath}'`);
+            }
+            initialAdtEnv.set(spec.imported, cloneTypeInfo(typ));
+          }
+        }
+      }
+
+      if (preludeSummary && path !== preludePath && !this.isStdCoreModule(path)) {
+        for (const [name, scheme] of preludeSummary.exportsValues.entries()) {
+          if (!initialEnv.has(name)) initialEnv.set(name, cloneTypeScheme(scheme));
+        }
+        for (const [name, info] of preludeSummary.exportsTypes.entries()) {
+          if (!initialAdtEnv.has(name)) initialAdtEnv.set(name, cloneTypeInfo(info));
+        }
+      }
+
+      const inference = inferProgram(node.program, { initialEnv, initialAdtEnv, resetCounter: true });
+
+      const exportedValues = new Map<string, TypeScheme>();
+      const exportedTypes = new Map<string, TypeInfo>();
+
+      for (const record of node.reexports) {
+        const provider = summaries.get(record.sourcePath);
+        if (!provider) {
+          throw new ModuleLoaderError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
+        }
+        for (const typeExport of record.typeExports) {
+          const providedType = provider.exportsTypes.get(typeExport.name);
+          if (!providedType) {
+            throw new ModuleLoaderError(`Module '${record.importerPath}' re-exports type '${typeExport.name}' from '${record.rawSource}' which does not export it`);
+          }
+          if (exportedTypes.has(typeExport.name)) {
+            throw new ModuleLoaderError(`Duplicate export '${typeExport.name}' in '${record.importerPath}'`);
+          }
+          const clonedInfo = cloneTypeInfo(providedType);
+          exportedTypes.set(typeExport.name, clonedInfo);
+          if (typeExport.exportConstructors) {
+            for (const ctor of clonedInfo.constructors) {
+              const providedScheme = provider.exportsValues.get(ctor.name);
+              if (!providedScheme) {
+                throw new ModuleLoaderError(`Module '${record.importerPath}' re-exports constructor '${ctor.name}' from '${record.rawSource}' but runtime type is missing in provider`);
+              }
+              if (exportedValues.has(ctor.name)) {
+                throw new ModuleLoaderError(`Duplicate export '${ctor.name}' in '${record.importerPath}'`);
+              }
+              exportedValues.set(ctor.name, cloneTypeScheme(providedScheme));
+            }
+          }
+        }
+      }
+
+      const letSchemeMap = new Map(inference.summaries.map(({ name, scheme }) => [name, scheme] as const));
+      for (const name of node.exportedValueNames) {
+        const scheme = letSchemeMap.get(name) ?? inference.env.get(name);
+        if (!scheme) {
+          throw new ModuleLoaderError(`Exported let '${name}' was not inferred in '${path}'`);
+        }
+        if (exportedValues.has(name)) {
+          throw new ModuleLoaderError(`Duplicate export '${name}' in '${path}'`);
+        }
+        exportedValues.set(name, cloneTypeScheme(scheme));
+      }
+
+      for (const typeName of node.exportedTypeNames) {
+        const info = inference.adtEnv.get(typeName);
+        if (!info) {
+          throw new ModuleLoaderError(`Exported type '${typeName}' was not defined in '${path}'`);
+        }
+        if (exportedTypes.has(typeName)) {
+          throw new ModuleLoaderError(`Duplicate export '${typeName}' in '${path}'`);
+        }
+        const clonedInfo = cloneTypeInfo(info);
+        exportedTypes.set(typeName, clonedInfo);
+        for (const ctor of clonedInfo.constructors) {
+          const scheme = inference.env.get(ctor.name);
+          if (!scheme) {
+            throw new ModuleLoaderError(`Constructor '${ctor.name}' for type '${typeName}' missing in '${path}'`);
+          }
+          if (exportedValues.has(ctor.name)) {
+            throw new ModuleLoaderError(`Duplicate export '${ctor.name}' in '${path}'`);
+          }
+          exportedValues.set(ctor.name, cloneTypeScheme(scheme));
+        }
+      }
+
+      summaries.set(path, { exportsValues: exportedValues, exportsTypes: exportedTypes, env: inference.env, adtEnv: inference.adtEnv });
+      if (path === preludePath) {
+        preludeSummary = { exportsValues: exportedValues, exportsTypes: exportedTypes };
+      }
+    }
+
+    const entry = summaries.get(graph.entry);
+    if (!entry) throw new ModuleLoaderError(`Internal error: failed to load entry module '${graph.entry}'`);
+    return entry.env;
+  }
+
+  private uriToFsPath(uri: string): string {
+    try {
+      if (uri.startsWith("file:")) return fromFileUrl(uri);
+    } catch {}
+    // Fallback: assume it's a normal path
+    return uri;
+  }
+
+  private computeStdRoots(entryPath: string): string[] {
+    const roots = new Set<string>();
+    if (this.initStdRoots && this.initStdRoots.length > 0) {
+      for (const r of this.initStdRoots) {
+        if (isAbsolute(r)) {
+          roots.add(r);
+        } else {
+          for (const ws of this.workspaceRoots) {
+            roots.add(join(ws, r));
+          }
+          roots.add(join(dirname(entryPath), r));
+        }
+      }
+    }
+    for (const root of this.workspaceRoots) {
+      roots.add(join(root, "std"));
+    }
+    let dir = dirname(entryPath);
+    for (let i = 0; i < 10; i++) {
+      const candidate = join(dir, "std");
+      try {
+        const stat = Deno.statSync(candidate);
+        if (stat.isDirectory) {
+          roots.add(candidate);
+          break;
+        }
+      } catch {
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    const arr = Array.from(roots);
+    this.log(`[LSP] stdRoots => ${arr.join(", ")}`);
+    return arr.length > 0 ? arr : [join(dirname(entryPath), "std")];
+  }
+
+  private estimateRangeFromMessage(text: string, msg: string) {
+    const quoted = Array.from(msg.matchAll(/["']([^"']+)["']/g)).map((m) => m[1]);
+    for (const q of quoted) {
+      const idx = text.indexOf(q);
+      if (idx !== -1) {
+        const start = this.offsetToPosition(text, idx);
+        const end = this.offsetToPosition(text, idx + q.length);
+        return { start, end };
+      }
+    }
+    return { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
   }
 }
 

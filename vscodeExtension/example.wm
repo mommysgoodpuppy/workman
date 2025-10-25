@@ -2,10 +2,7 @@
 -- This file demonstrates syntax highlighting
 
 -- Type declarations
-type Option<T> = None | Some<T>;
-type Result<T, E> = Ok<T> | Err<E>;
 
--- Note: List<T> with Cons and Nil is built-in
 
 -- Simple function
 let identity = (x) => { x };

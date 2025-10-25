@@ -4,6 +4,7 @@
     "compile": "deno compile --allow-all --output=workman-lsp src/server.ts"
   },
   "imports": {
-    "@workman/": "../../src/"
+    "@workman/": "../../src/",
+    "std/": "https://deno.land/std@0.224.0/"
   }
 }
