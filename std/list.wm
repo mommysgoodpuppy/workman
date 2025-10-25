@@ -1,3 +1,4 @@
+from "std/list/core" import { List, Nil, Cons };
 from "std/core/int" import { intAdd, intCompare };
 
 export let rec listLength = match(list) {

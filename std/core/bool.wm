@@ -1,0 +1,20 @@
+export let boolNot = (value) => {
+  match(value) {
+    true => { false },
+    false => { true }
+  }
+};
+
+export let boolAnd = (left, right) => {
+  match(left) {
+    true => { right },
+    false => { false }
+  }
+};
+
+export let boolOr = (left, right) => {
+  match(left) {
+    true => { true },
+    false => { right }
+  }
+};

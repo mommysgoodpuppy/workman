@@ -1,4 +1,5 @@
-from "std/option" import { Option, Some, None, map, flatMap, orElse, withDefault };
+from "std/option/core" import { Option };
+from "std/option" import { Some, None, map, flatMap, orElse, withDefault };
 
 let inc = (n) => { add(n, 1) };
 let toDoubleIfOdd = (n) => {

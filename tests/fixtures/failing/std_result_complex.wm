@@ -1,4 +1,5 @@
-from "std/result" import { Result, Ok, Err, map, mapError, andThen, withDefault, fold };
+from "std/result/core" import { Result };
+from "std/result" import { Ok, Err, map, mapError, andThen, withDefault, fold };
 
 let inc = (n) => { add(n, 1) };
 let doubleIfOdd = (n) => {

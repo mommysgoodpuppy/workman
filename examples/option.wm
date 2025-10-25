@@ -1,5 +1,4 @@
 -- Optional values used for fallible lookups.
-type Option<T> = None | Some<T>;
 
 -- Build a list of known user ids.
 let sampleIds = () => {

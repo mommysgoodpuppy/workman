@@ -28,9 +28,31 @@ export function freshTypeVar(): Type {
 export function applySubstitution(type: Type, subst: Substitution): Type {
   switch (type.kind) {
     case "var": {
-      const replacement = subst.get(type.id);
-      if (!replacement) return type;
-      return applySubstitution(replacement, subst);
+      // Iteratively chase substitutions to avoid deep recursion and handle cycles/identity mappings
+      let current: Type = type;
+      const seen = new Set<number>();
+      while (current.kind === "var") {
+        const mapped = subst.get(current.id);
+        if (!mapped) {
+          return current;
+        }
+        if (mapped.kind === "var") {
+          if (mapped.id === current.id) {
+            // Identity mapping, return as-is to avoid infinite recursion
+            return current;
+          }
+          if (seen.has(current.id)) {
+            // Cycle detected (e.g., v1 -> v2 -> v1). Break by returning current var.
+            return current;
+          }
+          seen.add(current.id);
+          current = mapped;
+          continue;
+        }
+        // Mapped to a non-var: apply substitution recursively into that structure
+        return applySubstitution(mapped, subst);
+      }
+      return current;
     }
     case "func":
       return {
@@ -70,7 +92,11 @@ export function applySubstitutionScheme(scheme: TypeScheme, subst: Substitution)
 export function composeSubstitution(a: Substitution, b: Substitution): Substitution {
   const result: Substitution = new Map();
   for (const [id, type] of b.entries()) {
-    result.set(id, applySubstitution(type, a));
+    const applied = applySubstitution(type, a);
+    // Avoid identity mappings like id -> Var(id), which can cause infinite recursion when applied
+    if (!(applied.kind === "var" && applied.id === id)) {
+      result.set(id, applied);
+    }
   }
   for (const [id, type] of a.entries()) {
     result.set(id, type);

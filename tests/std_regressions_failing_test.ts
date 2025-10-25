@@ -10,10 +10,6 @@ function fixturePath(relative: string): string {
   return fromFileUrl(new URL(`./fixtures/std_usage/${relative}`, import.meta.url));
 }
 
-// NOTE: These are known-failing regressions we want to reproduce during fixes.
-// They are marked ignore:true to avoid breaking CI until the underlying issues
-// (polymorphic HOFs + tuple lowering + HM) are resolved.
-
 Deno.test({
   name: "std option complex pipeline (map -> flatMap -> orElse)",
   permissions: { read: true },

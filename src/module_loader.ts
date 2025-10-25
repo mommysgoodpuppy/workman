@@ -1,7 +1,14 @@
 import { dirname, extname, isAbsolute, join, resolve } from "std/path/mod.ts";
 import { lex } from "./lexer.ts";
 import { parseSurfaceProgram, ParseError } from "./parser.ts";
-import type { ImportSpecifier, ModuleImport, Program, SourceSpan, LetDeclaration } from "./ast.ts";
+import type {
+  ImportSpecifier,
+  ModuleImport,
+  ModuleReexport,
+  Program,
+  SourceSpan,
+  LetDeclaration,
+} from "./ast.ts";
 import type { TypeInfo, TypeScheme } from "./types.ts";
 import { cloneTypeInfo, cloneTypeScheme } from "./types.ts";
 import { inferProgram, InferError } from "./infer.ts";
@@ -27,6 +34,7 @@ export interface ModuleNode {
   path: string;
   program: Program;
   imports: ModuleImportRecord[];
+  reexports: ModuleReexportRecord[];
   exportedValueNames: string[];
   exportedTypeNames: string[];
 }
@@ -39,9 +47,23 @@ export interface ModuleImportRecord {
   importerPath: string;
 }
 
+export interface ModuleReexportRecord {
+  sourcePath: string;
+  typeExports: TypeReexportRecord[];
+  span: SourceSpan;
+  rawSource: string;
+  importerPath: string;
+}
+
 export interface NamedImportRecord {
   imported: string;
   local: string;
+  span: SourceSpan;
+}
+
+export interface TypeReexportRecord {
+  name: string;
+  exportConstructors: boolean;
   span: SourceSpan;
 }
 
@@ -73,6 +95,16 @@ export class ModuleLoaderError extends Error {
   }
 }
 
+function isStdCoreModule(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/");
+  if (normalized.includes("/std/core/")) {
+    return true;
+  }
+  return normalized.endsWith("/std/list/core.wm")
+    || normalized.endsWith("/std/option/core.wm")
+    || normalized.endsWith("/std/result/core.wm");
+}
+
 export async function loadModuleGraph(entryPath: string, options: ModuleLoaderOptions = {}): Promise<ModuleGraph> {
   const normalizedEntry = resolveEntryPath(entryPath);
   const normalizedOptions = normalizeOptions(options);
@@ -100,6 +132,49 @@ export async function loadModuleGraph(entryPath: string, options: ModuleLoaderOp
   };
 }
 
+function applyReexports(
+  record: ModuleReexportRecord,
+  provider: ModuleSummary,
+  exportedValues: Map<string, TypeScheme>,
+  exportedTypes: Map<string, TypeInfo>,
+  exportedRuntime: Map<string, RuntimeValue>,
+): void {
+  for (const typeExport of record.typeExports) {
+    const providedType = provider.exports.types.get(typeExport.name);
+    if (!providedType) {
+      throw new ModuleLoaderError(
+        `Module '${record.importerPath}' re-exports type '${typeExport.name}' from '${record.rawSource}' which does not export it`,
+      );
+    }
+    if (exportedTypes.has(typeExport.name)) {
+      throw new ModuleLoaderError(`Duplicate export '${typeExport.name}' in '${record.importerPath}'`);
+    }
+    const clonedInfo = cloneTypeInfo(providedType);
+    exportedTypes.set(typeExport.name, clonedInfo);
+    if (typeExport.exportConstructors) {
+      for (const ctor of clonedInfo.constructors) {
+        const providedScheme = provider.exports.values.get(ctor.name);
+        if (!providedScheme) {
+          throw new ModuleLoaderError(
+            `Module '${record.importerPath}' re-exports constructors for type '${typeExport.name}' but constructor '${ctor.name}' is missing in provider`,
+          );
+        }
+        if (exportedValues.has(ctor.name)) {
+          throw new ModuleLoaderError(`Duplicate export '${ctor.name}' in '${record.importerPath}'`);
+        }
+        exportedValues.set(ctor.name, cloneTypeScheme(providedScheme));
+        const runtimeValue = provider.runtime.get(ctor.name);
+        if (!runtimeValue) {
+          throw new ModuleLoaderError(
+            `Module '${record.importerPath}' re-exports constructor '${ctor.name}' from '${record.rawSource}' but runtime value is missing in provider`,
+          );
+        }
+        exportedRuntime.set(ctor.name, runtimeValue);
+      }
+    }
+  }
+}
+
 export async function runEntryPath(entryPath: string, options: ModuleLoaderOptions = {}): Promise<{
   types: { name: string; type: string }[];
   values: { name: string; value: string }[];
@@ -120,6 +195,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
     const initialEnv = new Map<string, TypeScheme>();
     const initialAdtEnv = new Map<string, TypeInfo>();
     const initialBindings = new Map<string, RuntimeValue>();
+    const skipPrelude = isStdCoreModule(path);
 
     for (const record of node.imports) {
       const provider = moduleSummaries.get(record.sourcePath);
@@ -129,7 +205,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
       applyImports(record, provider, initialEnv, initialAdtEnv, initialBindings);
     }
 
-    if (preludeSummary && path !== preludePath) {
+    if (preludeSummary && path !== preludePath && !skipPrelude) {
       for (const [name, scheme] of preludeSummary.exports.values.entries()) {
         if (!initialEnv.has(name)) {
           initialEnv.set(name, cloneTypeScheme(scheme));
@@ -152,7 +228,6 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
       inference = inferProgram(node.program, {
         initialEnv,
         initialAdtEnv,
-        registerPrelude: true,
         resetCounter: true,
       });
     } catch (error) {
@@ -174,6 +249,15 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
 
     const exportedValues = new Map<string, TypeScheme>();
     const exportedTypes = new Map<string, TypeInfo>();
+    const reexportedRuntime = new Map<string, RuntimeValue>();
+
+    for (const record of node.reexports) {
+      const provider = moduleSummaries.get(record.sourcePath);
+      if (!provider) {
+        throw new ModuleLoaderError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
+      }
+      applyReexports(record, provider, exportedValues, exportedTypes, reexportedRuntime);
+    }
 
     for (const name of node.exportedValueNames) {
       const scheme = letSchemes.get(name) ?? inference.env.get(name);
@@ -210,7 +294,12 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
 
     const evaluation = evaluateProgram(node.program, {
       sourceName: path,
-      initialBindings,
+      initialBindings: skipPrelude ? initialBindings : (() => {
+        if (!skipPrelude) {
+          return initialBindings;
+        }
+        return initialBindings;
+      })(),
       onPrint: (text) => {
         runtimeLogs.push(text);
       },
@@ -223,8 +312,11 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
       letValueOrder.push(summary.name);
     }
 
-    const runtimeExports = new Map<string, RuntimeValue>();
+    const runtimeExports = new Map<string, RuntimeValue>(reexportedRuntime);
     for (const name of exportedValues.keys()) {
+      if (runtimeExports.has(name)) {
+        continue;
+      }
       const value = letRuntime.get(name) ?? lookupValue(evaluation.env, name);
       runtimeExports.set(name, value);
     }
@@ -299,16 +391,22 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     const program = await loadProgram(path, ctx);
     const exports = collectExports(program, path);
     const imports = resolveImports(path, program.imports, ctx);
+    const reexports = collectReexports(program.reexports, path, ctx.options);
 
     ctx.nodes.set(path, {
       path,
       program,
       imports,
+      reexports,
       exportedValueNames: exports.values,
       exportedTypeNames: exports.types,
     });
 
     for (const record of imports) {
+      await visitModule(record.sourcePath, ctx);
+    }
+
+    for (const record of reexports) {
       await visitModule(record.sourcePath, ctx);
     }
 
@@ -402,6 +500,25 @@ function collectExports(program: Program, path: string): { values: string[]; typ
   }
 
   return { values: valueNames, types: typeNames };
+}
+
+function collectReexports(reexports: ModuleReexport[], path: string, options: ModuleLoaderOptions): ModuleReexportRecord[] {
+  const records: ModuleReexportRecord[] = [];
+  for (const entry of reexports) {
+    const resolvedPath = resolveModuleSpecifier(path, entry.source, options);
+    records.push({
+      sourcePath: resolvedPath,
+      typeExports: entry.typeExports.map((typeExport) => ({
+        name: typeExport.name,
+        exportConstructors: typeExport.exportConstructors,
+        span: typeExport.span,
+      })),
+      span: entry.span,
+      rawSource: entry.source,
+      importerPath: path,
+    });
+  }
+  return records;
 }
 
 function forEachLetBinding(decl: LetDeclaration, fn: (binding: LetDeclaration) => void): void {

@@ -1,4 +1,7 @@
-export type Option<T> = None | Some<T>;
+from "std/option/core" import { Option, Some, None };
+from "std/list/core" import { Nil, Cons };
+
+export from "std/option/core" type Option(..);
 
 export let map = match(tuple) {
   (f, Some(value)) => { Some(f(value)) },

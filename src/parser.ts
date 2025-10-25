@@ -8,6 +8,7 @@ import type {
   LetDeclaration,
   MatchArm,
   ModuleImport,
+  ModuleReexport,
   NamedImport,
   NamespaceImport,
   Parameter,
@@ -17,6 +18,7 @@ import type {
   TypeDeclaration,
   TypeExpr,
   TypeParameter,
+  TypeReexport,
 } from "./ast.ts";
 import type { Pattern, SourceSpan } from "./ast.ts";
 
@@ -40,12 +42,19 @@ class SurfaceParser {
   parseProgram(): Program {
 
     const imports: ModuleImport[] = [];
+    const reexports: ModuleReexport[] = [];
     const declarations: TopLevel[] = [];
     while (!this.isEOF()) {
       const val = this.peek(this.index)
       //console.log(val, this.index);
       if (this.checkKeyword("from")) {
         imports.push(this.parseImportDeclaration());
+      } else if (
+        this.checkKeyword("export") &&
+        this.peek(1).kind === "keyword" &&
+        this.peek(1).value === "from"
+      ) {
+        reexports.push(this.parseModuleReexport());
       } else {
         declarations.push(this.parseTopLevel());
       }
@@ -56,7 +65,7 @@ class SurfaceParser {
         this.expectSymbol(";"); //cause of error
       }
     }
-    return { imports, declarations };
+    return { imports, reexports, declarations };
   }
 
   private parseImportDeclaration(): ModuleImport {
@@ -110,6 +119,51 @@ class SurfaceParser {
     }
     const close = this.expectSymbol("}");
     return { specifiers, endToken: close };
+  }
+
+  private parseModuleReexport(): ModuleReexport {
+    const exportToken = this.expectKeyword("export");
+    this.expectKeyword("from");
+    const sourceToken = this.expectStringLiteral();
+    this.expectKeyword("type");
+    const typeExports = this.parseTypeReexportList();
+    const endToken = this.previous();
+    return {
+      kind: "module_reexport",
+      source: sourceToken.value,
+      typeExports,
+      span: this.spanFrom(exportToken.start, endToken.end),
+    };
+  }
+
+  private parseTypeReexportList(): TypeReexport[] {
+    const typeExports: TypeReexport[] = [];
+    typeExports.push(this.parseTypeReexport());
+    while (this.matchSymbol(",")) {
+      typeExports.push(this.parseTypeReexport());
+    }
+    return typeExports;
+  }
+
+  private parseTypeReexport(): TypeReexport {
+    const nameToken = this.expectTypeName();
+    let exportConstructors = false;
+    let endToken: Token = nameToken;
+    if (this.matchSymbol("(")) {
+      if (this.matchSymbol(")")) {
+        endToken = this.previous();
+      } else {
+        this.expectSymbol("..");
+        const closeToken = this.expectSymbol(")");
+        exportConstructors = true;
+        endToken = closeToken;
+      }
+    }
+    return {
+      name: nameToken.value,
+      exportConstructors,
+      span: this.spanFrom(nameToken.start, endToken.end),
+    };
   }
 
   private expectStringLiteral(): Token {

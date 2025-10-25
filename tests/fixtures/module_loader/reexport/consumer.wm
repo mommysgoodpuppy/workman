@@ -1,0 +1,6 @@
+from "./provider" import { Choice, First };
+
+export let main = () => {
+  Choice;
+  First;
+};

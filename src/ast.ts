@@ -26,6 +26,12 @@ export interface ModuleImport extends NodeBase {
   specifiers: ImportSpecifier[];
 }
 
+export interface ModuleReexport extends NodeBase {
+  kind: "module_reexport";
+  source: string;
+  typeExports: TypeReexport[];
+}
+
 export type ImportSpecifier = NamedImport | NamespaceImport;
 
 export interface NamedImport extends NodeBase {
@@ -37,6 +43,11 @@ export interface NamedImport extends NodeBase {
 export interface NamespaceImport extends NodeBase {
   kind: "namespace";
   local: string;
+}
+
+export interface TypeReexport extends NodeBase {
+  name: string;
+  exportConstructors: boolean;
 }
 
 export interface ExportModifier {
@@ -204,5 +215,6 @@ export type TopLevel = LetDeclaration | TypeDeclaration;
 
 export interface Program {
   imports: ModuleImport[];
+  reexports: ModuleReexport[];
   declarations: TopLevel[];
 }
