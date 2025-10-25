@@ -1,0 +1,148 @@
+import { lex } from "./src/lexer.ts";
+import { ParseError, parseSurfaceProgram } from "./src/parser.ts";
+import { InferError, inferProgram } from "./src/infer.ts";
+import { formatScheme } from "./src/type_printer.ts";
+import { evaluateProgram } from "./src/eval.ts";
+import { formatRuntimeValue } from "./src/value_printer.ts";
+import type { TypeScheme } from "./src/types.ts";
+import type { RuntimeValue } from "./src/value.ts";
+
+export interface RunOptions {
+  sourceName?: string;
+  onPrint?: (text: string) => void;
+  skipEvaluation?: boolean;
+}
+
+export interface TypeSummary {
+  name: string;
+  type: string;
+}
+
+export interface RunResult {
+  types: TypeSummary[];
+  values: ValueSummary[];
+  runtimeLogs: string[];
+}
+
+export interface ValueSummary {
+  name: string;
+  value: string;
+}
+
+export function runFile(source: string, options: RunOptions = {}): RunResult {
+  try {
+    const tokens = lex(source);
+    const program = parseSurfaceProgram(tokens);
+    const inference = inferProgram(program);
+    const types = inference.summaries.map((
+      entry: { name: string; scheme: TypeScheme },
+    ) => ({
+      name: entry.name,
+      type: formatScheme(entry.scheme),
+    }));
+
+    let values: ValueSummary[] = [];
+    const runtimeLogs: string[] = [];
+
+    if (!options.skipEvaluation) {
+      const evaluation = evaluateProgram(program, {
+        sourceName: options.sourceName,
+        onPrint: (text: string) => {
+          runtimeLogs.push(text);
+          options.onPrint?.(text);
+        },
+      });
+      values = evaluation.summaries.map((
+        summary: { name: string; value: RuntimeValue },
+      ) => ({
+        name: summary.name,
+        value: formatRuntimeValue(summary.value),
+      }));
+    }
+
+    return { types, values, runtimeLogs };
+  } catch (error) {
+    if (error instanceof ParseError || error instanceof InferError) {
+      throw error;
+    }
+    if (error instanceof Error) {
+      throw new Error(`Unhandled error: ${error.message}`);
+    }
+    throw new Error(`Unknown error: ${String(error)}`);
+  }
+}
+
+if (import.meta.main) {
+  const args = Deno.args;
+  if (args.length === 0) {
+    console.error("Usage: wm <file.wm> | wm type <file.wm>");
+    Deno.exit(1);
+  }
+
+  let filePath: string;
+  let skipEvaluation = false;
+
+  if (args[0] === "type") {
+    if (args.length !== 2) {
+      console.error("Usage: wm type <file.wm>");
+      Deno.exit(1);
+    }
+    filePath = args[1];
+    skipEvaluation = true;
+  } else {
+    if (args.length !== 1) {
+      console.error("Usage: wm <file.wm> | wm type <file.wm>");
+      Deno.exit(1);
+    }
+    filePath = args[0];
+  }
+
+  if (!filePath.endsWith(".wm")) {
+    console.error("Expected a .wm file");
+    Deno.exit(1);
+  }
+
+  let source: string;
+  try {
+    source = await Deno.readTextFile(filePath);
+  } catch (error) {
+    console.error(
+      `Failed to read '${filePath}': ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    Deno.exit(1);
+  }
+
+  try {
+    const result = runFile(source, { sourceName: filePath, skipEvaluation });
+
+    if (result.types.length > 0) {
+      for (const { name, type } of result.types) {
+        console.log(`${name} : ${type}`);
+      }
+    } else {
+      console.log("(no top-level let bindings)");
+    }
+
+    if (!skipEvaluation) {
+      const hasRuntimeInfo = result.runtimeLogs.length > 0 ||
+        result.values.length > 0;
+      if (hasRuntimeInfo) {
+        console.log("");
+        for (const entry of result.runtimeLogs) {
+          console.log(entry);
+        }
+        if (result.runtimeLogs.length > 0 && result.values.length > 0) {
+          console.log("");
+        }
+        for (const { name, value } of result.values) {
+          console.log(`${name} = ${value}`);
+        }
+      }
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    Deno.exit(1);
+  }
+}
