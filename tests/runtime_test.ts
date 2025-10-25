@@ -2,14 +2,59 @@ import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { inferProgram, InferError } from "../src/infer.ts";
 import { evaluateProgram } from "../src/eval.ts";
+import type { TypeScheme } from "../src/types.ts";
+import type { RuntimeValue, NativeFunctionValue } from "../src/value.ts";
 import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
 import { RuntimeError } from "../src/value.ts";
 
 function evaluateSource(source: string) {
   const tokens = lex(source);
   const program = parseSurfaceProgram(tokens);
-  inferProgram(program);
-  return evaluateProgram(program);
+  const intBinScheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: { kind: "int" },
+      to: { kind: "func", from: { kind: "int" }, to: { kind: "int" } },
+    },
+  };
+
+  const initialEnv = new Map<string, TypeScheme>([
+    ["add", intBinScheme],
+    ["sub", intBinScheme],
+    ["mul", intBinScheme],
+    ["div", intBinScheme],
+  ]);
+
+  const initialBindings = new Map<string, RuntimeValue>([
+    ["add", native2("add", (a, b) => a + b)],
+    ["sub", native2("sub", (a, b) => a - b)],
+    ["mul", native2("mul", (a, b) => a * b)],
+    ["div", native2("div", (a, b) => {
+      if (b === 0) throw new Error("Division by zero");
+      return Math.trunc(a / b);
+    })],
+  ]);
+
+  inferProgram(program, { initialEnv });
+  return evaluateProgram(program, { initialBindings });
+}
+
+function native2(name: string, impl: (a: number, b: number) => number): NativeFunctionValue {
+  return {
+    kind: "native",
+    name,
+    arity: 2,
+    collectedArgs: [],
+    impl: (args) => ({ kind: "int", value: impl(expectInt(args[0]), expectInt(args[1])) }),
+  };
+}
+
+function expectInt(value: RuntimeValue): number {
+  if (value.kind !== "int") {
+    throw new Error("Expected Int argument");
+  }
+  return value.value;
 }
 
 Deno.test("evaluates non-recursive let-binding", () => {
