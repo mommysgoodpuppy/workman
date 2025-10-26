@@ -830,6 +830,14 @@ class SurfaceParser {
           span: this.createSpan(num, num),
         } as Expr;
       }
+      case "char": {
+        const ch = this.consume();
+        return {
+          kind: "literal",
+          literal: { kind: "char", value: ch.value, span: this.createSpan(ch, ch) },
+          span: this.createSpan(ch, ch),
+        } as Expr;
+      }
       case "string": {
         const str = this.consume();
         return {
@@ -1032,6 +1040,16 @@ class SurfaceParser {
         kind: "bool" as const,
         value: bool.value === "true",
         span: this.createSpan(bool, bool),
+      };
+      return { kind: "literal", literal, span: literal.span };
+    }
+
+    if (token.kind === "char") {
+      const ch = this.consume();
+      const literal = {
+        kind: "char" as const,
+        value: ch.value,
+        span: this.createSpan(ch, ch),
       };
       return { kind: "literal", literal, span: literal.span };
     }

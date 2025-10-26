@@ -1,0 +1,186 @@
+-- String library for Workman
+-- Strings are represented as List<Int> where each Int is a character code
+-- ASCII character codes: 'A' = 65, 'a' = 97, '0' = 48, ' ' = 32, etc.
+
+-- Type alias for clarity (just documentation, not enforced)
+-- type String = List<Int>;
+
+-- Character code constants
+export let charSpace = () => { 32 };
+export let charTab = () => { 9 };
+export let charNewline = () => { 10 };
+export let charReturn = () => { 13 };
+export let char0 = () => { 48 };
+export let char9 = () => { 57 };
+export let charA = () => { 65 };
+export let charZ = () => { 90 };
+export let charLowerA = () => { 97 };
+export let charLowerZ = () => { 122 };
+
+-- Get the length of a string (just list length)
+export let rec strLength = match(s) {
+  Nil => { 0 },
+  Cons(_, rest) => { add(1, strLength(rest)) }
+};
+
+-- Check if string is empty
+export let strIsEmpty = (s) => {
+  match(s) {
+    Nil => { true },
+    _ => { false }
+  }
+};
+
+-- Get character at index (returns Option<Int>)
+export let rec strCharAt = match(tuple) {
+  (Nil, _) => { None },
+  (Cons(c, _), 0) => { Some(c) },
+  (Cons(_, rest), n) => { strCharAt((rest, sub(n, 1))) }
+};
+
+-- Take first n characters
+export let rec strTake = match(tuple) {
+  (_, 0) => { Nil },
+  (Nil, _) => { Nil },
+  (Cons(c, rest), n) => { Cons(c, strTake((rest, sub(n, 1)))) }
+};
+
+-- Drop first n characters
+export let rec strDrop = match(tuple) {
+  (s, 0) => { s },
+  (Nil, _) => { Nil },
+  (Cons(_, rest), n) => { strDrop((rest, sub(n, 1))) }
+};
+
+-- Substring from start (inclusive) to end (exclusive)
+export let strSlice = (s, start, end) => {
+  let dropped = () => { strDrop((s, start)) };
+  let len = () => { sub(end, start) };
+  strTake((dropped(), len()))
+};
+
+-- Concatenate two strings
+export let rec strConcat = match(tuple) {
+  (Nil, s2) => { s2 },
+  (Cons(c, rest), s2) => { Cons(c, strConcat((rest, s2))) }
+};
+
+-- Check if character is a digit (0-9)
+export let isDigit = (c) => {
+  let ge0 = () => { 
+    match(cmpInt(c, char0())) {
+      LT => { false },
+      _ => { true }
+    }
+  };
+  let le9 = () => {
+    match(cmpInt(c, char9())) {
+      GT => { false },
+      _ => { true }
+    }
+  };
+  match(ge0()) {
+    false => { false },
+    true => { le9() }
+  }
+};
+
+-- Check if character is uppercase letter (A-Z)
+export let isUppercase = (c) => {
+  let geA = () => {
+    match(cmpInt(c, charA())) {
+      LT => { false },
+      _ => { true }
+    }
+  };
+  let leZ = () => {
+    match(cmpInt(c, charZ())) {
+      GT => { false },
+      _ => { true }
+    }
+  };
+  match(geA()) {
+    false => { false },
+    true => { leZ() }
+  }
+};
+
+-- Check if character is lowercase letter (a-z)
+export let isLowercase = (c) => {
+  let gea = () => {
+    match(cmpInt(c, charLowerA())) {
+      LT => { false },
+      _ => { true }
+    }
+  };
+  let lez = () => {
+    match(cmpInt(c, charLowerZ())) {
+      GT => { false },
+      _ => { true }
+    }
+  };
+  match(gea()) {
+    false => { false },
+    true => { lez() }
+  }
+};
+
+-- Check if character is alphabetic (A-Z or a-z)
+export let isAlpha = (c) => {
+  match(isUppercase(c)) {
+    true => { true },
+    false => { isLowercase(c) }
+  }
+};
+
+-- Check if character is alphanumeric
+export let isAlphaNum = (c) => {
+  match(isAlpha(c)) {
+    true => { true },
+    false => { isDigit(c) }
+  }
+};
+
+-- Check if character is whitespace
+export let isWhitespace = (c) => {
+  match(eq(c, charSpace())) {
+    true => { true },
+    false => {
+      match(eq(c, charTab())) {
+        true => { true },
+        false => {
+          match(eq(c, charNewline())) {
+            true => { true },
+            false => { eq(c, charReturn()) }
+          }
+        }
+      }
+    }
+  }
+};
+
+-- String equality
+export let rec strEq = match(tuple) {
+  (Nil, Nil) => { true },
+  (Nil, _) => { false },
+  (_, Nil) => { false },
+  (Cons(c1, rest1), Cons(c2, rest2)) => {
+    match(eq(c1, c2)) {
+      false => { false },
+      true => { strEq((rest1, rest2)) }
+    }
+  }
+};
+
+-- Convert single digit to character code
+export let digitToChar = (n) => {
+  add(char0(), n)
+};
+
+-- Convert character code to digit (returns Option<Int>)
+export let charToDigit = (c) => {
+  match(isDigit(c)) {
+    false => { None },
+    true => { Some(sub(c, char0())) }
+  }
+};

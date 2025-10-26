@@ -331,6 +331,8 @@ function literalToRuntime(literal: Literal): RuntimeValue {
       return { kind: "int", value: literal.value };
     case "bool":
       return { kind: "bool", value: literal.value };
+    case "char":
+      return { kind: "char", value: literal.value.charCodeAt(0) };
     case "string":
       return { kind: "string", value: literal.value };
     case "unit":
@@ -560,6 +562,8 @@ function matchLiteralPattern(value: RuntimeValue, literal: Literal): Map<string,
       return isIntValue(value, literal.value) ? new Map() : null;
     case "bool":
       return isBoolValue(value, literal.value) ? new Map() : null;
+    case "char":
+      return value.kind === "char" && value.value === literal.value.charCodeAt(0) ? new Map() : null;
     case "unit":
       return value.kind === "unit" ? new Map() : null;
     case "string":

@@ -41,8 +41,8 @@ import { InferError as InferErrorClass } from "./error.ts";
 export { InferError } from "./error.ts";
 
 // Helper to create InferError (for internal use)
-function inferError(message: string): InferErrorClass {
-  return new InferErrorClass(message);
+function inferError(message: string, span?: SourceSpan, source?: string): InferErrorClass {
+  return new InferErrorClass(message, span, source);
 }
 
 function cloneTypeEnv(source: TypeEnv): TypeEnv {
@@ -66,6 +66,7 @@ export interface InferOptions {
   initialAdtEnv?: TypeEnvADT;
   registerPrelude?: boolean;
   resetCounter?: boolean;
+  source?: string;  // Source code for error reporting
 }
 
 export interface InferResult {
@@ -78,6 +79,7 @@ interface Context {
   env: TypeEnv;
   adtEnv: TypeEnvADT;
   subst: Substitution;
+  source?: string;  // Source code for error reporting
 }
 
 function withScopedEnv<T>(ctx: Context, fn: () => T): T {
@@ -104,7 +106,7 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
   }
   const env: TypeEnv = options.initialEnv ? cloneTypeEnv(options.initialEnv) : new Map();
   const adtEnv: TypeEnvADT = options.initialAdtEnv ? cloneAdtEnv(options.initialAdtEnv) : new Map();
-  const ctx: Context = { env, adtEnv, subst: new Map() };
+  const ctx: Context = { env, adtEnv, subst: new Map(), source: options.source };
   const summaries: { name: string; scheme: TypeScheme }[] = [];
 
   if (options.registerPrelude !== false) {
@@ -403,6 +405,11 @@ function convertTypeExpr(
             throw inferError("Type constructor 'Bool' does not accept arguments");
           }
           return { kind: "bool" };
+        case "Char":
+          if (typeExpr.typeArgs.length > 0) {
+            throw inferError("Type constructor 'Char' does not accept arguments");
+          }
+          return { kind: "char" };
         case "Unit":
           if (typeExpr.typeArgs.length > 0) {
             throw inferError("Type constructor 'Unit' does not accept arguments");
@@ -435,11 +442,11 @@ function convertTypeExpr(
           scope.set(typeExpr.name, fresh);
           return fresh;
         }
-        throw inferError(`Unknown type constructor '${typeExpr.name}'`);
+        throw inferError(`Unknown type constructor '${typeExpr.name}'`, typeExpr.span, ctx.source);
       }
 
       if (!typeInfo) {
-        throw inferError(`Unknown type constructor '${typeExpr.name}'`);
+        throw inferError(`Unknown type constructor '${typeExpr.name}'`, typeExpr.span, ctx.source);
       }
 
       if (typeInfo.parameters.length !== typeExpr.typeArgs.length) {
@@ -769,6 +776,8 @@ function literalType(literal: Literal): Type {
       return { kind: "int" };
     case "bool":
       return { kind: "bool" };
+    case "char":
+      return { kind: "char" };
     case "unit":
       return { kind: "unit" };
     case "string":

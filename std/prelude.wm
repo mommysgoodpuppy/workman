@@ -3,7 +3,8 @@ from "std/core/bool" import { boolNot, boolAnd as boolAndImpl, boolOr as boolOrI
 export from "std/option/core" type Option(..);
 export from "std/result/core" type Result(..);
 
-export type List<T> = Nil | Cons<T, List<T>>;
+export type List<T> = Empty | Link<T, List<T>>;
+
 export type Ordering = LT | EQ | GT;
 
 export let add = (left, right) => {

@@ -8,6 +8,8 @@ export function formatRuntimeValue(value: RuntimeValue): string {
       return value.value.toString(10);
     case "bool":
       return value.value ? "true" : "false";
+    case "char":
+      return `'${String.fromCharCode(value.value)}'`;
     case "string":
       return value.value;
     case "tuple":

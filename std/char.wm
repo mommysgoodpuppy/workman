@@ -1,0 +1,131 @@
+-- Character utilities for Workman
+-- Char is a primitive type representing a single Unicode character
+
+-- Common character constants
+export let charSpace = () => { ' ' };
+export let charTab = () => { '\t' };
+export let charNewline = () => { '\n' };
+export let charReturn = () => { '\r' };
+
+-- Digits
+export let char0 = () => { '0' };
+export let char9 = () => { '9' };
+
+-- Uppercase letters
+export let charA = () => { 'A' };
+export let charZ = () => { 'Z' };
+
+-- Lowercase letters
+export let charLowerA = () => { 'a' };
+export let charLowerZ = () => { 'z' };
+
+-- Operators and punctuation
+export let charPlus = () => { '+' };
+export let charMinus = () => { '-' };
+export let charStar = () => { '*' };
+export let charSlash = () => { '/' };
+export let charEq = () => { '=' };
+export let charLParen = () => { '(' };
+export let charRParen = () => { ')' };
+export let charLBrace = () => { '{' };
+export let charRBrace = () => { '}' };
+export let charComma = () => { ',' };
+export let charSemicolon = () => { ';' };
+export let charColon = () => { ':' };
+
+-- Character classification using pattern matching
+export let isDigit = match(c) {
+  '0' => { true },
+  '1' => { true },
+  '2' => { true },
+  '3' => { true },
+  '4' => { true },
+  '5' => { true },
+  '6' => { true },
+  '7' => { true },
+  '8' => { true },
+  '9' => { true },
+  _ => { false }
+};
+
+export let isWhitespace = match(c) {
+  ' ' => { true },
+  '\t' => { true },
+  '\n' => { true },
+  '\r' => { true },
+  _ => { false }
+};
+
+export let isPlus = match(c) {
+  '+' => { true },
+  _ => { false }
+};
+
+export let isMinus = match(c) {
+  '-' => { true },
+  _ => { false }
+};
+
+export let isStar = match(c) {
+  '*' => { true },
+  _ => { false }
+};
+
+export let isSlash = match(c) {
+  '/' => { true },
+  _ => { false }
+};
+
+export let isLParen = match(c) {
+  '(' => { true },
+  _ => { false }
+};
+
+export let isRParen = match(c) {
+  ')' => { true },
+  _ => { false }
+};
+
+-- Check if uppercase letter
+export let isUppercase = (c) => {
+  match(c) {
+    'A' => { true }, 'B' => { true }, 'C' => { true }, 'D' => { true },
+    'E' => { true }, 'F' => { true }, 'G' => { true }, 'H' => { true },
+    'I' => { true }, 'J' => { true }, 'K' => { true }, 'L' => { true },
+    'M' => { true }, 'N' => { true }, 'O' => { true }, 'P' => { true },
+    'Q' => { true }, 'R' => { true }, 'S' => { true }, 'T' => { true },
+    'U' => { true }, 'V' => { true }, 'W' => { true }, 'X' => { true },
+    'Y' => { true }, 'Z' => { true },
+    _ => { false }
+  }
+};
+
+-- Check if lowercase letter
+export let isLowercase = (c) => {
+  match(c) {
+    'a' => { true }, 'b' => { true }, 'c' => { true }, 'd' => { true },
+    'e' => { true }, 'f' => { true }, 'g' => { true }, 'h' => { true },
+    'i' => { true }, 'j' => { true }, 'k' => { true }, 'l' => { true },
+    'm' => { true }, 'n' => { true }, 'o' => { true }, 'p' => { true },
+    'q' => { true }, 'r' => { true }, 's' => { true }, 't' => { true },
+    'u' => { true }, 'v' => { true }, 'w' => { true }, 'x' => { true },
+    'y' => { true }, 'z' => { true },
+    _ => { false }
+  }
+};
+
+-- Check if alphabetic
+export let isAlpha = (c) => {
+  match(isUppercase(c)) {
+    true => { true },
+    false => { isLowercase(c) }
+  }
+};
+
+-- Check if alphanumeric
+export let isAlphaNum = (c) => {
+  match(isAlpha(c)) {
+    true => { true },
+    false => { isDigit(c) }
+  }
+};

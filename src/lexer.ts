@@ -63,6 +63,13 @@ export function lex(source: string, sourceName?: string): Token[] {
       continue;
     }
 
+    if (char === "'") {
+      const { value, nextIndex } = readCharLiteral(source, index);
+      tokens.push({ kind: "char", value, start, end: nextIndex });
+      index = nextIndex;
+      continue;
+    }
+
     if (char === '"') {
       const { value, nextIndex } = readStringLiteral(source, index);
       tokens.push({ kind: "string", value, start, end: nextIndex });
@@ -181,6 +188,66 @@ function isAlphaNumeric(char: string): boolean {
 
 function isUppercase(char: string): boolean {
   return char >= "A" && char <= "Z";
+}
+
+function readCharLiteral(source: string, start: number): { value: string; nextIndex: number } {
+  let index = start + 1;
+  const length = source.length;
+
+  if (index >= length) {
+    throw unterminatedStringError(start, source);
+  }
+
+  const char = source[index];
+  
+  // Handle escape sequences
+  if (char === "\\") {
+    if (index + 1 >= length) {
+      throw unterminatedStringError(start, source);
+    }
+    const escape = source[index + 1];
+    let value: string;
+    switch (escape) {
+      case "'":
+        value = "'";
+        break;
+      case "\\":
+        value = "\\";
+        break;
+      case "n":
+        value = "\n";
+        break;
+      case "r":
+        value = "\r";
+        break;
+      case "t":
+        value = "\t";
+        break;
+      case "0":
+        value = "\0";
+        break;
+      default:
+        value = escape;
+        break;
+    }
+    index += 2;
+    if (index >= length || source[index] !== "'") {
+      throw unterminatedStringError(start, source);
+    }
+    return { value, nextIndex: index + 1 };
+  }
+
+  // Regular character
+  if (char === "\n" || char === "'") {
+    throw unterminatedStringError(start, source);
+  }
+  
+  index++;
+  if (index >= length || source[index] !== "'") {
+    throw unterminatedStringError(start, source);
+  }
+  
+  return { value: char, nextIndex: index + 1 };
 }
 
 function readStringLiteral(source: string, start: number): { value: string; nextIndex: number } {

@@ -43,6 +43,8 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       return "Int";
     case "bool":
       return "Bool";
+    case "char":
+      return "Char";
     case "string":
       return "String";
     default:

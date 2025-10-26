@@ -6,6 +6,7 @@ export type Type =
   | { kind: "unit" }
   | { kind: "int" }
   | { kind: "bool" }
+  | { kind: "char" }
   | { kind: "string" };
 
 export interface TypeScheme {

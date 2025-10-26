@@ -10,6 +10,7 @@ interface NodeBase {
 export type Literal =
   | ({ kind: "int" } & NodeBase & { value: number })
   | ({ kind: "bool" } & NodeBase & { value: boolean })
+  | ({ kind: "char" } & NodeBase & { value: string })
   | ({ kind: "string" } & NodeBase & { value: string })
   | ({ kind: "unit" } & NodeBase);
 

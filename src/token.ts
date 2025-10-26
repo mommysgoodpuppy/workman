@@ -3,6 +3,7 @@ export type TokenKind =
   | "constructor"
   | "number"
   | "bool"
+  | "char"
   | "string"
   | "keyword"
   | "symbol"

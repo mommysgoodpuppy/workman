@@ -270,10 +270,13 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
         initialEnv,
         initialAdtEnv,
         resetCounter: true,
+        source: node.source,
       });
     } catch (error) {
       if (error instanceof InferError) {
-        throw moduleError(`Type error in '${path}': ${error.message}`);
+        // Format the error with location info if available
+        const formatted = error.format(node.source);
+        throw moduleError(formatted, path);
       }
       throw error;
     }
