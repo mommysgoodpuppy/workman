@@ -9,6 +9,8 @@ import type { TypeScheme } from "./src/types.ts";
 import type { RuntimeValue } from "./src/value.ts";
 import { startRepl } from "./tools/repl.ts";
 import { runFormatter } from "./tools/fmt.ts";
+import { runEntryPath } from "./src/module_loader.ts";
+import { resolve } from "std/path/mod.ts";
 
 export interface RunOptions {
   sourceName?: string;
@@ -116,20 +118,12 @@ if (import.meta.main) {
     Deno.exit(1);
   }
 
-  let source: string;
   try {
-    source = await Deno.readTextFile(filePath);
-  } catch (error) {
-    console.error(
-      `Failed to read '${filePath}': ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    Deno.exit(1);
-  }
-
-  try {
-    const result = runFile(source, { sourceName: filePath, skipEvaluation });
+    // Use module loader to properly load prelude
+    const result = await runEntryPath(filePath, {
+      stdRoots: [resolve("std")],
+      preludeModule: "std/prelude",
+    });
 
     if (result.types.length > 0) {
       for (const { name, type } of result.types) {
