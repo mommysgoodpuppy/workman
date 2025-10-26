@@ -26,15 +26,19 @@ import type { Pattern, SourceSpan } from "./ast.ts";
 // Re-export ParseError from error module
 export { ParseError } from "./error.ts";
 
-export function parseSurfaceProgram(tokens: Token[], source?: string): Program {
-  const parser = new SurfaceParser(tokens, source);
+export function parseSurfaceProgram(tokens: Token[], source?: string, preserveComments: boolean = false): Program {
+  const parser = new SurfaceParser(tokens, source, preserveComments);
   return parser.parseProgram();
 }
 
 class SurfaceParser {
   private index = 0;
 
-  constructor(private readonly tokens: Token[], private readonly source?: string) {}
+  constructor(
+    private readonly tokens: Token[],
+    private readonly source?: string,
+    private readonly preserveComments: boolean = false
+  ) {}
 
   parseProgram(): Program {
 
@@ -54,8 +58,8 @@ class SurfaceParser {
         hasBlankLineBefore = newlineCount >= 2;
       }
       
-      // Collect any leading comments
-      const leadingComments = this.collectLeadingComments();
+      // Collect any leading comments (only when preserving comments for formatter)
+      const leadingComments = this.preserveComments ? this.collectLeadingComments() : [];
       
       if (this.isEOF()) {
         break;
@@ -84,8 +88,8 @@ class SurfaceParser {
       if (this.matchSymbol(";")) {
         const semicolonToken = this.previous();
         lastTokenEnd = semicolonToken.end;
-        // Check for trailing comment on the same line (no newline between semicolon and comment)
-        if (this.peek().kind === "comment" && this.source) {
+        // Check for trailing comment on the same line (only when preserving comments)
+        if (this.preserveComments && this.peek().kind === "comment" && this.source) {
           const commentToken = this.peek();
           const textBetween = this.source.slice(semicolonToken.end, commentToken.start);
           // Only treat as trailing if there's no newline between semicolon and comment
@@ -1007,6 +1011,9 @@ class SurfaceParser {
   }
 
   private consume(): Token {
+    if (!this.preserveComments) {
+      this.skipComments();
+    }
     if (this.isEOF()) {
       throw this.error("Unexpected end of input", this.peek(-1));
     }
@@ -1016,6 +1023,23 @@ class SurfaceParser {
   }
 
   private peek(offset = 0): Token {
+    if (!this.preserveComments) {
+      // Skip comments before peeking
+      let tempIndex = this.index;
+      while (tempIndex < this.tokens.length && this.tokens[tempIndex].kind === "comment") {
+        tempIndex++;
+      }
+      const index = tempIndex + offset;
+      if (index < 0) {
+        return this.tokens[0];
+      }
+      if (index >= this.tokens.length) {
+        return this.tokens[this.tokens.length - 1];
+      }
+      return this.tokens[index];
+    }
+    
+    // Original behavior when preserving comments
     const index = this.index + offset;
     if (index < 0) {
       return this.tokens[0];
@@ -1060,8 +1084,8 @@ class SurfaceParser {
   }
 
   private skipComments(): void {
-    while (this.peek().kind === "comment") {
-      this.consume();
+    while (this.index < this.tokens.length && this.tokens[this.index].kind === "comment") {
+      this.index++;
     }
   }
 }

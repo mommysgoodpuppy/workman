@@ -595,7 +595,7 @@ async function formatFile(filePath: string, options: FormatOptions): Promise<boo
 
   try {
     const tokens = lex(source, filePath);
-    const program = parseSurfaceProgram(tokens, source);
+    const program = parseSurfaceProgram(tokens, source, true); // preserveComments = true for formatter
     
     const formatter = new Formatter(options);
     const formatted = formatter.format(program);

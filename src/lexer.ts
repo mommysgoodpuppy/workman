@@ -27,6 +27,32 @@ export function lex(source: string, sourceName?: string): Token[] {
       continue;
     }
 
+    // Handle negative numbers: - followed immediately by digit
+    if (char === "-" && index + 1 < length && isDigit(source[index + 1])) {
+      // Check if this could be a negative number (not subtraction)
+      // It's a negative number if:
+      // - It's at the start, OR
+      // - Previous non-whitespace token is not a number, identifier, or closing paren/bracket
+      const canBeNegative = tokens.length === 0 || (() => {
+        const lastToken = tokens[tokens.length - 1];
+        return lastToken.kind !== "number" && 
+               lastToken.kind !== "identifier" &&
+               lastToken.kind !== "constructor" &&
+               lastToken.value !== ")" &&
+               lastToken.value !== "]";
+      })();
+      
+      if (canBeNegative) {
+        let value = char;
+        index++;
+        while (index < length && isDigit(source[index])) {
+          value += source[index++];
+        }
+        tokens.push({ kind: "number", value, start, end: index });
+        continue;
+      }
+    }
+
     if (isDigit(char)) {
       let value = char;
       index++;
