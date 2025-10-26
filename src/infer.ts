@@ -33,12 +33,14 @@ import {
   resetTypeVarCounter,
 } from "./types.ts";
 import { formatScheme } from "./type_printer.ts";
+import { InferError as InferErrorClass } from "./error.ts";
 
-export class InferError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "InferError";
-  }
+// Re-export InferError from error module
+export { InferError } from "./error.ts";
+
+// Helper to create InferError (for internal use)
+function inferError(message: string): InferErrorClass {
+  return new InferErrorClass(message);
 }
 
 function cloneTypeEnv(source: TypeEnv): TypeEnv {
@@ -88,7 +90,7 @@ function withScopedEnv<T>(ctx: Context, fn: () => T): T {
 
 function expectParameterName(param: Parameter): string {
   if (!param.name) {
-    throw new InferError("Internal error: missing parameter name after tuple lowering");
+    throw inferError("Internal error: missing parameter name after tuple lowering");
   }
   return param.name;
 }
@@ -132,7 +134,7 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
 
 function registerTypeDeclaration(ctx: Context, decl: TypeDeclaration) {
   if (ctx.adtEnv.has(decl.name)) {
-    throw new InferError(`Type '${decl.name}' is already defined`);
+    throw inferError(`Type '${decl.name}' is already defined`);
   }
 
   const parameterTypes = decl.typeParams.map(() => freshTypeVar());
@@ -155,7 +157,7 @@ function registerTypeDeclaration(ctx: Context, decl: TypeDeclaration) {
   const constructors: ConstructorInfo[] = [];
   for (const member of decl.members) {
     if (member.kind !== "constructor") {
-      throw new InferError(
+      throw inferError(
         `Type '${decl.name}' only supports constructor members in this version (found alias member)`,
       );
     }
@@ -336,7 +338,7 @@ function convertTypeExpr(
         return existing;
       }
       if (!options.allowNewVariables) {
-        throw new InferError(`Unknown type variable '${typeExpr.name}'`);
+        throw inferError(`Unknown type variable '${typeExpr.name}'`);
       }
       const fresh = freshTypeVar();
       scope.set(typeExpr.name, fresh);
@@ -344,7 +346,7 @@ function convertTypeExpr(
     }
     case "type_fn": {
       if (typeExpr.parameters.length === 0) {
-        throw new InferError("Function type must include at least one parameter");
+        throw inferError("Function type must include at least one parameter");
       }
       const result = convertTypeExpr(ctx, typeExpr.result, scope, options);
       return typeExpr.parameters.reduceRight<Type>((acc, param) => {
@@ -364,22 +366,22 @@ function convertTypeExpr(
       switch (typeExpr.name) {
         case "Int":
           if (typeExpr.typeArgs.length > 0) {
-            throw new InferError("Type constructor 'Int' does not accept arguments");
+            throw inferError("Type constructor 'Int' does not accept arguments");
           }
           return { kind: "int" };
         case "Bool":
           if (typeExpr.typeArgs.length > 0) {
-            throw new InferError("Type constructor 'Bool' does not accept arguments");
+            throw inferError("Type constructor 'Bool' does not accept arguments");
           }
           return { kind: "bool" };
         case "Unit":
           if (typeExpr.typeArgs.length > 0) {
-            throw new InferError("Type constructor 'Unit' does not accept arguments");
+            throw inferError("Type constructor 'Unit' does not accept arguments");
           }
           return { kind: "unit" };
         case "String":
           if (typeExpr.typeArgs.length > 0) {
-            throw new InferError("Type constructor 'String' does not accept arguments");
+            throw inferError("Type constructor 'String' does not accept arguments");
           }
           return { kind: "string" };
       }
@@ -389,7 +391,7 @@ function convertTypeExpr(
       if (typeExpr.typeArgs.length === 0) {
         if (typeInfo) {
           if (typeInfo.parameters.length > 0) {
-            throw new InferError(
+            throw inferError(
               `Type constructor '${typeExpr.name}' expects ${typeInfo.parameters.length} type argument(s)`,
             );
           }
@@ -404,15 +406,15 @@ function convertTypeExpr(
           scope.set(typeExpr.name, fresh);
           return fresh;
         }
-        throw new InferError(`Unknown type constructor '${typeExpr.name}'`);
+        throw inferError(`Unknown type constructor '${typeExpr.name}'`);
       }
 
       if (!typeInfo) {
-        throw new InferError(`Unknown type constructor '${typeExpr.name}'`);
+        throw inferError(`Unknown type constructor '${typeExpr.name}'`);
       }
 
       if (typeInfo.parameters.length !== typeExpr.typeArgs.length) {
-        throw new InferError(
+        throw inferError(
           `Type constructor '${typeExpr.name}' expects ${typeInfo.parameters.length} type argument(s)`,
         );
       }
@@ -433,7 +435,7 @@ function convertTypeExpr(
     case "type_unit":
       return { kind: "unit" };
     default:
-      throw new InferError("Unsupported type expression");
+      throw inferError("Unsupported type expression");
   }
 }
 
@@ -514,7 +516,7 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
       break;
     }
     default:
-      throw new InferError(`Unknown block statement kind ${(statement as BlockStatement).kind}`);
+      throw inferError(`Unknown block statement kind ${(statement as BlockStatement).kind}`);
   }
 }
 
@@ -538,7 +540,7 @@ function inferExpr(ctx: Context, expr: Expr): Type {
       }
       const applied = applyCurrentSubst(ctx, result);
       if (applied.kind === "func") {
-        throw new InferError(`Constructor ${expr.name} is not fully applied`);
+        throw inferError(`Constructor ${expr.name} is not fully applied`);
       }
       return applied;
     }
@@ -568,7 +570,7 @@ function inferExpr(ctx: Context, expr: Expr): Type {
     case "match_fn":
       return inferMatchFunction(ctx, expr.parameters, expr.arms);
     default:
-      throw new InferError(`Unsupported expression kind ${(expr as Expr).kind}`);
+      throw inferError(`Unsupported expression kind ${(expr as Expr).kind}`);
   }
 }
 
@@ -607,7 +609,7 @@ function inferMatchExpression(ctx: Context, scrutinee: Expr, arms: MatchArm[]): 
 
 function inferMatchFunction(ctx: Context, parameters: Expr[], arms: MatchArm[]): Type {
   if (parameters.length !== 1) {
-    throw new InferError("Match functions currently support exactly one argument");
+    throw inferError("Match functions currently support exactly one argument");
   }
   const parameterType = inferExpr(ctx, parameters[0]);
   const resultType = inferMatchBranches(ctx, parameterType, arms);
@@ -669,7 +671,7 @@ function inferMatchBranches(
 function expectFunctionType(ctx: Context, type: Type, description: string): { from: Type; to: Type } {
   const resolved = applyCurrentSubst(ctx, type);
   if (resolved.kind !== "func") {
-    throw new InferError(`${description} is not fully applied`);
+    throw inferError(`${description} is not fully applied`);
   }
   return resolved;
 }
@@ -686,7 +688,7 @@ function applyCurrentSubst(ctx: Context, type: Type): Type {
 function lookupEnv(ctx: Context, name: string): TypeScheme {
   const scheme = ctx.env.get(name);
   if (!scheme) {
-    throw new InferError(`Unknown identifier '${name}'`);
+    throw inferError(`Unknown identifier '${name}'`);
   }
   return scheme;
 }
@@ -707,14 +709,14 @@ function literalType(literal: Literal): Type {
     case "string":
       return { kind: "string" };
     default:
-      throw new InferError("Unsupported literal");
+      throw inferError("Unsupported literal");
   }
 }
 
 function mergeBindings(target: Map<string, Type>, source: Map<string, Type>) {
   for (const [name, type] of source.entries()) {
     if (target.has(name)) {
-      throw new InferError(`Duplicate variable '${name}' in pattern`);
+      throw inferError(`Duplicate variable '${name}' in pattern`);
     }
     target.set(name, type);
   }
@@ -765,10 +767,10 @@ function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternIn
       }
       const resolved = applyCurrentSubst(ctx, expected);
       if (resolved.kind !== "tuple") {
-        throw new InferError("Expected tuple type for tuple pattern");
+        throw inferError("Expected tuple type for tuple pattern");
       }
       if (resolved.elements.length !== pattern.elements.length) {
-        throw new InferError("Tuple pattern arity mismatch");
+        throw inferError("Tuple pattern arity mismatch");
       }
       const bindings = new Map<string, Type>();
       for (let i = 0; i < pattern.elements.length; i++) {
@@ -797,7 +799,7 @@ function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternIn
       unify(ctx, expected, current);
       const final = applyCurrentSubst(ctx, current);
       if (final.kind !== "constructor") {
-        throw new InferError(`Constructor pattern '${pattern.name}' does not result in a data type`);
+        throw inferError(`Constructor pattern '${pattern.name}' does not result in a data type`);
       }
       return {
         type: final,
@@ -806,7 +808,7 @@ function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternIn
       };
     }
     default:
-      throw new InferError("Unsupported pattern kind");
+      throw inferError("Unsupported pattern kind");
   }
 }
 
@@ -824,7 +826,7 @@ function ensureExhaustive(
     if (!booleanCoverage.has("true")) missing.push("true");
     if (!booleanCoverage.has("false")) missing.push("false");
     if (missing.length > 0) {
-      throw new InferError(`Non-exhaustive patterns, missing: ${missing.join(", ")}`);
+      throw inferError(`Non-exhaustive patterns, missing: ${missing.join(", ")}`);
     }
     return;
   }
@@ -838,7 +840,7 @@ function ensureExhaustive(
     .map((ctor) => ctor.name)
     .filter((name) => !seenForType.has(name));
   if (missing.length > 0) {
-    throw new InferError(`Non-exhaustive patterns, missing: ${missing.join(", ")}`);
+    throw inferError(`Non-exhaustive patterns, missing: ${missing.join(", ")}`);
   }
 }
 
@@ -869,7 +871,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): Substitution {
 
   if (left.kind === "constructor" && right.kind === "constructor") {
     if (left.name !== right.name || left.args.length !== right.args.length) {
-      throw new InferError(`Cannot unify constructors ${left.name} and ${right.name}`);
+      throw inferError(`Cannot unify constructors ${left.name} and ${right.name}`);
     }
     let current = subst;
     for (let i = 0; i < left.args.length; i++) {
@@ -880,7 +882,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): Substitution {
 
   if (left.kind === "tuple" && right.kind === "tuple") {
     if (left.elements.length !== right.elements.length) {
-      throw new InferError("Cannot unify tuples of different length");
+      throw inferError("Cannot unify tuples of different length");
     }
     let current = subst;
     for (let i = 0; i < left.elements.length; i++) {
@@ -895,7 +897,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): Substitution {
 
   const leftDesc = formatTypeForError(left);
   const rightDesc = formatTypeForError(right);
-  throw new InferError(`Type mismatch: cannot unify ${leftDesc} with ${rightDesc}`);
+  throw inferError(`Type mismatch: cannot unify ${leftDesc} with ${rightDesc}`);
 }
 
 function bindVar(id: number, type: Type, subst: Substitution): Substitution {
@@ -904,7 +906,7 @@ function bindVar(id: number, type: Type, subst: Substitution): Substitution {
     return subst;
   }
   if (occursInType(id, resolved)) {
-    throw new InferError("Occurs check failed");
+    throw inferError("Occurs check failed");
   }
   const next = new Map(subst);
   next.set(id, resolved);

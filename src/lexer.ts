@@ -1,6 +1,7 @@
 import { Token, keywords, symbols } from "./token.ts";
+import { unexpectedCharError, unterminatedStringError } from "./error.ts";
 
-export function lex(source: string): Token[] {
+export function lex(source: string, sourceName?: string): Token[] {
   const tokens: Token[] = [];
   const length = source.length;
   let index = 0;
@@ -82,7 +83,7 @@ export function lex(source: string): Token[] {
       continue;
     }
 
-    throw new Error(`Unexpected character '${char}' at position ${index}`);
+    throw unexpectedCharError(char, index, source);
   }
 
   tokens.push({ kind: "eof", value: "", start: length, end: length });
@@ -131,7 +132,7 @@ function readStringLiteral(source: string, start: number): { value: string; next
     }
     if (char === "\\") {
       if (index + 1 >= length) {
-        throw new Error("Unterminated string literal");
+        throw unterminatedStringError(start, source);
       }
       const escape = source[index + 1];
       switch (escape) {
@@ -158,11 +159,11 @@ function readStringLiteral(source: string, start: number): { value: string; next
       continue;
     }
     if (char === "\n") {
-      throw new Error("Unterminated string literal");
+      throw unterminatedStringError(start, source);
     }
     value += char;
     index++;
   }
 
-  throw new Error("Unterminated string literal");
+  throw unterminatedStringError(start, source);
 }

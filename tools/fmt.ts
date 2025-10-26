@@ -2,6 +2,7 @@
 
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram, ParseError } from "../src/parser.ts";
+import { LexError, WorkmanError } from "../src/error.ts";
 import type {
   Program,
   Declaration,
@@ -581,9 +582,19 @@ function verifyOnlyWhitespaceChanged(original: string, formatted: string, filePa
 }
 
 async function formatFile(filePath: string, options: FormatOptions): Promise<boolean> {
+  let source: string;
   try {
-    const source = await Deno.readTextFile(filePath);
-    const tokens = lex(source);
+    source = await Deno.readTextFile(filePath);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      console.error(`File not found: ${filePath}`);
+      return false;
+    }
+    throw error;
+  }
+
+  try {
+    const tokens = lex(source, filePath);
     const program = parseSurfaceProgram(tokens, source);
     
     const formatter = new Formatter(options);
@@ -606,11 +617,10 @@ async function formatFile(filePath: string, options: FormatOptions): Promise<boo
       return true;
     }
   } catch (error) {
-    if (error instanceof ParseError) {
-      console.error(`Parse error in ${filePath}: ${error.message}`);
-      return false;
-    } else if (error instanceof Deno.errors.NotFound) {
-      console.error(`File not found: ${filePath}`);
+    if (error instanceof WorkmanError) {
+      // Use the formatted error message with source context
+      const formatted = error.format(source);
+      console.error(`Error formatting ${filePath}:\n${formatted}`);
       return false;
     } else {
       console.error(`Error formatting ${filePath}: ${error}`);

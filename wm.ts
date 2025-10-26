@@ -1,6 +1,7 @@
 import { lex } from "./src/lexer.ts";
 import { ParseError, parseSurfaceProgram } from "./src/parser.ts";
 import { InferError, inferProgram } from "./src/infer.ts";
+import { LexError, WorkmanError } from "./src/error.ts";
 import { formatScheme } from "./src/type_printer.ts";
 import { evaluateProgram } from "./src/eval.ts";
 import { formatRuntimeValue } from "./src/value_printer.ts";
@@ -33,8 +34,8 @@ export interface ValueSummary {
 
 export function runFile(source: string, options: RunOptions = {}): RunResult {
   try {
-    const tokens = lex(source);
-    const program = parseSurfaceProgram(tokens);
+    const tokens = lex(source, options.sourceName);
+    const program = parseSurfaceProgram(tokens, source);
     const inference = inferProgram(program);
     const types = inference.summaries.map((
       entry: { name: string; scheme: TypeScheme },
@@ -64,8 +65,10 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
 
     return { types, values, runtimeLogs };
   } catch (error) {
-    if (error instanceof ParseError || error instanceof InferError) {
-      throw error;
+    if (error instanceof WorkmanError) {
+      // Format the error with source context
+      const formatted = error.format(source);
+      throw new Error(formatted);
     }
     if (error instanceof Error) {
       throw new Error(`Unhandled error: ${error.message}`);

@@ -1,4 +1,5 @@
 import { Token } from "./token.ts";
+import { ParseError, expectedTokenError, unexpectedTokenError } from "./error.ts";
 import type {
   BlockExpr,
   BlockStatement,
@@ -22,12 +23,8 @@ import type {
 } from "./ast.ts";
 import type { Pattern, SourceSpan } from "./ast.ts";
 
-export class ParseError extends Error {
-  constructor(message: string, readonly token: Token) {
-    super(`${message} at position ${token.start}`);
-    this.name = "SurfaceParseError";
-  }
-}
+// Re-export ParseError from error module
+export { ParseError } from "./error.ts";
 
 export function parseSurfaceProgram(tokens: Token[], source?: string): Program {
   const parser = new SurfaceParser(tokens, source);
@@ -961,7 +958,7 @@ class SurfaceParser {
   private expectKeyword(value: string): Token {
     const token = this.consume();
     if (token.kind !== "keyword" || token.value !== value) {
-      throw this.error(`Expected keyword '${value}'`, token);
+      throw expectedTokenError(`keyword '${value}'`, token, this.source);
     }
     return token;
   }
@@ -969,7 +966,7 @@ class SurfaceParser {
   private expectIdentifier(): Token {
     const token = this.consume();
     if (token.kind !== "identifier") {
-      throw this.error("Expected identifier", token);
+      throw expectedTokenError("identifier", token, this.source);
     }
     return token;
   }
@@ -979,13 +976,13 @@ class SurfaceParser {
     if (token.kind === "identifier" || token.kind === "constructor") {
       return token;
     }
-    throw this.error("Expected type name", token);
+    throw expectedTokenError("type name", token, this.source);
   }
 
   private expectSymbol(value: string): Token {
     const token = this.consume();
     if (token.kind !== "symbol" || token.value !== value) {
-      throw this.error(`Expected symbol '${value}'`, token);
+      throw expectedTokenError(`symbol '${value}'`, token, this.source);
     }
     return token;
   }
@@ -1038,7 +1035,7 @@ class SurfaceParser {
   }
 
   private error(message: string, token: Token = this.peek()): ParseError {
-    return new ParseError(message, token);
+    return unexpectedTokenError(message, token, this.source);
   }
 
   private collectLeadingComments(): import("./ast.ts").CommentBlock[] {

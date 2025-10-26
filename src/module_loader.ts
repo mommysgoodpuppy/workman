@@ -1,6 +1,7 @@
 import { dirname, extname, isAbsolute, join, resolve } from "std/path/mod.ts";
 import { lex } from "./lexer.ts";
 import { parseSurfaceProgram, ParseError } from "./parser.ts";
+import { ModuleError, LexError } from "./error.ts";
 import type {
   ImportSpecifier,
   ModuleImport,
@@ -88,11 +89,12 @@ interface ModuleSummary {
   letValueOrder: string[];
 }
 
-export class ModuleLoaderError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ModuleLoaderError";
-  }
+// Re-export ModuleError as ModuleLoaderError for backwards compatibility
+export { ModuleError as ModuleLoaderError } from "./error.ts";
+
+// Helper to create module errors
+function moduleError(message: string, modulePath?: string): ModuleError {
+  return new ModuleError(message, modulePath);
 }
 
 function isStdCoreModule(path: string): boolean {
@@ -142,12 +144,12 @@ function applyReexports(
   for (const typeExport of record.typeExports) {
     const providedType = provider.exports.types.get(typeExport.name);
     if (!providedType) {
-      throw new ModuleLoaderError(
+      throw moduleError(
         `Module '${record.importerPath}' re-exports type '${typeExport.name}' from '${record.rawSource}' which does not export it`,
       );
     }
     if (exportedTypes.has(typeExport.name)) {
-      throw new ModuleLoaderError(`Duplicate export '${typeExport.name}' in '${record.importerPath}'`);
+      throw moduleError(`Duplicate export '${typeExport.name}' in '${record.importerPath}'`);
     }
     const clonedInfo = cloneTypeInfo(providedType);
     exportedTypes.set(typeExport.name, clonedInfo);
@@ -155,17 +157,17 @@ function applyReexports(
       for (const ctor of clonedInfo.constructors) {
         const providedScheme = provider.exports.values.get(ctor.name);
         if (!providedScheme) {
-          throw new ModuleLoaderError(
+          throw moduleError(
             `Module '${record.importerPath}' re-exports constructors for type '${typeExport.name}' but constructor '${ctor.name}' is missing in provider`,
           );
         }
         if (exportedValues.has(ctor.name)) {
-          throw new ModuleLoaderError(`Duplicate export '${ctor.name}' in '${record.importerPath}'`);
+          throw moduleError(`Duplicate export '${ctor.name}' in '${record.importerPath}'`);
         }
         exportedValues.set(ctor.name, cloneTypeScheme(providedScheme));
         const runtimeValue = provider.runtime.get(ctor.name);
         if (!runtimeValue) {
-          throw new ModuleLoaderError(
+          throw moduleError(
             `Module '${record.importerPath}' re-exports constructor '${ctor.name}' from '${record.rawSource}' but runtime value is missing in provider`,
           );
         }
@@ -189,7 +191,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
   for (const path of graph.order) {
     const node = graph.nodes.get(path);
     if (!node) {
-      throw new ModuleLoaderError(`Internal error: missing node for '${path}'`);
+      throw moduleError(`Internal error: missing node for '${path}'`);
     }
 
     const initialEnv = new Map<string, TypeScheme>();
@@ -200,7 +202,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
     for (const record of node.imports) {
       const provider = moduleSummaries.get(record.sourcePath);
       if (!provider) {
-        throw new ModuleLoaderError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
+        throw moduleError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
       }
       applyImports(record, provider, initialEnv, initialAdtEnv, initialBindings);
     }
@@ -232,7 +234,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
       });
     } catch (error) {
       if (error instanceof InferError) {
-        throw new ModuleLoaderError(`Type error in '${path}': ${error.message}`);
+        throw moduleError(`Type error in '${path}': ${error.message}`);
       }
       throw error;
     }
@@ -241,7 +243,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
     const letSchemeOrder: string[] = [];
     for (const { name, scheme } of inference.summaries) {
       if (letSchemes.has(name)) {
-        throw new ModuleLoaderError(`Duplicate let binding '${name}' inferred in '${path}'`);
+        throw moduleError(`Duplicate let binding '${name}' inferred in '${path}'`);
       }
       letSchemes.set(name, cloneTypeScheme(scheme));
       letSchemeOrder.push(name);
@@ -254,7 +256,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
     for (const record of node.reexports) {
       const provider = moduleSummaries.get(record.sourcePath);
       if (!provider) {
-        throw new ModuleLoaderError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
+        throw moduleError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
       }
       applyReexports(record, provider, exportedValues, exportedTypes, reexportedRuntime);
     }
@@ -262,10 +264,10 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
     for (const name of node.exportedValueNames) {
       const scheme = letSchemes.get(name) ?? inference.env.get(name);
       if (!scheme) {
-        throw new ModuleLoaderError(`Exported let '${name}' was not inferred in '${path}'`);
+        throw moduleError(`Exported let '${name}' was not inferred in '${path}'`);
       }
       if (exportedValues.has(name)) {
-        throw new ModuleLoaderError(`Duplicate export '${name}' in '${path}'`);
+        throw moduleError(`Duplicate export '${name}' in '${path}'`);
       }
       exportedValues.set(name, cloneTypeScheme(scheme));
     }
@@ -273,20 +275,20 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
     for (const typeName of node.exportedTypeNames) {
       const info = inference.adtEnv.get(typeName);
       if (!info) {
-        throw new ModuleLoaderError(`Exported type '${typeName}' was not defined in '${path}'`);
+        throw moduleError(`Exported type '${typeName}' was not defined in '${path}'`);
       }
       if (exportedTypes.has(typeName)) {
-        throw new ModuleLoaderError(`Duplicate export '${typeName}' in '${path}'`);
+        throw moduleError(`Duplicate export '${typeName}' in '${path}'`);
       }
       const clonedInfo = cloneTypeInfo(info);
       exportedTypes.set(typeName, clonedInfo);
       for (const ctor of clonedInfo.constructors) {
         const scheme = inference.env.get(ctor.name);
         if (!scheme) {
-          throw new ModuleLoaderError(`Constructor '${ctor.name}' for type '${typeName}' missing in '${path}'`);
+          throw moduleError(`Constructor '${ctor.name}' for type '${typeName}' missing in '${path}'`);
         }
         if (exportedValues.has(ctor.name)) {
-          throw new ModuleLoaderError(`Duplicate export '${ctor.name}' in '${path}'`);
+          throw moduleError(`Duplicate export '${ctor.name}' in '${path}'`);
         }
         exportedValues.set(ctor.name, cloneTypeScheme(scheme));
       }
@@ -341,12 +343,12 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
   const entryNode = graph.nodes.get(graph.entry);
   const entrySummary = moduleSummaries.get(graph.entry);
   if (!entryNode || !entrySummary) {
-    throw new ModuleLoaderError(`Internal error: failed to load entry module '${graph.entry}'`);
+    throw moduleError(`Internal error: failed to load entry module '${graph.entry}'`);
   }
   const types = entrySummary.letSchemeOrder.map((name) => {
     const scheme = entrySummary.letSchemes.get(name);
     if (!scheme) {
-      throw new ModuleLoaderError(`Missing type information for '${name}' in '${graph.entry}'`);
+      throw moduleError(`Missing type information for '${name}' in '${graph.entry}'`);
     }
     return { name, type: formatScheme(scheme) };
   });
@@ -354,7 +356,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
   const values = entrySummary.letValueOrder.map((name) => {
     const value = entrySummary.letRuntime.get(name);
     if (!value) {
-      throw new ModuleLoaderError(`Missing runtime value for '${name}' in '${graph.entry}'`);
+      throw moduleError(`Missing runtime value for '${name}' in '${graph.entry}'`);
     }
     return { name, value: formatRuntimeValue(value) };
   });
@@ -379,7 +381,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
   const state = ctx.visitState.get(path);
   if (state === "visiting") {
     const cycle = [...ctx.stack, path];
-    throw new ModuleLoaderError(`Circular import detected: ${cycle.join(" -> ")}`);
+    throw moduleError(`Circular import detected: ${cycle.join(" -> ")}`);
   }
   if (state === "visited") {
     return;
@@ -427,17 +429,18 @@ async function loadProgram(path: string, ctx: LoaderContext): Promise<Program> {
     source = await Deno.readTextFile(path);
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
-      throw new ModuleLoaderError(`Module not found: '${path}'`);
+      throw moduleError(`Module not found: '${path}'`);
     }
-    throw new ModuleLoaderError(`Failed to read '${path}': ${error instanceof Error ? error.message : String(error)}`);
+    throw moduleError(`Failed to read '${path}': ${error instanceof Error ? error.message : String(error)}`);
   }
   let program: Program;
   try {
-    const tokens = lex(source);
-    program = parseSurfaceProgram(tokens);
+    const tokens = lex(source, path);
+    program = parseSurfaceProgram(tokens, source);
   } catch (error) {
-    if (error instanceof ParseError) {
-      throw new ModuleLoaderError(`Parse error in '${path}': ${error.message}`);
+    if (error instanceof ParseError || error instanceof LexError) {
+      const formatted = error.format(source);
+      throw moduleError(`${formatted}`, path);
     }
     throw error;
   }
@@ -463,7 +466,7 @@ function resolveImports(path: string, imports: ModuleImport[], ctx: LoaderContex
 
 function parseImportSpecifier(specifier: ImportSpecifier, path: string): NamedImportRecord {
   if (specifier.kind === "namespace") {
-    throw new ModuleLoaderError(`Namespace imports are not supported in Stage M1 (${path})`);
+    throw moduleError(`Namespace imports are not supported in Stage M1 (${path})`);
   }
   return {
     imported: specifier.imported,
@@ -483,7 +486,7 @@ function collectExports(program: Program, path: string): { values: string[]; typ
       forEachLetBinding(decl, (binding) => {
         if (binding.export) {
           if (valueSet.has(binding.name)) {
-            throw new ModuleLoaderError(`Duplicate export '${binding.name}' in '${path}'`);
+            throw moduleError(`Duplicate export '${binding.name}' in '${path}'`);
           }
           valueSet.add(binding.name);
           valueNames.push(binding.name);
@@ -492,7 +495,7 @@ function collectExports(program: Program, path: string): { values: string[]; typ
     }
     if (decl.kind === "type" && decl.export) {
       if (typeSet.has(decl.name)) {
-        throw new ModuleLoaderError(`Duplicate export '${decl.name}' in '${path}'`);
+        throw moduleError(`Duplicate export '${decl.name}' in '${path}'`);
       }
       typeSet.add(decl.name);
       typeNames.push(decl.name);
@@ -547,10 +550,10 @@ function resolveModuleSpecifier(importerPath: string, specifier: string, options
         return candidate;
       }
     }
-    throw new ModuleLoaderError(`Module not found in std roots: '${specifier}' imported by '${importerPath}'`);
+    throw moduleError(`Module not found in std roots: '${specifier}' imported by '${importerPath}'`);
   }
 
-  throw new ModuleLoaderError(`Unsupported module specifier '${specifier}' in '${importerPath}'`);
+  throw moduleError(`Unsupported module specifier '${specifier}' in '${importerPath}'`);
 }
 
 function ensureWmExtension(path: string): string {
@@ -583,21 +586,21 @@ function applyImports(
     const valueExport = provider.exports.values.get(spec.imported);
     const typeExport = provider.exports.types.get(spec.imported);
     if (!valueExport && !typeExport) {
-      throw new ModuleLoaderError(
+      throw moduleError(
         `Module '${record.sourcePath}' does not export '${spec.imported}' (imported by '${record.importerPath}')`,
       );
     }
 
     if (valueExport) {
       if (targetEnv.has(spec.local)) {
-        throw new ModuleLoaderError(
+        throw moduleError(
           `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
         );
       }
       targetEnv.set(spec.local, cloneTypeScheme(valueExport));
       const runtimeValue = provider.runtime.get(spec.imported);
       if (!runtimeValue) {
-        throw new ModuleLoaderError(
+        throw moduleError(
           `Missing runtime value for export '${spec.imported}' from '${record.sourcePath}'`,
         );
       }
@@ -606,12 +609,12 @@ function applyImports(
 
     if (typeExport) {
       if (spec.local !== spec.imported) {
-        throw new ModuleLoaderError(
+        throw moduleError(
           `Type import aliasing is not supported in Stage M1 (imported '${spec.imported}' as '${spec.local}')`,
         );
       }
       if (targetAdtEnv.has(spec.imported)) {
-        throw new ModuleLoaderError(
+        throw moduleError(
           `Duplicate imported type '${spec.imported}' in module '${record.importerPath}'`,
         );
       }
