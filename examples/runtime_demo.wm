@@ -9,28 +9,28 @@ let rec factorial = (n) => {
 
 let rec countdown = (n) => {
   match(n) {
-    0 => { Cons(0, Nil) },
-    _ => { Cons(n, countdown(sub(n, 1))) }
+    0 => { Link(0, Empty) },
+    _ => { Link(n, countdown(sub(n, 1))) }
   }
 };
 
 let rec sumList = (list) => {
   match(list) {
-    Nil => { 0 },
-    Cons(x, rest) => { add(x, sumList(rest)) }
+    Empty => { 0 },
+    Link(x, rest) => { add(x, sumList(rest)) }
   }
 };
 
 let rec mapFactorial = (list) => {
   match(list) {
-    Nil => { Nil },
-    Cons(x, rest) => { Cons(factorial(x), mapFactorial(rest)) }
+    Empty => { Empty },
+    Link(x, rest) => { Link(factorial(x), mapFactorial(rest)) }
   }
 };
 
 let describeList = match(list) {
-  Nil => { Empty },
-  Cons(_, _) => { NonEmpty }
+  Empty => { Empty },
+  Link(_, _) => { NonEmpty }
 };
 
 let buildDemo = (numbers) => {

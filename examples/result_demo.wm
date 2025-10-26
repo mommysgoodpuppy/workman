@@ -3,13 +3,13 @@ type IoError = Timeout | Disconnected;
 
 -- Ensure sensor feeds always have at least one reading.
 let ensureRecent = match(readings) {
-  Cons(first, rest) => { Ok(Cons(first, rest)) },
-  Nil => { Err(Timeout) }
+  Link(first, rest) => { Ok(Link(first, rest)) },
+  Empty => { Err(Timeout) }
 };
 
 -- Inspect connectivity and propagate detailed errors.
 let connect = match(status) {
-  true => { Ok(Cons(0, Nil)) },
+  true => { Ok(Link(0, Empty)) },
   false => { Err(Disconnected) }
 };
 
@@ -28,7 +28,7 @@ let loadSnapshot = (status) => {
       bindResult((
         ensureRecent(readings),
         (latest) => {
-        Ok(Cons(0, latest))
+        Ok(Link(0, latest))
       }
       ))
     }
@@ -38,20 +38,20 @@ let loadSnapshot = (status) => {
 
 -- Recursive function to sum all readings in a Result.
 let rec sumReadings = match(result) {
-  Ok(Cons(x, rest)) => {
+  Ok(Link(x, rest)) => {
     match(sumReadings(Ok(rest))) {
       Ok(sum) => { Ok(0) },
       Err(e) => { Err(e) }
     }
   },
-  Ok(Nil) => { Ok(0) },
+  Ok(Empty) => { Ok(0) },
   Err(e) => { Err(e) }
 };
 
 -- Example inputs drive inference toward Result<List<Int>, IoError>.
 let healthyFeed = () => {
-  loadSnapshot(true)(Cons(7, Cons(4, Nil)))
+  loadSnapshot(true)(Link(7, Link(4, Empty)))
 };
 let offlineFeed = () => {
-  loadSnapshot(false)(Nil)
+  loadSnapshot(false)(Empty)
 };

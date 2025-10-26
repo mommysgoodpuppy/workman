@@ -1,31 +1,31 @@
 let rec length = match(list) {
-  Nil => { 0 },
-  Cons(_, rest) => { add(1, length(rest)) }
+  Empty => { 0 },
+  Link(_, rest) => { add(1, length(rest)) }
 };
 
 let rec map = match(tuple) {
-  (f, Nil) => { Nil },
-  (f, Cons(x, rest)) => { Cons(f(x), map((f, rest))) }
+  (f, Empty) => { Empty },
+  (f, Link(x, rest)) => { Link(f(x), map((f, rest))) }
 };
 
 let rec fold = match(tuple) {
-  (f, acc, Nil) => { acc },
-  (f, acc, Cons(x, rest)) => { fold((f, f((acc, x)), rest)) }
+  (f, acc, Empty) => { acc },
+  (f, acc, Link(x, rest)) => { fold((f, f((acc, x)), rest)) }
 };
 
 let rec insertBy = match(tuple) {
-  (cmp, value, Nil) => { Cons(value, Nil) },
-  (cmp, value, Cons(x, rest)) => {
+  (cmp, value, Empty) => { Link(value, Empty) },
+  (cmp, value, Link(x, rest)) => {
     match(cmp(value, x)) {
-      GT => { Cons(x, insertBy((cmp, value, rest))) },
-      _ => { Cons(value, Cons(x, rest)) }
+      GT => { Link(x, insertBy((cmp, value, rest))) },
+      _ => { Link(value, Link(x, rest)) }
     }
   }
 };
 
 let rec insertionSortBy = match(tuple) {
-  (cmp, Nil) => { Nil },
-  (cmp, Cons(x, rest)) => { insertBy((cmp, x, insertionSortBy((cmp, rest)))) }
+  (cmp, Empty) => { Empty },
+  (cmp, Link(x, rest)) => { insertBy((cmp, x, insertionSortBy((cmp, rest)))) }
 };
 
 let sortInt = (list) => {
@@ -35,13 +35,13 @@ let sortInt = (list) => {
 let rec range = match(tuple) {
   (start, finish) => {
     match(cmpInt(start, finish)) {
-      GT => { Nil },
-      _ => { Cons(start, range((add(start, 1), finish))) }
+      GT => { Empty },
+      _ => { Link(start, range((add(start, 1), finish))) }
     }
   }
 };
 
-let shuffled = Cons(3, Cons(1, Cons(4, Cons(1, Cons(5, Cons(9, Nil))))));
+let shuffled = Link(3, Link(1, Link(4, Link(1, Link(5, Link(9, Empty))))));
 let sorted = sortInt(shuffled);
 
 let demo = {

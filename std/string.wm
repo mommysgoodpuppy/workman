@@ -19,37 +19,37 @@ export let charLowerZ = () => { 122 };
 
 -- Get the length of a string (just list length)
 export let rec strLength = match(s) {
-  Nil => { 0 },
-  Cons(_, rest) => { add(1, strLength(rest)) }
+  Empty => { 0 },
+  Link(_, rest) => { add(1, strLength(rest)) }
 };
 
 -- Check if string is empty
 export let strIsEmpty = (s) => {
   match(s) {
-    Nil => { true },
+    Empty => { true },
     _ => { false }
   }
 };
 
 -- Get character at index (returns Option<Int>)
 export let rec strCharAt = match(tuple) {
-  (Nil, _) => { None },
-  (Cons(c, _), 0) => { Some(c) },
-  (Cons(_, rest), n) => { strCharAt((rest, sub(n, 1))) }
+  (Empty, _) => { None },
+  (Link(c, _), 0) => { Some(c) },
+  (Link(_, rest), n) => { strCharAt((rest, sub(n, 1))) }
 };
 
 -- Take first n characters
 export let rec strTake = match(tuple) {
-  (_, 0) => { Nil },
-  (Nil, _) => { Nil },
-  (Cons(c, rest), n) => { Cons(c, strTake((rest, sub(n, 1)))) }
+  (_, 0) => { Empty },
+  (Empty, _) => { Empty },
+  (Link(c, rest), n) => { Link(c, strTake((rest, sub(n, 1)))) }
 };
 
 -- Drop first n characters
 export let rec strDrop = match(tuple) {
   (s, 0) => { s },
-  (Nil, _) => { Nil },
-  (Cons(_, rest), n) => { strDrop((rest, sub(n, 1))) }
+  (Empty, _) => { Empty },
+  (Link(_, rest), n) => { strDrop((rest, sub(n, 1))) }
 };
 
 -- Substring from start (inclusive) to end (exclusive)
@@ -61,8 +61,8 @@ export let strSlice = (s, start, end) => {
 
 -- Concatenate two strings
 export let rec strConcat = match(tuple) {
-  (Nil, s2) => { s2 },
-  (Cons(c, rest), s2) => { Cons(c, strConcat((rest, s2))) }
+  (Empty, s2) => { s2 },
+  (Link(c, rest), s2) => { Link(c, strConcat((rest, s2))) }
 };
 
 -- Check if character is a digit (0-9)
@@ -161,10 +161,10 @@ export let isWhitespace = (c) => {
 
 -- String equality
 export let rec strEq = match(tuple) {
-  (Nil, Nil) => { true },
-  (Nil, _) => { false },
-  (_, Nil) => { false },
-  (Cons(c1, rest1), Cons(c2, rest2)) => {
+  (Empty, Empty) => { true },
+  (Empty, _) => { false },
+  (_, Empty) => { false },
+  (Link(c1, rest1), Link(c2, rest2)) => {
     match(eq(c1, c2)) {
       false => { false },
       true => { strEq((rest1, rest2)) }

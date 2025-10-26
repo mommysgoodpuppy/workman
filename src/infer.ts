@@ -11,6 +11,7 @@ import {
   Pattern,
   PrefixDeclaration,
   Program,
+  SourceSpan,
   TypeDeclaration,
   TypeExpr,
 } from "./ast.ts";

@@ -3,8 +3,8 @@ type Order = Order<Int, Int>; -- order id, quantity
 
 -- Retrieve the most recent stock quantity if we have any entries.
 let latestStockLevel = match(list) {
-  Cons(stock, _) => { Some(stock) },
-  Nil => { None }
+  Link(stock, _) => { Some(stock) },
+  Empty => { None }
 };
 
 -- Extract the quantity from an order using pattern matching.

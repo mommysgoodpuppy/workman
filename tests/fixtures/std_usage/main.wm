@@ -12,5 +12,5 @@ export let sumSquares = () => {
   listFoldl((addPair, 0, squares))
 };
 export let sortedDemo = () => {
-  listSortInt(Cons(3, Cons(1, Cons(2, Nil))))
+  listSortInt(Link(3, Link(1, Link(2, Empty))))
 };

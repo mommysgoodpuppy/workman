@@ -18,6 +18,6 @@ and isOdd = match(n) {
 
 -- Recursive list processing
 let rec listLength = match(list) {
-  Cons(_, rest) => { listLength(rest) },
-  Nil => { 0 }
+  Link(_, rest) => { listLength(rest) },
+  Empty => { 0 }
 };

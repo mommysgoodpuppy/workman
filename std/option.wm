@@ -1,5 +1,5 @@
 from "std/option/core" import { Option, Some, None };
-from "std/list/core" import { Nil, Cons };
+from "std/list/core" import { Empty, Link };
 export from "std/option/core" type Option(..);
 
 export let map = match(tuple) {
@@ -32,6 +32,6 @@ export let fromBool = match(tuple) {
 };
 
 export let toList = match(option) {
-  Some(value) => { Cons(value, Nil) },
-  None => { Nil }
+  Some(value) => { Link(value, Empty) },
+  None => { Empty }
 };

@@ -1,1 +1,1 @@
-export type List<T> = Nil | Cons<T, List<T>>;
+export type List<T> = Empty | Link<T, List<T>>;

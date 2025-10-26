@@ -1,71 +1,71 @@
-from "std/list/core" import { List, Nil, Cons };
+from "std/list/core" import { List, Empty, Link };
 from "std/core/int" import { intAdd, intCompare };
 
 export let rec listLength = match(list) {
-  Nil => { 0 },
-  Cons(_, rest) => { intAdd(1, listLength(rest)) }
+  Empty => { 0 },
+  Link(_, rest) => { intAdd(1, listLength(rest)) }
 };
 
 export let rec listAppend = match(tuple) {
-  (Nil, ys) => { ys },
-  (Cons(x, rest), ys) => { Cons(x, listAppend((rest, ys))) }
+  (Empty, ys) => { ys },
+  (Link(x, rest), ys) => { Link(x, listAppend((rest, ys))) }
 };
 
 export let rec listMap = match(tuple) {
-  (f, Nil) => { Nil },
-  (f, Cons(x, rest)) => { Cons(f(x), listMap((f, rest))) }
+  (f, Empty) => { Empty },
+  (f, Link(x, rest)) => { Link(f(x), listMap((f, rest))) }
 };
 
 export let rec listFilter = match(tuple) {
-  (predicate, Nil) => { Nil },
-  (predicate, Cons(x, rest)) => {
+  (predicate, Empty) => { Empty },
+  (predicate, Link(x, rest)) => {
     match(predicate(x)) {
-      true => { Cons(x, listFilter((predicate, rest))) },
+      true => { Link(x, listFilter((predicate, rest))) },
       false => { listFilter((predicate, rest)) }
     }
   }
 };
 
 export let rec listFoldl = match(tuple) {
-  (f, acc, Nil) => { acc },
-  (f, acc, Cons(x, rest)) => { listFoldl((f, f((acc, x)), rest)) }
+  (f, acc, Empty) => { acc },
+  (f, acc, Link(x, rest)) => { listFoldl((f, f((acc, x)), rest)) }
 };
 
 export let rec listFoldr = match(tuple) {
-  (f, acc, Nil) => { acc },
-  (f, acc, Cons(x, rest)) => { f((x, listFoldr((f, acc, rest)))) }
+  (f, acc, Empty) => { acc },
+  (f, acc, Link(x, rest)) => { f((x, listFoldr((f, acc, rest)))) }
 };
 
 export let listReverse = (list) => {
   let rec reverseAcc = match(tuple) {
-    (Nil, acc) => { acc },
-    (Cons(x, rest), acc) => { reverseAcc((rest, Cons(x, acc))) }
+    (Empty, acc) => { acc },
+    (Link(x, rest), acc) => { reverseAcc((rest, Link(x, acc))) }
   };
-  reverseAcc((list, Nil))
+  reverseAcc((list, Empty))
 };
 
 export let rec listRange = match(tuple) {
   (start, finish) => {
     match(intCompare(start, finish)) {
-      GT => { Nil },
-      _ => { Cons(start, listRange((intAdd(start, 1), finish))) }
+      GT => { Empty },
+      _ => { Link(start, listRange((intAdd(start, 1), finish))) }
     }
   }
 };
 
 export let rec listInsertBy = match(tuple) {
-  (cmp, value, Nil) => { Cons(value, Nil) },
-  (cmp, value, Cons(x, rest)) => {
+  (cmp, value, Empty) => { Link(value, Empty) },
+  (cmp, value, Link(x, rest)) => {
     match(cmp(value, x)) {
-      GT => { Cons(x, listInsertBy((cmp, value, rest))) },
-      _ => { Cons(value, Cons(x, rest)) }
+      GT => { Link(x, listInsertBy((cmp, value, rest))) },
+      _ => { Link(value, Link(x, rest)) }
     }
   }
 };
 
 export let rec listInsertionSortBy = match(tuple) {
-  (cmp, Nil) => { Nil },
-  (cmp, Cons(x, rest)) => { listInsertBy((cmp, x, listInsertionSortBy((cmp, rest)))) }
+  (cmp, Empty) => { Empty },
+  (cmp, Link(x, rest)) => { listInsertBy((cmp, x, listInsertionSortBy((cmp, rest)))) }
 };
 
 export let listSortInt = (list) => {

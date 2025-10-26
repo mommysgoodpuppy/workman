@@ -2,13 +2,13 @@
 
 -- Build a list of known user ids.
 let sampleIds = () => {
-  Cons(1, Cons(42, Nil))
+  Link(1, Link(42, Empty))
 };
 
 -- Extract the first user id if it exists.
 let firstUserId = match(list) {
-  Cons(id, _) => { Some(id) },
-  Nil => { None }
+  Link(id, _) => { Some(id) },
+  Empty => { None }
 };
 
 -- Choose a fallback user id when none is present.

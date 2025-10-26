@@ -70,5 +70,5 @@ Deno.test({
   assertEquals(typeMap.get("sumSquares"), "Int");
   assertEquals(typeMap.get("sortedDemo"), "List<Int>");
   assertEquals(valueMap.get("sumSquares"), "55");
-  assertEquals(valueMap.get("sortedDemo"), "Cons 1 Cons 2 Cons 3 Nil");
+  assertEquals(valueMap.get("sortedDemo"), "Link 1 Link 2 Link 3 Empty");
 });

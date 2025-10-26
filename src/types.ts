@@ -212,6 +212,8 @@ export function cloneType(type: Type): Type {
       return { kind: "int" };
     case "bool":
       return { kind: "bool" };
+    case "char":
+      return { kind: "char" };
     case "string":
       return { kind: "string" };
     default: {

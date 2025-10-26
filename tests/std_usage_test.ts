@@ -27,8 +27,8 @@ Deno.test({
   assertEquals(types.get("sortedDemo"), "List<Int>");
 
   assertEquals(values.get("sumSquares"), "55");
-  assertEquals(values.get("reversedRange"), "Cons 4 Cons 3 Cons 2 Cons 1 Nil");
-  assertEquals(values.get("sortedDemo"), "Cons 1 Cons 2 Cons 3 Nil");
+  assertEquals(values.get("reversedRange"), "Link 4 Link 3 Link 2 Link 1 Empty");
+  assertEquals(values.get("sortedDemo"), "Link 1 Link 2 Link 3 Empty");
 });
 
 Deno.test({
@@ -45,13 +45,13 @@ Deno.test({
   assertEquals(values.get("boolExample"), "Some 9");
 
   assertEquals(types.get("listExample"), "List<Int>");
-  assertEquals(values.get("listExample"), "Cons 7 Nil");
+  assertEquals(values.get("listExample"), "Link 7 Empty");
   assertEquals(types.get("nestedPipeline"), "Int");
   assertEquals(values.get("nestedPipeline"), "7");
   assertEquals(types.get("lazyFallback"), "Option<Int>");
   assertEquals(values.get("lazyFallback"), "Some 8");
   assertEquals(types.get("noneToList"), "List<Int>");
-  assertEquals(values.get("noneToList"), "Nil");
+  assertEquals(values.get("noneToList"), "Empty");
 });
 
 Deno.test({
