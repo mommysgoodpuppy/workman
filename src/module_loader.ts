@@ -1,6 +1,6 @@
 import { dirname, extname, isAbsolute, join, resolve } from "std/path/mod.ts";
 import { lex } from "./lexer.ts";
-import { parseSurfaceProgram, ParseError } from "./parser.ts";
+import { parseSurfaceProgram, ParseError, type OperatorInfo } from "./parser.ts";
 import { ModuleError, LexError } from "./error.ts";
 import type {
   ImportSpecifier,
@@ -38,6 +38,8 @@ export interface ModuleNode {
   reexports: ModuleReexportRecord[];
   exportedValueNames: string[];
   exportedTypeNames: string[];
+  exportedOperators: Map<string, OperatorInfo>;
+  exportedPrefixOperators: Set<string>;
 }
 
 export interface ModuleImportRecord {
@@ -75,12 +77,14 @@ interface LoaderContext {
   stack: string[];
   nodes: Map<string, ModuleNode>;
   order: string[];
+  preludePath?: string;
 }
 
 interface ModuleSummary {
   exports: {
     values: Map<string, TypeScheme>;
     types: Map<string, TypeInfo>;
+    operators: Map<string, OperatorInfo>;
   };
   runtime: Map<string, RuntimeValue>;
   letSchemes: Map<string, TypeScheme>;
@@ -110,6 +114,12 @@ function isStdCoreModule(path: string): boolean {
 export async function loadModuleGraph(entryPath: string, options: ModuleLoaderOptions = {}): Promise<ModuleGraph> {
   const normalizedEntry = resolveEntryPath(entryPath);
   const normalizedOptions = normalizeOptions(options);
+  
+  let preludePath: string | undefined;
+  if (normalizedOptions.preludeModule) {
+    preludePath = resolveModuleSpecifier(normalizedEntry, normalizedOptions.preludeModule, normalizedOptions);
+  }
+  
   const ctx: LoaderContext = {
     options: normalizedOptions,
     programCache: new Map(),
@@ -117,11 +127,10 @@ export async function loadModuleGraph(entryPath: string, options: ModuleLoaderOp
     stack: [],
     nodes: new Map(),
     order: [],
+    preludePath,
   };
 
-  let preludePath: string | undefined;
-  if (normalizedOptions.preludeModule) {
-    preludePath = resolveModuleSpecifier(normalizedEntry, normalizedOptions.preludeModule, normalizedOptions);
+  if (preludePath) {
     await visitModule(preludePath, ctx);
   }
 
@@ -221,6 +230,35 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
       for (const [name, value] of preludeSummary.runtime.entries()) {
         if (!initialBindings.has(name)) {
           initialBindings.set(name, value);
+        }
+      }
+      
+      // Register operator implementation functions
+      const preludeNode = graph.nodes.get(preludePath!);
+      if (preludeNode) {
+        for (const decl of preludeNode.program.declarations) {
+          if (decl.kind === "infix") {
+            const opFuncName = `__op_${decl.operator}`;
+            const implScheme = preludeSummary.exports.values.get(decl.implementation);
+            if (implScheme && !initialEnv.has(opFuncName)) {
+              initialEnv.set(opFuncName, cloneTypeScheme(implScheme));
+            }
+            const implValue = preludeSummary.runtime.get(decl.implementation);
+            if (implValue && !initialBindings.has(opFuncName)) {
+              initialBindings.set(opFuncName, implValue);
+            }
+          }
+          if (decl.kind === "prefix") {
+            const opFuncName = `__prefix_${decl.operator}`;
+            const implScheme = preludeSummary.exports.values.get(decl.implementation);
+            if (implScheme && !initialEnv.has(opFuncName)) {
+              initialEnv.set(opFuncName, cloneTypeScheme(implScheme));
+            }
+            const implValue = preludeSummary.runtime.get(decl.implementation);
+            if (implValue && !initialBindings.has(opFuncName)) {
+              initialBindings.set(opFuncName, implValue);
+            }
+          }
         }
       }
     }
@@ -327,6 +365,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
       exports: {
         values: exportedValues,
         types: exportedTypes,
+        operators: node.exportedOperators,
       },
       runtime: runtimeExports,
       letSchemes,
@@ -390,27 +429,104 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
   ctx.visitState.set(path, "visiting");
   ctx.stack.push(path);
   try {
-    const program = await loadProgram(path, ctx);
-    const exports = collectExports(program, path);
-    const imports = resolveImports(path, program.imports, ctx);
-    const reexports = collectReexports(program.reexports, path, ctx.options);
+    // First pass: try to parse without operators to discover imports
+    // If this fails due to unknown operators, we'll retry after collecting them
+    let program: Program | null = null;
+    let imports: ModuleImportRecord[] = [];
+    let reexports: ModuleReexportRecord[] = [];
+    
+    try {
+      program = await loadProgram(path, ctx);
+      imports = resolveImports(path, program.imports, ctx);
+      reexports = collectReexports(program.reexports, path, ctx.options);
+    } catch (error) {
+      // If parse failed, we'll need to parse with operators later
+      // For now, just continue - we can't discover imports without parsing
+      if (error instanceof ModuleError && error.message.includes("Parse Error")) {
+        // Parse failed, likely due to operators - we'll handle this after visiting dependencies
+        program = null;
+      } else {
+        throw error;
+      }
+    }
+
+    // If we couldn't parse, we need to visit prelude/dependencies first
+    // For now, assume standard dependencies
+    if (!program) {
+      // Visit prelude if available
+      if (ctx.preludePath && path !== ctx.preludePath && !isStdCoreModule(path)) {
+        if (!ctx.nodes.has(ctx.preludePath)) {
+          await visitModule(ctx.preludePath, ctx);
+        }
+      }
+    } else {
+      // Visit dependencies discovered from first parse
+      for (const record of imports) {
+        await visitModule(record.sourcePath, ctx);
+      }
+
+      for (const record of reexports) {
+        await visitModule(record.sourcePath, ctx);
+      }
+    }
+
+    // Collect operators from dependencies
+    const availableOperators = new Map<string, OperatorInfo>();
+    const availablePrefixOperators = new Set<string>();
+    
+    // Include prelude operators if this isn't the prelude or a std core module
+    const skipPrelude = isStdCoreModule(path);
+    if (ctx.preludePath && path !== ctx.preludePath && !skipPrelude) {
+      const preludeNode = ctx.nodes.get(ctx.preludePath);
+      if (preludeNode) {
+        for (const [op, info] of preludeNode.exportedOperators) {
+          availableOperators.set(op, info);
+        }
+        for (const op of preludeNode.exportedPrefixOperators) {
+          availablePrefixOperators.add(op);
+        }
+      }
+    }
+    
+    // Include operators from explicit imports (if we had a successful first parse)
+    if (program) {
+      for (const record of imports) {
+        const depNode = ctx.nodes.get(record.sourcePath);
+        if (depNode) {
+          for (const [op, info] of depNode.exportedOperators) {
+            availableOperators.set(op, info);
+          }
+          for (const op of depNode.exportedPrefixOperators) {
+            availablePrefixOperators.add(op);
+          }
+        }
+      }
+    }
+
+    // Parse or reparse with operators
+    let finalProgram: Program;
+    if (!program || availableOperators.size > 0 || availablePrefixOperators.size > 0) {
+      ctx.programCache.delete(path); // Clear cache to force reparse
+      finalProgram = await loadProgram(path, ctx, availableOperators, availablePrefixOperators);
+      // Update imports/reexports from the successful parse
+      imports = resolveImports(path, finalProgram.imports, ctx);
+      reexports = collectReexports(finalProgram.reexports, path, ctx.options);
+    } else {
+      finalProgram = program;
+    }
+
+    const exports = collectExports(finalProgram, path);
 
     ctx.nodes.set(path, {
       path,
-      program,
+      program: finalProgram,
       imports,
       reexports,
       exportedValueNames: exports.values,
       exportedTypeNames: exports.types,
+      exportedOperators: exports.operators,
+      exportedPrefixOperators: exports.prefixOperators,
     });
-
-    for (const record of imports) {
-      await visitModule(record.sourcePath, ctx);
-    }
-
-    for (const record of reexports) {
-      await visitModule(record.sourcePath, ctx);
-    }
 
     ctx.visitState.set(path, "visited");
     ctx.order.push(path);
@@ -419,7 +535,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
   }
 }
 
-async function loadProgram(path: string, ctx: LoaderContext): Promise<Program> {
+async function loadProgram(path: string, ctx: LoaderContext, operators?: Map<string, OperatorInfo>, prefixOperators?: Set<string>): Promise<Program> {
   const cached = ctx.programCache.get(path);
   if (cached) {
     return cached;
@@ -436,7 +552,7 @@ async function loadProgram(path: string, ctx: LoaderContext): Promise<Program> {
   let program: Program;
   try {
     const tokens = lex(source, path);
-    program = parseSurfaceProgram(tokens, source);
+    program = parseSurfaceProgram(tokens, source, false, operators, prefixOperators);
   } catch (error) {
     if (error instanceof ParseError || error instanceof LexError) {
       const formatted = error.format(source);
@@ -475,9 +591,11 @@ function parseImportSpecifier(specifier: ImportSpecifier, path: string): NamedIm
   };
 }
 
-function collectExports(program: Program, path: string): { values: string[]; types: string[] } {
+function collectExports(program: Program, path: string): { values: string[]; types: string[]; operators: Map<string, OperatorInfo>; prefixOperators: Set<string> } {
   const valueNames: string[] = [];
   const typeNames: string[] = [];
+  const operators = new Map<string, OperatorInfo>();
+  const prefixOperators = new Set<string>();
   const valueSet = new Set<string>();
   const typeSet = new Set<string>();
 
@@ -500,9 +618,18 @@ function collectExports(program: Program, path: string): { values: string[]; typ
       typeSet.add(decl.name);
       typeNames.push(decl.name);
     }
+    if (decl.kind === "infix" && decl.export) {
+      operators.set(decl.operator, {
+        precedence: decl.precedence,
+        associativity: decl.associativity,
+      });
+    }
+    if (decl.kind === "prefix" && decl.export) {
+      prefixOperators.add(decl.operator);
+    }
   }
 
-  return { values: valueNames, types: typeNames };
+  return { values: valueNames, types: typeNames, operators, prefixOperators };
 }
 
 function collectReexports(reexports: ModuleReexport[], path: string, options: ModuleLoaderOptions): ModuleReexportRecord[] {

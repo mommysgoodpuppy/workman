@@ -1,4 +1,4 @@
-import { Token, keywords, symbols } from "./token.ts";
+import { Token, keywords, symbols, operatorChars, multiCharOperators } from "./token.ts";
 import { unexpectedCharError, unterminatedStringError } from "./error.ts";
 
 export function lex(source: string, sourceName?: string): Token[] {
@@ -102,6 +102,16 @@ export function lex(source: string, sourceName?: string): Token[] {
       continue;
     }
 
+    // Try to match multi-character operators first (before symbols)
+    // This handles cases like == which starts with = (a symbol)
+    const operatorMatch = matchOperator(source, index);
+    if (operatorMatch) {
+      tokens.push({ kind: "operator", value: operatorMatch.value, start, end: operatorMatch.end });
+      index = operatorMatch.end;
+      continue;
+    }
+
+    // Try to match symbols
     const match = matchSymbol(source, index);
     if (match) {
       tokens.push({ kind: "symbol", value: match.value, start, end: match.end });
@@ -123,6 +133,33 @@ function matchSymbol(source: string, index: number): { value: string; end: numbe
       return { value: symbol, end };
     }
   }
+  return null;
+}
+
+function matchOperator(source: string, index: number): { value: string; end: number } | null {
+  // First try multi-character operators (sorted by length, longest first)
+  for (const op of multiCharOperators) {
+    const end = index + op.length;
+    if (source.slice(index, end) === op) {
+      return { value: op, end };
+    }
+  }
+  
+  // Then try single character operators (but not if they're also symbols)
+  const char = source[index];
+  if (operatorChars.has(char)) {
+    // Don't match single-character operators that are also symbols
+    // (like = which is a symbol, but == is an operator)
+    if (symbols.includes(char)) {
+      return null;
+    }
+    
+    let value = char;
+    let end = index + 1;
+    
+    return { value, end };
+  }
+  
   return null;
 }
 

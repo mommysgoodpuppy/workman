@@ -1,3 +1,5 @@
+from "./ordering.wm" import { EQ, LT, GT };
+
 export let intAdd = (left, right) => {
   nativeAdd(left, right)
 };
@@ -17,3 +19,55 @@ export let intDiv = (left, right) => {
 export let intCompare = (left, right) => {
   nativeCmpInt(left, right)
 };
+
+export let intEq = (left, right) => {
+  match(intCompare(left, right)) {
+    EQ => { true },
+    _ => { false }
+  }
+};
+
+export let intNeq = (left, right) => {
+  match(intCompare(left, right)) {
+    EQ => { false },
+    _ => { true }
+  }
+};
+
+export let intLt = (left, right) => {
+  match(intCompare(left, right)) {
+    LT => { true },
+    _ => { false }
+  }
+};
+
+export let intLte = (left, right) => {
+  match(intCompare(left, right)) {
+    GT => { false },
+    _ => { true }
+  }
+};
+
+export let intGt = (left, right) => {
+  match(intCompare(left, right)) {
+    GT => { true },
+    _ => { false }
+  }
+};
+
+export let intGte = (left, right) => {
+  match(intCompare(left, right)) {
+    LT => { false },
+    _ => { true }
+  }
+};
+
+-- Arithmetic operators
+export infixl 6 + = intAdd;
+export infixl 6 - = intSub;
+export infixl 7 * = intMul;
+export infixl 7 / = intDiv;
+
+-- Comparison operators
+export infix 4 == = intEq;
+export infix 4 != = intNeq;

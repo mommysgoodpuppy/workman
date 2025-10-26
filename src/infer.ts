@@ -3,11 +3,13 @@ import {
   BlockStatement,
   ConstructorAlias,
   Expr,
+  InfixDeclaration,
   LetDeclaration,
   Literal,
   MatchArm,
   Parameter,
   Pattern,
+  PrefixDeclaration,
   Program,
   TypeDeclaration,
   TypeExpr,
@@ -121,6 +123,10 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
       for (const { name, scheme } of results) {
         summaries.push({ name, scheme: applySubstitutionScheme(scheme, ctx.subst) });
       }
+    } else if (decl.kind === "infix") {
+      registerInfixDeclaration(ctx, decl);
+    } else if (decl.kind === "prefix") {
+      registerPrefixDeclaration(ctx, decl);
     }
   }
 
@@ -130,6 +136,29 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
   }
 
   return { env: finalEnv, adtEnv: ctx.adtEnv, summaries };
+}
+
+function registerInfixDeclaration(ctx: Context, decl: InfixDeclaration) {
+  // Register the operator's implementation function in the environment
+  // with a special name so binary expressions can look it up
+  const opFuncName = `__op_${decl.operator}`;
+  
+  // Look up the actual implementation function
+  const implScheme = lookupEnv(ctx, decl.implementation);
+  
+  // Register it under the operator name
+  ctx.env.set(opFuncName, implScheme);
+}
+
+function registerPrefixDeclaration(ctx: Context, decl: PrefixDeclaration) {
+  // Register the prefix operator's implementation function
+  const opFuncName = `__prefix_${decl.operator}`;
+  
+  // Look up the actual implementation function
+  const implScheme = lookupEnv(ctx, decl.implementation);
+  
+  // Register it under the operator name
+  ctx.env.set(opFuncName, implScheme);
 }
 
 function registerTypeDeclaration(ctx: Context, decl: TypeDeclaration) {
@@ -569,6 +598,42 @@ function inferExpr(ctx: Context, expr: Expr): Type {
       return inferMatchExpression(ctx, expr.scrutinee, expr.arms);
     case "match_fn":
       return inferMatchFunction(ctx, expr.parameters, expr.arms);
+    case "binary": {
+      // Binary operators are desugared to function calls
+      // e.g., `a + b` becomes `add(a, b)` where `add` is the implementation function
+      // The operator itself should have been registered with its implementation function
+      // For type inference, we treat it as a call to the implementation function
+      const leftType = inferExpr(ctx, expr.left);
+      const rightType = inferExpr(ctx, expr.right);
+      
+      // Look up the operator's implementation function in the environment
+      // This will be set during the declaration phase
+      const opFuncName = `__op_${expr.operator}`;
+      const scheme = lookupEnv(ctx, opFuncName);
+      const opType = instantiateAndApply(ctx, scheme);
+      
+      // Apply the function to both arguments
+      const resultType1 = freshTypeVar();
+      unify(ctx, opType, { kind: "func", from: leftType, to: { kind: "func", from: rightType, to: resultType1 } });
+      
+      return applyCurrentSubst(ctx, resultType1);
+    }
+    case "unary": {
+      // Unary operators are desugared to function calls
+      // e.g., `!x` becomes `not(x)` where `not` is the implementation function
+      const operandType = inferExpr(ctx, expr.operand);
+      
+      // Look up the prefix operator's implementation function
+      const opFuncName = `__prefix_${expr.operator}`;
+      const scheme = lookupEnv(ctx, opFuncName);
+      const opType = instantiateAndApply(ctx, scheme);
+      
+      // Apply the function to the operand
+      const resultType = freshTypeVar();
+      unify(ctx, opType, { kind: "func", from: operandType, to: resultType });
+      
+      return applyCurrentSubst(ctx, resultType);
+    }
     default:
       throw inferError(`Unsupported expression kind ${(expr as Expr).kind}`);
   }

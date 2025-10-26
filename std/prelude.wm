@@ -1,4 +1,5 @@
-from "std/core/int" import { intAdd, intSub, intMul, intDiv, intCompare };
+from "std/core/int" import { intAdd, intSub, intMul, intDiv, intCompare, intEq, intNeq };
+from "std/core/bool" import { boolNot, boolAnd as boolAndImpl, boolOr as boolOrImpl };
 export from "std/option/core" type Option(..);
 export from "std/result/core" type Result(..);
 
@@ -24,6 +25,42 @@ export let div = (left, right) => {
 export let cmpInt = (left, right) => {
   intCompare(left, right)
 };
+
+export let eq = (left, right) => {
+  intEq(left, right)
+};
+
+export let neq = (left, right) => {
+  intNeq(left, right)
+};
+
+-- Arithmetic operators
+export infixl 6 + = add;
+export infixl 6 - = sub;
+export infixl 7 * = mul;
+export infixl 7 / = div;
+
+-- Comparison operators
+export infix 4 == = eq;
+export infix 4 != = neq;
+
+-- Re-export bool functions for operators
+export let boolAnd = (left, right) => {
+  boolAndImpl(left, right)
+};
+
+export let boolOr = (left, right) => {
+  boolOrImpl(left, right)
+};
+
+export let not = (value) => {
+  boolNot(value)
+};
+
+-- Boolean operators
+export infixr 3 && = boolAnd;
+export infixr 2 || = boolOr;
+export prefix ! = not;
 
 export let print = (value) => {
   nativePrint(value)

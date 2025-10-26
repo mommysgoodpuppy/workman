@@ -6,6 +6,7 @@ export type TokenKind =
   | "string"
   | "keyword"
   | "symbol"
+  | "operator"
   | "comment"
   | "eof";
 
@@ -26,11 +27,17 @@ export const keywords = new Set([
   "export",
   "from",
   "as",
+  "infix",
+  "infixl",
+  "infixr",
+  "prefix",
 ]);
 
-export const symbols = new Set([
+// Symbols sorted by length (longest first) to ensure correct matching
+export const symbols = [
   "=>",
   "->",
+  "..",
   "=",
   "|",
   ":",
@@ -44,7 +51,24 @@ export const symbols = new Set([
   "]",
   "<",
   ">",
-  "..",
   "_",
-  "*",
+];
+
+// Operator symbols that can be used in custom infix operators
+// Note: <, >, | are excluded because they're used as symbols in type syntax
+// Note: = is included for operators like == and !=, but single = is a symbol
+export const operatorChars = new Set([
+  "+", "-", "*", "/", "%",
+  "=", "!",
+  "&", "^", "~",
+  "@", "#", "$",
+  "?",
 ]);
+
+// Multi-character operators need to be checked in order of length
+export const multiCharOperators = [
+  "==", "!=",
+  "&&", "||",
+  "++", "--",
+  "**", "//",
+];

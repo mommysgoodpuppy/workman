@@ -1,11 +1,13 @@
 import { Token } from "./token.ts";
 import { ParseError, expectedTokenError, unexpectedTokenError } from "./error.ts";
 import type {
+  Associativity,
   BlockExpr,
   BlockStatement,
   Expr,
   ExportModifier,
   ImportSpecifier,
+  InfixDeclaration,
   LetDeclaration,
   MatchArm,
   ModuleImport,
@@ -26,19 +28,34 @@ import type { Pattern, SourceSpan } from "./ast.ts";
 // Re-export ParseError from error module
 export { ParseError } from "./error.ts";
 
-export function parseSurfaceProgram(tokens: Token[], source?: string, preserveComments: boolean = false): Program {
-  const parser = new SurfaceParser(tokens, source, preserveComments);
+export type OperatorInfo = { precedence: number; associativity: Associativity };
+
+export function parseSurfaceProgram(
+  tokens: Token[], 
+  source?: string, 
+  preserveComments: boolean = false,
+  initialOperators?: Map<string, OperatorInfo>,
+  initialPrefixOperators?: Set<string>
+): Program {
+  const parser = new SurfaceParser(tokens, source, preserveComments, initialOperators, initialPrefixOperators);
   return parser.parseProgram();
 }
 
 class SurfaceParser {
   private index = 0;
+  private operators: Map<string, OperatorInfo>;
+  private prefixOperators: Set<string>;
 
   constructor(
     private readonly tokens: Token[],
     private readonly source?: string,
-    private readonly preserveComments: boolean = false
-  ) {}
+    private readonly preserveComments: boolean = false,
+    initialOperators?: Map<string, OperatorInfo>,
+    initialPrefixOperators?: Set<string>
+  ) {
+    this.operators = initialOperators ? new Map(initialOperators) : new Map();
+    this.prefixOperators = initialPrefixOperators ? new Set(initialPrefixOperators) : new Set();
+  }
 
   parseProgram(): Program {
 
@@ -241,12 +258,18 @@ class SurfaceParser {
           return this.parseLetDeclaration(exportToken);
         case "type":
           return this.parseTypeDeclaration(exportToken);
+        case "infix":
+        case "infixl":
+        case "infixr":
+          return this.parseInfixDeclaration(exportToken);
+        case "prefix":
+          return this.parsePrefixDeclaration(exportToken);
         default:
           throw this.error(`Unexpected keyword '${token.value}' at top-level`, token);
       }
     }
     if (exportToken) {
-      throw this.error("Expected 'let' or 'type' after 'export'", token);
+      throw this.error("Expected 'let', 'type', 'infix', or 'prefix' after 'export'", token);
     }
     throw this.error("Expected top-level declaration", token);
   }
@@ -506,6 +529,92 @@ class SurfaceParser {
     return declaration;
   }
 
+  private parseInfixDeclaration(exportToken?: Token): InfixDeclaration {
+    const infixToken = this.consume(); // infix, infixl, or infixr
+    const associativity: Associativity = 
+      infixToken.value === "infixl" ? "left" :
+      infixToken.value === "infixr" ? "right" : "none";
+    
+    // Parse precedence (number)
+    const precedenceToken = this.consume();
+    if (precedenceToken.kind !== "number") {
+      throw this.error("Expected precedence number", precedenceToken);
+    }
+    const precedence = Number(precedenceToken.value);
+    
+    // Parse operator
+    const operatorToken = this.consume();
+    if (operatorToken.kind !== "operator") {
+      throw this.error("Expected operator", operatorToken);
+    }
+    const operator = operatorToken.value;
+    
+    // Parse "="
+    this.expectSymbol("=");
+    
+    // Parse implementation function name
+    const implToken = this.expectIdentifier();
+    const implementation = implToken.value;
+    
+    // Register the operator
+    this.operators.set(operator, { precedence, associativity });
+    
+    const declaration: InfixDeclaration = {
+      kind: "infix",
+      operator,
+      associativity,
+      precedence,
+      implementation,
+      span: this.spanFrom(infixToken.start, implToken.end),
+    };
+    
+    if (exportToken) {
+      declaration.export = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+    }
+    
+    return declaration;
+  }
+
+  private parsePrefixDeclaration(exportToken?: Token): import("./ast.ts").PrefixDeclaration {
+    const prefixToken = this.expectKeyword("prefix");
+    
+    // Parse operator
+    const operatorToken = this.consume();
+    if (operatorToken.kind !== "operator") {
+      throw this.error("Expected operator", operatorToken);
+    }
+    const operator = operatorToken.value;
+    
+    // Parse "="
+    this.expectSymbol("=");
+    
+    // Parse implementation function name
+    const implToken = this.expectIdentifier();
+    const implementation = implToken.value;
+    
+    // Register the prefix operator
+    this.prefixOperators.add(operator);
+    
+    const declaration: import("./ast.ts").PrefixDeclaration = {
+      kind: "prefix",
+      operator,
+      implementation,
+      span: this.spanFrom(prefixToken.start, implToken.end),
+    };
+    
+    if (exportToken) {
+      declaration.export = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+    }
+    
+    return declaration;
+  }
+
   private parseTypeParameters(): TypeParameter[] {
     const params: TypeParameter[] = [];
     if (!this.checkSymbol(">")) {
@@ -621,7 +730,7 @@ class SurfaceParser {
         };
       }
     }
-    return this.parseCallExpression();
+    return this.parseBinaryExpression();
   }
 
   private tryParseArrowParameters(): Parameter[] | null {
@@ -637,6 +746,39 @@ class SurfaceParser {
       this.index = startIndex;
       return null;
     }
+  }
+
+  private parseBinaryExpression(minPrecedence: number = 0): Expr {
+    let left = this.parseCallExpression();
+    
+    while (true) {
+      const token = this.peek();
+      if (token.kind !== "operator") {
+        break;
+      }
+      
+      const opInfo = this.operators.get(token.value);
+      if (!opInfo || opInfo.precedence < minPrecedence) {
+        break;
+      }
+      
+      const operator = this.consume().value;
+      const nextMinPrecedence = opInfo.associativity === "left" 
+        ? opInfo.precedence + 1 
+        : opInfo.precedence;
+      
+      const right = this.parseBinaryExpression(nextMinPrecedence);
+      
+      left = {
+        kind: "binary",
+        operator,
+        left,
+        right,
+        span: this.spanFrom(left.span.start, right.span.end),
+      };
+    }
+    
+    return left;
   }
 
   private parseCallExpression(): Expr {
@@ -711,6 +853,21 @@ class SurfaceParser {
         if (token.value === "{") {
           return this.parseBlockExpr();
         }
+      }
+      case "operator": {
+        // Check if this is a registered prefix operator
+        if (this.prefixOperators.has(token.value)) {
+          const opToken = this.consume();
+          const operand = this.parsePrimaryExpression();
+          return {
+            kind: "unary",
+            operator: opToken.value,
+            operand,
+            span: this.spanFrom(opToken.start, operand.span.end),
+          } as Expr;
+        }
+        // Otherwise, it's an unexpected operator
+        break;
       }
     }
     throw this.error("Expected expression", token);

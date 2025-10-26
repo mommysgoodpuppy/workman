@@ -1,0 +1,43 @@
+-- Example demonstrating operators from the prelude
+-- All standard operators are available automatically!
+
+-- Arithmetic operators work out of the box
+let sum = 10 + 5;              -- 15
+let difference = 20 - 3;       -- 17
+let product = 4 * 7;           -- 28
+let quotient = 100 / 10;       -- 10
+
+-- Operators respect precedence (multiplication before addition)
+let expr1 = 2 + 3 * 4;         -- evaluates as 2 + (3 * 4) = 14
+let expr2 = 10 * 2 + 5;        -- evaluates as (10 * 2) + 5 = 25
+let expr3 = 100 / 10 - 2;      -- evaluates as (100 / 10) - 2 = 8
+
+-- Complex arithmetic expressions
+let formula = (5 + 3) * 2 - 4; -- (5 + 3) * 2 - 4 = 12
+
+-- Comparison operators
+let isEqual = 5 == 5;          -- true
+let isNotEqual = 5 != 3;       -- true
+
+-- Boolean operators
+let andResult = true && false;  -- false
+let orResult = true || false;   -- true
+let notResult = !true;          -- false
+
+-- Complex boolean expressions
+-- let complex = (10 > 5) && (3 < 7);  -- Would be: true && true = true (if we had < and >)
+let logic = !false || (true && false);  -- true
+
+-- Operators work with variables
+let x = 5;
+let y = 3;
+let z = x * y + 2;             -- 17
+
+-- Operators work in function bodies
+let addThree = (n) => { n + 3 };
+let result = addThree(10);     -- 13
+
+-- You can still define custom operators!
+let concat = (a, b) => { a };
+infixr 5 ++ = concat;
+let custom = 1 ++ 2 ++ 3;      -- right associative

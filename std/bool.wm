@@ -3,17 +3,17 @@ export let not = match(value) {
   false => { true }
 };
 
-export let and = match(tuple) {
+export let boolAnd = match(tuple) {
   (true, true) => { true },
   _ => { false }
 };
 
-export let or = match(tuple) {
+export let boolOr = match(tuple) {
   (false, false) => { false },
   _ => { true }
 };
 
-export let xor = match(tuple) {
+export let boolXor = match(tuple) {
   (true, true) => { false },
   (false, false) => { false },
   _ => { true }

@@ -1,0 +1,24 @@
+from "./math_utils" import { square, cube, sumOfSquares, quadruple };
+
+-- Use imported functions
+let testSquare = () => {
+  square(5)
+};
+let testCube = () => {
+  cube(3)
+};
+let testSum = () => {
+  sumOfSquares(3, 4)
+};
+let testQuad = () => {
+  quadruple(10)
+};
+
+-- Combine with local functions
+let sumOfCubes = (a, b) => {
+  add(cube(a), cube(b))
+};
+
+let result = () => {
+  sumOfCubes(2, 3)
+};

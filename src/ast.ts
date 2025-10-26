@@ -93,6 +93,8 @@ export type Expr =
   | ConstructorExpr
   | TupleExpr
   | CallExpr
+  | BinaryExpr
+  | UnaryExpr
   | ArrowFunctionExpr
   | BlockExpr
   | MatchExpr
@@ -124,6 +126,19 @@ export interface CallExpr extends NodeBase {
   kind: "call";
   callee: Expr;
   arguments: Expr[];
+}
+
+export interface BinaryExpr extends NodeBase {
+  kind: "binary";
+  operator: string;
+  left: Expr;
+  right: Expr;
+}
+
+export interface UnaryExpr extends NodeBase {
+  kind: "unary";
+  operator: string;
+  operand: Expr;
 }
 
 export interface ArrowFunctionExpr extends NodeBase {
@@ -226,7 +241,31 @@ export interface LetDeclaration extends NodeBase {
   hasBlankLineBefore?: boolean; // True if there was a blank line before this declaration
 }
 
-export type TopLevel = LetDeclaration | TypeDeclaration;
+export type Associativity = "left" | "right" | "none";
+
+export interface InfixDeclaration extends NodeBase {
+  kind: "infix";
+  operator: string;
+  associativity: Associativity;
+  precedence: number;
+  implementation: string; // Name of the function that implements this operator
+  export?: ExportModifier;
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
+}
+
+export interface PrefixDeclaration extends NodeBase {
+  kind: "prefix";
+  operator: string;
+  implementation: string; // Name of the function that implements this operator
+  export?: ExportModifier;
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
+}
+
+export type TopLevel = LetDeclaration | TypeDeclaration | InfixDeclaration | PrefixDeclaration;
 
 export interface Program {
   imports: ModuleImport[];

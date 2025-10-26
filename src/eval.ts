@@ -4,11 +4,13 @@ import {
   ConstructorAlias,
   Expr,
   IdentifierExpr,
+  InfixDeclaration,
   LetDeclaration,
   LetStatement,
   Literal,
   MatchArm,
   Pattern,
+  PrefixDeclaration,
   Program,
   SourceSpan,
   TypeDeclaration,
@@ -70,9 +72,36 @@ export function evaluateProgram(program: Program, options: EvalOptions = {}): Ev
     if (decl.kind === "let") {
       const value = evaluateLetDeclaration(globalEnv, decl);
       summaries.push({ name: decl.name, value });
+    } else if (decl.kind === "infix") {
+      evaluateInfixDeclaration(globalEnv, decl);
+    } else if (decl.kind === "prefix") {
+      evaluatePrefixDeclaration(globalEnv, decl);
     }
   }
   return { env: globalEnv, summaries };
+}
+
+function evaluateInfixDeclaration(env: Environment, decl: InfixDeclaration): void {
+  // Register the operator's implementation function in the environment
+  // with a special name so binary expressions can look it up
+  const opFuncName = `__op_${decl.operator}`;
+  
+  // Look up the actual implementation function
+  const implValue = lookupValue(env, decl.implementation);
+  
+  // Register it under the operator name
+  bindValue(env, opFuncName, implValue);
+}
+
+function evaluatePrefixDeclaration(env: Environment, decl: PrefixDeclaration): void {
+  // Register the prefix operator's implementation function
+  const opFuncName = `__prefix_${decl.operator}`;
+  
+  // Look up the actual implementation function
+  const implValue = lookupValue(env, decl.implementation);
+  
+  // Register it under the operator name
+  bindValue(env, opFuncName, implValue);
 }
 
 function evaluateLetDeclaration(env: Environment, decl: LetDeclaration): RuntimeValue {
@@ -170,6 +199,31 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
       return evaluateMatchExpr(env, expr.scrutinee, expr.arms, expr.span);
     case "match_fn":
       return evaluateMatchFunction(env, expr.parameters, expr.arms, expr.span);
+    case "binary": {
+      // Binary operators are desugared to function calls
+      // e.g., `a + b` becomes `add(a, b)` where `add` is the implementation function
+      const left = evaluateExpr(env, expr.left);
+      const right = evaluateExpr(env, expr.right);
+      
+      // Look up the operator's implementation function
+      const opFuncName = `__op_${expr.operator}`;
+      const opFunc = lookupValue(env, opFuncName);
+      
+      // Apply the function to both arguments
+      return applyValue(opFunc, [left, right], expr.span);
+    }
+    case "unary": {
+      // Unary operators are desugared to function calls
+      // e.g., `!x` becomes `not(x)` where `not` is the implementation function
+      const operand = evaluateExpr(env, expr.operand);
+      
+      // Look up the prefix operator's implementation function
+      const opFuncName = `__prefix_${expr.operator}`;
+      const opFunc = lookupValue(env, opFuncName);
+      
+      // Apply the function to the operand
+      return applyValue(opFunc, [operand], expr.span);
+    }
     default:
       assertUnreachable(expr, `Unsupported expression kind '${kind}'`, span);
   }
