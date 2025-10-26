@@ -52,15 +52,19 @@ class Formatter {
     // Format declarations
     for (let i = 0; i < program.declarations.length; i++) {
       const decl = program.declarations[i];
-      parts.push(this.formatDeclaration(decl));
       
-      // Add blank line between top-level declarations
-      if (i < program.declarations.length - 1) {
+      // Add blank line before this declaration if it had one originally
+      if (i > 0 && decl.hasBlankLineBefore) {
         parts.push("");
       }
+      
+      parts.push(this.formatDeclaration(decl));
     }
 
-    return parts.join("\n") + "\n";
+    const formatted = parts.join("\n") + "\n";
+    
+    // Collapse multiple consecutive empty lines to single empty line
+    return formatted.replace(/\n\n\n+/g, "\n\n");
   }
 
   private formatImport(imp: ModuleImport): string {
@@ -89,8 +93,17 @@ class Formatter {
     
     // Add leading comments
     if (decl.leadingComments && decl.leadingComments.length > 0) {
-      for (const comment of decl.leadingComments) {
-        result += `-- ${comment}\n`;
+      for (const commentBlock of decl.leadingComments) {
+        // Handle both old string format and new CommentBlock format
+        const commentText = typeof commentBlock === "string" ? commentBlock : commentBlock.text;
+        const hasBlankLineAfter = typeof commentBlock === "object" && commentBlock.hasBlankLineAfter;
+        
+        result += `-- ${commentText}\n`;
+        
+        // Add blank line after comment if needed
+        if (hasBlankLineAfter) {
+          result += "\n";
+        }
       }
     }
     
@@ -117,6 +130,12 @@ class Formatter {
     const exportPrefix = decl.export ? "export " : "";
     const recPrefix = decl.isRecursive ? "rec " : "";
     
+    let result: string;
+    
+    // Determine if we should add semicolon (not if there are mutual bindings)
+    const hasMutualBindings = decl.mutualBindings && decl.mutualBindings.length > 0;
+    const semicolon = hasMutualBindings ? "" : ";";
+    
     // If this was originally a first-class match, format it that way
     if (decl.isFirstClassMatch && decl.parameters.length === 1 && 
         decl.body.statements.length === 0 && decl.body.result?.kind === "match") {
@@ -124,36 +143,40 @@ class Formatter {
       // Force multi-line if the body was originally multi-line
       const forceMultiLine = decl.body.isMultiLine === true;
       const formattedMatch = this.formatMatch(matchExpr.scrutinee, matchExpr.arms, forceMultiLine);
-      return `${exportPrefix}let ${recPrefix}${decl.name} = ${formattedMatch};`;
-    }
-    
-    // If there are parameters OR originally used arrow syntax, format as arrow function
-    if (decl.parameters.length > 0 || decl.isArrowSyntax) {
+      result = `${exportPrefix}let ${recPrefix}${decl.name} = ${formattedMatch}${semicolon}`;
+    } else if (decl.parameters.length > 0 || decl.isArrowSyntax) {
+      // If there are parameters OR originally used arrow syntax, format as arrow function
       const params = decl.parameters.map(p => p.name || "_").join(", ");
       // Always use parentheses for consistency
       const paramsStr = `(${params})`;
       const body = this.formatBlock(decl.body, false, true);
-      return `${exportPrefix}let ${recPrefix}${decl.name} = ${paramsStr} => ${body};`;
-    }
-    
-    // No parameters and not arrow syntax - format body directly
-    const body = this.formatBlockForLet(decl.body);
-    
-    let result;
-    if (body.startsWith("\n")) {
-      // Body is already formatted with leading newline
-      result = `${exportPrefix}let ${recPrefix}${decl.name} =${body};`;
+      result = `${exportPrefix}let ${recPrefix}${decl.name} = ${paramsStr} => ${body}${semicolon}`;
     } else {
-      result = `${exportPrefix}let ${recPrefix}${decl.name} = ${body};`;
+      // No parameters and not arrow syntax - format body directly
+      const body = this.formatBlockForLet(decl.body);
+      
+      if (body.startsWith("\n")) {
+        // Body is already formatted with leading newline
+        result = `${exportPrefix}let ${recPrefix}${decl.name} =${body}${semicolon}`;
+      } else {
+        result = `${exportPrefix}let ${recPrefix}${decl.name} = ${body}${semicolon}`;
+      }
     }
 
-    // Format mutual bindings
+    // Format mutual bindings (applies to all cases)
     if (decl.mutualBindings && decl.mutualBindings.length > 0) {
       for (const mutual of decl.mutualBindings) {
-        if (mutual.parameters.length > 0) {
+        // Check if this is a first-class match
+        if (mutual.isFirstClassMatch && mutual.parameters.length === 1 && 
+            mutual.body.statements.length === 0 && mutual.body.result?.kind === "match") {
+          const matchExpr = mutual.body.result;
+          const forceMultiLine = mutual.body.isMultiLine === true;
+          const formattedMatch = this.formatMatch(matchExpr.scrutinee, matchExpr.arms, forceMultiLine);
+          result += `\nand ${mutual.name} = ${formattedMatch};`;
+        } else if (mutual.parameters.length > 0 || mutual.isArrowSyntax) {
           const mutualParams = mutual.parameters.map(p => p.name || "_").join(", ");
           const mutualParamsStr = `(${mutualParams})`;
-          const mutualBody = this.formatBlock(mutual.body, false);
+          const mutualBody = this.formatBlock(mutual.body, false, true);
           result += `\nand ${mutual.name} = ${mutualParamsStr} => ${mutualBody};`;
         } else {
           const mutualBody = this.formatBlockForLet(mutual.body);
@@ -178,6 +201,12 @@ class Formatter {
       }
       
       const expr = this.formatExpr(block.result);
+      
+      // Simple expression - unwrap if possible (but only if not originally multi-line)
+      if (this.isSimpleExpr(block.result) && !block.isMultiLine) {
+        return expr;
+      }
+      
       // Check if the expression itself is multiline (like a match)
       if (expr.includes("\n")) {
         // Put opening brace on new line, indent content
@@ -186,14 +215,16 @@ class Formatter {
         this.indent--;
         return `\n${this.indentStr()}{\n${indentedExpr}\n${this.indentStr()}}`;
       }
-      // Simple expression - unwrap if possible
-      if (this.isSimpleExpr(block.result)) {
-        return expr;
+      
+      // If the block was originally multi-line, preserve the braces
+      if (block.isMultiLine) {
+        return `{\n${this.indentStr()}  ${expr}\n${this.indentStr()}}`;
       }
+      
       return `{ ${expr} }`;
     }
 
-    // Multi-statement block - always use multiple lines with opening brace on new line
+    // Multi-statement block
     const parts: string[] = [];
     this.indent++;
     
@@ -206,12 +237,12 @@ class Formatter {
     }
 
     this.indent--;
-    return `\n${this.indentStr()}{\n${parts.join("\n")}\n${this.indentStr()}}`;
+    return `{\n${parts.join("\n")}\n${this.indentStr()}}`;
   }
 
   private formatTypeDeclaration(decl: TypeDeclaration): string {
     const exportPrefix = decl.export ? "export " : "";
-    const typeParams = decl.typeParams.length > 0 ? `<${decl.typeParams.join(", ")}>` : "";
+    const typeParams = decl.typeParams.length > 0 ? `<${decl.typeParams.map(p => p.name).join(", ")}>` : "";
     const members = decl.members.map(m => {
       if (m.kind === "alias") {
         return m.name;
@@ -319,21 +350,31 @@ class Formatter {
     switch (stmt.kind) {
       case "let_statement": {
         const decl = stmt.declaration;
+        const recPrefix = decl.isRecursive ? "rec " : "";
+        
+        // If this was originally a first-class match, format it that way
+        if (decl.isFirstClassMatch && decl.parameters.length === 1 && 
+            decl.body.statements.length === 0 && decl.body.result?.kind === "match") {
+          const matchExpr = decl.body.result;
+          const forceMultiLine = decl.body.isMultiLine === true;
+          const formattedMatch = this.formatMatch(matchExpr.scrutinee, matchExpr.arms, forceMultiLine);
+          return `let ${recPrefix}${decl.name} = ${formattedMatch};`;
+        }
         
         // Use same logic as top-level let declarations
         if (decl.parameters.length > 0 || decl.isArrowSyntax) {
           const params = decl.parameters.map(p => p.name || "_").join(", ");
           const paramsStr = `(${params})`;
           const body = this.formatBlock(decl.body, false, true);
-          return `let ${decl.name} = ${paramsStr} => ${body};`;
+          return `let ${recPrefix}${decl.name} = ${paramsStr} => ${body};`;
         }
         
         // Simple let binding
         const body = this.formatBlockForLet(decl.body);
         if (body.startsWith("\n")) {
-          return `let ${decl.name} =${body};`;
+          return `let ${recPrefix}${decl.name} =${body};`;
         } else {
-          return `let ${decl.name} = ${body};`;
+          return `let ${recPrefix}${decl.name} = ${body};`;
         }
       }
       case "expr_statement":
@@ -355,6 +396,14 @@ class Formatter {
         }
         return `${expr.name}(${expr.args.map(a => this.formatExpr(a)).join(", ")})`;
       case "tuple":
+        // Check if tuple should be formatted multi-line
+        if (expr.isMultiLine && expr.elements.length > 1) {
+          const formattedElements = expr.elements.map(e => this.formatExpr(e));
+          this.indent++;
+          const indentedElements = formattedElements.map(el => `${this.indentStr()}${el}`).join(",\n");
+          this.indent--;
+          return `(\n${indentedElements}\n${this.indentStr()})`;
+        }
         return `(${expr.elements.map(e => this.formatExpr(e)).join(", ")})`;
       case "call":
         return `${this.formatExpr(expr.callee)}(${expr.arguments.map(a => this.formatExpr(a)).join(", ")})`;
@@ -394,8 +443,22 @@ class Formatter {
     // Match arm bodies must always be block expressions
     if (expr.kind === "block") {
       const block = expr;
-      // Single expression block - always keep braces for match arms with spaces
+      // Single expression block
       if (block.statements.length === 0 && block.result) {
+        // If the result contains braces (like a match or block), use multi-line format
+        // to avoid double {{ on the same line
+        if (block.result.kind === "match" || block.result.kind === "block") {
+          // Format the expression at the next indent level
+          this.indent++;
+          const resultExpr = this.formatExpr(block.result);
+          // Add indentation to the first line (match keyword line)
+          const lines = resultExpr.split("\n");
+          const indentedFirst = this.indentStr() + lines[0];
+          const rest = lines.slice(1);
+          this.indent--;
+          return `{\n${indentedFirst}\n${rest.join("\n")}\n${this.indentStr()}}`;
+        }
+        
         const resultExpr = this.formatExpr(block.result);
         return `{ ${resultExpr} }`;
       }
@@ -489,7 +552,7 @@ function stripWhitespace(text: string): string {
   return text.replace(/[\s\r\n\t]+/g, "");
 }
 
-function verifyOnlyWhitespaceChanged(original: string, formatted: string, filePath: string): void {
+function verifyOnlyWhitespaceChanged(original: string, formatted: string, filePath: string): boolean {
   const originalStripped = stripWhitespace(original);
   const formattedStripped = stripWhitespace(formatted);
   
@@ -512,11 +575,12 @@ function verifyOnlyWhitespaceChanged(original: string, formatted: string, filePa
     console.error(`\nLength: original=${originalStripped.length}, formatted=${formattedStripped.length}`);
     
     console.error(`\nAborting to prevent data loss. The file was not modified.`);
-    Deno.exit(1);
+    return false;
   }
+  return true;
 }
 
-async function formatFile(filePath: string, options: FormatOptions): Promise<void> {
+async function formatFile(filePath: string, options: FormatOptions): Promise<boolean> {
   try {
     const source = await Deno.readTextFile(filePath);
     const tokens = lex(source);
@@ -526,44 +590,82 @@ async function formatFile(filePath: string, options: FormatOptions): Promise<voi
     const formatted = formatter.format(program);
 
     // Safety check: ensure only whitespace changed
-    verifyOnlyWhitespaceChanged(source, formatted, filePath);
+    if (!verifyOnlyWhitespaceChanged(source, formatted, filePath)) {
+      return false;
+    }
 
     if (options.check) {
       if (source !== formatted) {
         console.error(`${filePath} is not formatted`);
-        Deno.exit(1);
-      } else {
-        console.log(`${filePath} is formatted`);
+        return false;
       }
+      return true;
     } else {
       await Deno.writeTextFile(filePath, formatted);
       console.log(`Formatted ${filePath}`);
+      return true;
     }
   } catch (error) {
     if (error instanceof ParseError) {
       console.error(`Parse error in ${filePath}: ${error.message}`);
-      Deno.exit(1);
+      return false;
     } else if (error instanceof Deno.errors.NotFound) {
       console.error(`File not found: ${filePath}`);
-      Deno.exit(1);
+      return false;
     } else {
       console.error(`Error formatting ${filePath}: ${error}`);
-      Deno.exit(1);
+      return false;
     }
   }
 }
 
+async function collectWmFiles(path: string): Promise<string[]> {
+  const files: string[] = [];
+  
+  try {
+    const stat = await Deno.stat(path);
+    
+    if (stat.isFile) {
+      if (path.endsWith(".wm")) {
+        files.push(path);
+      }
+      return files;
+    }
+    
+    if (stat.isDirectory) {
+      for await (const entry of Deno.readDir(path)) {
+        const fullPath = `${path}/${entry.name}`;
+        if (entry.isFile && entry.name.endsWith(".wm")) {
+          files.push(fullPath);
+        } else if (entry.isDirectory && !entry.name.startsWith(".")) {
+          // Recursively collect from subdirectories (skip hidden dirs)
+          const subFiles = await collectWmFiles(fullPath);
+          files.push(...subFiles);
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      console.error(`Path not found: ${path}`);
+      Deno.exit(1);
+    }
+    throw error;
+  }
+  
+  return files;
+}
+
 export async function runFormatter(args: string[]): Promise<void> {
   if (args.length === 0) {
-    console.error("Usage: wm fmt [--check] <file.wm> [<file2.wm> ...]");
+    console.error("Usage: wm fmt [--check] <file.wm|directory> [<file2.wm> ...]");
     Deno.exit(1);
   }
 
   const check = args[0] === "--check";
-  const files = check ? args.slice(1) : args;
+  const paths = check ? args.slice(1) : args;
 
-  if (files.length === 0) {
-    console.error("Usage: wm fmt [--check] <file.wm> [<file2.wm> ...]");
+  if (paths.length === 0) {
+    console.error("Usage: wm fmt [--check] <file.wm|directory> [<file2.wm> ...]");
     Deno.exit(1);
   }
 
@@ -572,8 +674,35 @@ export async function runFormatter(args: string[]): Promise<void> {
     check,
   };
 
-  for (const file of files) {
-    await formatFile(file, options);
+  // Collect all .wm files from paths (files or directories)
+  const allFiles: string[] = [];
+  for (const path of paths) {
+    const files = await collectWmFiles(path);
+    allFiles.push(...files);
+  }
+
+  if (allFiles.length === 0) {
+    console.error("No .wm files found");
+    Deno.exit(1);
+  }
+
+  // Format all files and track results
+  let successCount = 0;
+  let failCount = 0;
+  
+  for (const file of allFiles) {
+    const success = await formatFile(file, options);
+    if (success) {
+      successCount++;
+    } else {
+      failCount++;
+    }
+  }
+
+  // Exit with error if any files failed (in check mode or had errors)
+  if (failCount > 0) {
+    console.error(`\n${failCount} file(s) failed, ${successCount} file(s) succeeded`);
+    Deno.exit(1);
   }
 }
 

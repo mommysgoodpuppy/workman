@@ -44,7 +44,19 @@ class SurfaceParser {
     const imports: ModuleImport[] = [];
     const reexports: ModuleReexport[] = [];
     const declarations: TopLevel[] = [];
+    let lastTokenEnd = 0;
+    
     while (!this.isEOF()) {
+      // Check if there's a blank line before this declaration
+      let hasBlankLineBefore = false;
+      if (this.source && declarations.length > 0) {
+        const currentTokenStart = this.peek().start;
+        const textBetween = this.source.slice(lastTokenEnd, currentTokenStart);
+        // Count newlines - if 2 or more, there's a blank line
+        const newlineCount = (textBetween.match(/\n/g) || []).length;
+        hasBlankLineBefore = newlineCount >= 2;
+      }
+      
       // Collect any leading comments
       const leadingComments = this.collectLeadingComments();
       
@@ -67,10 +79,14 @@ class SurfaceParser {
         if (leadingComments.length > 0) {
           decl.leadingComments = leadingComments;
         }
+        if (hasBlankLineBefore) {
+          decl.hasBlankLineBefore = true;
+        }
         declarations.push(decl);
       }
       if (this.matchSymbol(";")) {
         const semicolonToken = this.previous();
+        lastTokenEnd = semicolonToken.end;
         // Check for trailing comment on the same line (no newline between semicolon and comment)
         if (this.peek().kind === "comment" && this.source) {
           const commentToken = this.peek();
@@ -80,6 +96,7 @@ class SurfaceParser {
             const lastDecl = declarations[declarations.length - 1];
             if (lastDecl) {
               lastDecl.trailingComment = this.consume().value;
+              lastTokenEnd = this.previous().end;
             }
           }
         }
@@ -719,10 +736,19 @@ class SurfaceParser {
     if (elements.length === 1) {
       return { ...elements[0], span: this.spanFrom(open.start, close.end) } as Expr;
     }
+    
+    // Detect if tuple is multi-line
+    let isMultiLine = false;
+    if (this.source) {
+      const tupleText = this.source.slice(open.start, close.end);
+      isMultiLine = tupleText.includes("\n");
+    }
+    
     return {
       kind: "tuple",
       elements,
       span: this.spanFrom(open.start, close.end),
+      isMultiLine,
     } as Expr;
   }
 
@@ -1015,10 +1041,23 @@ class SurfaceParser {
     return new ParseError(message, token);
   }
 
-  private collectLeadingComments(): string[] {
-    const comments: string[] = [];
+  private collectLeadingComments(): import("./ast.ts").CommentBlock[] {
+    const comments: import("./ast.ts").CommentBlock[] = [];
     while (this.peek().kind === "comment") {
-      comments.push(this.consume().value);
+      const commentToken = this.consume();
+      const commentText = commentToken.value;
+      
+      // Check if there's a blank line after this comment (before next token)
+      let hasBlankLineAfter = false;
+      if (this.source && this.peek().kind === "comment") {
+        const nextToken = this.peek();
+        const textBetween = this.source.slice(commentToken.end, nextToken.start);
+        // Count newlines - if 2 or more, there's a blank line
+        const newlineCount = (textBetween.match(/\n/g) || []).length;
+        hasBlankLineAfter = newlineCount >= 2;
+      }
+      
+      comments.push({ text: commentText, hasBlankLineAfter });
     }
     return comments;
   }

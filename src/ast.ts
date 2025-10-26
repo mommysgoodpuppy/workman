@@ -117,6 +117,7 @@ export interface ConstructorExpr extends NodeBase {
 export interface TupleExpr extends NodeBase {
   kind: "tuple";
   elements: Expr[];
+  isMultiLine?: boolean; // True if tuple was originally formatted across multiple lines
 }
 
 export interface CallExpr extends NodeBase {
@@ -193,14 +194,20 @@ export interface TypeParameter extends NodeBase {
   name: string;
 }
 
+export interface CommentBlock {
+  text: string;
+  hasBlankLineAfter?: boolean; // True if there's a blank line after this comment
+}
+
 export interface TypeDeclaration extends NodeBase {
   kind: "type";
   name: string;
   typeParams: TypeParameter[];
   members: TypeAliasMember[];
   export?: ExportModifier;
-  leadingComments?: string[];
+  leadingComments?: CommentBlock[];
   trailingComment?: string;
+  hasBlankLineBefore?: boolean; // True if there was a blank line before this declaration
 }
 
 export interface LetDeclaration extends NodeBase {
@@ -214,8 +221,9 @@ export interface LetDeclaration extends NodeBase {
   isArrowSyntax?: boolean; // True if originally written with arrow syntax `() => { ... }`
   mutualBindings?: LetDeclaration[];
   export?: ExportModifier;
-  leadingComments?: string[];
+  leadingComments?: CommentBlock[];
   trailingComment?: string;
+  hasBlankLineBefore?: boolean; // True if there was a blank line before this declaration
 }
 
 export type TopLevel = LetDeclaration | TypeDeclaration;
