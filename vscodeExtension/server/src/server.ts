@@ -8,6 +8,7 @@
 import { lex } from "@workman/lexer.ts";
 import { parseSurfaceProgram, ParseError } from "@workman/parser.ts";
 import { inferProgram, InferError } from "@workman/infer.ts";
+import { LexError, WorkmanError } from "@workman/error.ts";
 import { formatScheme } from "@workman/type_printer.ts";
 import { runEntryPath, ModuleLoaderError, loadModuleGraph } from "@workman/module_loader.ts";
 import { dirname, fromFileUrl, join, isAbsolute } from "std/path/mod.ts";
@@ -259,14 +260,94 @@ class WorkmanLanguageServer {
     
     this.log(`[LSP] Validating document: ${uri}`);
     
+    // First, try to parse the current document directly to get better error positions
     try {
-      const entryPath = this.uriToFsPath(uri);
-      const stdRoots = this.computeStdRoots(entryPath);
-      await runEntryPath(entryPath, { stdRoots, preludeModule: this.preludeModule });
-      this.log(`[LSP] Module graph validated OK (${entryPath})`);
+      const tokens = lex(text, uri);
+      const program = parseSurfaceProgram(tokens, text);
+      // If parsing succeeds, try full module validation
+      try {
+        const entryPath = this.uriToFsPath(uri);
+        const stdRoots = this.computeStdRoots(entryPath);
+        await runEntryPath(entryPath, { stdRoots, preludeModule: this.preludeModule });
+        this.log(`[LSP] Module graph validated OK (${entryPath})`);
+      } catch (moduleError) {
+        // Module-level errors (imports, type errors, etc.)
+        this.log(`[LSP] Module validation error: ${moduleError}`);
+        if (moduleError instanceof InferError) {
+          const range = moduleError.span 
+            ? { 
+                start: this.offsetToPosition(text, moduleError.span.start),
+                end: this.offsetToPosition(text, moduleError.span.end)
+              }
+            : this.estimateRangeFromMessage(text, moduleError.message);
+          diagnostics.push({
+            range,
+            severity: 1,
+            message: moduleError.format(text),
+            source: "workman-typechecker",
+            code: "type-error",
+          });
+        } else if (moduleError instanceof ModuleLoaderError) {
+          const msg = String(moduleError.message);
+          const range = this.estimateRangeFromMessage(text, msg);
+          diagnostics.push({
+            range,
+            severity: 1,
+            message: msg,
+            source: "workman-modules",
+            code: "module-error",
+          });
+        } else {
+          diagnostics.push({
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 1,
+            message: `Internal error: ${moduleError}`,
+            source: "workman",
+            code: "internal-error",
+          });
+        }
+      }
     } catch (error) {
       this.log(`[LSP] Validation error: ${error}`);
-      if (error instanceof ModuleLoaderError) {
+      
+      // Check if this is a WorkmanError (which includes LexError, ParseError, InferError)
+      // These might be wrapped in ModuleLoaderError
+      if (error instanceof LexError) {
+        const position = this.offsetToPosition(text, error.position);
+        const endPos = this.offsetToPosition(text, error.position + 1);
+        diagnostics.push({
+          range: { start: position, end: endPos },
+          severity: 1,
+          message: error.format(text),
+          source: "workman-lexer",
+          code: "lex-error",
+        });
+      } else if (error instanceof ParseError) {
+        // For parse errors, underline the exact token that caused the issue
+        const startPos = this.offsetToPosition(text, error.token.start);
+        const endPos = this.offsetToPosition(text, error.token.end);
+        diagnostics.push({
+          range: { start: startPos, end: endPos },
+          severity: 1,
+          message: error.format(text),
+          source: "workman-parser",
+          code: "parse-error",
+        });
+      } else if (error instanceof InferError) {
+        const range = error.span 
+          ? { 
+              start: this.offsetToPosition(text, error.span.start),
+              end: this.offsetToPosition(text, error.span.end)
+            }
+          : this.estimateRangeFromMessage(text, error.message);
+        diagnostics.push({
+          range,
+          severity: 1,
+          message: error.format(text),
+          source: "workman-typechecker",
+          code: "type-error",
+        });
+      } else if (error instanceof ModuleLoaderError) {
         const msg = String(error.message);
         const range = this.estimateRangeFromMessage(text, msg);
         diagnostics.push({
@@ -275,26 +356,6 @@ class WorkmanLanguageServer {
           message: msg,
           source: "workman-modules",
           code: "module-error",
-        });
-      } else if (error instanceof ParseError) {
-        const position = this.offsetToPosition(text, error.token.start);
-        const endPos = this.offsetToPosition(text, error.token.start + error.token.value.length);
-        diagnostics.push({
-          range: { start: position, end: endPos },
-          severity: 1,
-          message: error.message,
-          source: "workman-parser",
-          code: "parse-error",
-        });
-      } else if (error instanceof InferError) {
-        const errorMsg = error.message;
-        const range = this.estimateRangeFromMessage(text, errorMsg);
-        diagnostics.push({
-          range,
-          severity: 1,
-          message: errorMsg,
-          source: "workman-typechecker",
-          code: "type-error",
         });
       } else {
         diagnostics.push({

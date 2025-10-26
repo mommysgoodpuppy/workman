@@ -35,7 +35,7 @@ export class LexError extends WorkmanError {
     super(message);
   }
 
-  format(source?: string): string {
+  override format(source?: string): string {
     const src = source ?? this.source;
     if (!src) {
       return `${this.errorType}: ${this.message}`;
@@ -67,7 +67,7 @@ export class ParseError extends WorkmanError {
     super(message);
   }
 
-  format(source?: string): string {
+  override format(source?: string): string {
     const src = source ?? this.source;
     if (!src) {
       return `${this.errorType}: ${this.message} at position ${this.token.start}`;
@@ -100,7 +100,7 @@ export class InferError extends WorkmanError {
     super(message);
   }
 
-  format(source?: string): string {
+  override format(source?: string): string {
     const src = source ?? this.source;
     if (!src || !this.span) {
       return `${this.errorType}: ${this.message}`;
@@ -132,7 +132,7 @@ export class ModuleError extends WorkmanError {
     super(message);
   }
 
-  format(): string {
+  override format(): string {
     if (this.modulePath) {
       return `${this.errorType} in '${this.modulePath}':\n  ${this.message}`;
     }
@@ -154,7 +154,7 @@ export class RuntimeError extends WorkmanError {
     super(message);
   }
 
-  format(source?: string): string {
+  override format(source?: string): string {
     const src = source ?? this.source;
     if (!src || !this.span) {
       return `${this.errorType}: ${this.message}`;
