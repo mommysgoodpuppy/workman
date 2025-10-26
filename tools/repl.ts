@@ -40,8 +40,10 @@ class Repl {
   }
 
   async start() {
-    console.log("🚀 Workman REPL v1.0");
-    console.log("Type :help for commands, :quit to exit\n");
+    console.log("🗿 Workman REPL v1.0");
+    console.log("Run 'wm --help' to see CLI usage (wm <file.wm>, wm fmt, etc.)\n");
+    console.log("Type :help for REPL commands, :quit to exit");
+    
 
     // Load prelude
     await this.loadPrelude();

@@ -89,6 +89,34 @@ if (import.meta.main) {
     Deno.exit(0);
   }
 
+  if (args[0] === "--help" || args[0] === "-h") {
+    console.log(`
+🗿 Workman - A functional programming language
+
+Usage:
+  wm                    Start interactive REPL
+  wm <file.wm>          Run a Workman file
+  wm type <file.wm>     Type-check a file (skip evaluation)
+  wm fmt <files...>     Format Workman files
+  wm --help             Show this help message
+
+Examples:
+  wm                    # Start REPL for interactive development
+  wm main.wm            # Run main.wm and show types + values
+  wm type main.wm       # Only type-check main.wm
+  wm fmt .              # Format all .wm files recursively
+
+REPL Commands:
+  :help                 Show REPL-specific commands
+  :quit                 Exit the REPL
+  :load <file>          Load and evaluate a file
+  :clear                Clear accumulated context
+  :env                  Show all defined bindings
+  :type <id>            Show type of an identifier
+`);
+    Deno.exit(0);
+  }
+
   if (args[0] === "fmt") {
     // Format files
     await runFormatter(args.slice(1));
