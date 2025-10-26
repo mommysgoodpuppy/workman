@@ -629,6 +629,8 @@ class SurfaceParser {
 
   private parseTypeAliasMembers(): TypeAliasMember[] {
     const members: TypeAliasMember[] = [];
+    // Allow optional leading pipe for multi-line type definitions
+    this.matchSymbol("|");
     members.push(this.parseTypeAliasMember());
     while (this.matchSymbol("|")) {
       members.push(this.parseTypeAliasMember());
