@@ -34,6 +34,7 @@ export interface ModuleGraph {
 export interface ModuleNode {
   path: string;
   program: Program;
+  source: string;
   imports: ModuleImportRecord[];
   reexports: ModuleReexportRecord[];
   exportedValueNames: string[];
@@ -334,6 +335,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
 
     const evaluation = evaluateProgram(node.program, {
       sourceName: path,
+      source: node.source,
       initialBindings: skipPrelude ? initialBindings : (() => {
         if (!skipPrelude) {
           return initialBindings;
@@ -520,6 +522,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     ctx.nodes.set(path, {
       path,
       program: finalProgram,
+      source: await loadSource(path),
       imports,
       reexports,
       exportedValueNames: exports.values,
@@ -535,20 +538,23 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
   }
 }
 
-async function loadProgram(path: string, ctx: LoaderContext, operators?: Map<string, OperatorInfo>, prefixOperators?: Set<string>): Promise<Program> {
-  const cached = ctx.programCache.get(path);
-  if (cached) {
-    return cached;
-  }
-  let source: string;
+async function loadSource(path: string): Promise<string> {
   try {
-    source = await Deno.readTextFile(path);
+    return await Deno.readTextFile(path);
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
       throw moduleError(`Module not found: '${path}'`);
     }
     throw moduleError(`Failed to read '${path}': ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+async function loadProgram(path: string, ctx: LoaderContext, operators?: Map<string, OperatorInfo>, prefixOperators?: Set<string>): Promise<Program> {
+  const cached = ctx.programCache.get(path);
+  if (cached) {
+    return cached;
+  }
+  const source = await loadSource(path);
   let program: Program;
   try {
     const tokens = lex(source, path);

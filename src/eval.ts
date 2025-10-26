@@ -22,7 +22,6 @@ import {
   createEnvironment,
   bindValue,
   lookupValue,
-  RuntimeError,
   UNIT_VALUE,
   NativeFunctionValue,
   ClosureValue,
@@ -31,10 +30,15 @@ import {
   BoolValue,
   hasBinding,
 } from "./value.ts";
+import { RuntimeError } from "./error.ts";
 import { formatRuntimeValue } from "./value_printer.ts";
+
+// Module-level variable to store source text for error reporting
+let currentSource: string | undefined;
 
 export interface EvalOptions {
   sourceName?: string;
+  source?: string;
   onPrint?: (text: string) => void;
   initialBindings?: Map<string, RuntimeValue>;
 }
@@ -51,6 +55,7 @@ export interface EvalResult {
 
 export function evaluateProgram(program: Program, options: EvalOptions = {}): EvalResult {
   lowerTupleParameters(program);
+  currentSource = options.source;
   const globalEnv = createEnvironment(null);
   registerPreludeRuntime(globalEnv, options);
 
@@ -234,7 +239,7 @@ function evaluateIdentifier(env: Environment, expr: IdentifierExpr): RuntimeValu
     return lookupValue(env, expr.name);
   } catch (error) {
     if (error instanceof RuntimeError) {
-      throw new RuntimeError(error.message, expr.span);
+      throw new RuntimeError(error.message, expr.span, currentSource);
     }
     throw error;
   }
@@ -246,7 +251,7 @@ function evaluateConstructorExpr(env: Environment, expr: Expr & { kind: "constru
     callee = lookupValue(env, expr.name);
   } catch (error) {
     if (error instanceof RuntimeError) {
-      throw new RuntimeError(error.message, expr.span);
+      throw new RuntimeError(error.message, expr.span, currentSource);
     }
     throw error;
   }
@@ -271,7 +276,7 @@ function applyValue(target: RuntimeValue, args: RuntimeValue[], span: SourceSpan
     case "native":
       return callNative(target, args, span);
     default:
-      throw new RuntimeError("Attempted to call a non-function value", span);
+      throw new RuntimeError("Attempted to call a non-function value", span, currentSource);
   }
 }
 
@@ -280,6 +285,7 @@ function callClosure(closure: ClosureValue, args: RuntimeValue[], span: SourceSp
     throw new RuntimeError(
       `Expected ${closure.parameters.length} argument(s) but received ${args.length}`,
       span,
+      currentSource,
     );
   }
 
@@ -289,7 +295,7 @@ function callClosure(closure: ClosureValue, args: RuntimeValue[], span: SourceSp
       const value = args[index];
       const paramName = param.name;
       if (!paramName) {
-        throw new RuntimeError("Internal error: missing parameter name after tuple lowering", param.span);
+        throw new RuntimeError("Internal error: missing parameter name after tuple lowering", param.span, currentSource);
       }
       bindValue(frame, paramName, value);
     }
@@ -303,6 +309,7 @@ function callNative(nativeFn: NativeFunctionValue, args: RuntimeValue[], span: S
     throw new RuntimeError(
       `Native function '${nativeFn.name}' expected ${nativeFn.arity} argument(s) but received ${collected.length}`,
       span,
+      currentSource,
     );
   }
 
@@ -351,7 +358,7 @@ function registerPreludeRuntime(env: Environment, options: EvalOptions): void {
   bindIntBinaryNative(env, "nativeMul", (a, b) => a * b);
   bindIntBinaryNative(env, "nativeDiv", (a, b, span) => {
     if (b === 0) {
-      throw new RuntimeError("Division by zero", span);
+      throw new RuntimeError("Division by zero", span, currentSource);
     }
     return Math.trunc(a / b);
   });
@@ -463,6 +470,7 @@ function evaluateRecursiveBindings(env: Environment, bindings: LetDeclaration[])
       throw new RuntimeError(
         "Recursive let bindings must define at least one parameter",
         binding.span,
+        currentSource,
       );
     }
 
@@ -495,7 +503,7 @@ function evaluateMatchExpr(
       return evaluateExpr(scope, arm.body);
     }
   }
-  throw new RuntimeError("Non-exhaustive patterns at runtime", span);
+  throw new RuntimeError("Non-exhaustive patterns at runtime", span, currentSource);
 }
 
 function evaluateMatchFunction(
@@ -505,7 +513,7 @@ function evaluateMatchFunction(
   span: SourceSpan,
 ): RuntimeValue {
   if (parameters.length !== 1) {
-    throw new RuntimeError("Match functions currently support exactly one argument", span);
+    throw new RuntimeError("Match functions currently support exactly one argument", span, currentSource);
   }
 
   const closureEnv = env;
@@ -520,7 +528,7 @@ function evaluateMatchFunction(
         return evaluateExpr(scope, arm.body);
       }
     }
-    throw new RuntimeError("Non-exhaustive match function at runtime", span);
+    throw new RuntimeError("Non-exhaustive match function at runtime", span, currentSource);
   });
 }
 
@@ -571,7 +579,7 @@ function matchTuplePattern(
     return null;
   }
   if (value.elements.length !== elements.length) {
-    throw new RuntimeError("Tuple pattern arity mismatch", span);
+    throw new RuntimeError("Tuple pattern arity mismatch", span, currentSource);
   }
   const bindings = new Map<string, RuntimeValue>();
   for (let i = 0; i < elements.length; i += 1) {
@@ -600,7 +608,7 @@ function matchConstructorPattern(
   }
 
   if (value.fields.length !== pattern.args.length) {
-    throw new RuntimeError("Constructor pattern arity mismatch", span);
+    throw new RuntimeError("Constructor pattern arity mismatch", span, currentSource);
   }
 
   const bindings = new Map<string, RuntimeValue>();
@@ -621,7 +629,7 @@ function mergeBindings(
 ): void {
   for (const [key, value] of source.entries()) {
     if (target.has(key)) {
-      throw new RuntimeError(`Duplicate variable '${key}' in pattern`, span);
+      throw new RuntimeError(`Duplicate variable '${key}' in pattern`, span, currentSource);
     }
     target.set(key, value);
   }
@@ -636,12 +644,12 @@ function isBoolValue(value: RuntimeValue, expected: boolean): value is BoolValue
 }
 
 function assertUnreachable(_value: never, message: string, span?: SourceSpan): never {
-  throw new RuntimeError(message, span);
+  throw new RuntimeError(message, span, currentSource);
 }
 
 function expectInt(value: RuntimeValue, span: SourceSpan | undefined, primitiveName: string): number {
   if (value.kind !== "int") {
-    throw new RuntimeError(`Primitive '${primitiveName}' expected an Int argument`, span);
+    throw new RuntimeError(`Primitive '${primitiveName}' expected an Int argument`, span, currentSource);
   }
   return value.value;
 }

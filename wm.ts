@@ -52,6 +52,7 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
     if (!options.skipEvaluation) {
       const evaluation = evaluateProgram(program, {
         sourceName: options.sourceName,
+        source: source,
         onPrint: (text: string) => {
           runtimeLogs.push(text);
           options.onPrint?.(text);
@@ -69,7 +70,8 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
   } catch (error) {
     if (error instanceof WorkmanError) {
       // Format the error with source context
-      const formatted = error.format(source);
+      // Don't override the source if the error already has one (e.g., from a different module)
+      const formatted = error.format();
       throw new Error(formatted);
     }
     if (error instanceof Error) {
@@ -178,7 +180,11 @@ REPL Commands:
       }
     }
   } catch (error) {
-    console.error(error instanceof Error ? error.message : error);
+    if (error instanceof WorkmanError) {
+      console.error(error.format());
+    } else {
+      console.error(error instanceof Error ? error.message : error);
+    }
     Deno.exit(1);
   }
 }
