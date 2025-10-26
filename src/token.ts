@@ -6,6 +6,7 @@ export type TokenKind =
   | "string"
   | "keyword"
   | "symbol"
+  | "comment"
   | "eof";
 
 export interface Token {

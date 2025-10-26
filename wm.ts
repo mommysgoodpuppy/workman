@@ -6,6 +6,8 @@ import { evaluateProgram } from "./src/eval.ts";
 import { formatRuntimeValue } from "./src/value_printer.ts";
 import type { TypeScheme } from "./src/types.ts";
 import type { RuntimeValue } from "./src/value.ts";
+import { startRepl } from "./tools/repl.ts";
+import { runFormatter } from "./tools/fmt.ts";
 
 export interface RunOptions {
   sourceName?: string;
@@ -74,9 +76,18 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
 
 if (import.meta.main) {
   const args = Deno.args;
+  
+  // Handle special commands
   if (args.length === 0) {
-    console.error("Usage: wm <file.wm> | wm type <file.wm>");
-    Deno.exit(1);
+    // Start REPL mode
+    await startRepl();
+    Deno.exit(0);
+  }
+
+  if (args[0] === "fmt") {
+    // Format files
+    await runFormatter(args.slice(1));
+    Deno.exit(0);
   }
 
   let filePath: string;
@@ -84,14 +95,14 @@ if (import.meta.main) {
 
   if (args[0] === "type") {
     if (args.length !== 2) {
-      console.error("Usage: wm type <file.wm>");
+      console.error("Usage: wm [fmt|type] <file.wm> | wm <file.wm> | wm (REPL mode)");
       Deno.exit(1);
     }
     filePath = args[1];
     skipEvaluation = true;
   } else {
     if (args.length !== 1) {
-      console.error("Usage: wm <file.wm> | wm type <file.wm>");
+      console.error("Usage: wm [fmt|type] <file.wm> | wm <file.wm> | wm (REPL mode)");
       Deno.exit(1);
     }
     filePath = args[0];

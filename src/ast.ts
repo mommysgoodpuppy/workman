@@ -66,6 +66,7 @@ export interface BlockExpr extends NodeBase {
   kind: "block";
   statements: BlockStatement[];
   result?: Expr;
+  isMultiLine?: boolean; // True if the block was originally formatted across multiple lines
 }
 
 export type BlockStatement = LetStatement | ExprStatement;
@@ -198,6 +199,8 @@ export interface TypeDeclaration extends NodeBase {
   typeParams: TypeParameter[];
   members: TypeAliasMember[];
   export?: ExportModifier;
+  leadingComments?: string[];
+  trailingComment?: string;
 }
 
 export interface LetDeclaration extends NodeBase {
@@ -207,8 +210,12 @@ export interface LetDeclaration extends NodeBase {
   annotation?: TypeExpr;
   body: BlockExpr;
   isRecursive: boolean;
+  isFirstClassMatch?: boolean; // True if originally written as `let f = match(x) { ... }`
+  isArrowSyntax?: boolean; // True if originally written with arrow syntax `() => { ... }`
   mutualBindings?: LetDeclaration[];
   export?: ExportModifier;
+  leadingComments?: string[];
+  trailingComment?: string;
 }
 
 export type TopLevel = LetDeclaration | TypeDeclaration;

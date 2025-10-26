@@ -15,10 +15,14 @@ export function lex(source: string): Token[] {
     }
 
     if (char === "-" && source[index + 1] === "-") {
+      const commentStart = index;
       index += 2;
+      let value = "";
       while (index < length && source[index] !== "\n") {
+        value += source[index];
         index++;
       }
+      tokens.push({ kind: "comment", value: value.trim(), start: commentStart, end: index });
       continue;
     }
 

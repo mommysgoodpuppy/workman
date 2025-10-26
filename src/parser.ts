@@ -29,15 +29,15 @@ export class ParseError extends Error {
   }
 }
 
-export function parseSurfaceProgram(tokens: Token[]): Program {
-  const parser = new SurfaceParser(tokens);
+export function parseSurfaceProgram(tokens: Token[], source?: string): Program {
+  const parser = new SurfaceParser(tokens, source);
   return parser.parseProgram();
 }
 
 class SurfaceParser {
   private index = 0;
 
-  constructor(private readonly tokens: Token[]) {}
+  constructor(private readonly tokens: Token[], private readonly source?: string) {}
 
   parseProgram(): Program {
 
@@ -45,6 +45,13 @@ class SurfaceParser {
     const reexports: ModuleReexport[] = [];
     const declarations: TopLevel[] = [];
     while (!this.isEOF()) {
+      // Collect any leading comments
+      const leadingComments = this.collectLeadingComments();
+      
+      if (this.isEOF()) {
+        break;
+      }
+      
       const val = this.peek(this.index)
       //console.log(val, this.index);
       if (this.checkKeyword("from")) {
@@ -56,9 +63,26 @@ class SurfaceParser {
       ) {
         reexports.push(this.parseModuleReexport());
       } else {
-        declarations.push(this.parseTopLevel());
+        const decl = this.parseTopLevel();
+        if (leadingComments.length > 0) {
+          decl.leadingComments = leadingComments;
+        }
+        declarations.push(decl);
       }
       if (this.matchSymbol(";")) {
+        const semicolonToken = this.previous();
+        // Check for trailing comment on the same line (no newline between semicolon and comment)
+        if (this.peek().kind === "comment" && this.source) {
+          const commentToken = this.peek();
+          const textBetween = this.source.slice(semicolonToken.end, commentToken.start);
+          // Only treat as trailing if there's no newline between semicolon and comment
+          if (!textBetween.includes("\n")) {
+            const lastDecl = declarations[declarations.length - 1];
+            if (lastDecl) {
+              lastDecl.trailingComment = this.consume().value;
+            }
+          }
+        }
         continue;
       }
       if (!this.isEOF()) {
@@ -267,11 +291,20 @@ class SurfaceParser {
           annotation: undefined,
           span: scrutinee.span,
         }];
+      
+      // Detect if the match expression is multi-line
+      let isMultiLine = false;
+      if (this.source) {
+        const matchText = this.source.slice(initializer.span.start, initializer.span.end);
+        isMultiLine = matchText.includes("\n");
+      }
+      
       const body: BlockExpr = {
         kind: "block",
         statements: [],
         result: initializer,
         span: initializer.span,
+        isMultiLine,
       };
       return {
         kind: "let",
@@ -280,6 +313,7 @@ class SurfaceParser {
         annotation,
         body,
         isRecursive,
+        isFirstClassMatch: true,
         span: this.spanFrom(startPos, body.span.end),
       };
     }
@@ -308,6 +342,7 @@ class SurfaceParser {
         annotation,
         body,
         isRecursive,
+        isArrowSyntax: true,
         span: this.spanFrom(startPos, body.span.end),
       };
     }
@@ -419,7 +454,15 @@ class SurfaceParser {
 
     const close = this.expectSymbol("}");
     const span = this.spanFrom(open.start, close.end);
-    return { kind: "block", statements, result, span };
+    
+    // Detect if block is multi-line by checking if there's a newline between { and }
+    let isMultiLine = false;
+    if (this.source) {
+      const blockText = this.source.slice(open.start, close.end);
+      isMultiLine = blockText.includes("\n");
+    }
+    
+    return { kind: "block", statements, result, span, isMultiLine };
   }
 
   private parseTypeDeclaration(exportToken?: Token): TypeDeclaration {
@@ -970,5 +1013,19 @@ class SurfaceParser {
 
   private error(message: string, token: Token = this.peek()): ParseError {
     return new ParseError(message, token);
+  }
+
+  private collectLeadingComments(): string[] {
+    const comments: string[] = [];
+    while (this.peek().kind === "comment") {
+      comments.push(this.consume().value);
+    }
+    return comments;
+  }
+
+  private skipComments(): void {
+    while (this.peek().kind === "comment") {
+      this.consume();
+    }
   }
 }
