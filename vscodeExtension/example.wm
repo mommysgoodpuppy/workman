@@ -3,9 +3,10 @@
 
 -- Type declarations
 
-
 -- Simple function
-let identity = (x) => { x };
+let identity = (x) => {
+  x
+};
 
 -- First-class match
 let firstUserId = match(list) {
@@ -45,7 +46,7 @@ let fst = match(pair) {
 };
 
 -- Nested patterns
-let unwrap = match( opt) {
+let unwrap = match(opt) {
   Some(Some(x)) => { x },
   Some(None) => { 0 },
   None => { 0 }

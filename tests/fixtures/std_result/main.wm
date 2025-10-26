@@ -5,20 +5,51 @@ export let defaultOk = () => {
 };
 
 export let foldOk = () => {
-  fold(((err) => { err }, (val) => { add(val, 1) }, Ok(9)))
+  fold((
+    (err) => {
+    err
+  },
+    (val) => {
+    add(val, 1)
+  },
+    Ok(9)
+  ))
 };
 
 export let foldErr = () => {
-  fold(((err) => { add(err, 1) }, (val) => { val }, Err(3)))
+  fold((
+    (err) => {
+    add(err, 1)
+  },
+    (val) => {
+    val
+  },
+    Err(3)
+  ))
 };
 
 export let mapChain = () => {
   let base = Ok(7);
-  let mapped = map(((n) => { add(n, 1) }, base));
-  let chained = andThen(((n) => { Ok(add(n, n)) }, mapped));
+  let mapped = map((
+    (n) => {
+    add(n, 1)
+  },
+    base
+  ));
+  let chained = andThen((
+    (n) => {
+    Ok(add(n, n))
+  },
+    mapped
+  ));
   withDefault((0, chained))
 };
 
 export let remapError = () => {
-  mapError(((n) => { add(n, 5) }, Err(2)))
+  mapError((
+    (n) => {
+    add(n, 5)
+  },
+    Err(2)
+  ))
 };

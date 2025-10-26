@@ -1,5 +1,4 @@
 from "std/core/int" import { intAdd, intSub, intMul, intDiv, intCompare };
-
 export from "std/option/core" type Option(..);
 export from "std/result/core" type Result(..);
 

@@ -1,4 +1,5 @@
 from "std/list" import { listRange, listMap, listFoldl, listSortInt };
+
 let square = (n) => {
   mul(n, n)
 };

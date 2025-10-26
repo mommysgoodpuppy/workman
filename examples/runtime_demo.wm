@@ -35,15 +35,13 @@ let describeList = match(list) {
 
 let buildDemo = (numbers) => {
   match(mapFactorial(numbers)) {
-    totals => {
-      (
-        numbers,
-        totals,
-        sumList(numbers),
-        factorial(5),
-        describeList(totals)
-      )
-    }
+    totals => { (
+      numbers,
+      totals,
+      sumList(numbers),
+      factorial(5),
+      describeList(totals)
+    ) }
   }
 };
 

@@ -2,8 +2,18 @@ from "std/option" import { Some, map, flatMap, withDefault, fromBool, toList, or
 
 export let useOption = () => {
   let base = fromBool((true, 10));
-  let mapped = map(((x) => { add(x, 5) }, base));
-  let chained = flatMap(((x) => { fromBool((true, add(x, 1))) }, mapped));
+  let mapped = map((
+    (x) => {
+    add(x, 5)
+  },
+    base
+  ));
+  let chained = flatMap((
+    (x) => {
+    fromBool((true, add(x, 1)))
+  },
+    mapped
+  ));
   withDefault((0, chained))
 };
 
@@ -17,17 +27,25 @@ export let listExample = () => {
 
 export let nestedPipeline = () => {
   let base = fromBool((true, 3));
-  let tupled = map(((n) => { (n, add(n, 1)) }, base));
-  let combined = flatMap(((pair) => {
-    match(pair) {
-      (a, b) => { Some(add(a, b)) }
-    }
-  }, tupled));
+  let tupled = map((
+    (n) => {
+    (n, add(n, 1))
+  },
+    base
+  ));
+  let combined = flatMap((
+    (pair) => {
+    match(pair) { (a, b) => { Some(add(a, b)) } }
+  },
+    tupled
+  ));
   withDefault((0, combined))
 };
 
 export let lazyFallback = () => {
-  let fallback = () => { Some(8) };
+  let fallback = () => {
+    Some(8)
+  };
   let missing = fromBool((false, 0));
   orElse((fallback, missing))
 };

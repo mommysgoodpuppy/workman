@@ -1,5 +1,4 @@
 from "std/result/core" import { Ok, Err };
-
 export from "std/result/core" type Result(..);
 
 export let map = match(tuple) {

@@ -1,7 +1,9 @@
 from "std/result/core" import { Result };
 from "std/result" import { Ok, Err, map, mapError, andThen, withDefault, fold };
 
-let inc = (n) => { add(n, 1) };
+let inc = (n) => {
+  add(n, 1)
+};
 let doubleIfOdd = (n) => {
   match(cmpInt(sub(n, mul(div(n, 2), 2)), 0)) {
     EQ => { Err("even") },
@@ -9,7 +11,9 @@ let doubleIfOdd = (n) => {
   }
 };
 
-let strErr = (e) => { e };
+let strErr = (e) => {
+  e
+};
 
 export let pipeline = () => {
   let start = Ok(10);
@@ -20,5 +24,13 @@ export let pipeline = () => {
 
 export let foldBoth = () => {
   let start = Err("boom");
-  fold(((e) => { 0 }, (v) => { add(v, 1) }, start))
+  fold((
+    (e) => {
+    0
+  },
+    (v) => {
+    add(v, 1)
+  },
+    start
+  ))
 };

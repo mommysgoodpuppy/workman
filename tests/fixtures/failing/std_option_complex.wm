@@ -1,7 +1,9 @@
 from "std/option/core" import { Option };
 from "std/option" import { Some, None, map, flatMap, orElse, withDefault };
 
-let inc = (n) => { add(n, 1) };
+let inc = (n) => {
+  add(n, 1)
+};
 let toDoubleIfOdd = (n) => {
   match(cmpInt(sub(n, mul(div(n, 2), 2)), 0)) {
     EQ => { None },
@@ -18,6 +20,8 @@ export let pipeline = () => {
 
 export let fallback = () => {
   let missing = None;
-  let fallback = () => { Some(42) };
+  let fallback = () => {
+    Some(42)
+  };
   orElse((fallback, missing))
 };
