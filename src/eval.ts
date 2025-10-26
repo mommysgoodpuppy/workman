@@ -354,6 +354,7 @@ function registerTypeConstructorsRuntime(env: Environment, decl: TypeDeclaration
 
 function registerPreludeRuntime(env: Environment, options: EvalOptions): void {
   bindCmpIntNative(env, "nativeCmpInt");
+  bindCharEqNative(env, "nativeCharEq");
   bindPrintNative(env, "nativePrint", options.onPrint);
   bindIntBinaryNative(env, "nativeAdd", (a, b) => a + b);
   bindIntBinaryNative(env, "nativeSub", (a, b) => a - b);
@@ -437,6 +438,18 @@ function bindCmpIntNative(env: Environment, name: string): void {
       return gt;
     }
     return eq;
+  });
+  bindValue(env, name, native);
+}
+
+function bindCharEqNative(env: Environment, name: string): void {
+  if (hasBinding(env, name)) {
+    return;
+  }
+  const native = createNativeFunction(name, 2, (args, span) => {
+    const left = expectChar(args[0], span, name);
+    const right = expectChar(args[1], span, name);
+    return { kind: "bool", value: left === right } satisfies BoolValue;
   });
   bindValue(env, name, native);
 }
@@ -654,6 +667,13 @@ function assertUnreachable(_value: never, message: string, span?: SourceSpan): n
 function expectInt(value: RuntimeValue, span: SourceSpan | undefined, primitiveName: string): number {
   if (value.kind !== "int") {
     throw new RuntimeError(`Primitive '${primitiveName}' expected an Int argument`, span, currentSource);
+  }
+  return value.value;
+}
+
+function expectChar(value: RuntimeValue, span: SourceSpan | undefined, primitiveName: string): number {
+  if (value.kind !== "char") {
+    throw new RuntimeError(`Primitive '${primitiveName}' expected a Char argument`, span, currentSource);
   }
   return value.value;
 }

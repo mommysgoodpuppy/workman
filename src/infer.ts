@@ -110,13 +110,24 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
   const ctx: Context = { env, adtEnv, subst: new Map(), source: options.source };
   const summaries: { name: string; scheme: TypeScheme }[] = [];
 
+  // Clear the type params cache for this program
+  typeParamsCache.clear();
+
   if (options.registerPrelude !== false) {
     registerPrelude(ctx);
   }
 
+  // Pass 1: Register all type names (allows forward references)
   for (const decl of program.declarations) {
     if (decl.kind === "type") {
-      registerTypeDeclaration(ctx, decl);
+      registerTypeName(ctx, decl);
+    }
+  }
+
+  // Pass 2: Register constructors (now all type names are known)
+  for (const decl of program.declarations) {
+    if (decl.kind === "type") {
+      registerTypeConstructors(ctx, decl);
     }
   }
 
@@ -164,17 +175,16 @@ function registerPrefixDeclaration(ctx: Context, decl: PrefixDeclaration) {
   ctx.env.set(opFuncName, implScheme);
 }
 
-function registerTypeDeclaration(ctx: Context, decl: TypeDeclaration) {
+// Store parameter types for each declaration to use in pass 2
+const typeParamsCache = new Map<string, Type[]>();
+
+// Pass 1: Register type name and create empty entry
+function registerTypeName(ctx: Context, decl: TypeDeclaration) {
   if (ctx.adtEnv.has(decl.name)) {
-    throw inferError(`Type '${decl.name}' is already defined`);
+    throw inferError(`Type '${decl.name}' is already defined`, decl.span, ctx.source);
   }
 
   const parameterTypes = decl.typeParams.map(() => freshTypeVar());
-  const typeScope = new Map<string, Type>();
-  decl.typeParams.forEach((param, index) => {
-    typeScope.set(param.name, parameterTypes[index]);
-  });
-
   const parameterIds = parameterTypes
     .map((type) => (type.kind === "var" ? type.id : -1))
     .filter((id) => id >= 0);
@@ -185,6 +195,28 @@ function registerTypeDeclaration(ctx: Context, decl: TypeDeclaration) {
     constructors: [] as ConstructorInfo[],
   };
   ctx.adtEnv.set(decl.name, adtInfo);
+  
+  // Cache the parameter types for pass 2
+  typeParamsCache.set(decl.name, parameterTypes);
+}
+
+// Pass 2: Register constructors (can now reference other types)
+function registerTypeConstructors(ctx: Context, decl: TypeDeclaration) {
+  const adtInfo = ctx.adtEnv.get(decl.name);
+  if (!adtInfo) {
+    throw inferError(`Internal error: Type '${decl.name}' not pre-registered`);
+  }
+
+  // Reuse the parameter types from pass 1
+  const parameterTypes = typeParamsCache.get(decl.name);
+  if (!parameterTypes) {
+    throw inferError(`Internal error: Type parameters not cached for '${decl.name}'`);
+  }
+
+  const typeScope = new Map<string, Type>();
+  decl.typeParams.forEach((param, index) => {
+    typeScope.set(param.name, parameterTypes[index]);
+  });
 
   const constructors: ConstructorInfo[] = [];
   for (const member of decl.members) {
@@ -234,6 +266,7 @@ function buildConstructorInfo(
 
 function registerPrelude(ctx: Context) {
   registerCmpIntPrimitive(ctx, "nativeCmpInt");
+  registerCharEqPrimitive(ctx, "nativeCharEq");
   registerIntBinaryPrimitive(ctx, "nativeAdd");
   registerIntBinaryPrimitive(ctx, "nativeSub");
   registerIntBinaryPrimitive(ctx, "nativeMul");
@@ -251,6 +284,22 @@ function registerCmpIntPrimitive(ctx: Context, name: string, aliasOf?: string) {
         kind: "func",
         from: { kind: "int" },
         to: { kind: "constructor", name: "Ordering", args: [] },
+      },
+    },
+  };
+  bindTypeAlias(ctx, name, scheme, aliasOf);
+}
+
+function registerCharEqPrimitive(ctx: Context, name: string, aliasOf?: string) {
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: { kind: "char" },
+      to: {
+        kind: "func",
+        from: { kind: "char" },
+        to: { kind: "bool" },
       },
     },
   };

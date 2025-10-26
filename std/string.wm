@@ -6,16 +6,36 @@
 -- type String = List<Int>;
 
 -- Character code constants
-export let charSpace = () => { 32 };
-export let charTab = () => { 9 };
-export let charNewline = () => { 10 };
-export let charReturn = () => { 13 };
-export let char0 = () => { 48 };
-export let char9 = () => { 57 };
-export let charA = () => { 65 };
-export let charZ = () => { 90 };
-export let charLowerA = () => { 97 };
-export let charLowerZ = () => { 122 };
+export let charSpace = () => {
+  32
+};
+export let charTab = () => {
+  9
+};
+export let charNewline = () => {
+  10
+};
+export let charReturn = () => {
+  13
+};
+export let char0 = () => {
+  48
+};
+export let char9 = () => {
+  57
+};
+export let charA = () => {
+  65
+};
+export let charZ = () => {
+  90
+};
+export let charLowerA = () => {
+  97
+};
+export let charLowerZ = () => {
+  122
+};
 
 -- Get the length of a string (just list length)
 export let rec strLength = match(s) {
@@ -54,8 +74,12 @@ export let rec strDrop = match(tuple) {
 
 -- Substring from start (inclusive) to end (exclusive)
 export let strSlice = (s, start, end) => {
-  let dropped = () => { strDrop((s, start)) };
-  let len = () => { sub(end, start) };
+  let dropped = () => {
+    strDrop((s, start))
+  };
+  let len = () => {
+    sub(end, start)
+  };
   strTake((dropped(), len()))
 };
 
@@ -67,17 +91,17 @@ export let rec strConcat = match(tuple) {
 
 -- Check if character is a digit (0-9)
 export let isDigit = (c) => {
-  let ge0 = () => { 
+  let ge0 = () => {
     match(cmpInt(c, char0())) {
-      LT => { false },
-      _ => { true }
-    }
+        LT => { false },
+        _ => { true }
+      }
   };
   let le9 = () => {
     match(cmpInt(c, char9())) {
-      GT => { false },
-      _ => { true }
-    }
+        GT => { false },
+        _ => { true }
+      }
   };
   match(ge0()) {
     false => { false },
@@ -89,15 +113,15 @@ export let isDigit = (c) => {
 export let isUppercase = (c) => {
   let geA = () => {
     match(cmpInt(c, charA())) {
-      LT => { false },
-      _ => { true }
-    }
+        LT => { false },
+        _ => { true }
+      }
   };
   let leZ = () => {
     match(cmpInt(c, charZ())) {
-      GT => { false },
-      _ => { true }
-    }
+        GT => { false },
+        _ => { true }
+      }
   };
   match(geA()) {
     false => { false },
@@ -109,15 +133,15 @@ export let isUppercase = (c) => {
 export let isLowercase = (c) => {
   let gea = () => {
     match(cmpInt(c, charLowerA())) {
-      LT => { false },
-      _ => { true }
-    }
+        LT => { false },
+        _ => { true }
+      }
   };
   let lez = () => {
     match(cmpInt(c, charLowerZ())) {
-      GT => { false },
-      _ => { true }
-    }
+        GT => { false },
+        _ => { true }
+      }
   };
   match(gea()) {
     false => { false },
