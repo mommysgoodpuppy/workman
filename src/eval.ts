@@ -11,6 +11,7 @@ import type {
   Literal,
   MatchArm,
   MatchBundle,
+  MatchBundleLiteralExpr,
   Parameter,
   Pattern,
   PrefixDeclaration,
@@ -25,9 +26,12 @@ import {
   createEnvironment,
   bindValue,
   lookupValue,
+  updateValue,
   UNIT_VALUE,
   NativeFunctionValue,
   ClosureValue,
+  MatchBundleValue,
+  
   DataValue,
   IntValue,
   BoolValue,
@@ -215,6 +219,8 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
       return evaluateMatchExpr(env, expr.scrutinee, expr.bundle, expr.span);
     case "match_fn":
       return evaluateMatchFunction(env, expr.parameters, expr.bundle, expr.span);
+    case "match_bundle_literal":
+      return evaluateMatchBundleLiteral(env, expr);
     case "binary": {
       // Binary operators are desugared to function calls
       // e.g., `a + b` becomes `add(a, b)` where `add` is the implementation function
@@ -541,17 +547,7 @@ function evaluateMatchExpr(
   span: SourceSpan,
 ): RuntimeValue {
   const scrutinee = evaluateExpr(env, scrutineeExpr);
-  for (const arm of bundle.arms) {
-    const bindings = matchPattern(env, scrutinee, arm.pattern);
-    if (bindings) {
-      const scope = createEnvironment(env);
-      for (const [name, value] of bindings.entries()) {
-        bindValue(scope, name, value);
-      }
-      return evaluateExpr(scope, arm.body);
-    }
-  }
-  throw new RuntimeError("Non-exhaustive patterns at runtime", span, currentSource);
+  return applyMatchBundle(env, bundle, scrutinee, span);
 }
 
 function evaluateMatchFunction(
@@ -566,18 +562,35 @@ function evaluateMatchFunction(
 
   const closureEnv = env;
   return createNativeFunction("match_fn", 1, ([arg]) => {
-    for (const arm of bundle.arms) {
-      const bindings = matchPattern(closureEnv, arg, arm.pattern);
-      if (bindings) {
-        const scope = createEnvironment(closureEnv);
-        for (const [name, value] of bindings.entries()) {
-          bindValue(scope, name, value);
-        }
-        return evaluateExpr(scope, arm.body);
-      }
-    }
-    throw new RuntimeError("Non-exhaustive match function at runtime", span, currentSource);
+    return applyMatchBundle(closureEnv, bundle, arg, span);
   });
+}
+
+function evaluateMatchBundleLiteral(env: Environment, expr: MatchBundleLiteralExpr): RuntimeValue {
+  return {
+    kind: "match_bundle",
+    bundle: expr.bundle,
+    env,
+  } satisfies MatchBundleValue;
+}
+
+function applyMatchBundle(
+  env: Environment,
+  bundle: MatchBundle,
+  scrutinee: RuntimeValue,
+  span: SourceSpan,
+): RuntimeValue {
+  for (const arm of bundle.arms) {
+    const bindings = matchPattern(env, scrutinee, arm.pattern);
+    if (bindings) {
+      const scope = createEnvironment(env);
+      for (const [name, value] of bindings.entries()) {
+        bindValue(scope, name, value);
+      }
+      return evaluateExpr(scope, arm.body);
+    }
+  }
+  throw new RuntimeError("Non-exhaustive patterns at runtime", span, currentSource);
 }
 
 function matchPattern(env: Environment, value: RuntimeValue, pattern: Pattern): Map<string, RuntimeValue> | null {

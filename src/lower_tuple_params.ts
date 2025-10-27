@@ -105,6 +105,15 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
         }
       }
       return;
+    case "match_bundle_literal":
+      for (const arm of expr.bundle.arms) {
+        if (arm.body.kind === "block") {
+          lowerBlockExpr(arm.body, ctx);
+        } else {
+          lowerExpr(arm.body, ctx);
+        }
+      }
+      return;
     default:
       return;
   }

@@ -37,7 +37,7 @@ import {
 } from "./types.ts";
 import { formatScheme } from "./type_printer.ts";
 import { InferError as InferErrorClass } from "./error.ts";
-import { inferMatchExpression, inferMatchFunction } from "./infermatch.ts";
+import { inferMatchExpression, inferMatchFunction, inferMatchBundleLiteral } from "./infermatch.ts";
 
 // Re-export InferError from error module
 export { InferError } from "./error.ts";
@@ -774,6 +774,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       return inferMatchExpression(ctx, expr.scrutinee, expr.bundle);
     case "match_fn":
       return inferMatchFunction(ctx, expr.parameters, expr.bundle);
+    case "match_bundle_literal":
+      return inferMatchBundleLiteral(ctx, expr);
     case "binary": {
       // Binary operators are desugared to function calls
       // e.g., `a + b` becomes `add(a, b)` where `add` is the implementation function

@@ -93,6 +93,8 @@ export interface MatchBundle extends NodeBase {
   arms: MatchArm[];
 }
 
+export type MatchBundleExpr = MatchBundle;
+
 export type Expr =
   | IdentifierExpr
   | LiteralExpr
@@ -104,7 +106,8 @@ export type Expr =
   | ArrowFunctionExpr
   | BlockExpr
   | MatchExpr
-  | MatchFunctionExpr;
+  | MatchFunctionExpr
+  | MatchBundleLiteralExpr;
 
 export interface IdentifierExpr extends NodeBase {
   kind: "identifier";
@@ -162,6 +165,11 @@ export interface MatchExpr extends NodeBase {
 export interface MatchFunctionExpr extends NodeBase {
   kind: "match_fn";
   parameters: Expr[];
+  bundle: MatchBundle;
+}
+
+export interface MatchBundleLiteralExpr extends NodeBase {
+  kind: "match_bundle_literal";
   bundle: MatchBundle;
 }
 

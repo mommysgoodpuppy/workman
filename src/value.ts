@@ -1,4 +1,4 @@
-import type { BlockExpr, Parameter, SourceSpan } from "./ast.ts";
+import type { BlockExpr, MatchBundle, Parameter, SourceSpan } from "./ast.ts";
 
 export type RuntimeValue =
   | IntValue
@@ -9,7 +9,8 @@ export type RuntimeValue =
   | TupleValue
   | DataValue
   | ClosureValue
-  | NativeFunctionValue;
+  | NativeFunctionValue
+  | MatchBundleValue;
 
 export interface IntValue {
   kind: "int";
@@ -59,6 +60,12 @@ export interface NativeFunctionValue {
   arity: number;
   collectedArgs: RuntimeValue[];
   impl: (args: RuntimeValue[], span: SourceSpan | undefined) => RuntimeValue;
+}
+
+export interface MatchBundleValue {
+  kind: "match_bundle";
+  bundle: MatchBundle;
+  env: Environment;
 }
 
 export interface Environment {

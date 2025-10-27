@@ -674,6 +674,15 @@ class SurfaceParser {
     const token = this.peek();
     if (token.kind === "keyword" && token.value === "match") {
       const matchToken = this.expectKeyword("match");
+      if (this.matchSymbol("{")) {
+        const { bundle, span } = this.parseMatchBlockFromOpenBrace(matchToken.start);
+        return {
+          kind: "match_bundle_literal",
+          bundle,
+          span,
+        };
+      }
+
       this.expectSymbol("(");
 
       const args: Expr[] = [];
@@ -1099,6 +1108,11 @@ class SurfaceParser {
 
   private parseMatchBlock(): { bundle: MatchBundle; span: SourceSpan } {
     const open = this.expectSymbol("{");
+    return this.parseMatchBlockFromOpenBrace(open.start);
+  }
+
+  private parseMatchBlockFromOpenBrace(start: number): { bundle: MatchBundle; span: SourceSpan } {
+    const openStart = start;
     const arms: MatchArm[] = [];
 
     if (!this.checkSymbol("}")) {
@@ -1126,7 +1140,7 @@ class SurfaceParser {
     if (arms.length === 0) {
       throw this.error("Match block requires at least one arm", close);
     }
-    const span = this.spanFrom(open.start, close.end);
+    const span = this.spanFrom(openStart, close.end);
     const bundle: MatchBundle = {
       kind: "match_bundle",
       arms,

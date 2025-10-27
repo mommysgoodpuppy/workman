@@ -1,4 +1,4 @@
-import { Expr, MatchBundle } from "./ast.ts";
+import { Expr, MatchBundle, MatchBundleLiteralExpr, MatchArm } from "./ast.ts";
 import { Context, applyCurrentSubst, inferPattern, withScopedEnv, inferExpr, unify, ensureExhaustive } from "./infer.ts";
 import { Type, typeToString, freshTypeVar } from "./types.ts";
 import { inferError } from "./infer.ts";
@@ -19,6 +19,11 @@ export function inferMatchFunction(ctx: Context, parameters: Expr[], bundle: Mat
     from: applyCurrentSubst(ctx, parameterType),
     to: applyCurrentSubst(ctx, resultType),
   };
+}
+
+export function inferMatchBundleLiteral(ctx: Context, expr: MatchBundleLiteralExpr): Type {
+  const resultType = inferMatchBranches(ctx, freshTypeVar(), expr.bundle.arms);
+  return applyCurrentSubst(ctx, resultType);
 }
 
 export function inferMatchBranches(
