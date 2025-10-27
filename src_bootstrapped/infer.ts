@@ -34,6 +34,7 @@ import {
   instantiate,
   occursInType,
   resetTypeVarCounter,
+  typeToString,
 } from "./types.ts";
 import { formatScheme } from "./type_printer.ts";
 import { InferError as InferErrorClass } from "./error.ts";
@@ -74,6 +75,8 @@ export interface InferResult {
   env: TypeEnv;
   adtEnv: TypeEnvADT;
   summaries: { name: string; scheme: TypeScheme }[];
+  // Map from binding name to its type scheme (includes block-scoped bindings)
+  allBindings: Map<string, TypeScheme>;
 }
 
 interface Context {
@@ -81,6 +84,8 @@ interface Context {
   adtEnv: TypeEnvADT;
   subst: Substitution;
   source?: string;  // Source code for error reporting
+  // Track all bindings including block-scoped ones
+  allBindings: Map<string, TypeScheme>;
 }
 
 function withScopedEnv<T>(ctx: Context, fn: () => T): T {
@@ -107,7 +112,8 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
   }
   const env: TypeEnv = options.initialEnv ? cloneTypeEnv(options.initialEnv) : new Map();
   const adtEnv: TypeEnvADT = options.initialAdtEnv ? cloneAdtEnv(options.initialAdtEnv) : new Map();
-  const ctx: Context = { env, adtEnv, subst: new Map(), source: options.source };
+  const allBindings = new Map<string, TypeScheme>();
+  const ctx: Context = { env, adtEnv, subst: new Map(), source: options.source, allBindings };
   const summaries: { name: string; scheme: TypeScheme }[] = [];
 
   // Clear the type params cache for this program
@@ -149,7 +155,7 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     finalEnv.set(name, applySubstitutionScheme(scheme, ctx.subst));
   }
 
-  return { env: finalEnv, adtEnv: ctx.adtEnv, summaries };
+  return { env: finalEnv, adtEnv: ctx.adtEnv, summaries, allBindings: ctx.allBindings };
 }
 
 function registerInfixDeclaration(ctx: Context, decl: InfixDeclaration) {
@@ -272,6 +278,7 @@ function registerPrelude(ctx: Context) {
   registerIntBinaryPrimitive(ctx, "nativeMul");
   registerIntBinaryPrimitive(ctx, "nativeDiv");
   registerPrintPrimitive(ctx, "nativePrint");
+  registerStrFromLiteralPrimitive(ctx, "nativeStrFromLiteral");
 }
 
 function registerCmpIntPrimitive(ctx: Context, name: string, aliasOf?: string) {
@@ -340,6 +347,27 @@ function registerPrintPrimitive(ctx: Context, name: string, aliasOf?: string) {
   bindTypeAlias(ctx, name, scheme, aliasOf);
 }
 
+function registerStrFromLiteralPrimitive(ctx: Context, name: string) {
+  // nativeStrFromLiteral : String -> List<Int>
+  // Takes a string literal and converts it to a list of character codes
+  const listType: Type = {
+    kind: "constructor",
+    name: "List",
+    args: [{ kind: "int" }],
+  };
+  
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: { kind: "string" },
+      to: listType,
+    },
+  };
+  
+  ctx.env.set(name, scheme);
+}
+
 function bindTypeAlias(ctx: Context, name: string, scheme: TypeScheme, aliasOf?: string) {
   if (aliasOf && ctx.env.has(name)) {
     return;
@@ -354,6 +382,7 @@ function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string
     const fnType = inferLetBinding(ctx, decl.parameters, decl.body, decl.annotation);
     const scheme = generalizeInContext(ctx, fnType);
     ctx.env.set(decl.name, scheme);
+    ctx.allBindings.set(decl.name, scheme); // Track in allBindings
     return [{ name: decl.name, scheme }];
   }
 
@@ -390,12 +419,21 @@ function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string
   }
   
   // STEP 4: Apply substitutions and generalize
+  // Remove bindings from environment before generalization to avoid capturing their own type vars
+  for (const binding of allBindings) {
+    const existing = ctx.env.get(binding.name);
+    if (existing) {
+      ctx.env.delete(binding.name);
+    }
+  }
+
   const results: { name: string; scheme: TypeScheme }[] = [];
   for (const binding of allBindings) {
     const inferredType = inferredTypes.get(binding.name)!;
     const resolvedType = applyCurrentSubst(ctx, inferredType);
     const scheme = generalizeInContext(ctx, resolvedType);
     ctx.env.set(binding.name, scheme);
+    ctx.allBindings.set(binding.name, scheme); // Track in allBindings
     results.push({ name: binding.name, scheme });
   }
   
@@ -553,25 +591,26 @@ function inferLetBinding(
       });
     });
 
-    let inferred = inferBlockExpr(ctx, body);
+    const bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
+
+    let fnType: Type;
+    if (parameters.length === 0) {
+      fnType = bodyType;
+    } else {
+      fnType = paramTypes.reduceRight<Type>((acc, paramType) => ({
+        kind: "func",
+        from: applyCurrentSubst(ctx, paramType),
+        to: acc,
+      }), bodyType);
+    }
 
     if (annotation) {
       const annotated = convertTypeExpr(ctx, annotation, annotationScope);
-      unify(ctx, inferred, annotated);
-      inferred = applyCurrentSubst(ctx, annotated);
+      unify(ctx, fnType, annotated);
+      fnType = applyCurrentSubst(ctx, annotated);
     }
 
-    const resolved = applyCurrentSubst(ctx, inferred);
-
-    if (parameters.length === 0) {
-      return resolved;
-    }
-
-    return paramTypes.reduceRight<Type>((acc, paramType) => ({
-      kind: "func",
-      from: applyCurrentSubst(ctx, paramType),
-      to: acc,
-    }), resolved);
+    return fnType;
   });
 }
 
@@ -610,6 +649,33 @@ function inferExpr(ctx: Context, expr: Expr): Type {
   switch (expr.kind) {
     case "identifier": {
       const scheme = lookupEnv(ctx, expr.name);
+      if (
+        expr.name === "formatRuntimeValue" &&
+        ctx.source?.includes("Runtime value printer for Workman using std library")
+      ) {
+        console.log(
+          "[debug] identifier formatRuntimeValue scheme:",
+          formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
+        );
+      }
+      if (
+        expr.name === "listMap" &&
+        ctx.source?.includes("Runtime value printer for Workman using std library")
+      ) {
+        console.log(
+          "[debug] identifier listMap scheme:",
+          formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
+        );
+      }
+      if (
+        expr.name === "fromLiteral" &&
+        ctx.source?.includes("Runtime value printer for Workman using std library")
+      ) {
+        console.log(
+          "[debug] identifier fromLiteral scheme:",
+          formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
+        );
+      }
       return instantiateAndApply(ctx, scheme);
     }
     case "literal":
@@ -642,10 +708,63 @@ function inferExpr(ctx: Context, expr: Expr): Type {
       for (const arg of expr.arguments) {
         const argType = inferExpr(ctx, arg);
         const resultType = freshTypeVar();
-        unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
+        const calleeIdentifierName = expr.callee.kind === "identifier"
+          ? expr.callee.name
+          : null;
+        const calleeName = calleeIdentifierName ?? "<expression>";
+        if (
+          calleeIdentifierName === "listMap" &&
+          ctx.source?.includes("Runtime value printer for Workman using std library")
+        ) {
+          console.log("[debug] listMap arg type:", typeToString(applyCurrentSubst(ctx, argType)));
+          console.log(
+            "[debug] fnType before unify:",
+            typeToString(applyCurrentSubst(ctx, fnType)),
+          );
+        }
+        if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
+          console.log("[debug] call callee:", calleeName);
+        }
+        try {
+          unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
+        } catch (e) {
+          // Add context about which function call failed
+          const fnTypeStr = typeToString(applyCurrentSubst(ctx, fnType));
+          const argTypeStr = typeToString(applyCurrentSubst(ctx, argType));
+          if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
+            const snippet = ctx.source.slice(expr.span.start, expr.span.end);
+            console.log("[debug] failing call snippet:", snippet.trim());
+            console.log(
+              "[debug] resultType raw/applied:",
+              typeToString(resultType),
+              typeToString(applyCurrentSubst(ctx, resultType)),
+            );
+            if (resultType.kind === "var") {
+              const mapped = ctx.subst.get(resultType.id);
+              if (mapped) {
+                console.log("[debug] resultType mapped to:", typeToString(mapped));
+              }
+            }
+          }
+          throw inferError(`Type error in function call to '${calleeName}':\n  Function type: ${fnTypeStr}\n  Argument type: ${argTypeStr}\n\nOriginal error: ${e instanceof Error ? e.message : String(e)}`, expr.span, ctx.source);
+        }
         fnType = applyCurrentSubst(ctx, resultType);
       }
-      return applyCurrentSubst(ctx, fnType);
+      const callType = applyCurrentSubst(ctx, fnType);
+      if (
+        ctx.source?.includes("Runtime value printer for Workman using std library") &&
+        ctx.source.slice(expr.span.start, expr.span.end).includes("listMap")
+      ) {
+        console.log("[debug] listMap call type:", typeToString(callType));
+        const fmtScheme = ctx.env.get("formatRuntimeValue");
+        if (fmtScheme) {
+          console.log(
+            "[debug] formatRuntimeValue scheme after listMap:",
+            formatScheme(applySubstitutionScheme(fmtScheme, ctx.subst)),
+          );
+        }
+      }
+      return callType;
     }
     case "arrow":
       return inferArrowFunction(ctx, expr.parameters, expr.body);
@@ -770,9 +889,34 @@ function inferMatchBranches(
       for (const [name, type] of patternInfo.bindings.entries()) {
         ctx.env.set(name, { quantifiers: [], type: applyCurrentSubst(ctx, type) });
       }
+      if (
+        ctx.source?.includes("Runtime value printer for Workman using std library") &&
+        resultType
+      ) {
+        console.log(
+          "[debug] expected result before arm",
+          arm.pattern.kind === "constructor" ? arm.pattern.name : arm.pattern.kind,
+          ":",
+          typeToString(applyCurrentSubst(ctx, resultType)),
+        );
+      }
       return inferExpr(ctx, arm.body);
     });
 
+    if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
+      let patternDesc = arm.pattern.kind;
+      if (arm.pattern.kind === "constructor") {
+        patternDesc = `constructor ${arm.pattern.name}`;
+      } else if (arm.pattern.kind === "literal") {
+        patternDesc = `literal ${arm.pattern.literal.kind}`;
+      }
+      console.log(
+        "[debug] match arm",
+        patternDesc,
+        "body type:",
+        typeToString(applyCurrentSubst(ctx, bodyType)),
+      );
+    }
     if (!resultType) {
       resultType = bodyType;
     } else {
@@ -916,6 +1060,12 @@ function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternIn
       const bindings = new Map<string, Type>();
       for (const argPattern of pattern.args) {
         const fnType = expectFunctionType(ctx, current, `Constructor ${pattern.name}`);
+        if (pattern.name === "Data") {
+          console.log(
+            "[debug] Data pattern field type:",
+            typeToString(applyCurrentSubst(ctx, fnType.from)),
+          );
+        }
         const info = inferPattern(ctx, argPattern, fnType.from);
         mergeBindings(bindings, info.bindings);
         current = fnType.to;
@@ -995,7 +1145,22 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): Substitution {
 
   if (left.kind === "constructor" && right.kind === "constructor") {
     if (left.name !== right.name || left.args.length !== right.args.length) {
-      throw inferError(`Cannot unify constructors ${left.name} and ${right.name}`);
+      // Enhanced error message with full type information
+      const leftStr = typeToString(left);
+      const rightStr = typeToString(right);
+      
+      // Apply current substitution to see the "real" types
+      const leftResolved = typeToString(applySubstitution(left, subst));
+      const rightResolved = typeToString(applySubstitution(right, subst));
+      
+      // Show substitution for debugging
+      const substStr = Array.from(subst.entries())
+        .slice(0, 10) // Limit to first 10 to avoid spam
+        .map(([id, type]) => `  't${id} -> ${typeToString(type)}`)
+        .join("\n");
+      
+      const msg = `Cannot unify types:\n  ${leftStr}\nwith:\n  ${rightStr}\n\nAfter substitution:\n  ${leftResolved}\nwith:\n  ${rightResolved}\n\nConstructor mismatch: ${left.name} vs ${right.name}\n\nCurrent substitution (first 10):\n${substStr}`;
+      throw inferError(msg);
     }
     let current = subst;
     for (let i = 0; i < left.args.length; i++) {
@@ -1034,6 +1199,13 @@ function bindVar(id: number, type: Type, subst: Substitution): Substitution {
   }
   const next = new Map(subst);
   next.set(id, resolved);
+  if (
+    resolved.kind === "constructor" &&
+    resolved.name === "RuntimeValue" &&
+    id === 22
+  ) {
+    console.log("[debug] bindVar t22 := RuntimeValue");
+  }
   return next;
 }
 

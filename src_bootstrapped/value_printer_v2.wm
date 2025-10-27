@@ -13,17 +13,18 @@ type RuntimeValue =
   | Int<Int>
   | Bool<Bool>
   | Char<Int>
+  | String<List<Int>>
   | Tuple<List<RuntimeValue>>
   | Data<List<Int>, List<RuntimeValue>>
-  | Closure;
+  | Closure
+  | Native<List<Int>>;
 
 -- ============================================================================
 -- Value Printer Implementation
 -- ============================================================================
 
--- Minimal reproduction: nested match + recursive call through listMap
-let rec formatRuntimeValue = match(value) {
-  Unit => { fromLiteral("unit") },
+export let rec formatRuntimeValue = match(value) {
+  Unit => { fromLiteral("()") },
   Int(n) => { intToString(n) },
   Bool(b) => {
     match(b) {
@@ -34,15 +35,29 @@ let rec formatRuntimeValue = match(value) {
   Char(code) => {
     strConcat((fromLiteral("'"), strConcat((Link(code, Empty), fromLiteral("'")))))
   },
-  Tuple(t) => { fromLiteral("tuple") },
+  String(chars) => { chars },
+  Tuple(elements) => {
+    match(elements) {
+      Empty => { fromLiteral("()") },
+      Link(_, _) => {
+        let formatted = listMap((formatRuntimeValue, elements));
+        let inner = listJoin((fromLiteral(", "), formatted));
+        strConcat((fromLiteral("("), strConcat((inner, fromLiteral(")")))))
+      }
+    }
+  },
   Data(constructor, fields) => {
     match(fields) {
       Empty => { constructor },
       Link(_, _) => {
-        strConcat((constructor, strConcat((fromLiteral(" "), listJoin((fromLiteral(" "), listMap((formatRuntimeValue, fields))))))))
+        let formattedFields = listMap((formatRuntimeValue, fields));
+        let inner = listJoin((fromLiteral(" "), formattedFields));
+        strConcat((constructor, strConcat((fromLiteral(" "), inner))))
       }
     }
   },
-  Closure => { fromLiteral("closure") }
+  Closure => { fromLiteral("<closure>") },
+  Native(name) => {
+    strConcat((fromLiteral("<native "), strConcat((name, fromLiteral(">")))))
+  }
 };
-
