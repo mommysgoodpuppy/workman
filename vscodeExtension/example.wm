@@ -10,14 +10,14 @@ let identity = (x) => {
 
 -- First-class match
 let firstUserId = match(list) {
-  Cons(id, _) => { Some(id) },
-  Nil => { None }
+  Link(id, _) => { Some(id) },
+  Empty => { None }
 };
 
 -- Recursive function
 let rec length = match(list) {
-  Cons(_, rest) => { length(rest) },
-  Nil => { 0 }
+  Link(_, rest) => { length(rest) },
+  Empty => { 0 }
 };
 
 -- Mutual recursion
@@ -34,8 +34,8 @@ and isOdd = match(n) {
 let rec map = (f) => {
   (list) => {
     match(list) {
-      Cons(x, rest) => { Cons(f(x), map(f)(rest)) },
-      Nil => { Nil }
+      Link(x, rest) => { Link(f(x), map(f)(rest)) },
+      Empty => { Empty }
     }
   }
 };

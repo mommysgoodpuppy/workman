@@ -9,7 +9,11 @@
 console.log = console.error;
 
 import { lex } from "@workman/lexer.ts";
-import { ParseError, parseSurfaceProgram } from "@workman/parser.ts";
+import {
+  ParseError,
+  parseSurfaceProgram,
+  type OperatorInfo,
+} from "@workman/parser.ts";
 import { InferError, inferProgram } from "@workman/infer.ts";
 import { LexError, WorkmanError } from "@workman/error.ts";
 import { formatScheme } from "@workman/type_printer.ts";
@@ -43,6 +47,10 @@ class WorkmanLanguageServer {
   private workspaceRoots: string[] = [];
   private initStdRoots: string[] | undefined = undefined;
   private preludeModule: string | undefined = undefined;
+  private preludeOperatorCache = new Map<string, {
+    operators: Map<string, OperatorInfo>;
+    prefixOperators: Set<string>;
+  }>();
 
   private log(message: string) {
     const timestamp = new Date().toISOString();
@@ -283,14 +291,25 @@ class WorkmanLanguageServer {
 
     this.log(`[LSP] Validating document: ${uri}`);
 
+    const entryPath = this.uriToFsPath(uri);
+    const stdRoots = this.computeStdRoots(entryPath);
+
     // First, try to parse the current document directly to get better error positions
     try {
       const tokens = lex(text, uri);
-      const program = parseSurfaceProgram(tokens, text);
+      const { operators, prefixOperators } = await this.getPreludeOperatorSets(
+        entryPath,
+        stdRoots,
+      );
+      const program = parseSurfaceProgram(
+        tokens,
+        text,
+        false,
+        operators.size > 0 ? operators : undefined,
+        prefixOperators.size > 0 ? prefixOperators : undefined,
+      );
       // If parsing succeeds, try full module validation
       try {
-        const entryPath = this.uriToFsPath(uri);
-        const stdRoots = this.computeStdRoots(entryPath);
         await runEntryPath(entryPath, {
           stdRoots,
           preludeModule: this.preludeModule,
@@ -491,7 +510,11 @@ class WorkmanLanguageServer {
         this.preludeModule,
       );
       for (const [name, scheme] of env.entries()) {
-        const regex = new RegExp(`\\blet\\s+(?:rec\\s+)?${name}\\b`, "g");
+        if (name.startsWith("__op_") || name.startsWith("__prefix_")) {
+          continue;
+        }
+        const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(`\\blet\\s+(?:rec\\s+)?${escapedName}\\b`, "g");
         let match: RegExpExecArray | null;
         while ((match = regex.exec(text)) !== null) {
           const endPos = match.index + match[0].length;
@@ -599,6 +622,7 @@ class WorkmanLanguageServer {
       exportsValues: Map<string, TypeScheme>;
       exportsTypes: Map<string, TypeInfo>;
     } | undefined = undefined;
+    let preludeEnv: Map<string, TypeScheme> | undefined = undefined;
 
     for (const path of graph.order) {
       const node = graph.nodes.get(path)!;
@@ -650,6 +674,26 @@ class WorkmanLanguageServer {
         for (const [name, info] of preludeSummary.exportsTypes.entries()) {
           if (!initialAdtEnv.has(name)) {
             initialAdtEnv.set(name, cloneTypeInfo(info));
+          }
+        }
+        if (preludeEnv) {
+          const preludeNode = graph.nodes.get(preludePath!);
+          if (preludeNode) {
+            for (const decl of preludeNode.program.declarations) {
+              if (decl.kind === "infix") {
+                const opName = `__op_${decl.operator}`;
+                const scheme = preludeEnv.get(opName);
+                if (scheme && !initialEnv.has(opName)) {
+                  initialEnv.set(opName, cloneTypeScheme(scheme));
+                }
+              } else if (decl.kind === "prefix") {
+                const opName = `__prefix_${decl.operator}`;
+                const scheme = preludeEnv.get(opName);
+                if (scheme && !initialEnv.has(opName)) {
+                  initialEnv.set(opName, cloneTypeScheme(scheme));
+                }
+              }
+            }
           }
         }
       }
@@ -762,6 +806,7 @@ class WorkmanLanguageServer {
           exportsValues: exportedValues,
           exportsTypes: exportedTypes,
         };
+        preludeEnv = inference.env;
       }
     }
 
@@ -817,6 +862,132 @@ class WorkmanLanguageServer {
     const arr = Array.from(roots);
     this.log(`[LSP] stdRoots => ${arr.join(", ")}`);
     return arr.length > 0 ? arr : [join(dirname(entryPath), "std")];
+  }
+
+  private async getPreludeOperatorSets(
+    entryPath: string,
+    stdRoots: string[],
+  ): Promise<{
+    operators: Map<string, OperatorInfo>;
+    prefixOperators: Set<string>;
+  }> {
+    const emptyResult = {
+      operators: new Map<string, OperatorInfo>(),
+      prefixOperators: new Set<string>(),
+    };
+
+    if (!this.preludeModule) {
+      return emptyResult;
+    }
+
+    const cacheKey = `${[...stdRoots].sort().join(";")}::${this.preludeModule}`;
+    const cached = this.preludeOperatorCache.get(cacheKey);
+    if (cached) {
+      return {
+        operators: new Map(cached.operators),
+        prefixOperators: new Set(cached.prefixOperators),
+      };
+    }
+
+    const preludePath = this.resolvePreludePath(entryPath, stdRoots);
+    if (!preludePath) {
+      this.log(
+        `[LSP] Unable to resolve prelude module '${this.preludeModule}' for '${entryPath}'`,
+      );
+      return emptyResult;
+    }
+
+    let source: string;
+    try {
+      source = await Deno.readTextFile(preludePath);
+    } catch (error) {
+      this.log(
+        `[LSP] Failed to read prelude '${preludePath}': ${error instanceof Error ? error.message : error}'`,
+      );
+      return emptyResult;
+    }
+
+    let program;
+    try {
+      const tokens = lex(source, preludePath);
+      program = parseSurfaceProgram(tokens, source);
+    } catch (error) {
+      this.log(
+        `[LSP] Failed to parse prelude '${preludePath}': ${error instanceof Error ? error.message : error}'`,
+      );
+      return emptyResult;
+    }
+
+    const operators = new Map<string, OperatorInfo>();
+    const prefixOperators = new Set<string>();
+    for (const decl of program.declarations ?? []) {
+      if (decl.kind === "infix") {
+        operators.set(decl.operator, {
+          precedence: decl.precedence,
+          associativity: decl.associativity,
+        });
+      } else if (decl.kind === "prefix") {
+        prefixOperators.add(decl.operator);
+      }
+    }
+
+    this.preludeOperatorCache.set(cacheKey, {
+      operators: new Map(operators),
+      prefixOperators: new Set(prefixOperators),
+    });
+
+    return { operators, prefixOperators };
+  }
+
+  private resolvePreludePath(
+    entryPath: string,
+    stdRoots: string[],
+  ): string | null {
+    if (!this.preludeModule) {
+      return null;
+    }
+
+    const ensureExists = (candidate: string): string | null => {
+      const withExt = this.ensureWmExtension(candidate);
+      try {
+        const stat = Deno.statSync(withExt);
+        if (stat.isFile) {
+          return withExt;
+        }
+      } catch {
+        return null;
+      }
+      return null;
+    };
+
+    const spec = this.preludeModule;
+    if (spec.startsWith("./") || spec.startsWith("../")) {
+      const candidate = ensureExists(join(dirname(entryPath), spec));
+      if (candidate) return candidate;
+    } else if (isAbsolute(spec)) {
+      const candidate = ensureExists(spec);
+      if (candidate) return candidate;
+    } else if (spec.startsWith("std/")) {
+      const remainder = spec.slice(4);
+      for (const root of stdRoots) {
+        const candidate = ensureExists(join(root, remainder));
+        if (candidate) return candidate;
+      }
+    } else {
+      for (const root of this.workspaceRoots) {
+        const candidate = ensureExists(join(root, spec));
+        if (candidate) return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private ensureWmExtension(path: string): string {
+    if (path.endsWith(".wm")) {
+      return path;
+    }
+    return `${path}.wm`;
   }
 
   private estimateRangeFromMessage(text: string, msg: string) {
