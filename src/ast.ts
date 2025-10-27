@@ -82,9 +82,18 @@ export interface ExprStatement extends NodeBase {
   expression: Expr;
 }
 
-export interface MatchArm extends NodeBase {
+export type MatchArm = MatchPatternArm | MatchBundleReferenceArm;
+
+export interface MatchPatternArm extends NodeBase {
+  kind: "match_pattern";
   pattern: Pattern;
   body: Expr;
+  hasTrailingComma: boolean;
+}
+
+export interface MatchBundleReferenceArm extends NodeBase {
+  kind: "match_bundle_reference";
+  name: string;
   hasTrailingComma: boolean;
 }
 
@@ -279,7 +288,11 @@ export interface PrefixDeclaration extends NodeBase {
   hasBlankLineBefore?: boolean;
 }
 
-export type TopLevel = LetDeclaration | TypeDeclaration | InfixDeclaration | PrefixDeclaration;
+export type TopLevel =
+  | LetDeclaration
+  | TypeDeclaration
+  | InfixDeclaration
+  | PrefixDeclaration;
 
 export interface Program {
   imports: ModuleImport[];

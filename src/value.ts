@@ -1,4 +1,4 @@
-import type { BlockExpr, Parameter, SourceSpan } from "./ast.ts";
+import type { BlockExpr, MatchBundle, Parameter, SourceSpan } from "./ast.ts";
 
 export type RuntimeValue =
   | IntValue
@@ -59,6 +59,10 @@ export interface NativeFunctionValue {
   arity: number;
   collectedArgs: RuntimeValue[];
   impl: (args: RuntimeValue[], span: SourceSpan | undefined) => RuntimeValue;
+  matchBundleInfo?: {
+    bundle: MatchBundle;
+    env: Environment;
+  };
 }
 
 export interface Environment {

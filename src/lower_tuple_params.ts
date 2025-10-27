@@ -86,6 +86,9 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
     case "match":
       lowerExpr(expr.scrutinee, ctx);
       for (const arm of expr.bundle.arms) {
+        if (arm.kind !== "match_pattern") {
+          continue;
+        }
         if (arm.body.kind === "block") {
           lowerBlockExpr(arm.body, ctx);
         } else {
@@ -98,6 +101,9 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
         lowerExpr(parameterExpr, ctx);
       }
       for (const arm of expr.bundle.arms) {
+        if (arm.kind !== "match_pattern") {
+          continue;
+        }
         if (arm.body.kind === "block") {
           lowerBlockExpr(arm.body, ctx);
         } else {
@@ -107,6 +113,9 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
       return;
     case "match_bundle_literal":
       for (const arm of expr.bundle.arms) {
+        if (arm.kind !== "match_pattern") {
+          continue;
+        }
         if (arm.body.kind === "block") {
           lowerBlockExpr(arm.body, ctx);
         } else {
@@ -203,6 +212,7 @@ function wrapWithMatch(pattern: Pattern, tempName: string, body: BlockExpr): Blo
   };
 
   const arm: MatchArm = {
+    kind: "match_pattern",
     pattern,
     body,
     hasTrailingComma: false,

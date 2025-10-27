@@ -12,6 +12,7 @@ import type {
   MatchArm,
   MatchBundle,
   MatchBundleLiteralExpr,
+  MatchPatternArm,
   Parameter,
   Pattern,
   PrefixDeclaration,
@@ -21,19 +22,19 @@ import type {
 } from "./ast.ts";
 import { lowerTupleParameters } from "./lower_tuple_params.ts";
 import {
-  RuntimeValue,
-  Environment,
-  createEnvironment,
   bindValue,
-  lookupValue,
-  updateValue,
-  UNIT_VALUE,
-  NativeFunctionValue,
-  ClosureValue,
-  DataValue,
-  IntValue,
   BoolValue,
+  ClosureValue,
+  createEnvironment,
+  DataValue,
+  Environment,
   hasBinding,
+  IntValue,
+  lookupValue,
+  NativeFunctionValue,
+  RuntimeValue,
+  UNIT_VALUE,
+  updateValue,
 } from "./value.ts";
 import { RuntimeError } from "./error.ts";
 import { formatRuntimeValue } from "./value_printer.ts";
@@ -58,7 +59,10 @@ export interface EvalResult {
   summaries: EvalSummary[];
 }
 
-export function evaluateProgram(program: Program, options: EvalOptions = {}): EvalResult {
+export function evaluateProgram(
+  program: Program,
+  options: EvalOptions = {},
+): EvalResult {
   lowerTupleParameters(program);
   currentSource = options.source;
   const globalEnv = createEnvironment(null);
@@ -99,32 +103,44 @@ export function evaluateProgram(program: Program, options: EvalOptions = {}): Ev
   return { env: globalEnv, summaries };
 }
 
-function evaluateInfixDeclaration(env: Environment, decl: InfixDeclaration): void {
+function evaluateInfixDeclaration(
+  env: Environment,
+  decl: InfixDeclaration,
+): void {
   // Register the operator's implementation function in the environment
   // with a special name so binary expressions can look it up
   const opFuncName = `__op_${decl.operator}`;
-  
+
   // Look up the actual implementation function
   const implValue = lookupValue(env, decl.implementation);
-  
+
   // Register it under the operator name
   bindValue(env, opFuncName, implValue);
 }
 
-function evaluatePrefixDeclaration(env: Environment, decl: PrefixDeclaration): void {
+function evaluatePrefixDeclaration(
+  env: Environment,
+  decl: PrefixDeclaration,
+): void {
   // Register the prefix operator's implementation function
   const opFuncName = `__prefix_${decl.operator}`;
-  
+
   // Look up the actual implementation function
   const implValue = lookupValue(env, decl.implementation);
-  
+
   // Register it under the operator name
   bindValue(env, opFuncName, implValue);
 }
 
-function evaluateLetDeclaration(env: Environment, decl: LetDeclaration): RuntimeValue {
+function evaluateLetDeclaration(
+  env: Environment,
+  decl: LetDeclaration,
+): RuntimeValue {
   if (decl.isRecursive) {
-    const bindings = evaluateRecursiveBindings(env, [decl, ...(decl.mutualBindings ?? [])]);
+    const bindings = evaluateRecursiveBindings(env, [
+      decl,
+      ...(decl.mutualBindings ?? []),
+    ]);
     return bindings.get(decl.name)!;
   }
 
@@ -136,7 +152,11 @@ function evaluateLetDeclaration(env: Environment, decl: LetDeclaration): Runtime
   return value;
 }
 
-function createClosure(_env: Environment, decl: LetDeclaration, closureEnv: Environment): ClosureValue {
+function createClosure(
+  _env: Environment,
+  decl: LetDeclaration,
+  closureEnv: Environment,
+): ClosureValue {
   return {
     kind: "closure",
     parameters: decl.parameters,
@@ -159,7 +179,10 @@ function evaluateBlock(env: Environment, block: BlockExpr): RuntimeValue {
   return UNIT_VALUE;
 }
 
-function evaluateBlockStatement(env: Environment, statement: BlockStatement): void {
+function evaluateBlockStatement(
+  env: Environment,
+  statement: BlockStatement,
+): void {
   const kind = statement.kind;
   const span = statement.span;
   switch (kind) {
@@ -170,14 +193,21 @@ function evaluateBlockStatement(env: Environment, statement: BlockStatement): vo
       evaluateExpr(env, statement.expression);
       break;
     default:
-      assertUnreachable(statement, `Unsupported block statement '${kind}'`, span);
+      assertUnreachable(
+        statement,
+        `Unsupported block statement '${kind}'`,
+        span,
+      );
   }
 }
 
 function evaluateLetStatement(env: Environment, statement: LetStatement): void {
   const { declaration } = statement;
   if (declaration.isRecursive) {
-    evaluateRecursiveBindings(env, [declaration, ...(declaration.mutualBindings ?? [])]);
+    evaluateRecursiveBindings(env, [
+      declaration,
+      ...(declaration.mutualBindings ?? []),
+    ]);
     return;
   }
 
@@ -199,7 +229,9 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
     case "constructor":
       return evaluateConstructorExpr(env, expr);
     case "tuple": {
-      const elements = expr.elements.map((element) => evaluateExpr(env, element));
+      const elements = expr.elements.map((element) =>
+        evaluateExpr(env, element)
+      );
       return { kind: "tuple", elements };
     }
     case "call":
@@ -216,7 +248,12 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
     case "match":
       return evaluateMatchExpr(env, expr.scrutinee, expr.bundle, expr.span);
     case "match_fn":
-      return evaluateMatchFunction(env, expr.parameters, expr.bundle, expr.span);
+      return evaluateMatchFunction(
+        env,
+        expr.parameters,
+        expr.bundle,
+        expr.span,
+      );
     case "match_bundle_literal":
       return evaluateMatchBundleLiteral(env, expr);
     case "binary": {
@@ -224,11 +261,11 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
       // e.g., `a + b` becomes `add(a, b)` where `add` is the implementation function
       const left = evaluateExpr(env, expr.left);
       const right = evaluateExpr(env, expr.right);
-      
+
       // Look up the operator's implementation function
       const opFuncName = `__op_${expr.operator}`;
       const opFunc = lookupValue(env, opFuncName);
-      
+
       // Apply the function to both arguments
       return applyValue(opFunc, [left, right], expr.span);
     }
@@ -236,11 +273,11 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
       // Unary operators are desugared to function calls
       // e.g., `!x` becomes `not(x)` where `not` is the implementation function
       const operand = evaluateExpr(env, expr.operand);
-      
+
       // Look up the prefix operator's implementation function
       const opFuncName = `__prefix_${expr.operator}`;
       const opFunc = lookupValue(env, opFuncName);
-      
+
       // Apply the function to the operand
       return applyValue(opFunc, [operand], expr.span);
     }
@@ -249,7 +286,10 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
   }
 }
 
-function evaluateIdentifier(env: Environment, expr: IdentifierExpr): RuntimeValue {
+function evaluateIdentifier(
+  env: Environment,
+  expr: IdentifierExpr,
+): RuntimeValue {
   try {
     return lookupValue(env, expr.name);
   } catch (error) {
@@ -260,7 +300,10 @@ function evaluateIdentifier(env: Environment, expr: IdentifierExpr): RuntimeValu
   }
 }
 
-function evaluateConstructorExpr(env: Environment, expr: Expr & { kind: "constructor" }): RuntimeValue {
+function evaluateConstructorExpr(
+  env: Environment,
+  expr: Expr & { kind: "constructor" },
+): RuntimeValue {
   let callee: RuntimeValue;
   try {
     callee = lookupValue(env, expr.name);
@@ -274,13 +317,20 @@ function evaluateConstructorExpr(env: Environment, expr: Expr & { kind: "constru
   return applyValue(callee, args, expr.span);
 }
 
-function evaluateCallExpr(env: Environment, expr: Expr & { kind: "call" }): RuntimeValue {
+function evaluateCallExpr(
+  env: Environment,
+  expr: Expr & { kind: "call" },
+): RuntimeValue {
   const callee = evaluateExpr(env, expr.callee);
   const args = expr.arguments.map((argument) => evaluateExpr(env, argument));
   return applyValue(callee, args, expr.span);
 }
 
-function applyValue(target: RuntimeValue, args: RuntimeValue[], span: SourceSpan | undefined): RuntimeValue {
+function applyValue(
+  target: RuntimeValue,
+  args: RuntimeValue[],
+  span: SourceSpan | undefined,
+): RuntimeValue {
   if (args.length === 0) {
     return target;
   }
@@ -291,11 +341,19 @@ function applyValue(target: RuntimeValue, args: RuntimeValue[], span: SourceSpan
     case "native":
       return callNative(target, args, span);
     default:
-      throw new RuntimeError("Attempted to call a non-function value", span, currentSource);
+      throw new RuntimeError(
+        "Attempted to call a non-function value",
+        span,
+        currentSource,
+      );
   }
 }
 
-function callClosure(closure: ClosureValue, args: RuntimeValue[], span: SourceSpan | undefined): RuntimeValue {
+function callClosure(
+  closure: ClosureValue,
+  args: RuntimeValue[],
+  span: SourceSpan | undefined,
+): RuntimeValue {
   if (args.length !== closure.parameters.length) {
     throw new RuntimeError(
       `Expected ${closure.parameters.length} argument(s) but received ${args.length}`,
@@ -304,21 +362,29 @@ function callClosure(closure: ClosureValue, args: RuntimeValue[], span: SourceSp
     );
   }
 
-    const frame = createEnvironment(closure.env);
-    for (let index = 0; index < closure.parameters.length; index += 1) {
-      const param = closure.parameters[index];
-      const value = args[index];
-      const paramName = param.name;
-      if (!paramName) {
-        throw new RuntimeError("Internal error: missing parameter name after tuple lowering", param.span, currentSource);
-      }
-      bindValue(frame, paramName, value);
+  const frame = createEnvironment(closure.env);
+  for (let index = 0; index < closure.parameters.length; index += 1) {
+    const param = closure.parameters[index];
+    const value = args[index];
+    const paramName = param.name;
+    if (!paramName) {
+      throw new RuntimeError(
+        "Internal error: missing parameter name after tuple lowering",
+        param.span,
+        currentSource,
+      );
     }
-
-    return evaluateBlock(frame, closure.body);
+    bindValue(frame, paramName, value);
   }
 
-function callNative(nativeFn: NativeFunctionValue, args: RuntimeValue[], span: SourceSpan | undefined): RuntimeValue {
+  return evaluateBlock(frame, closure.body);
+}
+
+function callNative(
+  nativeFn: NativeFunctionValue,
+  args: RuntimeValue[],
+  span: SourceSpan | undefined,
+): RuntimeValue {
   const collected = [...nativeFn.collectedArgs, ...args];
   if (collected.length > nativeFn.arity) {
     throw new RuntimeError(
@@ -357,7 +423,10 @@ function literalToRuntime(literal: Literal): RuntimeValue {
   }
 }
 
-function registerTypeConstructorsRuntime(env: Environment, decl: TypeDeclaration): void {
+function registerTypeConstructorsRuntime(
+  env: Environment,
+  decl: TypeDeclaration,
+): void {
   for (const member of decl.members) {
     if (member.kind !== "constructor") {
       continue;
@@ -386,7 +455,11 @@ function registerPreludeRuntime(env: Environment, options: EvalOptions): void {
 function createConstructorValue(ctor: ConstructorAlias): RuntimeValue {
   const arity = ctor.typeArgs.length;
   if (arity === 0) {
-    return { kind: "data", constructor: ctor.name, fields: [] } satisfies DataValue;
+    return {
+      kind: "data",
+      constructor: ctor.name,
+      fields: [],
+    } satisfies DataValue;
   }
   return createNativeFunction(ctor.name, arity, (args) => ({
     kind: "data",
@@ -425,7 +498,11 @@ function bindIntBinaryNative(
   bindValue(env, name, native);
 }
 
-function bindNativeAlias(env: Environment, alias: string, target: string): void {
+function bindNativeAlias(
+  env: Environment,
+  alias: string,
+  target: string,
+): void {
   if (hasBinding(env, alias) || !hasBinding(env, target)) {
     return;
   }
@@ -465,7 +542,11 @@ function bindStrFromLiteralNative(env: Environment, name: string): void {
   const native = createNativeFunction(name, 1, (args, span) => {
     const str = expectString(args[0], span, name);
     // Convert string to list of character codes
-    let result: RuntimeValue = { kind: "data", constructor: "Empty", fields: [] };
+    let result: RuntimeValue = {
+      kind: "data",
+      constructor: "Empty",
+      fields: [],
+    };
     for (let i = str.length - 1; i >= 0; i--) {
       const charCode: RuntimeValue = { kind: "int", value: str.charCodeAt(i) };
       result = {
@@ -491,7 +572,11 @@ function bindCharEqNative(env: Environment, name: string): void {
   bindValue(env, name, native);
 }
 
-function bindPrintNative(env: Environment, name: string, onPrint?: (text: string) => void): void {
+function bindPrintNative(
+  env: Environment,
+  name: string,
+  onPrint?: (text: string) => void,
+): void {
   if (hasBinding(env, name)) {
     return;
   }
@@ -508,7 +593,10 @@ function bindPrintNative(env: Environment, name: string, onPrint?: (text: string
   bindValue(env, name, native);
 }
 
-function evaluateRecursiveBindings(env: Environment, bindings: LetDeclaration[]): Map<string, RuntimeValue> {
+function evaluateRecursiveBindings(
+  env: Environment,
+  bindings: LetDeclaration[],
+): Map<string, RuntimeValue> {
   const frame = createEnvironment(env);
 
   for (const binding of bindings) {
@@ -555,7 +643,11 @@ function evaluateMatchFunction(
   span: SourceSpan,
 ): RuntimeValue {
   if (parameters.length !== 1) {
-    throw new RuntimeError("Match functions currently support exactly one argument", span, currentSource);
+    throw new RuntimeError(
+      "Match functions currently support exactly one argument",
+      span,
+      currentSource,
+    );
   }
 
   const closureEnv = env;
@@ -564,11 +656,18 @@ function evaluateMatchFunction(
   });
 }
 
-function evaluateMatchBundleLiteral(env: Environment, expr: MatchBundleLiteralExpr): RuntimeValue {
+function evaluateMatchBundleLiteral(
+  env: Environment,
+  expr: MatchBundleLiteralExpr,
+): RuntimeValue {
   const bundle = expr.bundle;
-  return createNativeFunction("match_bundle", 1, ([arg], span) =>
-    applyMatchBundle(env, bundle, arg, span)
+  const native = createNativeFunction(
+    "match_bundle",
+    1,
+    ([arg], span) => applyMatchBundle(env, bundle, arg, span),
   );
+  native.matchBundleInfo = { bundle, env };
+  return native;
 }
 
 function applyMatchBundle(
@@ -577,21 +676,49 @@ function applyMatchBundle(
   scrutinee: RuntimeValue,
   span: SourceSpan | undefined,
 ): RuntimeValue {
-  for (const arm of bundle.arms) {
+  const arms = expandMatchArms(env, bundle.arms);
+  for (const arm of arms) {
     const bindings = matchPattern(env, scrutinee, arm.pattern);
-    if (bindings) {
-      const scope = createEnvironment(env);
-      for (const [name, value] of bindings.entries()) {
-        bindValue(scope, name, value);
-      }
-      return evaluateExpr(scope, arm.body);
+    if (!bindings) {
+      continue;
     }
+    const scope = createEnvironment(env);
+    for (const [name, value] of bindings.entries()) {
+      bindValue(scope, name, value);
+    }
+    return evaluateExpr(scope, arm.body);
   }
   const errorSpan = span ?? bundle.span;
-  throw new RuntimeError("Non-exhaustive patterns at runtime", errorSpan, currentSource);
+  throw new RuntimeError(
+    "Non-exhaustive patterns at runtime",
+    errorSpan,
+    currentSource,
+  );
 }
 
-function matchPattern(env: Environment, value: RuntimeValue, pattern: Pattern): Map<string, RuntimeValue> | null {
+function expandMatchArms(env: Environment, arms: MatchArm[]): MatchPatternArm[] {
+  const result: MatchPatternArm[] = [];
+  for (const arm of arms) {
+    if (arm.kind === "match_bundle_reference") {
+      const referenced = lookupValue(env, arm.name);
+      if (referenced.kind !== "native" || !referenced.matchBundleInfo) {
+        throw new RuntimeError(`'${arm.name}' is not a match bundle`, arm.span, currentSource);
+      }
+      const { bundle, env: bundleEnv } = referenced.matchBundleInfo;
+      const expanded = expandMatchArms(bundleEnv, bundle.arms);
+      result.push(...expanded);
+      continue;
+    }
+    result.push(arm);
+  }
+  return result;
+}
+
+function matchPattern(
+  env: Environment,
+  value: RuntimeValue,
+  pattern: Pattern,
+): Map<string, RuntimeValue> | null {
   const kind = pattern.kind;
   const span = pattern.span;
   switch (kind) {
@@ -613,18 +740,26 @@ function matchPattern(env: Environment, value: RuntimeValue, pattern: Pattern): 
   }
 }
 
-function matchLiteralPattern(value: RuntimeValue, literal: Literal): Map<string, RuntimeValue> | null {
+function matchLiteralPattern(
+  value: RuntimeValue,
+  literal: Literal,
+): Map<string, RuntimeValue> | null {
   switch (literal.kind) {
     case "int":
       return isIntValue(value, literal.value) ? new Map() : null;
     case "bool":
       return isBoolValue(value, literal.value) ? new Map() : null;
     case "char":
-      return value.kind === "char" && value.value === literal.value.charCodeAt(0) ? new Map() : null;
+      return value.kind === "char" &&
+          value.value === literal.value.charCodeAt(0)
+        ? new Map()
+        : null;
     case "unit":
       return value.kind === "unit" ? new Map() : null;
     case "string":
-      return value.kind === "string" && value.value === literal.value ? new Map() : null;
+      return value.kind === "string" && value.value === literal.value
+        ? new Map()
+        : null;
     default:
       return null;
   }
@@ -669,7 +804,11 @@ function matchConstructorPattern(
   }
 
   if (value.fields.length !== pattern.args.length) {
-    throw new RuntimeError("Constructor pattern arity mismatch", span, currentSource);
+    throw new RuntimeError(
+      "Constructor pattern arity mismatch",
+      span,
+      currentSource,
+    );
   }
 
   const bindings = new Map<string, RuntimeValue>();
@@ -690,7 +829,11 @@ function mergeBindings(
 ): void {
   for (const [key, value] of source.entries()) {
     if (target.has(key)) {
-      throw new RuntimeError(`Duplicate variable '${key}' in pattern`, span, currentSource);
+      throw new RuntimeError(
+        `Duplicate variable '${key}' in pattern`,
+        span,
+        currentSource,
+      );
     }
     target.set(key, value);
   }
@@ -700,31 +843,62 @@ function isIntValue(value: RuntimeValue, expected: number): value is IntValue {
   return value.kind === "int" && value.value === expected;
 }
 
-function isBoolValue(value: RuntimeValue, expected: boolean): value is BoolValue {
+function isBoolValue(
+  value: RuntimeValue,
+  expected: boolean,
+): value is BoolValue {
   return value.kind === "bool" && value.value === expected;
 }
 
-function assertUnreachable(_value: never, message: string, span?: SourceSpan): never {
+function assertUnreachable(
+  _value: never,
+  message: string,
+  span?: SourceSpan,
+): never {
   throw new RuntimeError(message, span, currentSource);
 }
 
-function expectInt(value: RuntimeValue, span: SourceSpan | undefined, primitiveName: string): number {
+function expectInt(
+  value: RuntimeValue,
+  span: SourceSpan | undefined,
+  primitiveName: string,
+): number {
   if (value.kind !== "int") {
-    throw new RuntimeError(`Primitive '${primitiveName}' expected an Int argument`, span, currentSource);
+    throw new RuntimeError(
+      `Primitive '${primitiveName}' expected an Int argument`,
+      span,
+      currentSource,
+    );
   }
   return value.value;
 }
 
-function expectChar(value: RuntimeValue, span: SourceSpan | undefined, primitiveName: string): number {
+function expectChar(
+  value: RuntimeValue,
+  span: SourceSpan | undefined,
+  primitiveName: string,
+): number {
   if (value.kind !== "char") {
-    throw new RuntimeError(`Primitive '${primitiveName}' expected a Char argument`, span, currentSource);
+    throw new RuntimeError(
+      `Primitive '${primitiveName}' expected a Char argument`,
+      span,
+      currentSource,
+    );
   }
   return value.value;
 }
 
-function expectString(value: RuntimeValue, span: SourceSpan | undefined, primitiveName: string): string {
+function expectString(
+  value: RuntimeValue,
+  span: SourceSpan | undefined,
+  primitiveName: string,
+): string {
   if (value.kind !== "string") {
-    throw new RuntimeError(`Primitive '${primitiveName}' expected a String argument`, span, currentSource);
+    throw new RuntimeError(
+      `Primitive '${primitiveName}' expected a String argument`,
+      span,
+      currentSource,
+    );
   }
   return value.value;
 }

@@ -1117,6 +1117,28 @@ class SurfaceParser {
 
     if (!this.checkSymbol("}")) {
       while (true) {
+        const entryStart = this.peek();
+
+        if (entryStart.kind === "identifier") {
+          const next = this.peek(1);
+          if (next.kind === "symbol" && (next.value === "," || next.value === "}")) {
+            const identifier = this.expectIdentifier();
+            const hasComma = this.matchSymbol(",");
+            const endToken = hasComma ? this.previous() : identifier;
+            const span = this.spanFrom(identifier.start, endToken.end);
+            arms.push({
+              kind: "match_bundle_reference",
+              name: identifier.value,
+              hasTrailingComma: hasComma,
+              span,
+            });
+            if (!hasComma || this.checkSymbol("}")) {
+              break;
+            }
+            continue;
+          }
+        }
+
         const patternStart = this.peek();
         const pattern = this.parsePattern();
         this.expectSymbol("=>");
@@ -1129,7 +1151,13 @@ class SurfaceParser {
         
         const hasComma = this.matchSymbol(",");
         const span = this.spanFrom(patternStart.start, body.span.end);
-        arms.push({ pattern, body, hasTrailingComma: hasComma, span });
+        arms.push({
+          kind: "match_pattern",
+          pattern,
+          body,
+          hasTrailingComma: hasComma,
+          span,
+        });
         if (!hasComma || this.checkSymbol("}")) {
           break;
         }
