@@ -1,0 +1,121 @@
+-- value_printer.wm
+-- Self-contained runtime value printer for Workman
+-- Inlines all necessary standard library functionality
+
+-- ============================================================================
+-- ADT Definitions
+-- ============================================================================
+
+type List<a> = Link<a, List<a>> | Empty;
+
+type RuntimeValue = 
+  | Unit
+  | Int<Int>
+  | Bool<Bool>
+  | Char<Int>
+  | Str<String>
+  | Tuple<List<RuntimeValue>>
+  | Data<String, List<RuntimeValue>>
+  | Closure
+  | Native<String>;
+
+type Option<a> = Some<a> | None;
+
+-- ============================================================================
+-- String Helpers (inlined from std)
+-- ============================================================================
+
+-- Note: For M1, we'll use native string operations via FFI
+-- These are placeholders that will need native implementations
+
+-- Concatenate two strings
+let concat = (a, b) => {
+  -- TODO: This needs a native implementation
+  -- For now, we'll mark it as a stub
+  a
+};
+
+-- Convert int to string
+let intToString = (n) => {
+  -- TODO: This needs a native implementation
+  -- For now, return a placeholder
+  "<?>"
+};
+
+-- Convert char code to string representation
+let charToString = (code) => {
+  -- TODO: This needs a native implementation
+  "<?>"
+};
+
+-- ============================================================================
+-- List Helpers (inlined from std)
+-- ============================================================================
+
+-- Map a function over a list
+let rec listMap = (f, list) => {
+  match(list) {
+    Empty => { Empty },
+    Link(head, tail) => { Link(f(head), listMap(f, tail)) }
+  }
+};
+
+-- Join list of strings with a separator
+let rec listJoin = (sep, list) => {
+  match(list) {
+    Empty => { "" },
+    Link(head, tail) => {
+      match(tail) {
+        Empty => { head },
+        Link(_, _) => { concat(head, concat(sep, listJoin(sep, tail))) }
+      }
+    }
+  }
+};
+
+-- ============================================================================
+-- Value Printer Implementation
+-- ============================================================================
+
+-- Main formatting function (mutually recursive with helpers)
+let rec formatRuntimeValue = match(value) {
+  Unit => { "()" },
+  Int(n) => { intToString(n) },
+  Bool(b) => {
+    match(b) {
+      true => { "true" },
+      false => { "false" }
+    }
+  },
+  Char(code) => {
+    -- Format as 'c'
+    concat("'", concat(charToString(code), "'"))
+  },
+  Str(s) => { s },
+  Tuple(elements) => {
+    -- Format tuple inline
+    match(elements) {
+      Empty => { "()" },
+      Link(_, _) => {
+        concat("(", concat(listJoin(", ", listMap(formatRuntimeValue, elements)), ")"))
+      }
+    }
+  },
+  Data(constructor, fields) => {
+    -- Format data inline
+    match(fields) {
+      Empty => { constructor },
+      Link(_, _) => {
+        concat(constructor, concat(" ", listJoin(" ", listMap(formatRuntimeValue, fields))))
+      }
+    }
+  },
+  Closure => { "<closure>" },
+  Native(name) => { concat("<native ", concat(name, ">")) }
+};
+
+-- ============================================================================
+-- Exports
+-- ============================================================================
+
+export let format = formatRuntimeValue;

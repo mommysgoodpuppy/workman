@@ -1,0 +1,65 @@
+-- value_printer.wm (v2 - with real std imports)
+-- Runtime value printer for Workman using std library
+
+from "std/list" import { listMap, listJoin };
+from "std/string" import { strConcat, intToString, fromLiteral };
+
+-- ============================================================================
+-- ADT Definitions
+-- ============================================================================
+
+type RuntimeValue = 
+  | Unit
+  | Int<Int>
+  | Bool<Bool>
+  | Char<Int>
+  | Str<List<Int>>
+  | Tuple<List<RuntimeValue>>
+  | Data<List<Int>, List<RuntimeValue>>
+  | Closure
+  | Native<List<Int>>;
+
+-- ============================================================================
+-- Value Printer Implementation
+-- ============================================================================
+
+-- Helper: Convert char code to string (single char)  
+let charToString = (code) => {
+  fromLiteral("x")
+};
+
+-- Main formatting function
+let rec formatRuntimeValue = match(value) {
+  Unit => { fromLiteral("()") },
+  Int(n) => { intToString(n) },
+  Bool(b) => { fromLiteral("bool") },
+  Char(code) => { fromLiteral("char") },
+  Str(s) => { s },
+  Tuple(elements) => {
+    -- Format tuple inline
+    fromLiteral("(...)")
+    -- match(elements) {
+    --   Empty => { fromLiteral("()") },
+    --   Link(_, _) => {
+    --     strConcat((fromLiteral("("), strConcat((listJoin((fromLiteral(", "), listMap((formatRuntimeValue, elements)))), fromLiteral(")")))))
+    --   }
+    -- }
+  },
+  Data(constructor, fields) => {
+    -- Format data inline
+    match(fields) {
+      Empty => { constructor },
+      Link(_, _) => {
+        strConcat((constructor, strConcat((fromLiteral(" "), listJoin((fromLiteral(" "), listMap((formatRuntimeValue, fields))))))))
+      }
+    }
+  },
+  Closure => { fromLiteral("<closure>") },
+  Native(name) => { strConcat((fromLiteral("<native "), strConcat((name, fromLiteral(">"))))) }
+};
+
+-- ============================================================================
+-- Exports
+-- ============================================================================
+
+export let format = formatRuntimeValue;

@@ -2,8 +2,17 @@
 -- Strings are represented as List<Int> where each Int is a character code
 -- ASCII character codes: 'A' = 65, 'a' = 97, '0' = 48, ' ' = 32, etc.
 
+from "std/core/string" import { strFromLiteral };
+from "std/option/core" import { Some, None };
+from "std/list/core" import { Empty, Link };
+from "std/core/int" import { intAdd as add, intSub as sub, intMul as mul, intDiv as div, intCompare as cmpInt, intEq as eq };
+from "std/core/ordering" import { LT, EQ, GT };
+
 -- Type alias for clarity (just documentation, not enforced)
 -- type String = List<Int>;
+
+-- Re-export the core function
+export let fromLiteral = strFromLiteral;
 
 -- Character code constants
 export let charSpace = () => {
@@ -208,3 +217,36 @@ export let charToDigit = (c) => {
     true => { Some(sub(c, char0())) }
   }
 };
+
+-- Helper: convert positive integer to string
+let rec intToStringPositive = (n) => {
+  match(eq(n, 0)) {
+    true => { Empty },
+    false => {
+      let digit = () => { digitToChar(sub(n, mul(div(n, 10), 10))) };
+      let rest = () => { intToStringPositive(div(n, 10)) };
+      strConcat((rest(), Link(digit(), Empty)))
+    }
+  }
+};
+
+-- Convert integer to string (list of char codes)
+export let intToString = (n) => {
+  -- Handle zero specially
+  match(eq(n, 0)) {
+    true => { Link(char0(), Empty) },
+    false => {
+      -- Handle negative numbers
+      match(cmpInt(n, 0)) {
+        LT => {
+          -- Negative: prepend '-' (45) to absolute value
+          let absStr = () => { intToStringPositive(sub(0, n)) };
+          Link(45, absStr())
+        },
+        _ => { intToStringPositive(n) }
+      }
+    }
+  }
+};
+
+

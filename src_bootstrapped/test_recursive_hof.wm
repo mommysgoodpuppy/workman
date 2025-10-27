@@ -1,0 +1,36 @@
+-- Minimal test case for recursive function through higher-order function
+
+from "std/list" import { listMap, listJoin };
+from "std/string" import { fromLiteral, strConcat, intToString };
+
+type RuntimeValue = 
+  | Unit
+  | Int<Int>
+  | Bool<Bool>
+  | Char<Int>
+  | Str<List<Int>>
+  | Tuple<List<RuntimeValue>>
+  | Data<List<Int>, List<RuntimeValue>>
+  | Closure
+  | Native<List<Int>>;
+
+let rec formatRuntimeValue = match(value) {
+  Unit => { fromLiteral("()") },
+  Int(n) => { intToString(n) },
+  Bool(b) => { fromLiteral("bool") },
+  Char(c) => { fromLiteral("char") },
+  Str(s) => { s },
+  Tuple(elements) => { fromLiteral("tuple") },
+  Data(constructor, fields) => {
+    match(fields) {
+      Empty => { constructor },
+      Link(_, _) => {
+        strConcat((constructor, strConcat((fromLiteral(" "), listJoin((fromLiteral(" "), listMap((formatRuntimeValue, fields))))))))
+      }
+    }
+  },
+  Closure => { fromLiteral("closure") },
+  Native(name) => { name }
+};
+
+export let test = formatRuntimeValue;

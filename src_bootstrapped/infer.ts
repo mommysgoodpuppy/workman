@@ -34,7 +34,6 @@ import {
   instantiate,
   occursInType,
   resetTypeVarCounter,
-  typeToString,
 } from "./types.ts";
 import { formatScheme } from "./type_printer.ts";
 import { InferError as InferErrorClass } from "./error.ts";
@@ -75,8 +74,6 @@ export interface InferResult {
   env: TypeEnv;
   adtEnv: TypeEnvADT;
   summaries: { name: string; scheme: TypeScheme }[];
-  // Map from binding name to its type scheme (includes block-scoped bindings)
-  allBindings: Map<string, TypeScheme>;
 }
 
 interface Context {
@@ -84,8 +81,6 @@ interface Context {
   adtEnv: TypeEnvADT;
   subst: Substitution;
   source?: string;  // Source code for error reporting
-  // Track all bindings including block-scoped ones
-  allBindings: Map<string, TypeScheme>;
 }
 
 function withScopedEnv<T>(ctx: Context, fn: () => T): T {
@@ -112,8 +107,7 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
   }
   const env: TypeEnv = options.initialEnv ? cloneTypeEnv(options.initialEnv) : new Map();
   const adtEnv: TypeEnvADT = options.initialAdtEnv ? cloneAdtEnv(options.initialAdtEnv) : new Map();
-  const allBindings = new Map<string, TypeScheme>();
-  const ctx: Context = { env, adtEnv, subst: new Map(), source: options.source, allBindings };
+  const ctx: Context = { env, adtEnv, subst: new Map(), source: options.source };
   const summaries: { name: string; scheme: TypeScheme }[] = [];
 
   // Clear the type params cache for this program
@@ -155,7 +149,7 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     finalEnv.set(name, applySubstitutionScheme(scheme, ctx.subst));
   }
 
-  return { env: finalEnv, adtEnv: ctx.adtEnv, summaries, allBindings: ctx.allBindings };
+  return { env: finalEnv, adtEnv: ctx.adtEnv, summaries };
 }
 
 function registerInfixDeclaration(ctx: Context, decl: InfixDeclaration) {
@@ -278,7 +272,6 @@ function registerPrelude(ctx: Context) {
   registerIntBinaryPrimitive(ctx, "nativeMul");
   registerIntBinaryPrimitive(ctx, "nativeDiv");
   registerPrintPrimitive(ctx, "nativePrint");
-  registerStrFromLiteralPrimitive(ctx, "nativeStrFromLiteral");
 }
 
 function registerCmpIntPrimitive(ctx: Context, name: string, aliasOf?: string) {
@@ -347,27 +340,6 @@ function registerPrintPrimitive(ctx: Context, name: string, aliasOf?: string) {
   bindTypeAlias(ctx, name, scheme, aliasOf);
 }
 
-function registerStrFromLiteralPrimitive(ctx: Context, name: string) {
-  // nativeStrFromLiteral : String -> List<Int>
-  // Takes a string literal and converts it to a list of character codes
-  const listType: Type = {
-    kind: "constructor",
-    name: "List",
-    args: [{ kind: "int" }],
-  };
-  
-  const scheme: TypeScheme = {
-    quantifiers: [],
-    type: {
-      kind: "func",
-      from: { kind: "string" },
-      to: listType,
-    },
-  };
-  
-  ctx.env.set(name, scheme);
-}
-
 function bindTypeAlias(ctx: Context, name: string, scheme: TypeScheme, aliasOf?: string) {
   if (aliasOf && ctx.env.has(name)) {
     return;
@@ -382,7 +354,6 @@ function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string
     const fnType = inferLetBinding(ctx, decl.parameters, decl.body, decl.annotation);
     const scheme = generalizeInContext(ctx, fnType);
     ctx.env.set(decl.name, scheme);
-    ctx.allBindings.set(decl.name, scheme); // Track in allBindings
     return [{ name: decl.name, scheme }];
   }
 
@@ -425,7 +396,6 @@ function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string
     const resolvedType = applyCurrentSubst(ctx, inferredType);
     const scheme = generalizeInContext(ctx, resolvedType);
     ctx.env.set(binding.name, scheme);
-    ctx.allBindings.set(binding.name, scheme); // Track in allBindings
     results.push({ name: binding.name, scheme });
   }
   
@@ -672,15 +642,7 @@ function inferExpr(ctx: Context, expr: Expr): Type {
       for (const arg of expr.arguments) {
         const argType = inferExpr(ctx, arg);
         const resultType = freshTypeVar();
-        try {
-          unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
-        } catch (e) {
-          // Add context about which function call failed
-          const calleeName = expr.callee.kind === "variable" ? expr.callee.name : "<expression>";
-          const fnTypeStr = typeToString(applyCurrentSubst(ctx, fnType));
-          const argTypeStr = typeToString(applyCurrentSubst(ctx, argType));
-          throw inferError(`Type error in function call to '${calleeName}':\n  Function type: ${fnTypeStr}\n  Argument type: ${argTypeStr}\n\nOriginal error: ${e instanceof Error ? e.message : String(e)}`, expr.span, ctx.source);
-        }
+        unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
         fnType = applyCurrentSubst(ctx, resultType);
       }
       return applyCurrentSubst(ctx, fnType);
@@ -1033,22 +995,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): Substitution {
 
   if (left.kind === "constructor" && right.kind === "constructor") {
     if (left.name !== right.name || left.args.length !== right.args.length) {
-      // Enhanced error message with full type information
-      const leftStr = typeToString(left);
-      const rightStr = typeToString(right);
-      
-      // Apply current substitution to see the "real" types
-      const leftResolved = typeToString(applySubstitution(left, subst));
-      const rightResolved = typeToString(applySubstitution(right, subst));
-      
-      // Show substitution for debugging
-      const substStr = Array.from(subst.entries())
-        .slice(0, 10) // Limit to first 10 to avoid spam
-        .map(([id, type]) => `  't${id} -> ${typeToString(type)}`)
-        .join("\n");
-      
-      const msg = `Cannot unify types:\n  ${leftStr}\nwith:\n  ${rightStr}\n\nAfter substitution:\n  ${leftResolved}\nwith:\n  ${rightResolved}\n\nConstructor mismatch: ${left.name} vs ${right.name}\n\nCurrent substitution (first 10):\n${substStr}`;
-      throw inferError(msg);
+      throw inferError(`Cannot unify constructors ${left.name} and ${right.name}`);
     }
     let current = subst;
     for (let i = 0; i < left.args.length; i++) {

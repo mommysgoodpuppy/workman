@@ -1,0 +1,20 @@
+-- Minimal test for the unification issue
+
+from "std/list" import { listMap };
+from "std/string" import { fromLiteral };
+
+type RT = A | B<List<RT>> | C<Int, List<RT>>;
+
+let rec fmt = match(x) {
+  A => { fromLiteral("a") },
+  B(children) => { 
+    listMap((fmt, children));
+    fromLiteral("b")
+  },
+  C(n, children) => {
+    listMap((fmt, children));
+    fromLiteral("c")
+  }
+};
+
+export let test = fmt;

@@ -1,5 +1,6 @@
-from "std/list/core" import { List, Empty, Link };
+from "std/list/core" import { Empty, Link };
 from "std/core/int" import { intAdd, intCompare };
+from "std/core/ordering" import { LT, EQ, GT };
 
 export let rec listLength = match(list) {
   Empty => { 0 },
@@ -36,11 +37,13 @@ export let rec listFoldr = match(tuple) {
   (f, acc, Link(x, rest)) => { f((x, listFoldr((f, acc, rest)))) }
 };
 
+-- Helper for listReverse
+let rec reverseAcc = match(tuple) {
+  (Empty, acc) => { acc },
+  (Link(x, rest), acc) => { reverseAcc((rest, Link(x, acc))) }
+};
+
 export let listReverse = (list) => {
-  let rec reverseAcc = match(tuple) {
-    (Empty, acc) => { acc },
-    (Link(x, rest), acc) => { reverseAcc((rest, Link(x, acc))) }
-  };
   reverseAcc((list, Empty))
 };
 
@@ -54,20 +57,36 @@ export let rec listRange = match(tuple) {
 };
 
 export let rec listInsertBy = match(tuple) {
-  (cmp, value, Empty) => { Link(value, Empty) },
-  (cmp, value, Link(x, rest)) => {
-    match(cmp(value, x)) {
-      GT => { Link(x, listInsertBy((cmp, value, rest))) },
-      _ => { Link(value, Link(x, rest)) }
+  (cmp, value, list) => {
+    match(list) {
+      Empty => { Link(value, Empty) },
+      Link(x, rest) => {
+        match(cmp(value, x)) {
+          GT => { Link(x, listInsertBy((cmp, value, rest))) },
+          _ => { Link(value, Link(x, rest)) }
+        }
+      }
     }
   }
 };
 
 export let rec listInsertionSortBy = match(tuple) {
-  (cmp, Empty) => { Empty },
-  (cmp, Link(x, rest)) => { listInsertBy((cmp, x, listInsertionSortBy((cmp, rest)))) }
+  (cmp, list) => {
+    match(list) {
+      Empty => { Empty },
+      Link(x, rest) => { listInsertBy((cmp, x, listInsertionSortBy((cmp, rest)))) }
+    }
+  }
 };
 
 export let listSortInt = (list) => {
   listInsertionSortBy((intCompare, list))
+};
+
+-- Join a list of lists with a separator
+-- For strings: listJoin((separator, listOfStrings))
+export let rec listJoin = match(tuple) {
+  (sep, Empty) => { Empty },
+  (sep, Link(x, Empty)) => { x },
+  (sep, Link(x, rest)) => { listAppend((x, listAppend((sep, listJoin((sep, rest)))))) }
 };

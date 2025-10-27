@@ -364,7 +364,6 @@ function registerPreludeRuntime(env: Environment, options: EvalOptions): void {
   bindCmpIntNative(env, "nativeCmpInt");
   bindCharEqNative(env, "nativeCharEq");
   bindPrintNative(env, "nativePrint", options.onPrint);
-  bindStrFromLiteralNative(env, "nativeStrFromLiteral");
   bindIntBinaryNative(env, "nativeAdd", (a, b) => a + b);
   bindIntBinaryNative(env, "nativeSub", (a, b) => a - b);
   bindIntBinaryNative(env, "nativeMul", (a, b) => a * b);
@@ -447,27 +446,6 @@ function bindCmpIntNative(env: Environment, name: string): void {
       return gt;
     }
     return eq;
-  });
-  bindValue(env, name, native);
-}
-
-function bindStrFromLiteralNative(env: Environment, name: string): void {
-  if (hasBinding(env, name)) {
-    return;
-  }
-  const native = createNativeFunction(name, 1, (args, span) => {
-    const str = expectString(args[0], span, name);
-    // Convert string to list of character codes
-    let result: RuntimeValue = { kind: "data", constructor: "Empty", fields: [] };
-    for (let i = str.length - 1; i >= 0; i--) {
-      const charCode: RuntimeValue = { kind: "int", value: str.charCodeAt(i) };
-      result = {
-        kind: "data",
-        constructor: "Link",
-        fields: [charCode, result],
-      };
-    }
-    return result;
   });
   bindValue(env, name, native);
 }

@@ -1,0 +1,24 @@
+-- Test listMap with a recursive type
+
+from "std/list" import { listMap };
+from "std/string" import { intToString, fromLiteral };
+
+type MyType = Leaf<Int> | Branch<List<MyType>>;
+
+let rec formatMyType = match(x) {
+  Leaf(n) => { intToString(n) },
+  Branch(children) => {
+    match(children) {
+      Empty => { fromLiteral("[]") },
+      Link(_, _) => {
+        -- Recursively format children
+        listMap((formatMyType, children));
+        fromLiteral("[...]")
+      }
+    }
+  }
+};
+
+export let testMap = (list) => {
+  listMap((formatMyType, list))
+};

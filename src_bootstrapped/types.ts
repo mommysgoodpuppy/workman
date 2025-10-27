@@ -238,34 +238,6 @@ export function cloneConstructorInfo(info: ConstructorInfo): ConstructorInfo {
   };
 }
 
-export function typeToString(type: Type): string {
-  switch (type.kind) {
-    case "var":
-      return `'t${type.id}`;
-    case "int":
-      return "Int";
-    case "bool":
-      return "Bool";
-    case "string":
-      return "String";
-    case "unit":
-      return "()";
-    case "func":
-      return `(${typeToString(type.from)} -> ${typeToString(type.to)})`;
-    case "constructor": {
-      if (type.args.length === 0) {
-        return type.name;
-      }
-      const args = type.args.map(typeToString).join(", ");
-      return `${type.name}<${args}>`;
-    }
-    case "tuple": {
-      const elems = type.elements.map(typeToString).join(", ");
-      return `(${elems})`;
-    }
-  }
-}
-
 export function cloneTypeInfo(info: TypeInfo): TypeInfo {
   return {
     name: info.name,

@@ -1,0 +1,8 @@
+-- Core string operations
+-- Provides the bridge between string literals and List<Int>
+
+-- Convert a string literal to List<Int> (list of character codes)
+-- This is the only native string operation we need
+export let strFromLiteral = (lit) => {
+  nativeStrFromLiteral(lit)
+};
