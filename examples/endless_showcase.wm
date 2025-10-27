@@ -1,0 +1,250 @@
+-- endless_showcase.wm
+-- Demonstrates Workman language features in a non-halting loop.
+
+from "std/list/core" import { Empty, Link };
+from "std/list" import { listJoin, listMap, listFoldl, listLength, listRange };
+from "std/string" import { fromLiteral, strConcat, intToString };
+from "std/option/core" import { Some, None };
+
+-- ============================================================================
+-- Domain Types
+-- ============================================================================
+
+type Phase = Counting | Sampling | Narrating;
+type State = State<Phase, Int, List<Int>>;
+
+-- ============================================================================
+-- Helpers
+-- ============================================================================
+
+let windowWidth = () => {
+  6
+};
+
+let mod = (n, k) => {
+  n - (n / k) * k
+};
+
+let combineStrings = (parts) => {
+  listJoin((fromLiteral(""), parts))
+};
+
+let applyTwice = (fn) => {
+  (value) => {
+    fn(fn(value))
+  }
+};
+
+let buildWindow = match(tuple) {
+  (start, size) => {
+    let finish = () => {
+      start + size - 1
+    };
+    listRange((start, finish()))
+  }
+};
+
+let fizzBuzzLabel = (n) => {
+  let mod3 = () => {
+    mod(n, 3)
+  };
+  let mod5 = () => {
+    mod(n, 5)
+  };
+  match(cmpInt(mod3(), 0)) {
+    EQ => {
+      match(cmpInt(mod5(), 0)) {
+        EQ => { fromLiteral("FizzBuzz") },
+        _ => { fromLiteral("Fizz") }
+      }
+    },
+    _ => {
+      match(cmpInt(mod5(), 0)) {
+        EQ => { fromLiteral("Buzz") },
+        _ => { intToString(n) }
+      }
+    }
+  }
+};
+
+let formatWindow = (window) => {
+  listJoin((fromLiteral(", "), listMap((fizzBuzzLabel, window))))
+};
+
+let sumList = (values) => {
+  let folder = match(tuple) {
+    (acc, value) => {
+      acc + value
+    }
+  };
+  listFoldl((folder, 0, values))
+};
+
+let describeWindowSummary = (window) => {
+  let total = () => {
+    sumList(window)
+  };
+  let length = () => {
+    listLength(window)
+  };
+  let average = () => {
+    total() / length()
+  };
+  let emphasiser = () => {
+    applyTwice((x) => {
+      x + length()
+    })
+  };
+  let emphasised = () => {
+    emphasiser()(total())
+  };
+  combineStrings(
+    Link(
+      fromLiteral("sum="),
+      Link(
+        intToString(total()),
+        Link(
+          fromLiteral(", avg≈"),
+          Link(
+            intToString(average()),
+            Link(fromLiteral(", jump="), Link(intToString(emphasised()), Empty))
+          )
+        )
+      )
+    )
+  )
+};
+
+let describePhase = match(tuple) {
+  (Counting, iteration, window) => {
+    combineStrings(
+      Link(
+        fromLiteral("Counting → next fizz is "),
+        Link(fizzBuzzLabel(iteration + 1), Empty)
+      )
+    )
+  },
+  (Sampling, _, window) => {
+    combineStrings(
+      Link(
+        fromLiteral("Sampling window: "),
+        Link(formatWindow(window), Empty)
+      )
+    )
+  },
+  (Narrating, _, window) => {
+    combineStrings(
+      Link(
+        fromLiteral("Narrating window summary: "),
+        Link(describeWindowSummary(window), Empty)
+      )
+    )
+  }
+};
+
+let maybeHighlight = (iteration) => {
+  match(cmpInt(mod(iteration, 7), 0)) {
+    EQ => {
+      Some(
+        combineStrings(
+          Link(
+            fromLiteral("Lucky seven cycle at iteration "),
+            Link(intToString(iteration), Empty)
+          )
+        )
+      )
+    },
+    _ => {
+      match(cmpInt(mod(iteration, 11), 0)) {
+        EQ => {
+          Some(
+            combineStrings(
+              Link(
+                fromLiteral("Rhythmic checkpoint at iteration "),
+                Link(intToString(iteration), Empty)
+              )
+            )
+          )
+        },
+        _ => { None }
+      }
+    }
+  }
+};
+
+let renderState = (state) => {
+  match(state) {
+    State(phase, iteration, window) => {
+      let header = () => {
+        combineStrings(
+          Link(
+            fromLiteral("[iteration "),
+            Link(intToString(iteration), Link(fromLiteral("] "), Empty))
+          )
+        )
+      };
+      let body = () => {
+        describePhase((phase, iteration, window))
+      };
+      match(maybeHighlight(iteration)) {
+        None => {
+          combineStrings(Link(header(), Link(body(), Empty)))
+        },
+        Some(extra) => {
+          combineStrings(
+            Link(
+              header(),
+              Link(body(), Link(fromLiteral(" — "), Link(extra, Empty)))
+            )
+          )
+        }
+      }
+    }
+  }
+};
+
+let advancePhase = match(tuple) {
+  (Counting, iteration) => {
+    match(cmpInt(mod(iteration, 5), 0)) {
+      EQ => { Sampling },
+      _ => { Counting }
+    }
+  },
+  (Sampling, iteration) => {
+    match(cmpInt(mod(iteration, 3), 0)) {
+      EQ => { Narrating },
+      _ => { Sampling }
+    }
+  },
+  (Narrating, _) => { Counting }
+};
+
+let nextState = match(state) {
+  State(phase, iteration, _) => {
+    let nextIteration = () => {
+      iteration + 1
+    };
+    let updatedPhase = () => {
+      advancePhase((phase, nextIteration()))
+    };
+    let nextWindow = () => {
+      buildWindow((nextIteration(), windowWidth()))
+    };
+    State(updatedPhase(), nextIteration(), nextWindow())
+  }
+};
+
+let rec mainLoop = match(state) {
+  State(_, _, _) => {
+    print(renderState(state));
+    mainLoop(nextState(state))
+  }
+};
+
+let initialState = () => {
+  State(Counting, 0, buildWindow((0, windowWidth())))
+};
+
+export let main = () => {
+  mainLoop(initialState())
+};

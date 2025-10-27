@@ -4,7 +4,7 @@ import { dirname, extname, isAbsolute, join, resolve } from "https://deno.land/s
 import { existsSync } from "https://deno.land/std@0.208.0/fs/mod.ts";
 import type { Program, ModuleImport, ModuleReexport } from "../../../src/ast.ts";
 import { lex } from "../../../src/lexer.ts";
-import { parseSurfaceProgram } from "../../../src/parser.ts";
+import { parseSurfaceProgram, type OperatorInfo } from "../../../src/parser.ts";
 
 export interface ModuleResolverOptions {
   stdRoots?: string[];
@@ -41,6 +41,8 @@ export interface ExportInfo {
   values: Set<string>;
   types: Set<string>;
   typeConstructors: Map<string, string[]>; // type name -> constructor names
+  operators: Map<string, OperatorInfo>;
+  prefixOperators: Set<string>;
 }
 
 interface ResolverContext {
@@ -113,7 +115,9 @@ async function visitModule(path: string, ctx: ResolverContext): Promise<void> {
   // Load and parse module
   const source = await Deno.readTextFile(path);
   const tokens = lex(source, path);
-  const program = parseSurfaceProgram(tokens, source);
+  const { operators: initialOperators, prefixOperators: initialPrefixOperators } =
+    getInitialOperatorSets(path, ctx);
+  const program = parseSurfaceProgram(tokens, source, false, initialOperators, initialPrefixOperators);
 
   // Resolve imports
   const resolvedImports: ResolvedImport[] = [];
@@ -165,29 +169,61 @@ function collectExports(program: Program): ExportInfo {
   const values = new Set<string>();
   const types = new Set<string>();
   const typeConstructors = new Map<string, string[]>();
+  const operators = new Map<string, OperatorInfo>();
+  const prefixOperators = new Set<string>();
 
   for (const decl of program.declarations) {
-    if (decl.kind === "let" && decl.exported) {
+    if (decl.kind === "let" && decl.export) {
       values.add(decl.name);
-    } else if (decl.kind === "type" && decl.exported) {
+    } else if (decl.kind === "type" && decl.export) {
+      const constructors = decl.constructors ?? [];
       types.add(decl.name);
       // Collect constructor names
-      const ctorNames = decl.constructors.map((c) => c.name);
+      const ctorNames = constructors.map((c) => c.name);
       typeConstructors.set(decl.name, ctorNames);
       // Constructors are also exported as values
       for (const ctorName of ctorNames) {
         values.add(ctorName);
       }
-    } else if (decl.kind === "infix" && decl.exported) {
-      // For M1: Skip operator exports
-      // We'll handle them in M2
+    } else if (decl.kind === "infix" && decl.export) {
+      operators.set(decl.operator, {
+        precedence: decl.precedence,
+        associativity: decl.associativity,
+      });
+    } else if (decl.kind === "prefix" && decl.export) {
+      prefixOperators.add(decl.operator);
     }
   }
 
   // For M1: Skip re-exports
   // We'll add them in M2
 
-  return { values, types, typeConstructors };
+  return { values, types, typeConstructors, operators, prefixOperators };
+}
+
+function getInitialOperatorSets(
+  path: string,
+  ctx: ResolverContext,
+): {
+  operators?: Map<string, OperatorInfo>;
+  prefixOperators?: Set<string>;
+} {
+  if (!ctx.preludePath || path === ctx.preludePath) {
+    return {};
+  }
+
+  const preludeNode = ctx.modules.get(ctx.preludePath);
+  if (!preludeNode) {
+    return {};
+  }
+
+  const operators = new Map<string, OperatorInfo>(preludeNode.exports.operators);
+  const prefixOperators = new Set<string>(preludeNode.exports.prefixOperators);
+
+  return {
+    operators: operators.size > 0 ? operators : undefined,
+    prefixOperators: prefixOperators.size > 0 ? prefixOperators : undefined,
+  };
 }
 
 /**
