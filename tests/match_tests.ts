@@ -184,7 +184,7 @@ Deno.test("match expressions can reference bundle arms", () => {
     throw new Error("expected bindings for someOnly, handle, someResult, and noneResult");
   }
 
-  assertEquals(someOnlyBinding.type, "Option<Int> -> Int");
+  assertEquals(someOnlyBinding.type, "Option<T> -> T");
   assertEquals(handleBinding.type, "Option<Int> -> Int");
   assertEquals(someResultBinding.type, "Int");
   assertEquals(noneResultBinding.type, "Int");
@@ -203,6 +203,156 @@ Deno.test("match expressions can reference bundle arms", () => {
   }
   assertEquals(someResultValue.value.value, 5);
   assertEquals(noneResultValue.value.value, 0);
+});
+
+Deno.test("composes nested bundle references", () => {
+  const source = `
+    let zero = match {
+      0 => { ("zero", (0, true), (_) => { "zero" }) }
+    };
+    let one = match {
+      1 => { ("one", (1, false), (_) => { "one" }) }
+    };
+    let other = match {
+      value => { ("other", (value, false), (_) => { "other" }) }
+    };
+    let grouped = match {
+      zero,
+      one
+    };
+    let describeNumber = match(n) {
+      grouped,
+      other
+    };
+    let a = describeNumber(0);
+    let b = describeNumber(1);
+    let c = describeNumber(42);
+    let aLabel = match(a) {
+      (label, _, _) => { label }
+    };
+    let cExtracted = match(c) {
+      (_, (value, _), _) => { value }
+    };
+    let bFormatted = match(b) {
+      (_, _, formatter) => { formatter(999) }
+    };
+  `;
+
+  const summaries = inferTypes(source);
+  const zeroBinding = summaries.find((entry) => entry.name === "zero");
+  const oneBinding = summaries.find((entry) => entry.name === "one");
+  const otherBinding = summaries.find((entry) => entry.name === "other");
+  const groupedBinding = summaries.find((entry) => entry.name === "grouped");
+  const describeBinding = summaries.find((entry) => entry.name === "describeNumber");
+  const aBinding = summaries.find((entry) => entry.name === "a");
+  const bBinding = summaries.find((entry) => entry.name === "b");
+  const cBinding = summaries.find((entry) => entry.name === "c");
+  const aLabelBinding = summaries.find((entry) => entry.name === "aLabel");
+  const cExtractedBinding = summaries.find((entry) => entry.name === "cExtracted");
+  const bFormattedBinding = summaries.find((entry) => entry.name === "bFormatted");
+  if (
+    !zeroBinding || !oneBinding || !otherBinding || !groupedBinding || !describeBinding ||
+    !aBinding || !bBinding || !cBinding || !aLabelBinding || !cExtractedBinding || !bFormattedBinding
+  ) {
+    throw new Error("expected bindings for composed match bundles and derived results");
+  }
+
+  const expectedBundleType = "Int -> (String, (Int, Bool), Int -> String)";
+  const expectedResultType = "(String, (Int, Bool), Int -> String)";
+
+  assertEquals(zeroBinding.type, expectedBundleType);
+  assertEquals(oneBinding.type, expectedBundleType);
+  assertEquals(otherBinding.type, expectedBundleType);
+  assertEquals(groupedBinding.type, expectedBundleType);
+  assertEquals(describeBinding.type, expectedBundleType);
+
+  assertEquals(aBinding.type, expectedResultType);
+  assertEquals(bBinding.type, expectedResultType);
+  assertEquals(cBinding.type, expectedResultType);
+  assertEquals(aLabelBinding.type, "String");
+  assertEquals(cExtractedBinding.type, "Int");
+  assertEquals(bFormattedBinding.type, "String");
+
+  const evaluation = evaluateSource(source);
+  const aResult = evaluation.summaries.find((entry) => entry.name === "a");
+  const bResult = evaluation.summaries.find((entry) => entry.name === "b");
+  const cResult = evaluation.summaries.find((entry) => entry.name === "c");
+  const aLabelResult = evaluation.summaries.find((entry) => entry.name === "aLabel");
+  const cExtractedResult = evaluation.summaries.find((entry) => entry.name === "cExtracted");
+  const bFormattedResult = evaluation.summaries.find((entry) => entry.name === "bFormatted");
+  if (!aResult || !bResult || !cResult || !aLabelResult || !cExtractedResult || !bFormattedResult) {
+    throw new Error("expected runtime values for describeNumber results and derived bindings");
+  }
+  if (aResult.value.kind !== "tuple" || bResult.value.kind !== "tuple" || cResult.value.kind !== "tuple") {
+    throw new Error("expected describeNumber results to be tuples");
+  }
+  const [aLabelRuntime, aPayloadRuntime, aFormatterRuntime] = aResult.value.elements;
+  const [bLabelRuntime, bPayloadRuntime, bFormatterRuntime] = bResult.value.elements;
+  const [cLabelRuntime, cPayloadRuntime, cFormatterRuntime] = cResult.value.elements;
+
+  if (
+    aLabelRuntime.kind !== "string" ||
+    bLabelRuntime.kind !== "string" ||
+    cLabelRuntime.kind !== "string"
+  ) {
+    throw new Error("expected tuple labels to be strings");
+  }
+  if (
+    aPayloadRuntime.kind !== "tuple" ||
+    bPayloadRuntime.kind !== "tuple" ||
+    cPayloadRuntime.kind !== "tuple"
+  ) {
+    throw new Error("expected tuple payloads to be nested tuples");
+  }
+
+  const [aNumberRuntime, aFlagRuntime] = aPayloadRuntime.elements;
+  const [bNumberRuntime, bFlagRuntime] = bPayloadRuntime.elements;
+  const [cNumberRuntime, cFlagRuntime] = cPayloadRuntime.elements;
+
+  if (
+    aNumberRuntime.kind !== "int" ||
+    bNumberRuntime.kind !== "int" ||
+    cNumberRuntime.kind !== "int"
+  ) {
+    throw new Error("expected tuple payload numbers to be ints");
+  }
+  if (
+    aFlagRuntime.kind !== "bool" ||
+    bFlagRuntime.kind !== "bool" ||
+    cFlagRuntime.kind !== "bool"
+  ) {
+    throw new Error("expected tuple payload flags to be bools");
+  }
+  if (
+    aFormatterRuntime.kind !== "closure" ||
+    bFormatterRuntime.kind !== "closure" ||
+    cFormatterRuntime.kind !== "closure"
+  ) {
+    throw new Error("expected tuple formatters to be closures");
+  }
+
+  assertEquals(aLabelRuntime.value, "zero");
+  assertEquals(bLabelRuntime.value, "one");
+  assertEquals(cLabelRuntime.value, "other");
+
+  assertEquals(aNumberRuntime.value, 0);
+  assertEquals(bNumberRuntime.value, 1);
+  assertEquals(cNumberRuntime.value, 42);
+
+  assertEquals(aFlagRuntime.value, true);
+  assertEquals(bFlagRuntime.value, false);
+  assertEquals(cFlagRuntime.value, false);
+
+  if (aLabelResult.value.kind !== "string" || bFormattedResult.value.kind !== "string") {
+    throw new Error("expected derived string bindings to be strings");
+  }
+  if (cExtractedResult.value.kind !== "int") {
+    throw new Error("expected extracted numeric binding to be an int");
+  }
+
+  assertEquals(aLabelResult.value.value, "zero");
+  assertEquals(cExtractedResult.value.value, 42);
+  assertEquals(bFormattedResult.value.value, "one");
 });
 
 Deno.test("rejects non-exhaustive match expression", () => {
