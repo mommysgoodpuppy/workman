@@ -30,8 +30,6 @@ import {
   UNIT_VALUE,
   NativeFunctionValue,
   ClosureValue,
-  MatchBundleValue,
-  
   DataValue,
   IntValue,
   BoolValue,
@@ -567,18 +565,17 @@ function evaluateMatchFunction(
 }
 
 function evaluateMatchBundleLiteral(env: Environment, expr: MatchBundleLiteralExpr): RuntimeValue {
-  return {
-    kind: "match_bundle",
-    bundle: expr.bundle,
-    env,
-  } satisfies MatchBundleValue;
+  const bundle = expr.bundle;
+  return createNativeFunction("match_bundle", 1, ([arg], span) =>
+    applyMatchBundle(env, bundle, arg, span)
+  );
 }
 
 function applyMatchBundle(
   env: Environment,
   bundle: MatchBundle,
   scrutinee: RuntimeValue,
-  span: SourceSpan,
+  span: SourceSpan | undefined,
 ): RuntimeValue {
   for (const arm of bundle.arms) {
     const bindings = matchPattern(env, scrutinee, arm.pattern);
@@ -590,7 +587,8 @@ function applyMatchBundle(
       return evaluateExpr(scope, arm.body);
     }
   }
-  throw new RuntimeError("Non-exhaustive patterns at runtime", span, currentSource);
+  const errorSpan = span ?? bundle.span;
+  throw new RuntimeError("Non-exhaustive patterns at runtime", errorSpan, currentSource);
 }
 
 function matchPattern(env: Environment, value: RuntimeValue, pattern: Pattern): Map<string, RuntimeValue> | null {

@@ -22,14 +22,20 @@ export function inferMatchFunction(ctx: Context, parameters: Expr[], bundle: Mat
 }
 
 export function inferMatchBundleLiteral(ctx: Context, expr: MatchBundleLiteralExpr): Type {
-  const resultType = inferMatchBranches(ctx, freshTypeVar(), expr.bundle.arms);
-  return applyCurrentSubst(ctx, resultType);
+  const param = freshTypeVar();
+  const result = inferMatchBranches(ctx, param, expr.bundle.arms, false);
+  return {
+    kind: "func",
+    from: applyCurrentSubst(ctx, param),
+    to: applyCurrentSubst(ctx, result),
+  };
 }
 
 export function inferMatchBranches(
   ctx: Context,
   scrutineeType: Type,
-  arms: MatchArm[]
+  arms: MatchArm[],
+  exhaustive: boolean = true,
 ): Type {
   let resultType: Type | null = null;
   const coverageMap = new Map<string, Set<string>>();
@@ -74,7 +80,15 @@ export function inferMatchBranches(
     }
   }
 
-  ensureExhaustive(ctx, applyCurrentSubst(ctx, scrutineeType), hasWildcard, coverageMap, booleanCoverage);
+  if (exhaustive) {
+    ensureExhaustive(
+      ctx,
+      applyCurrentSubst(ctx, scrutineeType),
+      hasWildcard,
+      coverageMap,
+      booleanCoverage,
+    );
+  }
 
   if (!resultType) {
     resultType = freshTypeVar();
