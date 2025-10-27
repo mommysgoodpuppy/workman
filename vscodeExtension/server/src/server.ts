@@ -5,14 +5,26 @@
  * Provides type inference, diagnostics, and hover information for .wm files
  */
 
+// Redirect console.log to stderr to prevent polluting LSP stdout with debug messages
+console.log = console.error;
+
 import { lex } from "@workman/lexer.ts";
-import { parseSurfaceProgram, ParseError } from "@workman/parser.ts";
-import { inferProgram, InferError } from "@workman/infer.ts";
+import { ParseError, parseSurfaceProgram } from "@workman/parser.ts";
+import { InferError, inferProgram } from "@workman/infer.ts";
 import { LexError, WorkmanError } from "@workman/error.ts";
 import { formatScheme } from "@workman/type_printer.ts";
-import { runEntryPath, ModuleLoaderError, loadModuleGraph } from "@workman/module_loader.ts";
-import { dirname, fromFileUrl, join, isAbsolute } from "std/path/mod.ts";
-import { TypeScheme, TypeInfo, cloneTypeInfo, cloneTypeScheme } from "@workman/types.ts";
+import {
+  loadModuleGraph,
+  ModuleLoaderError,
+  runEntryPath,
+} from "@workman/module_loader.ts";
+import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
+import {
+  cloneTypeInfo,
+  cloneTypeScheme,
+  TypeInfo,
+  TypeScheme,
+} from "@workman/types.ts";
 
 interface LSPMessage {
   jsonrpc: string;
@@ -82,7 +94,7 @@ class WorkmanLanguageServer {
     if (this.writeLock || this.writeQueue.length === 0) {
       return;
     }
-    
+
     this.writeLock = true;
     const writer = this.writeQueue.shift()!;
     try {
@@ -91,7 +103,7 @@ class WorkmanLanguageServer {
       console.error(`[LSP] Queue processing error: ${error}`);
     }
     this.writeLock = false;
-    
+
     // Process next item if any
     if (this.writeQueue.length > 0) {
       this.processWriteQueue();
@@ -100,41 +112,44 @@ class WorkmanLanguageServer {
 
   async start() {
     this.log("[LSP] Workman Language Server starting...");
-    
+
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
-    
+
     let buffer = "";
-    
+
     for await (const chunk of Deno.stdin.readable) {
       buffer += decoder.decode(chunk);
-      
+
       while (true) {
         const headerEnd = buffer.indexOf("\r\n\r\n");
         if (headerEnd === -1) break;
-        
+
         const header = buffer.substring(0, headerEnd);
         const contentLengthMatch = header.match(/Content-Length: (\d+)/);
-        
+
         if (!contentLengthMatch) {
           this.log(`[LSP] Invalid header: ${header}`);
           break;
         }
-        
+
         const contentLength = parseInt(contentLengthMatch[1]);
         const messageStart = headerEnd + 4;
-        
+
         if (buffer.length < messageStart + contentLength) {
           break; // Wait for more data
         }
-        
-        const messageContent = buffer.substring(messageStart, messageStart + contentLength);
+
+        const messageContent = buffer.substring(
+          messageStart,
+          messageStart + contentLength,
+        );
         buffer = buffer.substring(messageStart + contentLength);
-        
+
         try {
           const message: LSPMessage = JSON.parse(messageContent);
           const response = await this.handleMessage(message);
-          
+
           if (response) {
             await this.writeMessage(response);
           }
@@ -147,7 +162,7 @@ class WorkmanLanguageServer {
 
   private async handleMessage(message: LSPMessage): Promise<LSPMessage | null> {
     this.log(`[LSP] Received: ${message.method}`);
-    
+
     if (!message.method) {
       return null;
     }
@@ -155,28 +170,28 @@ class WorkmanLanguageServer {
     switch (message.method) {
       case "initialize":
         return this.handleInitialize(message);
-      
+
       case "initialized":
         return null;
-      
+
       case "textDocument/didOpen":
         return await this.handleDidOpen(message);
-      
+
       case "textDocument/didChange":
         return await this.handleDidChange(message);
-      
+
       case "textDocument/hover":
         return await this.handleHover(message);
-      
+
       case "textDocument/inlayHint":
         return await this.handleInlayHint(message);
-      
+
       case "shutdown":
         return { jsonrpc: "2.0", id: message.id, result: null };
-      
+
       case "exit":
         Deno.exit(0);
-      
+
       default:
         this.log(`[LSP] Unhandled method: ${message.method}`);
         return null;
@@ -188,14 +203,18 @@ class WorkmanLanguageServer {
       const params: any = message.params ?? {};
       const roots: string[] = [];
       if (typeof params.rootUri === "string") {
-        try { roots.push(fromFileUrl(params.rootUri)); } catch {}
+        try {
+          roots.push(fromFileUrl(params.rootUri));
+        } catch {}
       } else if (typeof params.rootPath === "string") {
         roots.push(params.rootPath);
       }
       if (Array.isArray(params.workspaceFolders)) {
         for (const wf of params.workspaceFolders) {
           if (wf && typeof wf.uri === "string") {
-            try { roots.push(fromFileUrl(wf.uri)); } catch {}
+            try {
+              roots.push(fromFileUrl(wf.uri));
+            } catch {}
           }
         }
       }
@@ -203,7 +222,9 @@ class WorkmanLanguageServer {
       this.log(`[LSP] Workspace roots: ${this.workspaceRoots.join(", ")}`);
       const init = params.initializationOptions ?? {};
       if (init && Array.isArray(init.stdRoots)) {
-        this.initStdRoots = init.stdRoots.filter((s: unknown) => typeof s === "string");
+        this.initStdRoots = init.stdRoots.filter((s: unknown) =>
+          typeof s === "string"
+        );
       }
       if (init && typeof init.preludeModule === "string") {
         this.preludeModule = init.preludeModule;
@@ -235,31 +256,33 @@ class WorkmanLanguageServer {
     const { textDocument } = message.params;
     const uri = textDocument.uri;
     const text = textDocument.text;
-    
+
     this.documents.set(uri, text);
     await this.validateDocument(uri, text);
-    
+
     return null;
   }
 
-  private async handleDidChange(message: LSPMessage): Promise<LSPMessage | null> {
+  private async handleDidChange(
+    message: LSPMessage,
+  ): Promise<LSPMessage | null> {
     const { textDocument, contentChanges } = message.params;
     const uri = textDocument.uri;
-    
+
     if (contentChanges.length > 0) {
       const text = contentChanges[0].text;
       this.documents.set(uri, text);
       await this.validateDocument(uri, text);
     }
-    
+
     return null;
   }
 
   private async validateDocument(uri: string, text: string) {
     const diagnostics: any[] = [];
-    
+
     this.log(`[LSP] Validating document: ${uri}`);
-    
+
     // First, try to parse the current document directly to get better error positions
     try {
       const tokens = lex(text, uri);
@@ -268,17 +291,20 @@ class WorkmanLanguageServer {
       try {
         const entryPath = this.uriToFsPath(uri);
         const stdRoots = this.computeStdRoots(entryPath);
-        await runEntryPath(entryPath, { stdRoots, preludeModule: this.preludeModule });
+        await runEntryPath(entryPath, {
+          stdRoots,
+          preludeModule: this.preludeModule,
+        });
         this.log(`[LSP] Module graph validated OK (${entryPath})`);
       } catch (moduleError) {
         // Module-level errors (imports, type errors, etc.)
         this.log(`[LSP] Module validation error: ${moduleError}`);
         if (moduleError instanceof InferError) {
-          const range = moduleError.span 
-            ? { 
-                start: this.offsetToPosition(text, moduleError.span.start),
-                end: this.offsetToPosition(text, moduleError.span.end)
-              }
+          const range = moduleError.span
+            ? {
+              start: this.offsetToPosition(text, moduleError.span.start),
+              end: this.offsetToPosition(text, moduleError.span.end),
+            }
             : this.estimateRangeFromMessage(text, moduleError.message);
           diagnostics.push({
             range,
@@ -299,7 +325,10 @@ class WorkmanLanguageServer {
           });
         } else {
           diagnostics.push({
-            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            range: {
+              start: { line: 0, character: 0 },
+              end: { line: 0, character: 1 },
+            },
             severity: 1,
             message: `Internal error: ${moduleError}`,
             source: "workman",
@@ -309,7 +338,7 @@ class WorkmanLanguageServer {
       }
     } catch (error) {
       this.log(`[LSP] Validation error: ${error}`);
-      
+
       // Check if this is a WorkmanError (which includes LexError, ParseError, InferError)
       // These might be wrapped in ModuleLoaderError
       if (error instanceof LexError) {
@@ -334,11 +363,11 @@ class WorkmanLanguageServer {
           code: "parse-error",
         });
       } else if (error instanceof InferError) {
-        const range = error.span 
-          ? { 
-              start: this.offsetToPosition(text, error.span.start),
-              end: this.offsetToPosition(text, error.span.end)
-            }
+        const range = error.span
+          ? {
+            start: this.offsetToPosition(text, error.span.start),
+            end: this.offsetToPosition(text, error.span.end),
+          }
           : this.estimateRangeFromMessage(text, error.message);
         diagnostics.push({
           range,
@@ -359,7 +388,10 @@ class WorkmanLanguageServer {
         });
       } else {
         diagnostics.push({
-          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+          range: {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 1 },
+          },
           severity: 1,
           message: `Internal error: ${error}`,
           source: "workman",
@@ -367,10 +399,10 @@ class WorkmanLanguageServer {
         });
       }
     }
-    
+
     this.diagnostics.set(uri, diagnostics);
     this.log(`[LSP] Sending ${diagnostics.length} diagnostics for ${uri}`);
-    
+
     // Send diagnostics notification
     try {
       await this.sendNotification("textDocument/publishDiagnostics", {
@@ -396,17 +428,23 @@ class WorkmanLanguageServer {
     const { textDocument, position } = message.params;
     const uri = textDocument.uri;
     const text = this.documents.get(uri);
-    
-    this.log(`[LSP] Hover at line ${position.line}, char ${position.character}`);
-    
+
+    this.log(
+      `[LSP] Hover at line ${position.line}, char ${position.character}`,
+    );
+
     if (!text) {
       return { jsonrpc: "2.0", id: message.id, result: null };
     }
-    
+
     try {
       const entryPath = this.uriToFsPath(uri);
       const stdRoots = this.computeStdRoots(entryPath);
-      const env = await this.buildModuleEnv(entryPath, stdRoots, this.preludeModule);
+      const env = await this.buildModuleEnv(
+        entryPath,
+        stdRoots,
+        this.preludeModule,
+      );
       const offset = this.positionToOffset(text, position);
       const word = this.getWordAtOffset(text, offset);
       this.log(`[LSP] Word at cursor: '${word}'`);
@@ -437,17 +475,21 @@ class WorkmanLanguageServer {
     const { textDocument } = message.params;
     const uri = textDocument.uri;
     const text = this.documents.get(uri);
-    
+
     if (!text) {
       return { jsonrpc: "2.0", id: message.id, result: [] };
     }
-    
+
     const hints: any[] = [];
-    
+
     try {
       const entryPath = this.uriToFsPath(uri);
       const stdRoots = this.computeStdRoots(entryPath);
-      const env = await this.buildModuleEnv(entryPath, stdRoots, this.preludeModule);
+      const env = await this.buildModuleEnv(
+        entryPath,
+        stdRoots,
+        this.preludeModule,
+      );
       for (const [name, scheme] of env.entries()) {
         const regex = new RegExp(`\\blet\\s+(?:rec\\s+)?${name}\\b`, "g");
         let match: RegExpExecArray | null;
@@ -462,7 +504,9 @@ class WorkmanLanguageServer {
             paddingLeft: true,
             paddingRight: false,
           });
-          this.log(`[LSP] Type hint: ${name} : ${typeStr} at line ${position.line}, char ${position.character}`);
+          this.log(
+            `[LSP] Type hint: ${name} : ${typeStr} at line ${position.line}, char ${position.character}`,
+          );
         }
       }
       this.log(`[LSP] Returning ${hints.length} inlay hints`);
@@ -470,14 +514,17 @@ class WorkmanLanguageServer {
       this.log(`[LSP] Inlay hint error: ${error}`);
       return { jsonrpc: "2.0", id: message.id, result: [] };
     }
-    
+
     return { jsonrpc: "2.0", id: message.id, result: hints };
   }
 
-  private offsetToPosition(text: string, offset: number): { line: number; character: number } {
+  private offsetToPosition(
+    text: string,
+    offset: number,
+  ): { line: number; character: number } {
     let line = 0;
     let character = 0;
-    
+
     for (let i = 0; i < offset && i < text.length; i++) {
       if (text[i] === "\n") {
         line++;
@@ -486,14 +533,17 @@ class WorkmanLanguageServer {
         character++;
       }
     }
-    
+
     return { line, character };
   }
 
-  private positionToOffset(text: string, position: { line: number; character: number }): number {
+  private positionToOffset(
+    text: string,
+    position: { line: number; character: number },
+  ): number {
     let offset = 0;
     let currentLine = 0;
-    
+
     for (let i = 0; i < text.length; i++) {
       if (currentLine === position.line) {
         return offset + position.character;
@@ -503,36 +553,40 @@ class WorkmanLanguageServer {
       }
       offset++;
     }
-    
+
     return offset;
   }
 
   private getWordAtOffset(text: string, offset: number): string {
     let start = offset;
     let end = offset;
-    
+
     // Move start back to word boundary
     while (start > 0 && /[a-zA-Z0-9_]/.test(text[start - 1])) {
       start--;
     }
-    
+
     // Move end forward to word boundary
     while (end < text.length && /[a-zA-Z0-9_]/.test(text[end])) {
       end++;
     }
-    
+
     return text.substring(start, end);
   }
 
   private isStdCoreModule(path: string): boolean {
     const normalized = path.replaceAll("\\", "/");
     if (normalized.includes("/std/core/")) return true;
-    return normalized.endsWith("/std/list/core.wm")
-      || normalized.endsWith("/std/option/core.wm")
-      || normalized.endsWith("/std/result/core.wm");
+    return normalized.endsWith("/std/list/core.wm") ||
+      normalized.endsWith("/std/option/core.wm") ||
+      normalized.endsWith("/std/result/core.wm");
   }
 
-  private async buildModuleEnv(entryPath: string, stdRoots: string[], preludeModule?: string): Promise<Map<string, TypeScheme>> {
+  private async buildModuleEnv(
+    entryPath: string,
+    stdRoots: string[],
+    preludeModule?: string,
+  ): Promise<Map<string, TypeScheme>> {
     const graph = await loadModuleGraph(entryPath, { stdRoots, preludeModule });
     const summaries = new Map<string, {
       exportsValues: Map<string, TypeScheme>;
@@ -541,7 +595,10 @@ class WorkmanLanguageServer {
       adtEnv: Map<string, TypeInfo>;
     }>();
     const preludePath = graph.prelude;
-    let preludeSummary: { exportsValues: Map<string, TypeScheme>; exportsTypes: Map<string, TypeInfo> } | undefined = undefined;
+    let preludeSummary: {
+      exportsValues: Map<string, TypeScheme>;
+      exportsTypes: Map<string, TypeInfo>;
+    } | undefined = undefined;
 
     for (const path of graph.order) {
       const node = graph.nodes.get(path)!;
@@ -551,39 +608,57 @@ class WorkmanLanguageServer {
       for (const record of node.imports) {
         const provider = summaries.get(record.sourcePath);
         if (!provider) {
-          throw new ModuleLoaderError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
+          throw new ModuleLoaderError(
+            `Module '${path}' depends on '${record.sourcePath}' which failed to load`,
+          );
         }
         for (const spec of record.specifiers) {
           const val = provider.exportsValues.get(spec.imported);
           const typ = provider.exportsTypes.get(spec.imported);
           if (!val && !typ) {
-            throw new ModuleLoaderError(`Module '${record.sourcePath}' does not export '${spec.imported}' (imported by '${record.importerPath}')`);
+            throw new ModuleLoaderError(
+              `Module '${record.sourcePath}' does not export '${spec.imported}' (imported by '${record.importerPath}')`,
+            );
           }
           if (val) {
             initialEnv.set(spec.local, cloneTypeScheme(val));
           }
           if (typ) {
             if (spec.local !== spec.imported) {
-              throw new ModuleLoaderError(`Type import aliasing is not supported in Stage M1 (imported '${spec.imported}' as '${spec.local}')`);
+              throw new ModuleLoaderError(
+                `Type import aliasing is not supported in Stage M1 (imported '${spec.imported}' as '${spec.local}')`,
+              );
             }
             if (initialAdtEnv.has(spec.imported)) {
-              throw new ModuleLoaderError(`Duplicate imported type '${spec.imported}' in module '${record.importerPath}'`);
+              throw new ModuleLoaderError(
+                `Duplicate imported type '${spec.imported}' in module '${record.importerPath}'`,
+              );
             }
             initialAdtEnv.set(spec.imported, cloneTypeInfo(typ));
           }
         }
       }
 
-      if (preludeSummary && path !== preludePath && !this.isStdCoreModule(path)) {
+      if (
+        preludeSummary && path !== preludePath && !this.isStdCoreModule(path)
+      ) {
         for (const [name, scheme] of preludeSummary.exportsValues.entries()) {
-          if (!initialEnv.has(name)) initialEnv.set(name, cloneTypeScheme(scheme));
+          if (!initialEnv.has(name)) {
+            initialEnv.set(name, cloneTypeScheme(scheme));
+          }
         }
         for (const [name, info] of preludeSummary.exportsTypes.entries()) {
-          if (!initialAdtEnv.has(name)) initialAdtEnv.set(name, cloneTypeInfo(info));
+          if (!initialAdtEnv.has(name)) {
+            initialAdtEnv.set(name, cloneTypeInfo(info));
+          }
         }
       }
 
-      const inference = inferProgram(node.program, { initialEnv, initialAdtEnv, resetCounter: true });
+      const inference = inferProgram(node.program, {
+        initialEnv,
+        initialAdtEnv,
+        resetCounter: true,
+      });
 
       const exportedValues = new Map<string, TypeScheme>();
       const exportedTypes = new Map<string, TypeInfo>();
@@ -591,15 +666,21 @@ class WorkmanLanguageServer {
       for (const record of node.reexports) {
         const provider = summaries.get(record.sourcePath);
         if (!provider) {
-          throw new ModuleLoaderError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
+          throw new ModuleLoaderError(
+            `Module '${path}' depends on '${record.sourcePath}' which failed to load`,
+          );
         }
         for (const typeExport of record.typeExports) {
           const providedType = provider.exportsTypes.get(typeExport.name);
           if (!providedType) {
-            throw new ModuleLoaderError(`Module '${record.importerPath}' re-exports type '${typeExport.name}' from '${record.rawSource}' which does not export it`);
+            throw new ModuleLoaderError(
+              `Module '${record.importerPath}' re-exports type '${typeExport.name}' from '${record.rawSource}' which does not export it`,
+            );
           }
           if (exportedTypes.has(typeExport.name)) {
-            throw new ModuleLoaderError(`Duplicate export '${typeExport.name}' in '${record.importerPath}'`);
+            throw new ModuleLoaderError(
+              `Duplicate export '${typeExport.name}' in '${record.importerPath}'`,
+            );
           }
           const clonedInfo = cloneTypeInfo(providedType);
           exportedTypes.set(typeExport.name, clonedInfo);
@@ -607,10 +688,14 @@ class WorkmanLanguageServer {
             for (const ctor of clonedInfo.constructors) {
               const providedScheme = provider.exportsValues.get(ctor.name);
               if (!providedScheme) {
-                throw new ModuleLoaderError(`Module '${record.importerPath}' re-exports constructor '${ctor.name}' from '${record.rawSource}' but runtime type is missing in provider`);
+                throw new ModuleLoaderError(
+                  `Module '${record.importerPath}' re-exports constructor '${ctor.name}' from '${record.rawSource}' but runtime type is missing in provider`,
+                );
               }
               if (exportedValues.has(ctor.name)) {
-                throw new ModuleLoaderError(`Duplicate export '${ctor.name}' in '${record.importerPath}'`);
+                throw new ModuleLoaderError(
+                  `Duplicate export '${ctor.name}' in '${record.importerPath}'`,
+                );
               }
               exportedValues.set(ctor.name, cloneTypeScheme(providedScheme));
             }
@@ -618,14 +703,20 @@ class WorkmanLanguageServer {
         }
       }
 
-      const letSchemeMap = new Map(inference.summaries.map(({ name, scheme }) => [name, scheme] as const));
+      const letSchemeMap = new Map(
+        inference.summaries.map(({ name, scheme }) => [name, scheme] as const),
+      );
       for (const name of node.exportedValueNames) {
         const scheme = letSchemeMap.get(name) ?? inference.env.get(name);
         if (!scheme) {
-          throw new ModuleLoaderError(`Exported let '${name}' was not inferred in '${path}'`);
+          throw new ModuleLoaderError(
+            `Exported let '${name}' was not inferred in '${path}'`,
+          );
         }
         if (exportedValues.has(name)) {
-          throw new ModuleLoaderError(`Duplicate export '${name}' in '${path}'`);
+          throw new ModuleLoaderError(
+            `Duplicate export '${name}' in '${path}'`,
+          );
         }
         exportedValues.set(name, cloneTypeScheme(scheme));
       }
@@ -633,33 +724,53 @@ class WorkmanLanguageServer {
       for (const typeName of node.exportedTypeNames) {
         const info = inference.adtEnv.get(typeName);
         if (!info) {
-          throw new ModuleLoaderError(`Exported type '${typeName}' was not defined in '${path}'`);
+          throw new ModuleLoaderError(
+            `Exported type '${typeName}' was not defined in '${path}'`,
+          );
         }
         if (exportedTypes.has(typeName)) {
-          throw new ModuleLoaderError(`Duplicate export '${typeName}' in '${path}'`);
+          throw new ModuleLoaderError(
+            `Duplicate export '${typeName}' in '${path}'`,
+          );
         }
         const clonedInfo = cloneTypeInfo(info);
         exportedTypes.set(typeName, clonedInfo);
         for (const ctor of clonedInfo.constructors) {
           const scheme = inference.env.get(ctor.name);
           if (!scheme) {
-            throw new ModuleLoaderError(`Constructor '${ctor.name}' for type '${typeName}' missing in '${path}'`);
+            throw new ModuleLoaderError(
+              `Constructor '${ctor.name}' for type '${typeName}' missing in '${path}'`,
+            );
           }
           if (exportedValues.has(ctor.name)) {
-            throw new ModuleLoaderError(`Duplicate export '${ctor.name}' in '${path}'`);
+            throw new ModuleLoaderError(
+              `Duplicate export '${ctor.name}' in '${path}'`,
+            );
           }
           exportedValues.set(ctor.name, cloneTypeScheme(scheme));
         }
       }
 
-      summaries.set(path, { exportsValues: exportedValues, exportsTypes: exportedTypes, env: inference.env, adtEnv: inference.adtEnv });
+      summaries.set(path, {
+        exportsValues: exportedValues,
+        exportsTypes: exportedTypes,
+        env: inference.env,
+        adtEnv: inference.adtEnv,
+      });
       if (path === preludePath) {
-        preludeSummary = { exportsValues: exportedValues, exportsTypes: exportedTypes };
+        preludeSummary = {
+          exportsValues: exportedValues,
+          exportsTypes: exportedTypes,
+        };
       }
     }
 
     const entry = summaries.get(graph.entry);
-    if (!entry) throw new ModuleLoaderError(`Internal error: failed to load entry module '${graph.entry}'`);
+    if (!entry) {
+      throw new ModuleLoaderError(
+        `Internal error: failed to load entry module '${graph.entry}'`,
+      );
+    }
     return entry.env;
   }
 
@@ -709,7 +820,9 @@ class WorkmanLanguageServer {
   }
 
   private estimateRangeFromMessage(text: string, msg: string) {
-    const quoted = Array.from(msg.matchAll(/["']([^"']+)["']/g)).map((m) => m[1]);
+    const quoted = Array.from(msg.matchAll(/["']([^"']+)["']/g)).map((m) =>
+      m[1]
+    );
     for (const q of quoted) {
       const idx = text.indexOf(q);
       if (idx !== -1) {

@@ -903,20 +903,6 @@ function inferMatchBranches(
       return inferExpr(ctx, arm.body);
     });
 
-    if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
-      let patternDesc = arm.pattern.kind;
-      if (arm.pattern.kind === "constructor") {
-        patternDesc = `constructor ${arm.pattern.name}`;
-      } else if (arm.pattern.kind === "literal") {
-        patternDesc = `literal ${arm.pattern.literal.kind}`;
-      }
-      console.log(
-        "[debug] match arm",
-        patternDesc,
-        "body type:",
-        typeToString(applyCurrentSubst(ctx, bodyType)),
-      );
-    }
     if (!resultType) {
       resultType = bodyType;
     } else {

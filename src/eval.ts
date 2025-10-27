@@ -707,3 +707,10 @@ function expectChar(value: RuntimeValue, span: SourceSpan | undefined, primitive
   }
   return value.value;
 }
+
+function expectString(value: RuntimeValue, span: SourceSpan | undefined, primitiveName: string): string {
+  if (value.kind !== "string") {
+    throw new RuntimeError(`Primitive '${primitiveName}' expected a String argument`, span, currentSource);
+  }
+  return value.value;
+}

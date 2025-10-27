@@ -77,7 +77,10 @@ export function applySubstitution(type: Type, subst: Substitution): Type {
   }
 }
 
-export function applySubstitutionScheme(scheme: TypeScheme, subst: Substitution): TypeScheme {
+export function applySubstitutionScheme(
+  scheme: TypeScheme,
+  subst: Substitution,
+): TypeScheme {
   const filtered = new Map<number, Type>();
   for (const [id, ty] of subst.entries()) {
     if (!scheme.quantifiers.includes(id)) {
@@ -90,7 +93,10 @@ export function applySubstitutionScheme(scheme: TypeScheme, subst: Substitution)
   };
 }
 
-export function composeSubstitution(a: Substitution, b: Substitution): Substitution {
+export function composeSubstitution(
+  a: Substitution,
+  b: Substitution,
+): Substitution {
   const result: Substitution = new Map();
   for (const [id, type] of b.entries()) {
     const applied = applySubstitution(type, a);
@@ -246,6 +252,8 @@ export function typeToString(type: Type): string {
       return "Int";
     case "bool":
       return "Bool";
+    case "char":
+      return "Char";
     case "string":
       return "String";
     case "unit":
@@ -262,6 +270,10 @@ export function typeToString(type: Type): string {
     case "tuple": {
       const elems = type.elements.map(typeToString).join(", ");
       return `(${elems})`;
+    }
+    default: {
+      const _exhaustive: never = type;
+      return _exhaustive;
     }
   }
 }
