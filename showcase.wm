@@ -200,7 +200,7 @@ let sumOfList = () => {
 -- Note: Keep recursion depth reasonable (< 1000) to avoid stack overflow
 
 let main = () => {
-  -- printPattern((0, 20))      -- Prints 0 to 20 with pattern matching
+  printPattern((0, 20))      -- Prints 0 to 20 with pattern matching
   -- countdown(10)              -- Counts down from 10 to 0
-  countUpTo((1, 20));           -- Counts from 1 to 500
+  -- countUpTo((1, 20));           -- Counts from 1 to 500
 };

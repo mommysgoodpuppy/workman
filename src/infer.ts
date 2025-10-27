@@ -419,6 +419,14 @@ function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string
   }
   
   // STEP 4: Apply substitutions and generalize
+  // Remove bindings from environment before generalization to avoid capturing their own type vars
+  for (const binding of allBindings) {
+    const existing = ctx.env.get(binding.name);
+    if (existing) {
+      ctx.env.delete(binding.name);
+    }
+  }
+
   const results: { name: string; scheme: TypeScheme }[] = [];
   for (const binding of allBindings) {
     const inferredType = inferredTypes.get(binding.name)!;
@@ -583,25 +591,26 @@ function inferLetBinding(
       });
     });
 
-    let inferred = inferBlockExpr(ctx, body);
+    const bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
+
+    let fnType: Type;
+    if (parameters.length === 0) {
+      fnType = bodyType;
+    } else {
+      fnType = paramTypes.reduceRight<Type>((acc, paramType) => ({
+        kind: "func",
+        from: applyCurrentSubst(ctx, paramType),
+        to: acc,
+      }), bodyType);
+    }
 
     if (annotation) {
       const annotated = convertTypeExpr(ctx, annotation, annotationScope);
-      unify(ctx, inferred, annotated);
-      inferred = applyCurrentSubst(ctx, annotated);
+      unify(ctx, fnType, annotated);
+      fnType = applyCurrentSubst(ctx, annotated);
     }
 
-    const resolved = applyCurrentSubst(ctx, inferred);
-
-    if (parameters.length === 0) {
-      return resolved;
-    }
-
-    return paramTypes.reduceRight<Type>((acc, paramType) => ({
-      kind: "func",
-      from: applyCurrentSubst(ctx, paramType),
-      to: acc,
-    }), resolved);
+    return fnType;
   });
 }
 
@@ -640,6 +649,33 @@ function inferExpr(ctx: Context, expr: Expr): Type {
   switch (expr.kind) {
     case "identifier": {
       const scheme = lookupEnv(ctx, expr.name);
+      if (
+        expr.name === "formatRuntimeValue" &&
+        ctx.source?.includes("Runtime value printer for Workman using std library")
+      ) {
+        console.log(
+          "[debug] identifier formatRuntimeValue scheme:",
+          formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
+        );
+      }
+      if (
+        expr.name === "listMap" &&
+        ctx.source?.includes("Runtime value printer for Workman using std library")
+      ) {
+        console.log(
+          "[debug] identifier listMap scheme:",
+          formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
+        );
+      }
+      if (
+        expr.name === "fromLiteral" &&
+        ctx.source?.includes("Runtime value printer for Workman using std library")
+      ) {
+        console.log(
+          "[debug] identifier fromLiteral scheme:",
+          formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
+        );
+      }
       return instantiateAndApply(ctx, scheme);
     }
     case "literal":
@@ -672,18 +708,63 @@ function inferExpr(ctx: Context, expr: Expr): Type {
       for (const arg of expr.arguments) {
         const argType = inferExpr(ctx, arg);
         const resultType = freshTypeVar();
+        const calleeIdentifierName = expr.callee.kind === "identifier"
+          ? expr.callee.name
+          : null;
+        const calleeName = calleeIdentifierName ?? "<expression>";
+        if (
+          calleeIdentifierName === "listMap" &&
+          ctx.source?.includes("Runtime value printer for Workman using std library")
+        ) {
+          console.log("[debug] listMap arg type:", typeToString(applyCurrentSubst(ctx, argType)));
+          console.log(
+            "[debug] fnType before unify:",
+            typeToString(applyCurrentSubst(ctx, fnType)),
+          );
+        }
+        if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
+          console.log("[debug] call callee:", calleeName);
+        }
         try {
           unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
         } catch (e) {
           // Add context about which function call failed
-          const calleeName = expr.callee.kind === "variable" ? expr.callee.name : "<expression>";
           const fnTypeStr = typeToString(applyCurrentSubst(ctx, fnType));
           const argTypeStr = typeToString(applyCurrentSubst(ctx, argType));
+          if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
+            const snippet = ctx.source.slice(expr.span.start, expr.span.end);
+            console.log("[debug] failing call snippet:", snippet.trim());
+            console.log(
+              "[debug] resultType raw/applied:",
+              typeToString(resultType),
+              typeToString(applyCurrentSubst(ctx, resultType)),
+            );
+            if (resultType.kind === "var") {
+              const mapped = ctx.subst.get(resultType.id);
+              if (mapped) {
+                console.log("[debug] resultType mapped to:", typeToString(mapped));
+              }
+            }
+          }
           throw inferError(`Type error in function call to '${calleeName}':\n  Function type: ${fnTypeStr}\n  Argument type: ${argTypeStr}\n\nOriginal error: ${e instanceof Error ? e.message : String(e)}`, expr.span, ctx.source);
         }
         fnType = applyCurrentSubst(ctx, resultType);
       }
-      return applyCurrentSubst(ctx, fnType);
+      const callType = applyCurrentSubst(ctx, fnType);
+      if (
+        ctx.source?.includes("Runtime value printer for Workman using std library") &&
+        ctx.source.slice(expr.span.start, expr.span.end).includes("listMap")
+      ) {
+        console.log("[debug] listMap call type:", typeToString(callType));
+        const fmtScheme = ctx.env.get("formatRuntimeValue");
+        if (fmtScheme) {
+          console.log(
+            "[debug] formatRuntimeValue scheme after listMap:",
+            formatScheme(applySubstitutionScheme(fmtScheme, ctx.subst)),
+          );
+        }
+      }
+      return callType;
     }
     case "arrow":
       return inferArrowFunction(ctx, expr.parameters, expr.body);
@@ -808,9 +889,34 @@ function inferMatchBranches(
       for (const [name, type] of patternInfo.bindings.entries()) {
         ctx.env.set(name, { quantifiers: [], type: applyCurrentSubst(ctx, type) });
       }
+      if (
+        ctx.source?.includes("Runtime value printer for Workman using std library") &&
+        resultType
+      ) {
+        console.log(
+          "[debug] expected result before arm",
+          arm.pattern.kind === "constructor" ? arm.pattern.name : arm.pattern.kind,
+          ":",
+          typeToString(applyCurrentSubst(ctx, resultType)),
+        );
+      }
       return inferExpr(ctx, arm.body);
     });
 
+    if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
+      let patternDesc = arm.pattern.kind;
+      if (arm.pattern.kind === "constructor") {
+        patternDesc = `constructor ${arm.pattern.name}`;
+      } else if (arm.pattern.kind === "literal") {
+        patternDesc = `literal ${arm.pattern.literal.kind}`;
+      }
+      console.log(
+        "[debug] match arm",
+        patternDesc,
+        "body type:",
+        typeToString(applyCurrentSubst(ctx, bodyType)),
+      );
+    }
     if (!resultType) {
       resultType = bodyType;
     } else {
@@ -954,6 +1060,12 @@ function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternIn
       const bindings = new Map<string, Type>();
       for (const argPattern of pattern.args) {
         const fnType = expectFunctionType(ctx, current, `Constructor ${pattern.name}`);
+        if (pattern.name === "Data") {
+          console.log(
+            "[debug] Data pattern field type:",
+            typeToString(applyCurrentSubst(ctx, fnType.from)),
+          );
+        }
         const info = inferPattern(ctx, argPattern, fnType.from);
         mergeBindings(bindings, info.bindings);
         current = fnType.to;
@@ -1087,6 +1199,13 @@ function bindVar(id: number, type: Type, subst: Substitution): Substitution {
   }
   const next = new Map(subst);
   next.set(id, resolved);
+  if (
+    resolved.kind === "constructor" &&
+    resolved.name === "RuntimeValue" &&
+    id === 22
+  ) {
+    console.log("[debug] bindVar t22 := RuntimeValue");
+  }
   return next;
 }
 
