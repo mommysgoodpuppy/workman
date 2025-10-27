@@ -7,6 +7,7 @@ import type {
   CorePattern,
   CoreMatchCase,
   CoreTypeDecl,
+  CoreLitValue,
 } from "./core_ir.ts";
 import {
   MirProgram,
@@ -339,7 +340,7 @@ function lowerMatch(ctx: LoweringContext, scrutinee: CoreExpr, cases: CoreMatchC
     return lowerTupleMatch(ctx, scrutVar, cases);
   }
 
-  throw new Error(`Unsupported pattern kind: ${firstPattern.kind}`);
+  throw new Error("Unsupported pattern kind in match");
 }
 
 /**
@@ -570,32 +571,156 @@ function lowerAdtMatchCases(
  * Lower literal pattern match to if/else chain
  */
 function lowerLiteralMatch(ctx: LoweringContext, scrutVar: string, cases: CoreMatchCase[]): string {
-  const resultVar = freshVar("match_result");
-  const mergeLabel = freshLabel(ctx, "merge");
-  
-  // Build if/else chain
-  for (let i = 0; i < cases.length; i++) {
-    const matchCase = cases[i];
-    const pattern = matchCase.pattern;
-    
-    if (pattern.kind === "core_pwildcard") {
-      // Wildcard - just evaluate body
-      const bodyResult = lowerExprToVar(ctx, matchCase.body);
-      // TODO: Proper control flow for wildcard
-      return bodyResult;
-    }
-    
-    if (pattern.kind !== "core_plit") {
-      throw new Error(`Expected literal pattern, got ${pattern.kind}`);
-    }
-
-    // For now, simplified: just return first match
-    // TODO: Implement proper if/else chain with comparisons
-    const bodyResult = lowerExprToVar(ctx, matchCase.body);
-    return bodyResult;
+  if (cases.length === 0) {
+    throw new Error("Literal match must have at least one case");
   }
 
+  return lowerLiteralMatchCases(ctx, scrutVar, cases, 0);
+}
+
+function lowerLiteralMatchCases(
+  ctx: LoweringContext,
+  scrutVar: string,
+  cases: CoreMatchCase[],
+  caseIndex: number,
+): string {
+  if (caseIndex >= cases.length) {
+    // Should be unreachable for exhaustive matches; emit panic as safety net
+    const panicMsg = freshVar("panic_msg");
+    ctx.currentInstrs.push({
+      kind: "mir_const",
+      dest: panicMsg,
+      value: { kind: "string", value: "Non-exhaustive literal match" },
+    });
+    const panicResult = freshVar("panic_result");
+    ctx.currentInstrs.push({
+      kind: "mir_prim",
+      dest: panicResult,
+      op: "print",
+      args: [panicMsg],
+    });
+    return panicResult;
+  }
+
+  const matchCase = cases[caseIndex];
+  const pattern = matchCase.pattern;
+
+  if (pattern.kind === "core_pwildcard") {
+    return lowerExprToVar(ctx, matchCase.body);
+  }
+
+  if (pattern.kind === "core_pvar") {
+    const prev = ctx.varSubst.get(pattern.name);
+    ctx.varSubst.set(pattern.name, scrutVar);
+    const result = lowerExprToVar(ctx, matchCase.body);
+    if (prev !== undefined) {
+      ctx.varSubst.set(pattern.name, prev);
+    } else {
+      ctx.varSubst.delete(pattern.name);
+    }
+    return result;
+  }
+
+  if (pattern.kind !== "core_plit") {
+    throw new Error(`Expected literal pattern, got ${pattern.kind}`);
+  }
+
+  // Matching on unit is equivalent to wildcard (only one possible value)
+  if (pattern.value.kind === "unit") {
+    return lowerExprToVar(ctx, matchCase.body);
+  }
+
+  const condVar = buildLiteralCondition(ctx, scrutVar, pattern.value);
+  const beforeIfInstrs = ctx.currentInstrs;
+
+  // Then branch
+  ctx.currentInstrs = [];
+  const savedSubsts = new Map(ctx.varSubst);
+  const thenResult = lowerExprToVar(ctx, matchCase.body);
+  const thenInstrs = ctx.currentInstrs;
+  ctx.varSubst = savedSubsts;
+
+  // Else branch
+  ctx.currentInstrs = [];
+  const elseResult = lowerLiteralMatchCases(ctx, scrutVar, cases, caseIndex + 1);
+  const elseInstrs = ctx.currentInstrs;
+
+  ctx.currentInstrs = beforeIfInstrs;
+  const resultVar = freshVar("match_result");
+  ctx.currentInstrs.push({
+    kind: "mir_if_else",
+    dest: resultVar,
+    condition: condVar,
+    thenInstrs,
+    thenResult,
+    elseInstrs,
+    elseResult,
+  });
+
   return resultVar;
+}
+
+function buildLiteralCondition(
+  ctx: LoweringContext,
+  scrutVar: string,
+  lit: CoreLitValue,
+): string {
+  switch (lit.kind) {
+    case "int": {
+      const litVar = freshVar("lit_int");
+      ctx.currentInstrs.push({
+        kind: "mir_const",
+        dest: litVar,
+        value: { kind: "int", value: lit.value },
+      });
+      const condVar = freshVar("cond");
+      ctx.currentInstrs.push({
+        kind: "mir_prim",
+        dest: condVar,
+        op: "eqInt",
+        args: [scrutVar, litVar],
+      });
+      return condVar;
+    }
+
+    case "bool": {
+      if (lit.value === true) {
+        return scrutVar;
+      }
+      const condVar = freshVar("cond");
+      ctx.currentInstrs.push({
+        kind: "mir_prim",
+        dest: condVar,
+        op: "not",
+        args: [scrutVar],
+      });
+      return condVar;
+    }
+
+    case "char": {
+      const litVar = freshVar("lit_char");
+      ctx.currentInstrs.push({
+        kind: "mir_const",
+        dest: litVar,
+        value: { kind: "char", value: lit.value },
+      });
+      const condVar = freshVar("cond");
+      ctx.currentInstrs.push({
+        kind: "mir_prim",
+        dest: condVar,
+        op: "charEq",
+        args: [scrutVar, litVar],
+      });
+      return condVar;
+    }
+
+    case "string":
+      throw new Error("String literal pattern matching is not supported in M1 lowering");
+
+    case "unit":
+      // Handled earlier
+      return scrutVar;
+  }
 }
 
 /**
@@ -606,54 +731,285 @@ function lowerTupleMatch(ctx: LoweringContext, scrutVar: string, cases: CoreMatc
     throw new Error("Tuple match must have at least one case");
   }
 
-  const matchCase = cases[0];
+  return lowerTupleMatchCases(ctx, scrutVar, cases, 0);
+}
+
+function lowerTupleMatchCases(
+  ctx: LoweringContext,
+  scrutVar: string,
+  cases: CoreMatchCase[],
+  caseIndex: number,
+): string {
+  if (caseIndex >= cases.length) {
+    const panicMsg = freshVar("panic_msg");
+    ctx.currentInstrs.push({
+      kind: "mir_const",
+      dest: panicMsg,
+      value: { kind: "string", value: "Non-exhaustive tuple match" },
+    });
+    const panicResult = freshVar("panic_result");
+    ctx.currentInstrs.push({
+      kind: "mir_prim",
+      dest: panicResult,
+      op: "print",
+      args: [panicMsg],
+    });
+    return panicResult;
+  }
+
+  const matchCase = cases[caseIndex];
   const pattern = matchCase.pattern;
-  
+
+  if (pattern.kind === "core_pwildcard") {
+    return lowerExprToVar(ctx, matchCase.body);
+  }
+
+  if (pattern.kind === "core_pvar") {
+    const previous = ctx.varSubst.get(pattern.name);
+    ctx.varSubst.set(pattern.name, scrutVar);
+    const result = lowerExprToVar(ctx, matchCase.body);
+    if (previous !== undefined) {
+      ctx.varSubst.set(pattern.name, previous);
+    } else {
+      ctx.varSubst.delete(pattern.name);
+    }
+    return result;
+  }
+
   if (pattern.kind !== "core_ptuple") {
     throw new Error(`Expected tuple pattern, got ${pattern.kind}`);
   }
 
-  // Extract tuple elements and bind pattern variables
+  const condVarRaw = buildTupleCaseCondition(ctx, scrutVar, pattern);
+  const condVar = condVarRaw ?? createBoolConst(ctx, true);
+  const beforeIfInstrs = ctx.currentInstrs;
+
+  // Then branch
+  ctx.currentInstrs = [];
   const savedSubsts = new Map(ctx.varSubst);
+  bindTuplePattern(ctx, scrutVar, pattern);
+  const thenResult = lowerExprToVar(ctx, matchCase.body);
+  const thenInstrs = ctx.currentInstrs;
+  ctx.varSubst = savedSubsts;
+
+  // Else branch
+  ctx.currentInstrs = [];
+  const elseResult = lowerTupleMatchCases(ctx, scrutVar, cases, caseIndex + 1);
+  const elseInstrs = ctx.currentInstrs;
+
+  ctx.currentInstrs = beforeIfInstrs;
+  const resultVar = freshVar("match_result");
+  ctx.currentInstrs.push({
+    kind: "mir_if_else",
+    dest: resultVar,
+    condition: condVar,
+    thenInstrs,
+    thenResult,
+    elseInstrs,
+    elseResult,
+  });
+
+  return resultVar;
+}
+
+function buildTupleCaseCondition(
+  ctx: LoweringContext,
+  tupleVar: string,
+  pattern: CorePattern & { kind: "core_ptuple" },
+): string | null {
+  let condition: string | null = null;
+
   for (let i = 0; i < pattern.elements.length; i++) {
+    const elemVar = freshVar(`tuple_elem_${i}`);
+    ctx.currentInstrs.push({
+      kind: "mir_get_tuple",
+      dest: elemVar,
+      tuple: tupleVar,
+      index: i,
+    });
     const subpat = pattern.elements[i];
-    if (subpat.kind === "core_pvar") {
-      const elemVar = freshVar(`elem_${i}`);
-      ctx.currentInstrs.push({
-        kind: "mir_get_tuple",
-        dest: elemVar,
-        tuple: scrutVar,
-        index: i,
-      });
-      ctx.varSubst.set(subpat.name, elemVar);
-    } else if (subpat.kind === "core_pwildcard") {
-      // No binding needed
-    } else if (subpat.kind === "core_pctor") {
-      // Nested constructor pattern - extract element and match it
-      const elemVar = freshVar(`elem_${i}`);
-      ctx.currentInstrs.push({
-        kind: "mir_get_tuple",
-        dest: elemVar,
-        tuple: scrutVar,
-        index: i,
-      });
-      // Recursively match the nested pattern
-      lowerNestedPattern(ctx, elemVar, subpat);
-    } else if (subpat.kind === "core_plit") {
-      // Literal pattern in tuple - we assume it matches
-      // No binding needed, just skip it
-    } else {
-      throw new Error(`Unsupported pattern kind in tuple: ${subpat.kind}`);
+    const subCond = buildPatternCondition(ctx, elemVar, subpat);
+    if (subCond) {
+      condition = combineConditions(ctx, condition, subCond);
     }
   }
 
-  // Lower the body
-  const result = lowerExprToVar(ctx, matchCase.body);
+  return condition;
+}
 
-  // Restore substitutions
-  ctx.varSubst = savedSubsts;
+function buildPatternCondition(
+  ctx: LoweringContext,
+  valueVar: string,
+  pattern: CorePattern,
+): string | null {
+  switch (pattern.kind) {
+    case "core_pwildcard":
+    case "core_pvar":
+      return null;
+    case "core_plit":
+      return buildLiteralCondition(ctx, valueVar, pattern.value);
+    case "core_pctor":
+      return buildConstructorCondition(ctx, valueVar, pattern);
+    case "core_ptuple":
+      return buildTupleConditionForValue(ctx, valueVar, pattern);
+    default:
+      throw new Error(`Unsupported pattern in condition: ${pattern.kind}`);
+  }
+}
 
-  return result;
+function buildConstructorCondition(
+  ctx: LoweringContext,
+  valueVar: string,
+  pattern: CorePattern & { kind: "core_pctor" },
+): string {
+  const tag = getConstructorTag(ctx, pattern.ctorName);
+  if (tag === undefined) {
+    throw new Error(`Unknown constructor: ${pattern.ctorName}`);
+  }
+
+  const tagVar = freshVar("ctor_tag");
+  ctx.currentInstrs.push({
+    kind: "mir_get_tag",
+    dest: tagVar,
+    value: valueVar,
+  });
+
+  const tagConst = freshVar("tag_const");
+  ctx.currentInstrs.push({
+    kind: "mir_const",
+    dest: tagConst,
+    value: { kind: "int", value: tag },
+  });
+
+  let condition = freshVar("cond");
+  ctx.currentInstrs.push({
+    kind: "mir_prim",
+    dest: condition,
+    op: "eqInt",
+    args: [tagVar, tagConst],
+  });
+
+  for (let i = 0; i < pattern.subpatterns.length; i++) {
+    const fieldVar = freshVar(`field_${i}`);
+    ctx.currentInstrs.push({
+      kind: "mir_get_field",
+      dest: fieldVar,
+      value: valueVar,
+      index: i,
+    });
+    const subCond = buildPatternCondition(ctx, fieldVar, pattern.subpatterns[i]);
+    if (subCond) {
+      condition = combineConditions(ctx, condition, subCond);
+    }
+  }
+
+  return condition;
+}
+
+function buildTupleConditionForValue(
+  ctx: LoweringContext,
+  valueVar: string,
+  pattern: CorePattern & { kind: "core_ptuple" },
+): string | null {
+  let condition: string | null = null;
+  for (let i = 0; i < pattern.elements.length; i++) {
+    const elemVar = freshVar(`tuple_elem_${i}`);
+    ctx.currentInstrs.push({
+      kind: "mir_get_tuple",
+      dest: elemVar,
+      tuple: valueVar,
+      index: i,
+    });
+    const subCond = buildPatternCondition(ctx, elemVar, pattern.elements[i]);
+    if (subCond) {
+      condition = combineConditions(ctx, condition, subCond);
+    }
+  }
+  return condition;
+}
+
+function combineConditions(ctx: LoweringContext, existing: string | null, next: string): string {
+  if (existing === null) {
+    return next;
+  }
+
+  const combined = freshVar("cond");
+  ctx.currentInstrs.push({
+    kind: "mir_prim",
+    dest: combined,
+    op: "and",
+    args: [existing, next],
+  });
+  return combined;
+}
+
+function createBoolConst(ctx: LoweringContext, value: boolean): string {
+  const dest = freshVar(value ? "true" : "false");
+  ctx.currentInstrs.push({
+    kind: "mir_const",
+    dest,
+    value: { kind: "bool", value },
+  });
+  return dest;
+}
+
+function bindTuplePattern(
+  ctx: LoweringContext,
+  tupleVar: string,
+  pattern: CorePattern & { kind: "core_ptuple" },
+): void {
+  for (let i = 0; i < pattern.elements.length; i++) {
+    const elemVar = freshVar(`tuple_elem_${i}`);
+    ctx.currentInstrs.push({
+      kind: "mir_get_tuple",
+      dest: elemVar,
+      tuple: tupleVar,
+      index: i,
+    });
+    bindPattern(ctx, elemVar, pattern.elements[i]);
+  }
+}
+
+function bindPattern(ctx: LoweringContext, valueVar: string, pattern: CorePattern): void {
+  switch (pattern.kind) {
+    case "core_pwildcard":
+      return;
+    case "core_pvar":
+      ctx.varSubst.set(pattern.name, valueVar);
+      return;
+    case "core_plit":
+      // Literals have already been checked in the condition.
+      return;
+    case "core_pctor": {
+      for (let i = 0; i < pattern.subpatterns.length; i++) {
+        const fieldVar = freshVar(`field_${i}`);
+        ctx.currentInstrs.push({
+          kind: "mir_get_field",
+          dest: fieldVar,
+          value: valueVar,
+          index: i,
+        });
+        bindPattern(ctx, fieldVar, pattern.subpatterns[i]);
+      }
+      return;
+    }
+    case "core_ptuple": {
+      bindTuplePattern(ctx, valueVar, pattern);
+      return;
+    }
+    default:
+      throw new Error(`Unsupported pattern binding: ${pattern.kind}`);
+  }
+}
+
+function getConstructorTag(ctx: LoweringContext, ctorName: string): number | undefined {
+  for (const tagTable of ctx.tagTables.values()) {
+    const entry = tagTable.constructors.find((ctor) => ctor.name === ctorName);
+    if (entry) {
+      return entry.tag;
+    }
+  }
+  return undefined;
 }
 
 /**
