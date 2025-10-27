@@ -122,37 +122,38 @@ class WorkmanLanguageServer {
     this.log("[LSP] Workman Language Server starting...");
 
     const decoder = new TextDecoder();
-    const encoder = new TextEncoder();
-
-    let buffer = "";
+    let buffer = new Uint8Array(0);
 
     for await (const chunk of Deno.stdin.readable) {
-      buffer += decoder.decode(chunk);
+      //@ts-expect-error deno bug
+      buffer = this.concatBuffers(buffer, chunk);
 
       while (true) {
-        const headerEnd = buffer.indexOf("\r\n\r\n");
+        const headerEnd = this.findHeaderBoundary(buffer);
         if (headerEnd === -1) break;
 
-        const header = buffer.substring(0, headerEnd);
-        const contentLengthMatch = header.match(/Content-Length: (\d+)/);
+        const headerBytes = buffer.slice(0, headerEnd);
+        const header = decoder.decode(headerBytes);
+        const contentLength = this.extractContentLength(header);
 
-        if (!contentLengthMatch) {
+        if (contentLength === null) {
           this.log(`[LSP] Invalid header: ${header}`);
-          break;
+          buffer = buffer.slice(headerEnd + 4);
+          continue;
         }
 
-        const contentLength = parseInt(contentLengthMatch[1]);
         const messageStart = headerEnd + 4;
 
         if (buffer.length < messageStart + contentLength) {
           break; // Wait for more data
         }
 
-        const messageContent = buffer.substring(
+        const messageBytes = buffer.slice(
           messageStart,
           messageStart + contentLength,
         );
-        buffer = buffer.substring(messageStart + contentLength);
+        const messageContent = decoder.decode(messageBytes);
+        buffer = buffer.slice(messageStart + contentLength);
 
         try {
           const message: LSPMessage = JSON.parse(messageContent);
@@ -166,6 +167,39 @@ class WorkmanLanguageServer {
         }
       }
     }
+  }
+
+  private concatBuffers(existing: Uint8Array, incoming: Uint8Array): Uint8Array {
+    if (existing.length === 0) {
+      return incoming.slice();
+    }
+    const combined = new Uint8Array(existing.length + incoming.length);
+    combined.set(existing);
+    combined.set(incoming, existing.length);
+    return combined;
+  }
+
+  private findHeaderBoundary(buffer: Uint8Array): number {
+    for (let i = 0; i <= buffer.length - 4; i++) {
+      if (
+        buffer[i] === 13 &&
+        buffer[i + 1] === 10 &&
+        buffer[i + 2] === 13 &&
+        buffer[i + 3] === 10
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private extractContentLength(header: string): number | null {
+    const match = header.match(/Content-Length:\s*(\d+)/i);
+    if (!match) {
+      return null;
+    }
+    const length = Number.parseInt(match[1], 10);
+    return Number.isNaN(length) ? null : length;
   }
 
   private async handleMessage(message: LSPMessage): Promise<LSPMessage | null> {

@@ -1,10 +1,9 @@
 -- endless_showcase.wm
 -- Demonstrates Workman language features in a non-halting loop.
 
-from "std/list/core" import { Empty, Link };
-from "std/list" import { listJoin, listMap, listFoldl, listLength, listRange };
-from "std/string" import { fromLiteral, strConcat, intToString };
 from "std/option/core" import { Some, None };
+from "std/list" import { listJoin, listMap, listFoldl, listRange, listLength };
+from "std/string" import { fromLiteral, intToString };
 
 -- ============================================================================
 -- Domain Types

@@ -2,8 +2,8 @@ from "std/core/int" import { intAdd, intSub, intMul, intDiv, intCompare, intEq, 
 from "std/core/bool" import { boolNot, boolAnd as boolAndImpl, boolOr as boolOrImpl };
 export from "std/option/core" type Option(..);
 export from "std/result/core" type Result(..);
+export from "std/list/core" type List(..);
 
-export type List<T> = Empty | Link<T, List<T>>;
 
 -- Char comparison (native)
 export let charEq = (left, right) => {

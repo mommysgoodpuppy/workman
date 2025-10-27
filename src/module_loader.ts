@@ -520,6 +520,19 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
       finalProgram = program;
     }
 
+    // Ensure dependencies are visited even if the initial parse failed
+    for (const record of imports) {
+      if (ctx.visitState.get(record.sourcePath) !== "visited") {
+        await visitModule(record.sourcePath, ctx);
+      }
+    }
+
+    for (const record of reexports) {
+      if (ctx.visitState.get(record.sourcePath) !== "visited") {
+        await visitModule(record.sourcePath, ctx);
+      }
+    }
+
     const exports = collectExports(finalProgram, path);
 
     ctx.nodes.set(path, {
