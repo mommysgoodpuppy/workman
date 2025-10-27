@@ -1,191 +1,206 @@
 -- Workman Language Showcase
--- Demonstrating: ADTs, pattern matching, type inference, recursion, and higher-order functions
+-- A long-running program demonstrating recursion and pattern matching
 
--- === Custom ADT: Binary Tree ===
-type Tree<T> = Leaf | Node<T, Tree<T>, Tree<T>>;
+-- === Counter with Limit ===
+-- Recursively prints numbers up to a limit
+-- Note: Deep recursion will overflow the stack since JavaScript doesn't have TCO
 
--- Insert into binary search tree
-let rec treeInsert = match(tuple) {
-  (value, Leaf) => { Node(value, Leaf, Leaf) },
-  (value, Node(current, left, right)) => {
-    match(cmpInt(value, current)) {
-      LT => { Node(current, treeInsert((value, left)), right) },
-      EQ => { Node(current, left, right) },
-      GT => { Node(current, left, treeInsert((value, right))) }
-    }
-  }
-};
-
--- Count nodes in tree
-let rec treeSize = match(tree) {
-  Leaf => { 0 },
-  Node(_, left, right) => { add(1, add(treeSize(left), treeSize(right))) }
-};
-
--- Find value in tree
-let rec treeContains = match(tuple) {
-  (_, Leaf) => { false },
-  (value, Node(current, left, right)) => {
-    match(cmpInt(value, current)) {
-      EQ => { true },
-      LT => { treeContains((value, left)) },
-      GT => { treeContains((value, right)) }
-    }
-  }
-};
-
--- === Functional List Operations ===
-
--- Map with index
-let rec mapWithIndex = match(tuple) {
-  (_, _, Empty) => { Empty },
-  (f, idx, Link(head, tail)) => { Link(f((idx, head)), mapWithIndex((f, add(idx, 1), tail))) }
-};
-
--- Zip two lists together
-let rec zipLists = match(tuple) {
-  (Empty, _) => { Empty },
-  (_, Empty) => { Empty },
-  (Link(x, xs), Link(y, ys)) => { Link((x, y), zipLists((xs, ys))) }
-};
-
--- Take first n elements
-let rec take = match(tuple) {
-  (0, _) => { Empty },
-  (_, Empty) => { Empty },
-  (n, Link(head, tail)) => { Link(head, take((sub(n, 1), tail))) }
-};
-
--- === Option Combinators ===
-let optionChain = (opt1) => {
-  (opt2) => {
-    match(opt1) {
-      Some(v1) => {
-        match(opt2) {
-          Some(v2) => { Some((v1, v2)) },
-          None => { None }
-        }
-      },
-      None => { None }
-    }
-  }
-};
-
--- === Result Error Handling ===
-let resultMap = match(tuple) {
-  (f, Ok(value)) => { Ok(f(value)) },
-  (_, Err(e)) => { Err(e) }
-};
-
-let resultChain = match(tuple) {
-  (f, Ok(value)) => { f(value) },
-  (_, Err(e)) => { Err(e) }
-};
-
--- Safe division with error handling
-let safeDivWithCheck = (a, b) => {
-  match(cmpInt(b, 0)) {
-    EQ => { Err("Cannot divide by zero") },
-    _ => {
-      match(cmpInt(a, 0)) {
-        LT => { Err("Negative dividend not supported") },
-        _ => { Ok(div(a, b)) }
+let rec countUpTo = match(tuple) {
+  (current, max) => {
+    match(cmpInt(current, max)) {
+      GT => { print("Done counting!") },
+      _ => {
+        print(current);
+        countUpTo((current, max))
       }
     }
   }
 };
 
--- === Higher-Order Function Utilities ===
+-- === Countdown Timer ===
+-- Counts down from a number to zero
 
--- Flip argument order
-let flip = (f) => {
-  (a) => {
-    (b) => {
-      f(b)(a)
+let rec countdown = match(n) {
+  0 => { print("Blast off!") },
+  _ => {
+    print(n);
+    countdown(n - 1)
+  }
+};
+
+-- === Pattern-Based Printer ===
+-- Prints different messages based on number patterns
+
+let rec printPattern = match(tuple) {
+  (n, max) => {
+    match(cmpInt(n, max)) {
+      GT => { print("Done!") },
+      _ => {
+        match(cmpInt(n, 0)) {
+          EQ => {
+            print("Zero");
+            printPattern((n + 1, max))
+          },
+          _ => {
+            print(n);
+            printPattern((n + 1, max))
+          }
+        }
+      }
     }
   }
 };
 
--- const function (returns first arg, ignores second)
-let const = (x) => {
-  (_) => {
-    x
+-- === Basic Arithmetic ===
+-- Using infix operators: +, -, *, /
+
+let sum = () => {
+  1 + 2 + 3
+};
+
+let product = () => {
+  4 * 5
+};
+
+let calculation = () => {
+  (10 + 5) * 2 - 3
+};
+
+-- === Boolean Logic ===
+-- Using prefix operator ! (not) and infix operators && (and), || (or)
+
+let isTrue = () => {
+  true
+};
+
+let isFalse = () => {
+  false
+};
+
+let notTrue = () => {
+  !true
+};
+
+let andExample = () => {
+  true && false
+};
+
+let orExample = () => {
+  true || false
+};
+
+let complexBoolean = () => {
+  (true && true) || (false && true)
+};
+
+-- === Comparisons ===
+-- Using operators: ==, !=
+
+let isEqual = () => {
+  5 == 5
+};
+
+let notEqual = () => {
+  3 != 7
+};
+
+let compareResult = () => {
+  (2 + 2) == 4
+};
+
+-- === Simple Functions ===
+
+let double = (x) => {
+  x * 2
+};
+
+let square = (x) => {
+  x * x
+};
+
+let isEven = (n) => {
+  match(cmpInt(n, 0)) {
+    EQ => { true },
+    _ => { false }
   }
 };
 
--- Apply function n times
-let rec applyN = match(tuple) {
-  (0, _, x) => { x },
-  (n, f, x) => { applyN((sub(n, 1), f, f(x))) }
+-- === Pattern Matching ===
+
+let describeNumber = match(n) {
+  0 => { "zero" },
+  1 => { "one" },
+  _ => { "other" }
 };
 
--- === Test Data and Examples ===
-
--- Build a sample tree
-let sampleTree = () => {
-  let t1 = () => {
-    treeInsert((5, Leaf))
-  };
-  let t2 = () => {
-    treeInsert((3, t1()))
-  };
-  let t3 = () => {
-    treeInsert((7, t2()))
-  };
-  let t4 = () => {
-    treeInsert((1, t3()))
-  };
-  treeInsert((9, t4()))
+let boolToString = match(b) {
+  true => { "yes" },
+  false => { "no" }
 };
 
--- Test tree operations
-let treeNodeCount = () => {
-  treeSize(sampleTree())
-};
-let hasValue7 = () => {
-  treeContains((7, sampleTree()))
-};
-let hasValue10 = () => {
-  treeContains((10, sampleTree()))
+-- === Recursion ===
+
+let rec factorial = match(n) {
+  0 => { 1 },
+  1 => { 1 },
+  _ => { n * factorial(n - 1) }
 };
 
--- Test list operations
-let numbers = () => {
-  Link(10, Link(20, Link(30, Empty)))
+let rec fibonacci = match(n) {
+  0 => { 0 },
+  1 => { 1 },
+  _ => { fibonacci(n - 1) + fibonacci(n - 2) }
 };
-let letters = () => {
+
+-- === Working with Lists ===
+
+let myList = () => {
   Link(1, Link(2, Link(3, Empty)))
 };
-let zipped = () => {
-  zipLists((numbers(), letters()))
-};
-let firstTwo = () => {
-  take((2, numbers()))
+
+let rec listLength = match(list) {
+  Empty => { 0 },
+  Link(_, tail) => { 1 + listLength(tail) }
 };
 
--- Test option chaining
-let opt1 = () => {
-  Some(42)
-};
-let opt2 = () => {
-  Some(100)
-};
-let chained = () => {
-  optionChain(opt1())(opt2())
+let rec listSum = match(list) {
+  Empty => { 0 },
+  Link(head, tail) => { head + listSum(tail) }
 };
 
--- Test result operations
-let goodDiv = () => {
-  safeDivWithCheck(10, 2)
-};
-let badDiv = () => {
-  safeDivWithCheck(10, 0)
+-- === Example Computations ===
+
+let doubleOfFive = () => {
+  double(5)
 };
 
--- Test higher-order functions
-let increment = (x) => {
-  add(x, 1)
+let squareOfSeven = () => {
+  square(7)
 };
-let addFive = () => {
-  applyN((5, increment, 0))
+
+let factorialOfFive = () => {
+  factorial(5)
+};
+
+let fibonacciOfSix = () => {
+  fibonacci(6)
+};
+
+let lengthOfList = () => {
+  listLength(myList())
+};
+
+let sumOfList = () => {
+  listSum(myList())
+};
+
+-- === Start Long-Running Program ===
+-- The main function is automatically executed!
+-- Change the function call below to try different examples:
+-- Note: Keep recursion depth reasonable (< 1000) to avoid stack overflow
+
+let main = () => {
+  -- printPattern((0, 20))      -- Prints 0 to 20 with pattern matching
+  -- countdown(10)              -- Counts down from 10 to 0
+  countUpTo((1, 20));           -- Counts from 1 to 500
 };

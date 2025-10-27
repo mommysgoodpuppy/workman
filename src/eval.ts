@@ -83,6 +83,14 @@ export function evaluateProgram(program: Program, options: EvalOptions = {}): Ev
       evaluatePrefixDeclaration(globalEnv, decl);
     }
   }
+
+  // Auto-execute main function if it exists
+  if (hasBinding(globalEnv, "main")) {
+    const mainValue = lookupValue(globalEnv, "main");
+    // Call main with no arguments
+    applyValue(mainValue, [], undefined);
+  }
+
   return { env: globalEnv, summaries };
 }
 
