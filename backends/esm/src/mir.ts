@@ -204,6 +204,7 @@ export interface MirTagTable {
  */
 export interface MirProgram {
   tagTables: MirTagTable[];
+  localTagTables?: MirTagTable[];
   functions: MirFunction[];
   exports: MirExport[];
 }

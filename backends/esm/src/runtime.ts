@@ -109,15 +109,27 @@ const WM = {
   strFromLiteral(str) {
     // Convert JS string to List<Int> (char codes)
     // List has constructors: Link (tag 0), Empty (tag 1)
-    let result = WM.mk(1); // Empty
+    let result = WM.mk(0); // Empty
     for (let i = str.length - 1; i >= 0; i--) {
-      result = WM.mk(0, str.charCodeAt(i), result); // Link(charCode, rest)
+      result = WM.mk(1, str.charCodeAt(i), result); // Link(charCode, rest)
     }
     return result;
   },
   
   panic(msg) { throw new Error(\`Workman panic: \${msg}\`); }
 };
+
+const nativeStrFromLiteral = (str) => WM.strFromLiteral(str);
+const nativeAdd = (a, b) => WM.add(a, b);
+const nativeSub = (a, b) => WM.sub(a, b);
+const nativeMul = (a, b) => WM.mul(a, b);
+const nativeDiv = (a, b) => WM.div(a, b);
+const nativeCmpInt = (a, b) => WM.cmpInt(a, b);
+const nativeCharEq = (a, b) => WM.charEq(a, b);
+const nativePrint = (value) => WM.print(value);
+const nativeStrLength = (s) => WM.strLength(s);
+const nativeStrCharAt = (s, idx) => WM.strCharAt(s, idx);
+const nativeStrSlice = (s, start, end) => WM.strSlice(s, start, end);
 `.trim();
 }
 

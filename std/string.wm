@@ -11,8 +11,9 @@ from "std/core/ordering" import { LT, EQ, GT };
 -- Type alias for clarity (just documentation, not enforced)
 -- type String = List<Int>;
 
--- Re-export the core function
-export let fromLiteral = strFromLiteral;
+export let fromLiteral = (literal) => {
+  strFromLiteral(literal)
+};
 
 -- Character code constants
 export let charSpace = () => {
@@ -223,9 +224,9 @@ let rec intToStringPositive = (n) => {
   match(eq(n, 0)) {
     true => { Empty },
     false => {
-      let digit = () => { digitToChar(sub(n, mul(div(n, 10), 10))) };
-      let rest = () => { intToStringPositive(div(n, 10)) };
-      strConcat((rest(), Link(digit(), Empty)))
+      let digit = digitToChar(sub(n, mul(div(n, 10), 10)));
+      let rest = intToStringPositive(div(n, 10));
+      strConcat((rest, Link(digit, Empty)))
     }
   }
 };
@@ -240,8 +241,8 @@ export let intToString = (n) => {
       match(cmpInt(n, 0)) {
         LT => {
           -- Negative: prepend '-' (45) to absolute value
-          let absStr = () => { intToStringPositive(sub(0, n)) };
-          Link(45, absStr())
+          let absStr = intToStringPositive(sub(0, n));
+          Link(45, absStr)
         },
         _ => { intToStringPositive(n) }
       }

@@ -24,6 +24,7 @@ import {
 interface LoweringContext {
   functions: MirFunction[];
   tagTables: Map<string, MirTagTable>;
+  localTagTables: MirTagTable[];
   currentFunction: string;
   currentBlocks: MirBasicBlock[];
   currentInstrs: MirInstr[];
@@ -45,6 +46,7 @@ export function lowerToMir(
   const ctx: LoweringContext = {
     functions: [],
     tagTables: new Map(),
+    localTagTables: [],
     currentFunction: "",
     currentBlocks: [],
     currentInstrs: [],
@@ -64,6 +66,7 @@ export function lowerToMir(
   for (const typeDecl of core.types) {
     const tagTable = generateTagTable(typeDecl);
     ctx.tagTables.set(typeDecl.name, tagTable);
+    ctx.localTagTables.push(tagTable);
   }
 
   // Lower each top-level binding
@@ -90,6 +93,7 @@ export function lowerToMir(
 
   return {
     tagTables: Array.from(ctx.tagTables.values()),
+    localTagTables: ctx.localTagTables,
     functions: ctx.functions,
     exports,
   };

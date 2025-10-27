@@ -22,8 +22,15 @@ export function generateESM(mir: MirProgram): string {
   lines.push(generateRuntimeCode(hasOrdering));
   lines.push("");
 
+  const tagTablesForEmission = mir.localTagTables ?? mir.tagTables;
+
+  if (hasOrdering && !tagTablesForEmission.some((t) => t.typeName === "Ordering")) {
+    lines.push(ORDERING_TAG_TABLE);
+    lines.push("");
+  }
+
   // Emit tag tables and constructors
-  for (const tagTable of mir.tagTables) {
+  for (const tagTable of tagTablesForEmission) {
     if (tagTable.typeName === "Ordering") {
       lines.push(ORDERING_TAG_TABLE);
     } else {
