@@ -9,6 +9,7 @@ import { lowerToMir } from "./lower_to_mir.ts";
 import { generateESM } from "./codegen.ts";
 import type { CoreProgram } from "./core_ir.ts";
 import type { MirProgram } from "./mir.ts";
+import { ModuleError, WorkmanError } from "../../../src/error.ts";
 
 export interface CompiledModule {
   path: string;
@@ -20,10 +21,27 @@ export interface CompiledModule {
   mir: MirProgram;
 }
 
+function normalizeCompilationError(error: unknown, modulePath: string): WorkmanError {
+  if (error instanceof WorkmanError) {
+    return error;
+  }
+
+  if (error instanceof AggregateError) {
+    const nestedErrors = error.errors.map((inner) => normalizeCompilationError(inner, modulePath));
+    const message = error.message || "Aggregate compilation error";
+    const aggregate = new ModuleError(`${message}`, modulePath);
+    (aggregate as { causes?: WorkmanError[] }).causes = nestedErrors;
+    return aggregate;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return new ModuleError(`Error compiling module: ${message}`, modulePath);
+}
+
 export interface CompilationResult {
   modules: Map<string, CompiledModule>;
   entryPath: string;
-  errors?: string[];
+  errors?: WorkmanError[];
 }
 
 /**
@@ -31,7 +49,7 @@ export interface CompilationResult {
  */
 export function compileModuleGraph(graph: ModuleGraph): CompilationResult {
   const compiledModules = new Map<string, CompiledModule>();
-  const errors: string[] = [];
+  const errors: WorkmanError[] = [];
 
   // Global type environment (accumulates across modules)
   let globalTypeEnv: TypeEnv = new Map();
@@ -41,7 +59,7 @@ export function compileModuleGraph(graph: ModuleGraph): CompilationResult {
   for (const modulePath of graph.order) {
     const node = graph.modules.get(modulePath);
     if (!node) {
-      errors.push(`Module not found in graph: ${modulePath}`);
+      errors.push(new ModuleError(`Module not found in graph`, modulePath));
       continue;
     }
 
@@ -59,7 +77,7 @@ export function compileModuleGraph(graph: ModuleGraph): CompilationResult {
       globalTypeEnv = new Map([...globalTypeEnv, ...compiled.inferResult.env]);
       globalAdtEnv = new Map([...globalAdtEnv, ...compiled.inferResult.adtEnv]);
     } catch (error) {
-      errors.push(`Error compiling ${modulePath}: ${error instanceof Error ? error.message : String(error)}`);
+      errors.push(normalizeCompilationError(error, modulePath));
     }
   }
 

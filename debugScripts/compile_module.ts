@@ -1,4 +1,5 @@
 import { compileProject } from "../backends/esm/src/compile.ts";
+import { formatWorkmanError } from "../src/error.ts";
 import { resolve } from "https://deno.land/std@0.208.0/path/mod.ts";
 
 async function main() {
@@ -16,9 +17,10 @@ async function main() {
   });
 
   if (result.errors) {
-    console.error("Compilation failed:");
+    console.error("Compilation failed:\n");
     for (const error of result.errors) {
-      console.error("  ", error);
+      console.error(formatWorkmanError(error));
+      console.error("");
     }
     Deno.exit(1);
   }

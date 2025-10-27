@@ -9,6 +9,7 @@ import { generateESM } from "./codegen.ts";
 import { buildModuleGraph } from "./module_resolver.ts";
 import { compileModuleGraph } from "./module_compiler.ts";
 import type { ModuleResolverOptions } from "./module_resolver.ts";
+import { ModuleError, WorkmanError } from "../../../src/error.ts";
 
 export interface CompileOptions {
   sourceName?: string;
@@ -18,9 +19,26 @@ export interface CompileOptions {
   preludeModule?: string;
 }
 
+function normalizeError(error: unknown, modulePath: string): WorkmanError {
+  if (error instanceof WorkmanError) {
+    return error;
+  }
+
+  if (error instanceof AggregateError) {
+    const nestedErrors = error.errors.map((inner) => normalizeError(inner, modulePath));
+    const message = error.message || "Aggregate compilation error";
+    const aggregate = new ModuleError(`${message}`, modulePath);
+    (aggregate as { causes?: WorkmanError[] }).causes = nestedErrors;
+    return aggregate;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return new ModuleError(`Error compiling module: ${message}`, modulePath);
+}
+
 export interface CompileResult {
   js: string;
-  errors?: string[];
+  errors?: WorkmanError[];
 }
 
 /**
@@ -50,7 +68,7 @@ export function compile(source: string, options: CompileOptions = {}): CompileRe
   } catch (error) {
     return {
       js: "",
-      errors: [error instanceof Error ? error.message : String(error)],
+      errors: [normalizeError(error, options.sourceName ?? "<source>")],
     };
   }
 }
@@ -75,7 +93,7 @@ export async function compileFile(inputPath: string, outputPath?: string): Promi
 export async function compileProject(
   entryPath: string,
   options: CompileOptions = {}
-): Promise<{ modules: Map<string, { path: string; js: string }>; errors?: string[] }> {
+): Promise<{ modules: Map<string, { path: string; js: string }>; errors?: WorkmanError[] }> {
   try {
     const resolverOptions: ModuleResolverOptions = {
       stdRoots: options.stdRoots,
@@ -105,7 +123,7 @@ export async function compileProject(
   } catch (error) {
     return {
       modules: new Map(),
-      errors: [error instanceof Error ? error.message : String(error)],
+      errors: [normalizeError(error, entryPath)],
     };
   }
 }
@@ -116,7 +134,7 @@ export async function compileProject(
 export async function compileProjectToFiles(
   entryPath: string,
   options: CompileOptions = {}
-): Promise<{ errors?: string[] }> {
+): Promise<{ errors?: WorkmanError[] }> {
   const result = await compileProject(entryPath, options);
 
   if (result.errors) {

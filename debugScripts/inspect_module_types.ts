@@ -2,6 +2,7 @@ import { resolve } from "https://deno.land/std@0.208.0/path/mod.ts";
 
 import { buildModuleGraph } from "../backends/esm/src/module_resolver.ts";
 import { compileModuleGraph } from "../backends/esm/src/module_compiler.ts";
+import { formatWorkmanError } from "../src/error.ts";
 import { formatScheme } from "../src/type_printer.ts";
 
 async function main() {
@@ -20,9 +21,10 @@ async function main() {
 
   const result = compileModuleGraph(graph);
   if (result.errors && result.errors.length > 0) {
-    console.error("Compilation errors:");
+    console.error("Compilation errors:\n");
     for (const error of result.errors) {
-      console.error("  -", error);
+      console.error(formatWorkmanError(error));
+      console.error("");
     }
     Deno.exit(1);
   }

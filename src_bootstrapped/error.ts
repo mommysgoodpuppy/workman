@@ -282,6 +282,43 @@ function getSourceContext(
 }
 
 // ============================================================================
+// Error Formatting Helpers
+// ============================================================================
+
+export function formatWorkmanError(error: unknown, sourceOverride?: string): string {
+  if (error instanceof WorkmanError) {
+    return error.format(sourceOverride);
+  }
+
+  if (error instanceof AggregateError) {
+    const header = error.message ? `${error.name}: ${error.message}` : error.name;
+    if (error.errors.length === 0) {
+      return header;
+    }
+
+    const formattedErrors = error.errors
+      .map((inner) => formatWorkmanError(inner, sourceOverride))
+      .join("\n\n");
+
+    return `${header}\n${formattedErrors}`;
+  }
+
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+// ============================================================================
 // Error Hints
 // ============================================================================
 
