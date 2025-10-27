@@ -1,3 +1,10 @@
 coverage/
 *.exe
 out/
+testin/
+bootstrap/
+ignore/
+vscodeExtension/out/
+tools/deno/
+*.js
+*.js.map
