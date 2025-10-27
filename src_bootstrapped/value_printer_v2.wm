@@ -13,11 +13,9 @@ type RuntimeValue =
   | Int<Int>
   | Bool<Bool>
   | Char<Int>
-  | Str<List<Int>>
   | Tuple<List<RuntimeValue>>
   | Data<List<Int>, List<RuntimeValue>>
-  | Closure
-  | Native<List<Int>>;
+  | Closure;
 
 -- ============================================================================
 -- Value Printer Implementation
@@ -36,7 +34,6 @@ let rec formatRuntimeValue = match(value) {
   Char(code) => {
     strConcat((fromLiteral("'"), strConcat((Link(code, Empty), fromLiteral("'")))))
   },
-  Str(s) => { s },
   Tuple(t) => { fromLiteral("tuple") },
   Data(constructor, fields) => {
     match(fields) {
@@ -46,12 +43,6 @@ let rec formatRuntimeValue = match(value) {
       }
     }
   },
-  Closure => { fromLiteral("closure") },
-  Native(n) => { n }
+  Closure => { fromLiteral("closure") }
 };
 
--- ============================================================================
--- Exports
--- ============================================================================
-
-export let format = formatRuntimeValue;
