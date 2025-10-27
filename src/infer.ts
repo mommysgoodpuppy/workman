@@ -6,7 +6,6 @@ import {
   InfixDeclaration,
   LetDeclaration,
   Literal,
-  MatchArm,
   Parameter,
   Pattern,
   PrefixDeclaration,
@@ -38,12 +37,13 @@ import {
 } from "./types.ts";
 import { formatScheme } from "./type_printer.ts";
 import { InferError as InferErrorClass } from "./error.ts";
+import { inferMatchExpression, inferMatchFunction } from "./infermatch.ts";
 
 // Re-export InferError from error module
 export { InferError } from "./error.ts";
 
 // Helper to create InferError (for internal use)
-function inferError(message: string, span?: SourceSpan, source?: string): InferErrorClass {
+export function inferError(message: string, span?: SourceSpan, source?: string): InferErrorClass {
   return new InferErrorClass(message, span, source);
 }
 
@@ -79,7 +79,7 @@ export interface InferResult {
   allBindings: Map<string, TypeScheme>;
 }
 
-interface Context {
+export interface Context {
   env: TypeEnv;
   adtEnv: TypeEnvADT;
   subst: Substitution;
@@ -88,7 +88,7 @@ interface Context {
   allBindings: Map<string, TypeScheme>;
 }
 
-function withScopedEnv<T>(ctx: Context, fn: () => T): T {
+export function withScopedEnv<T>(ctx: Context, fn: () => T): T {
   const previous = ctx.env;
   ctx.env = new Map(ctx.env);
   try {
@@ -645,7 +645,7 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
   }
 }
 
-function inferExpr(ctx: Context, expr: Expr): Type {
+export function inferExpr(ctx: Context, expr: Expr): Type {
   switch (expr.kind) {
     case "identifier": {
       const scheme = lookupEnv(ctx, expr.name);
@@ -771,9 +771,9 @@ function inferExpr(ctx: Context, expr: Expr): Type {
     case "block":
       return inferBlockExpr(ctx, expr);
     case "match":
-      return inferMatchExpression(ctx, expr.scrutinee, expr.arms);
+      return inferMatchExpression(ctx, expr.scrutinee, expr.bundle);
     case "match_fn":
-      return inferMatchFunction(ctx, expr.parameters, expr.arms);
+      return inferMatchFunction(ctx, expr.parameters, expr.bundle);
     case "binary": {
       // Binary operators are desugared to function calls
       // e.g., `a + b` becomes `add(a, b)` where `add` is the implementation function
@@ -843,83 +843,6 @@ function inferArrowFunction(ctx: Context, parameters: Parameter[], body: BlockEx
   });
 }
 
-function inferMatchExpression(ctx: Context, scrutinee: Expr, arms: MatchArm[]): Type {
-  const scrutineeType = inferExpr(ctx, scrutinee);
-  return inferMatchBranches(ctx, scrutineeType, arms);
-}
-
-function inferMatchFunction(ctx: Context, parameters: Expr[], arms: MatchArm[]): Type {
-  if (parameters.length !== 1) {
-    throw inferError("Match functions currently support exactly one argument");
-  }
-  const parameterType = inferExpr(ctx, parameters[0]);
-  const resultType = inferMatchBranches(ctx, parameterType, arms);
-  return {
-    kind: "func",
-    from: applyCurrentSubst(ctx, parameterType),
-    to: applyCurrentSubst(ctx, resultType),
-  };
-}
-
-function inferMatchBranches(
-  ctx: Context,
-  scrutineeType: Type,
-  arms: MatchArm[],
-): Type {
-  let resultType: Type | null = null;
-  const coverageMap = new Map<string, Set<string>>();
-  const booleanCoverage = new Set<"true" | "false">();
-  let hasWildcard = false;
-
-  for (const arm of arms) {
-    const expected = applyCurrentSubst(ctx, scrutineeType);
-    const patternInfo = inferPattern(ctx, arm.pattern, expected);
-    if (patternInfo.coverage.kind === "wildcard") {
-      hasWildcard = true;
-    } else if (patternInfo.coverage.kind === "constructor") {
-      const key = patternInfo.coverage.typeName;
-      const set = coverageMap.get(key) ?? new Set<string>();
-      set.add(patternInfo.coverage.ctor);
-      coverageMap.set(key, set);
-    } else if (patternInfo.coverage.kind === "bool") {
-      booleanCoverage.add(patternInfo.coverage.value ? "true" : "false");
-    }
-
-    const bodyType = withScopedEnv(ctx, () => {
-      for (const [name, type] of patternInfo.bindings.entries()) {
-        ctx.env.set(name, { quantifiers: [], type: applyCurrentSubst(ctx, type) });
-      }
-      if (
-        ctx.source?.includes("Runtime value printer for Workman using std library") &&
-        resultType
-      ) {
-        console.log(
-          "[debug] expected result before arm",
-          arm.pattern.kind === "constructor" ? arm.pattern.name : arm.pattern.kind,
-          ":",
-          typeToString(applyCurrentSubst(ctx, resultType)),
-        );
-      }
-      return inferExpr(ctx, arm.body);
-    });
-
-    if (!resultType) {
-      resultType = bodyType;
-    } else {
-      unify(ctx, resultType, bodyType);
-      resultType = applyCurrentSubst(ctx, resultType);
-    }
-  }
-
-  ensureExhaustive(ctx, applyCurrentSubst(ctx, scrutineeType), hasWildcard, coverageMap, booleanCoverage);
-
-  if (!resultType) {
-    resultType = freshTypeVar();
-  }
-
-  return applyCurrentSubst(ctx, resultType);
-}
-
 function expectFunctionType(ctx: Context, type: Type, description: string): { from: Type; to: Type } {
   const resolved = applyCurrentSubst(ctx, type);
   if (resolved.kind !== "func") {
@@ -933,7 +856,7 @@ export function unify(ctx: Context, a: Type, b: Type) {
   ctx.subst = composeSubstitution(updated, ctx.subst);
 }
 
-function applyCurrentSubst(ctx: Context, type: Type): Type {
+export function applyCurrentSubst(ctx: Context, type: Type): Type {
   return applySubstitution(type, ctx.subst);
 }
 
@@ -988,7 +911,7 @@ interface PatternInfo {
   coverage: PatternCoverage;
 }
 
-function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternInfo {
+export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternInfo {
   switch (pattern.kind) {
     case "wildcard": {
       const target = applyCurrentSubst(ctx, expected);
@@ -1072,7 +995,7 @@ function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternIn
   }
 }
 
-function ensureExhaustive(
+export function ensureExhaustive(
   ctx: Context,
   scrutineeType: Type,
   hasWildcard: boolean,

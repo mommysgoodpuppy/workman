@@ -66,16 +66,16 @@ let example = (input) => {
     throw new Error("expected match expression");
   }
 
-  assertEquals(matchExpr.arms.length, 2);
+  assertEquals(matchExpr.bundle.arms.length, 2);
 
-  const firstCase = matchExpr.arms[0];
+  const firstCase = matchExpr.bundle.arms[0];
   assertEquals(firstCase.pattern.kind, "constructor");
   if (firstCase.pattern.kind === "constructor") {
     assertEquals(firstCase.pattern.name, "Some");
     assertEquals(firstCase.pattern.args.length, 1);
   }
 
-  const secondCase = matchExpr.arms[1];
+  const secondCase = matchExpr.bundle.arms[1];
   assertEquals(secondCase.pattern.kind, "constructor");
   if (secondCase.pattern.kind === "constructor") {
     assertEquals(secondCase.pattern.name, "None");

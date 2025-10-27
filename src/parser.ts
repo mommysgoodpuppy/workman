@@ -10,6 +10,7 @@ import type {
   InfixDeclaration,
   LetDeclaration,
   MatchArm,
+  MatchBundle,
   ModuleImport,
   ModuleReexport,
   NamedImport,
@@ -689,20 +690,20 @@ class SurfaceParser {
       }
 
       if (this.matchSymbol("=>")) {
-        const { arms, span } = this.parseMatchBlock();
+        const { bundle, span } = this.parseMatchBlock();
         return {
           kind: "match_fn",
           parameters: args,
-          arms,
+          bundle,
           span: this.spanFrom(matchToken.start, span.end),
         };
       }
 
-      const { arms, span } = this.parseMatchBlock();
+      const { bundle, span } = this.parseMatchBlock();
       return {
         kind: "match",
         scrutinee: args[0],
-        arms,
+        bundle,
         span: this.spanFrom(matchToken.start, span.end),
       };
     }
@@ -1096,7 +1097,7 @@ class SurfaceParser {
     throw this.error("Expected pattern", token);
   }
 
-  private parseMatchBlock(): { arms: MatchArm[]; span: SourceSpan } {
+  private parseMatchBlock(): { bundle: MatchBundle; span: SourceSpan } {
     const open = this.expectSymbol("{");
     const arms: MatchArm[] = [];
 
@@ -1125,7 +1126,13 @@ class SurfaceParser {
     if (arms.length === 0) {
       throw this.error("Match block requires at least one arm", close);
     }
-    return { arms, span: this.spanFrom(open.start, close.end) };
+    const span = this.spanFrom(open.start, close.end);
+    const bundle: MatchBundle = {
+      kind: "match_bundle",
+      arms,
+      span,
+    };
+    return { bundle, span };
   }
 
   private createSpan(start: Token, end: Token): SourceSpan {

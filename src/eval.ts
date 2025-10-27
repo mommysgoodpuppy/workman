@@ -1,4 +1,5 @@
-import {
+import type {
+  ArrowFunctionExpr,
   BlockExpr,
   BlockStatement,
   ConstructorAlias,
@@ -9,6 +10,8 @@ import {
   LetStatement,
   Literal,
   MatchArm,
+  MatchBundle,
+  Parameter,
   Pattern,
   PrefixDeclaration,
   Program,
@@ -209,9 +212,9 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
     case "block":
       return evaluateBlock(env, expr);
     case "match":
-      return evaluateMatchExpr(env, expr.scrutinee, expr.arms, expr.span);
+      return evaluateMatchExpr(env, expr.scrutinee, expr.bundle, expr.span);
     case "match_fn":
-      return evaluateMatchFunction(env, expr.parameters, expr.arms, expr.span);
+      return evaluateMatchFunction(env, expr.parameters, expr.bundle, expr.span);
     case "binary": {
       // Binary operators are desugared to function calls
       // e.g., `a + b` becomes `add(a, b)` where `add` is the implementation function
@@ -534,11 +537,11 @@ function evaluateRecursiveBindings(env: Environment, bindings: LetDeclaration[])
 function evaluateMatchExpr(
   env: Environment,
   scrutineeExpr: Expr,
-  arms: MatchArm[],
+  bundle: MatchBundle,
   span: SourceSpan,
 ): RuntimeValue {
   const scrutinee = evaluateExpr(env, scrutineeExpr);
-  for (const arm of arms) {
+  for (const arm of bundle.arms) {
     const bindings = matchPattern(env, scrutinee, arm.pattern);
     if (bindings) {
       const scope = createEnvironment(env);
@@ -554,7 +557,7 @@ function evaluateMatchExpr(
 function evaluateMatchFunction(
   env: Environment,
   parameters: Expr[],
-  arms: MatchArm[],
+  bundle: MatchBundle,
   span: SourceSpan,
 ): RuntimeValue {
   if (parameters.length !== 1) {
@@ -563,7 +566,7 @@ function evaluateMatchFunction(
 
   const closureEnv = env;
   return createNativeFunction("match_fn", 1, ([arg]) => {
-    for (const arm of arms) {
+    for (const arm of bundle.arms) {
       const bindings = matchPattern(closureEnv, arg, arm.pattern);
       if (bindings) {
         const scope = createEnvironment(closureEnv);

@@ -4,6 +4,7 @@ import type {
   Expr,
   LetDeclaration,
   MatchArm,
+  MatchBundle,
   Parameter,
   Pattern,
   Program,
@@ -84,7 +85,7 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
       return;
     case "match":
       lowerExpr(expr.scrutinee, ctx);
-      for (const arm of expr.arms) {
+      for (const arm of expr.bundle.arms) {
         if (arm.body.kind === "block") {
           lowerBlockExpr(arm.body, ctx);
         } else {
@@ -96,7 +97,7 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
       for (const parameterExpr of expr.parameters) {
         lowerExpr(parameterExpr, ctx);
       }
-      for (const arm of expr.arms) {
+      for (const arm of expr.bundle.arms) {
         if (arm.body.kind === "block") {
           lowerBlockExpr(arm.body, ctx);
         } else {
@@ -204,10 +205,16 @@ function wrapWithMatch(pattern: Pattern, tempName: string, body: BlockExpr): Blo
     end: body.span.end,
   };
 
+  const bundle: MatchBundle = {
+    kind: "match_bundle",
+    arms: [arm],
+    span: matchSpan,
+  };
+
   const matchExpr = {
     kind: "match" as const,
     scrutinee,
-    arms: [arm],
+    bundle,
     span: matchSpan,
   };
 

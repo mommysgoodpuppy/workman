@@ -88,6 +88,11 @@ export interface MatchArm extends NodeBase {
   hasTrailingComma: boolean;
 }
 
+export interface MatchBundle extends NodeBase {
+  kind: "match_bundle";
+  arms: MatchArm[];
+}
+
 export type Expr =
   | IdentifierExpr
   | LiteralExpr
@@ -151,13 +156,13 @@ export interface ArrowFunctionExpr extends NodeBase {
 export interface MatchExpr extends NodeBase {
   kind: "match";
   scrutinee: Expr;
-  arms: MatchArm[];
+  bundle: MatchBundle;
 }
 
 export interface MatchFunctionExpr extends NodeBase {
   kind: "match_fn";
   parameters: Expr[];
-  arms: MatchArm[];
+  bundle: MatchBundle;
 }
 
 export type TypeExpr =
