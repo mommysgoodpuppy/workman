@@ -8,3 +8,4 @@ vscodeExtension/out/
 tools/deno/
 *.js
 *.js.map
+src_bootstrapped/

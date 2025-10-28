@@ -1,0 +1,29 @@
+let zero = match {
+  0 => { ("zero", (0, true), (_) => { "zero" }) }
+};
+let one = match {
+  1 => { ("one", (1, false), (_) => { "one" }) }
+};
+let other = match {
+  value => { ("other", (value, false), (_) => { "other" }) }
+};
+let grouped = match {
+  zero,
+  one
+};
+let describeNumber = match(n) {
+  grouped,
+  other
+};
+let a = describeNumber(0);
+let b = describeNumber(1);
+let c = describeNumber(42);
+let aLabel = match(a) {
+  (label, _, _) => { label }
+};
+let cExtracted = match(c) {
+  (_, (value, _), _) => { value }
+};
+let bFormatted = match(b) {
+  (_, _, formatter) => { formatter(999) }
+};

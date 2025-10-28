@@ -1,6 +1,7 @@
 // Test script to compile value_printer_v2.wm with module support
 
 import { compileProject } from "../backends/esm/src/compile.ts";
+import { formatWorkmanError } from "./error.ts";
 import { resolve } from "https://deno.land/std@0.208.0/path/mod.ts";
 
 const entryPath = resolve(Deno.cwd(), "src_bootstrapped/value_printer_v2.wm");
@@ -13,9 +14,10 @@ const result = await compileProject(entryPath, {
 });
 
 if (result.errors) {
-  console.error("❌ Compilation failed:");
+  console.error("❌ Compilation failed:\n");
   for (const error of result.errors) {
-    console.error("  ", error);
+    console.error(formatWorkmanError(error));
+    console.error("");
   }
   console.error("\nCompiled modules so far:");
   for (const [path, _] of result.modules) {
