@@ -8,7 +8,7 @@ import {
   unify,
   withScopedEnv,
 } from "./infer.ts";
-import { freshTypeVar, instantiate, Type, typeToString } from "./types.ts";
+import { cloneTypeScheme, freeTypeVars, freshTypeVar, instantiate, Type, typeToString } from "./types.ts";
 import { inferError } from "./infer.ts";
 
 export function inferMatchExpression(
@@ -63,7 +63,8 @@ export function inferMatchBranches(
 
   for (const arm of arms) {
     if (arm.kind === "match_bundle_reference") {
-      const scheme = ctx.env.get(arm.name);
+      const existingScheme = ctx.env.get(arm.name);
+      const scheme = existingScheme ? cloneTypeScheme(existingScheme) : undefined;
       if (!scheme) {
         throw inferError(
           `Unknown match bundle '${arm.name}'`,
@@ -71,16 +72,26 @@ export function inferMatchBranches(
           ctx.source,
         );
       }
-      const instantiated = instantiate(scheme);
-      const inputType = freshTypeVar();
-      const outputType = freshTypeVar();
+      let instantiated = instantiate(scheme);
+      instantiated = applyCurrentSubst(ctx, instantiated);
+      if (instantiated.kind === "func" && scheme.quantifiers.length > 0) {
+        // Instantiate result with fresh variables so it can specialize per use.
+        const freshResult = freshTypeVar();
+        unify(ctx, instantiated.to, freshResult);
+        instantiated = {
+          kind: "func",
+          from: instantiated.from,
+          to: freshResult,
+        };
+      }
+      const resultVar = freshTypeVar();
+      // Ensure the referenced bundle accepts the current scrutinee type exactly
       unify(ctx, instantiated, {
         kind: "func",
-        from: inputType,
-        to: outputType,
+        from: applyCurrentSubst(ctx, scrutineeType),
+        to: resultVar,
       });
-      unify(ctx, inputType, scrutineeType);
-      const bodyType = applyCurrentSubst(ctx, outputType);
+      const bodyType = applyCurrentSubst(ctx, resultVar);
       if (!resultType) {
         resultType = bodyType;
       } else {
@@ -152,5 +163,20 @@ export function inferMatchBranches(
     resultType = freshTypeVar();
   }
 
-  return applyCurrentSubst(ctx, resultType);
+  const resolvedResult = applyCurrentSubst(ctx, resultType);
+  const resolvedScrutinee = applyCurrentSubst(ctx, scrutineeType);
+  const resultVars = freeTypeVars(resolvedResult);
+  const scrutineeVars = freeTypeVars(resolvedScrutinee);
+  console.log("[debug] match result", {
+    scrutinee: typeToString(resolvedScrutinee),
+    result: typeToString(resolvedResult),
+    resultVars: Array.from(resultVars),
+    scrutineeVars: Array.from(scrutineeVars),
+  });
+  for (const id of resultVars) {
+    if (!scrutineeVars.has(id)) {
+      ctx.nonGeneralizable.add(id);
+    }
+  }
+  return resolvedResult;
 }

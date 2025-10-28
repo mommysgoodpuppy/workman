@@ -86,6 +86,7 @@ export interface Context {
   source?: string;  // Source code for error reporting
   // Track all bindings including block-scoped ones
   allBindings: Map<string, TypeScheme>;
+  nonGeneralizable: Set<number>;
 }
 
 export function withScopedEnv<T>(ctx: Context, fn: () => T): T {
@@ -113,7 +114,14 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
   const env: TypeEnv = options.initialEnv ? cloneTypeEnv(options.initialEnv) : new Map();
   const adtEnv: TypeEnvADT = options.initialAdtEnv ? cloneAdtEnv(options.initialAdtEnv) : new Map();
   const allBindings = new Map<string, TypeScheme>();
-  const ctx: Context = { env, adtEnv, subst: new Map(), source: options.source, allBindings };
+  const ctx: Context = {
+    env,
+    adtEnv,
+    subst: new Map(),
+    source: options.source ?? program.sourceText ?? undefined,
+    allBindings,
+    nonGeneralizable: new Set(),
+  };
   const summaries: { name: string; scheme: TypeScheme }[] = [];
 
   // Clear the type params cache for this program
@@ -155,7 +163,20 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     finalEnv.set(name, applySubstitutionScheme(scheme, ctx.subst));
   }
 
-  return { env: finalEnv, adtEnv: ctx.adtEnv, summaries, allBindings: ctx.allBindings };
+  const finalSummaries = summaries.map(({ name, scheme }) => ({
+    name,
+    scheme: applySubstitutionScheme(scheme, ctx.subst),
+  }));
+
+  console.log("[debug] final substitution entries", Array.from(ctx.subst.entries()).map(([id, type]) => [id, formatScheme({ quantifiers: [], type })]));
+  console.log("[debug] final summaries", finalSummaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) })));
+
+  return {
+    env: finalEnv,
+    adtEnv: ctx.adtEnv,
+    summaries: finalSummaries,
+    allBindings: ctx.allBindings,
+  };
 }
 
 function registerInfixDeclaration(ctx: Context, decl: InfixDeclaration) {
@@ -382,6 +403,12 @@ function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string
     const fnType = inferLetBinding(ctx, decl.parameters, decl.body, decl.annotation);
     const scheme = generalizeInContext(ctx, fnType);
     ctx.env.set(decl.name, scheme);
+    if (decl.name === "zero" || decl.name === "describeNumber" || decl.name === "grouped") {
+      console.log(`[debug] scheme ${decl.name}`, {
+        quantifiers: scheme.quantifiers,
+        type: formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
+      });
+    }
     ctx.allBindings.set(decl.name, scheme); // Track in allBindings
     return [{ name: decl.name, scheme }];
   }
@@ -712,6 +739,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           ? expr.callee.name
           : null;
         const calleeName = calleeIdentifierName ?? "<expression>";
+        const shouldLogFormatter = calleeIdentifierName === "formatter";
         if (
           calleeIdentifierName === "listMap" &&
           ctx.source?.includes("Runtime value printer for Workman using std library")
@@ -724,6 +752,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         }
         if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
           console.log("[debug] call callee:", calleeName);
+        }
+        if (shouldLogFormatter) {
+          console.log("[debug] formatter call before unify", {
+            fnType: typeToString(applyCurrentSubst(ctx, fnType)),
+            argType: typeToString(applyCurrentSubst(ctx, argType)),
+          });
         }
         try {
           unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
@@ -747,6 +781,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             }
           }
           throw inferError(`Type error in function call to '${calleeName}':\n  Function type: ${fnTypeStr}\n  Argument type: ${argTypeStr}\n\nOriginal error: ${e instanceof Error ? e.message : String(e)}`, expr.span, ctx.source);
+        }
+        if (shouldLogFormatter) {
+          console.log("[debug] formatter call after unify", {
+            resultType: typeToString(applyCurrentSubst(ctx, resultType)),
+            fnType: typeToString(applyCurrentSubst(ctx, fnType)),
+          });
         }
         fnType = applyCurrentSubst(ctx, resultType);
       }
@@ -1031,11 +1071,29 @@ export function ensureExhaustive(
 
 function generalizeInContext(ctx: Context, type: Type): TypeScheme {
   const appliedType = applyCurrentSubst(ctx, type);
+  console.log("[debug] generalize raw type", typeToString(appliedType));
   const appliedEnv: TypeEnv = new Map();
   for (const [name, scheme] of ctx.env.entries()) {
     appliedEnv.set(name, applySubstitutionScheme(scheme, ctx.subst));
   }
-  return generalize(appliedType, appliedEnv);
+  const scheme = generalize(appliedType, appliedEnv);
+  console.log("[debug] generalize free vars", Array.from(freeTypeVars(appliedType)).sort((a, b) => a - b));
+  console.log("[debug] generalize", {
+    quantifiers: scheme.quantifiers,
+    nonGeneralizable: Array.from(ctx.nonGeneralizable.values()),
+  });
+  if (ctx.nonGeneralizable.size === 0) {
+    return scheme;
+  }
+  const filtered = scheme.quantifiers.filter((id) => !ctx.nonGeneralizable.has(id));
+  ctx.nonGeneralizable.clear();
+  if (filtered.length === scheme.quantifiers.length) {
+    return scheme;
+  }
+  return {
+    quantifiers: filtered,
+    type: scheme.type,
+  };
 }
 
 function unifyTypes(a: Type, b: Type, subst: Substitution): Substitution {

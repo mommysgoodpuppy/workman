@@ -153,7 +153,11 @@ export function freeTypeVarsScheme(scheme: TypeScheme): Set<number> {
   return vars;
 }
 
-export function generalize(type: Type, env: TypeEnv): TypeScheme {
+export function generalize(
+  type: Type,
+  env: TypeEnv,
+  extraQuantifiers: number[] = [],
+): TypeScheme {
   const typeVars = freeTypeVars(type);
   for (const scheme of env.values()) {
     const envVars = freeTypeVarsScheme(scheme);
@@ -161,10 +165,10 @@ export function generalize(type: Type, env: TypeEnv): TypeScheme {
       typeVars.delete(v);
     }
   }
-  return {
-    quantifiers: [...typeVars],
-    type,
-  };
+  for (const id of extraQuantifiers) {
+    typeVars.add(id);
+  }
+  return { quantifiers: Array.from(typeVars), type };
 }
 
 export function instantiate(scheme: TypeScheme): Type {
