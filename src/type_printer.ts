@@ -1,4 +1,4 @@
-import { Type, TypeScheme } from "./types.ts";
+import { provenanceToString, Type, TypeScheme } from "./types.ts";
 
 interface PrintContext {
   names: Map<number, string>;
@@ -47,6 +47,8 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       return "Char";
     case "string":
       return "String";
+    case "unknown":
+      return provenanceToString(type.provenance);
     default:
       return "?";
   }

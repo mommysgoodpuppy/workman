@@ -1,6 +1,6 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { inferProgram, InferError } from "../src/infer.ts";
+import { inferProgram, InferError } from "../src/layer1infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
 

@@ -1,3 +1,11 @@
+export type Provenance =
+  | { kind: "user_hole"; id: number }
+  | { kind: "expr_hole"; id: number }
+  | { kind: "error_free_var"; name: string }
+  | { kind: "error_inconsistent"; expected: Type; actual: Type }
+  | { kind: "error_not_function"; calleeType: Type }
+  | { kind: "error_unify_conflict"; typeA: Type; typeB: Type };
+
 export type Type =
   | { kind: "var"; id: number }
   | { kind: "func"; from: Type; to: Type }
@@ -7,7 +15,8 @@ export type Type =
   | { kind: "int" }
   | { kind: "bool" }
   | { kind: "char" }
-  | { kind: "string" };
+  | { kind: "string" }
+  | { kind: "unknown"; provenance: Provenance };
 
 export interface TypeScheme {
   quantifiers: number[];
@@ -72,6 +81,8 @@ export function applySubstitution(type: Type, subst: Substitution): Type {
         kind: "tuple",
         elements: type.elements.map((el) => applySubstitution(el, subst)),
       };
+    case "unknown":
+      return type;
     default:
       return type;
   }
@@ -121,6 +132,8 @@ export function occursInType(id: number, type: Type): boolean {
       return type.args.some((arg) => occursInType(id, arg));
     case "tuple":
       return type.elements.some((el) => occursInType(id, el));
+    case "unknown":
+      return false;
     default:
       return false;
   }
@@ -140,6 +153,8 @@ export function freeTypeVars(type: Type): Set<number> {
       const sets = type.elements.map(freeTypeVars);
       return unionMany(sets);
     }
+    case "unknown":
+      return new Set();
     default:
       return new Set();
   }
@@ -216,6 +231,11 @@ export function cloneType(type: Type): Type {
         kind: "tuple",
         elements: type.elements.map(cloneType),
       };
+    case "unknown":
+      return {
+        kind: "unknown",
+        provenance: cloneProvenance(type.provenance),
+      };
     case "unit":
       return { kind: "unit" };
     case "int":
@@ -275,8 +295,62 @@ export function typeToString(type: Type): string {
       const elems = type.elements.map(typeToString).join(", ");
       return `(${elems})`;
     }
+    case "unknown":
+      return provenanceToString(type.provenance);
     default: {
       const _exhaustive: never = type;
+      return _exhaustive;
+    }
+  }
+}
+
+function cloneProvenance(provenance: Provenance): Provenance {
+  switch (provenance.kind) {
+    case "user_hole":
+    case "expr_hole":
+      return { ...provenance };
+    case "error_free_var":
+      return { ...provenance };
+    case "error_not_function":
+      return {
+        kind: "error_not_function",
+        calleeType: cloneType(provenance.calleeType),
+      };
+    case "error_inconsistent":
+      return {
+        kind: "error_inconsistent",
+        expected: cloneType(provenance.expected),
+        actual: cloneType(provenance.actual),
+      };
+    case "error_unify_conflict":
+      return {
+        kind: "error_unify_conflict",
+        typeA: cloneType(provenance.typeA),
+        typeB: cloneType(provenance.typeB),
+      };
+    default: {
+      const _exhaustive: never = provenance;
+      return _exhaustive;
+    }
+  }
+}
+
+export function provenanceToString(provenance: Provenance): string {
+  switch (provenance.kind) {
+    case "user_hole":
+      return `?${provenance.id}`;
+    case "expr_hole":
+      return `□${provenance.id}`;
+    case "error_free_var":
+      return `?(free ${provenance.name})`;
+    case "error_not_function":
+      return "?(not-function)";
+    case "error_inconsistent":
+      return "?(inconsistent)";
+    case "error_unify_conflict":
+      return "?(conflict)";
+    default: {
+      const _exhaustive: never = provenance;
       return _exhaustive;
     }
   }

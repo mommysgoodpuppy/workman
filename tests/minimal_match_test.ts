@@ -1,4 +1,4 @@
-import { inferProgram } from "../src/infer.ts";
+import { inferProgram } from "../src/layer1infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { assertEquals } from "https://deno.land/std/assert/mod.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";

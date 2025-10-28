@@ -3,7 +3,7 @@
 import { assertEquals } from "https://deno.land/std@0.208.0/assert/mod.ts";
 import { parseSurfaceProgram } from "../../../src/parser.ts";
 import { lex } from "../../../src/lexer.ts";
-import { inferProgram } from "../../../src/infer.ts";
+import { inferProgram } from "../../../src/layer1infer.ts";
 import { lowerToCore } from "../src/lower_to_core.ts";
 import { lowerToMir } from "../src/lower_to_mir.ts";
 

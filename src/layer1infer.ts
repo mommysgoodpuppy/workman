@@ -5,99 +5,52 @@ import {
   Expr,
   InfixDeclaration,
   LetDeclaration,
-  Literal,
   Parameter,
   Pattern,
   PrefixDeclaration,
   Program,
-  SourceSpan,
   TypeDeclaration,
   TypeExpr,
 } from "./ast.ts";
 import { lowerTupleParameters } from "./lower_tuple_params.ts";
 import {
   ConstructorInfo,
-  Substitution,
   Type,
   TypeEnv,
   TypeEnvADT,
   TypeScheme,
-  applySubstitution,
   applySubstitutionScheme,
-  cloneTypeInfo,
-  cloneTypeScheme,
-  composeSubstitution,
-  freeTypeVars,
   freshTypeVar,
-  generalize,
-  instantiate,
-  occursInType,
-  resetTypeVarCounter,
   typeToString,
 } from "./types.ts";
 import { formatScheme } from "./type_printer.ts";
-import { InferError as InferErrorClass } from "./error.ts";
+import {
+  Context,
+  InferOptions,
+  InferResult,
+  applyCurrentSubst,
+  createContext,
+  expectFunctionType,
+  generalizeInContext,
+  inferError,
+  instantiateAndApply,
+  literalType,
+  lookupEnv,
+  unify,
+  withScopedEnv,
+} from "./layer1/context.ts";
+import {
+  convertTypeExpr,
+  registerPrelude,
+  registerTypeConstructors,
+  registerTypeName,
+  resetTypeParamsCache,
+} from "./layer1/declarations.ts";
 import { inferMatchExpression, inferMatchFunction, inferMatchBundleLiteral } from "./infermatch.ts";
 
-// Re-export InferError from error module
+export type { Context, InferOptions, InferResult } from "./layer1/context.ts";
 export { InferError } from "./error.ts";
-
-// Helper to create InferError (for internal use)
-export function inferError(message: string, span?: SourceSpan, source?: string): InferErrorClass {
-  return new InferErrorClass(message, span, source);
-}
-
-function cloneTypeEnv(source: TypeEnv): TypeEnv {
-  const clone: TypeEnv = new Map();
-  for (const [name, scheme] of source.entries()) {
-    clone.set(name, cloneTypeScheme(scheme));
-  }
-  return clone;
-}
-
-function cloneAdtEnv(source: TypeEnvADT): TypeEnvADT {
-  const clone: TypeEnvADT = new Map();
-  for (const [name, info] of source.entries()) {
-    clone.set(name, cloneTypeInfo(info));
-  }
-  return clone;
-}
-
-export interface InferOptions {
-  initialEnv?: TypeEnv;
-  initialAdtEnv?: TypeEnvADT;
-  registerPrelude?: boolean;
-  resetCounter?: boolean;
-  source?: string;  // Source code for error reporting
-}
-
-export interface InferResult {
-  env: TypeEnv;
-  adtEnv: TypeEnvADT;
-  summaries: { name: string; scheme: TypeScheme }[];
-  // Map from binding name to its type scheme (includes block-scoped bindings)
-  allBindings: Map<string, TypeScheme>;
-}
-
-export interface Context {
-  env: TypeEnv;
-  adtEnv: TypeEnvADT;
-  subst: Substitution;
-  source?: string;  // Source code for error reporting
-  // Track all bindings including block-scoped ones
-  allBindings: Map<string, TypeScheme>;
-  nonGeneralizable: Set<number>;
-}
-
-export function withScopedEnv<T>(ctx: Context, fn: () => T): T {
-  const previous = ctx.env;
-  ctx.env = new Map(ctx.env);
-  try {
-    return fn();
-  } finally {
-    ctx.env = previous;
-  }
-}
+export { inferError } from "./layer1/context.ts";
 
 function expectParameterName(param: Parameter): string {
   if (!param.name) {
@@ -108,24 +61,17 @@ function expectParameterName(param: Parameter): string {
 
 export function inferProgram(program: Program, options: InferOptions = {}): InferResult {
   lowerTupleParameters(program);
-  if (options.resetCounter !== false) {
-    resetTypeVarCounter();
-  }
-  const env: TypeEnv = options.initialEnv ? cloneTypeEnv(options.initialEnv) : new Map();
-  const adtEnv: TypeEnvADT = options.initialAdtEnv ? cloneAdtEnv(options.initialAdtEnv) : new Map();
-  const allBindings = new Map<string, TypeScheme>();
-  const ctx: Context = {
-    env,
-    adtEnv,
-    subst: new Map(),
+  const ctx = createContext({
+    initialEnv: options.initialEnv,
+    initialAdtEnv: options.initialAdtEnv,
+    registerPrelude: options.registerPrelude,
+    resetCounter: options.resetCounter,
     source: options.source ?? program.sourceText ?? undefined,
-    allBindings,
-    nonGeneralizable: new Set(),
-  };
+  });
   const summaries: { name: string; scheme: TypeScheme }[] = [];
 
   // Clear the type params cache for this program
-  typeParamsCache.clear();
+  resetTypeParamsCache();
 
   if (options.registerPrelude !== false) {
     registerPrelude(ctx);
@@ -202,201 +148,6 @@ function registerPrefixDeclaration(ctx: Context, decl: PrefixDeclaration) {
   ctx.env.set(opFuncName, implScheme);
 }
 
-// Store parameter types for each declaration to use in pass 2
-const typeParamsCache = new Map<string, Type[]>();
-
-// Pass 1: Register type name and create empty entry
-function registerTypeName(ctx: Context, decl: TypeDeclaration) {
-  if (ctx.adtEnv.has(decl.name)) {
-    throw inferError(`Type '${decl.name}' is already defined`, decl.span, ctx.source);
-  }
-
-  const parameterTypes = decl.typeParams.map(() => freshTypeVar());
-  const parameterIds = parameterTypes
-    .map((type) => (type.kind === "var" ? type.id : -1))
-    .filter((id) => id >= 0);
-
-  const adtInfo = {
-    name: decl.name,
-    parameters: parameterIds,
-    constructors: [] as ConstructorInfo[],
-  };
-  ctx.adtEnv.set(decl.name, adtInfo);
-  
-  // Cache the parameter types for pass 2
-  typeParamsCache.set(decl.name, parameterTypes);
-}
-
-// Pass 2: Register constructors (can now reference other types)
-function registerTypeConstructors(ctx: Context, decl: TypeDeclaration) {
-  const adtInfo = ctx.adtEnv.get(decl.name);
-  if (!adtInfo) {
-    throw inferError(`Internal error: Type '${decl.name}' not pre-registered`);
-  }
-
-  // Reuse the parameter types from pass 1
-  const parameterTypes = typeParamsCache.get(decl.name);
-  if (!parameterTypes) {
-    throw inferError(`Internal error: Type parameters not cached for '${decl.name}'`);
-  }
-
-  const typeScope = new Map<string, Type>();
-  decl.typeParams.forEach((param, index) => {
-    typeScope.set(param.name, parameterTypes[index]);
-  });
-
-  const constructors: ConstructorInfo[] = [];
-  for (const member of decl.members) {
-    if (member.kind !== "constructor") {
-      throw inferError(
-        `Type '${decl.name}' only supports constructor members in this version (found alias member)`,
-      );
-    }
-    const info = buildConstructorInfo(ctx, decl.name, parameterTypes, member, typeScope);
-    constructors.push(info);
-    ctx.env.set(member.name, info.scheme);
-  }
-
-  adtInfo.constructors.push(...constructors);
-}
-
-function buildConstructorInfo(
-  ctx: Context,
-  typeName: string,
-  parameterTypes: Type[],
-  ctor: ConstructorAlias,
-  scope: Map<string, Type>,
-): ConstructorInfo {
-  const ctorResult = makeDataConstructor(typeName, parameterTypes);
-  const args = ctor.typeArgs.map((arg) => convertTypeExpr(ctx, arg, scope, { allowNewVariables: false }));
-  const ctorType = args.reduceRight<Type>((acc, argType) => ({
-    kind: "func",
-    from: argType,
-    to: acc,
-  }), ctorResult);
-
-  const quantifiers = parameterTypes
-    .map((type) => (type.kind === "var" ? type.id : null))
-    .filter((id): id is number => id !== null);
-
-  const scheme: TypeScheme = {
-    quantifiers,
-    type: ctorType,
-  };
-
-  return {
-    name: ctor.name,
-    arity: ctor.typeArgs.length,
-    scheme,
-  };
-}
-
-function registerPrelude(ctx: Context) {
-  registerCmpIntPrimitive(ctx, "nativeCmpInt");
-  registerCharEqPrimitive(ctx, "nativeCharEq");
-  registerIntBinaryPrimitive(ctx, "nativeAdd");
-  registerIntBinaryPrimitive(ctx, "nativeSub");
-  registerIntBinaryPrimitive(ctx, "nativeMul");
-  registerIntBinaryPrimitive(ctx, "nativeDiv");
-  registerPrintPrimitive(ctx, "nativePrint");
-  registerStrFromLiteralPrimitive(ctx, "nativeStrFromLiteral");
-}
-
-function registerCmpIntPrimitive(ctx: Context, name: string, aliasOf?: string) {
-  const scheme: TypeScheme = {
-    quantifiers: [],
-    type: {
-      kind: "func",
-      from: { kind: "int" },
-      to: {
-        kind: "func",
-        from: { kind: "int" },
-        to: { kind: "constructor", name: "Ordering", args: [] },
-      },
-    },
-  };
-  bindTypeAlias(ctx, name, scheme, aliasOf);
-}
-
-function registerCharEqPrimitive(ctx: Context, name: string, aliasOf?: string) {
-  const scheme: TypeScheme = {
-    quantifiers: [],
-    type: {
-      kind: "func",
-      from: { kind: "char" },
-      to: {
-        kind: "func",
-        from: { kind: "char" },
-        to: { kind: "bool" },
-      },
-    },
-  };
-  bindTypeAlias(ctx, name, scheme, aliasOf);
-}
-
-function registerIntBinaryPrimitive(ctx: Context, name: string, aliasOf?: string) {
-  const scheme: TypeScheme = {
-    quantifiers: [],
-    type: {
-      kind: "func",
-      from: { kind: "int" },
-      to: {
-        kind: "func",
-        from: { kind: "int" },
-        to: { kind: "int" },
-      },
-    },
-  };
-  bindTypeAlias(ctx, name, scheme, aliasOf);
-}
-
-function registerPrintPrimitive(ctx: Context, name: string, aliasOf?: string) {
-  const typeVar = freshTypeVar();
-  if (typeVar.kind !== "var") {
-    throw new Error("Expected fresh type variable");
-  }
-
-  const scheme: TypeScheme = {
-    quantifiers: [typeVar.id],
-    type: {
-      kind: "func",
-      from: typeVar,
-      to: { kind: "unit" },
-    },
-  };
-
-  bindTypeAlias(ctx, name, scheme, aliasOf);
-}
-
-function registerStrFromLiteralPrimitive(ctx: Context, name: string) {
-  // nativeStrFromLiteral : String -> List<Int>
-  // Takes a string literal and converts it to a list of character codes
-  const listType: Type = {
-    kind: "constructor",
-    name: "List",
-    args: [{ kind: "int" }],
-  };
-  
-  const scheme: TypeScheme = {
-    quantifiers: [],
-    type: {
-      kind: "func",
-      from: { kind: "string" },
-      to: listType,
-    },
-  };
-  
-  ctx.env.set(name, scheme);
-}
-
-function bindTypeAlias(ctx: Context, name: string, scheme: TypeScheme, aliasOf?: string) {
-  if (aliasOf && ctx.env.has(name)) {
-    return;
-  }
-  const target = aliasOf ? ctx.env.get(aliasOf) : undefined;
-  ctx.env.set(name, aliasOf && target ? target : scheme);
-}
-
 function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string; scheme: TypeScheme }[] {
   // Non-recursive case
   if (!decl.isRecursive) {
@@ -465,137 +216,6 @@ function inferLetDeclaration(ctx: Context, decl: LetDeclaration): { name: string
   }
   
   return results;
-}
-
-interface ConvertTypeOptions {
-  allowNewVariables: boolean;
-}
-
-function convertTypeExpr(
-  ctx: Context,
-  typeExpr: TypeExpr,
-  scope: Map<string, Type> = new Map(),
-  options: ConvertTypeOptions = { allowNewVariables: true },
-): Type {
-  switch (typeExpr.kind) {
-    case "type_var": {
-      const existing = scope.get(typeExpr.name);
-      if (existing) {
-        return existing;
-      }
-      if (!options.allowNewVariables) {
-        throw inferError(`Unknown type variable '${typeExpr.name}'`);
-      }
-      const fresh = freshTypeVar();
-      scope.set(typeExpr.name, fresh);
-      return fresh;
-    }
-    case "type_fn": {
-      if (typeExpr.parameters.length === 0) {
-        throw inferError("Function type must include at least one parameter");
-      }
-      const result = convertTypeExpr(ctx, typeExpr.result, scope, options);
-      return typeExpr.parameters.reduceRight<Type>((acc, param) => {
-        const paramType = convertTypeExpr(ctx, param, scope, options);
-        return {
-          kind: "func",
-          from: paramType,
-          to: acc,
-        };
-      }, result);
-    }
-    case "type_ref": {
-      const scoped = scope.get(typeExpr.name);
-      if (scoped && typeExpr.typeArgs.length === 0) {
-        return scoped;
-      }
-      switch (typeExpr.name) {
-        case "Int":
-          if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'Int' does not accept arguments");
-          }
-          return { kind: "int" };
-        case "Bool":
-          if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'Bool' does not accept arguments");
-          }
-          return { kind: "bool" };
-        case "Char":
-          if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'Char' does not accept arguments");
-          }
-          return { kind: "char" };
-        case "Unit":
-          if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'Unit' does not accept arguments");
-          }
-          return { kind: "unit" };
-        case "String":
-          if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'String' does not accept arguments");
-          }
-          return { kind: "string" };
-      }
-
-      const typeInfo = ctx.adtEnv.get(typeExpr.name);
-
-      if (typeExpr.typeArgs.length === 0) {
-        if (typeInfo) {
-          if (typeInfo.parameters.length > 0) {
-            throw inferError(
-              `Type constructor '${typeExpr.name}' expects ${typeInfo.parameters.length} type argument(s)`,
-            );
-          }
-          return {
-            kind: "constructor",
-            name: typeExpr.name,
-            args: [],
-          };
-        }
-        if (options.allowNewVariables) {
-          const fresh = freshTypeVar();
-          scope.set(typeExpr.name, fresh);
-          return fresh;
-        }
-        throw inferError(`Unknown type constructor '${typeExpr.name}'`, typeExpr.span, ctx.source);
-      }
-
-      if (!typeInfo) {
-        throw inferError(`Unknown type constructor '${typeExpr.name}'`, typeExpr.span, ctx.source);
-      }
-
-      if (typeInfo.parameters.length !== typeExpr.typeArgs.length) {
-        throw inferError(
-          `Type constructor '${typeExpr.name}' expects ${typeInfo.parameters.length} type argument(s)`,
-        );
-      }
-
-      const args = typeExpr.typeArgs.map((arg) => convertTypeExpr(ctx, arg, scope, options));
-      return {
-        kind: "constructor",
-        name: typeExpr.name,
-        args,
-      };
-    }
-    case "type_tuple": {
-      return {
-        kind: "tuple",
-        elements: typeExpr.elements.map((el) => convertTypeExpr(ctx, el, scope, options)),
-      };
-    }
-    case "type_unit":
-      return { kind: "unit" };
-    default:
-      throw inferError("Unsupported type expression");
-  }
-}
-
-function makeDataConstructor(name: string, parameters: Type[]): Type {
-  return {
-    kind: "constructor",
-    name,
-    args: parameters,
-  };
 }
 
 function inferLetBinding(
@@ -885,53 +505,6 @@ function inferArrowFunction(ctx: Context, parameters: Parameter[], body: BlockEx
   });
 }
 
-function expectFunctionType(ctx: Context, type: Type, description: string): { from: Type; to: Type } {
-  const resolved = applyCurrentSubst(ctx, type);
-  if (resolved.kind !== "func") {
-    throw inferError(`${description} is not fully applied`);
-  }
-  return resolved;
-}
-
-export function unify(ctx: Context, a: Type, b: Type) {
-  const updated = unifyTypes(a, b, ctx.subst);
-  ctx.subst = composeSubstitution(updated, ctx.subst);
-}
-
-export function applyCurrentSubst(ctx: Context, type: Type): Type {
-  return applySubstitution(type, ctx.subst);
-}
-
-function lookupEnv(ctx: Context, name: string): TypeScheme {
-  const scheme = ctx.env.get(name);
-  if (!scheme) {
-    throw inferError(`Unknown identifier '${name}'`);
-  }
-  return scheme;
-}
-
-function instantiateAndApply(ctx: Context, scheme: TypeScheme): Type {
-  const type = instantiate(scheme);
-  return applyCurrentSubst(ctx, type);
-}
-
-function literalType(literal: Literal): Type {
-  switch (literal.kind) {
-    case "int":
-      return { kind: "int" };
-    case "bool":
-      return { kind: "bool" };
-    case "char":
-      return { kind: "char" };
-    case "unit":
-      return { kind: "unit" };
-    case "string":
-      return { kind: "string" };
-    default:
-      throw inferError("Unsupported literal");
-  }
-}
-
 function mergeBindings(target: Map<string, Type>, source: Map<string, Type>) {
   for (const [name, type] of source.entries()) {
     if (target.has(name)) {
@@ -1069,116 +642,4 @@ export function ensureExhaustive(
   }
 }
 
-function generalizeInContext(ctx: Context, type: Type): TypeScheme {
-  const appliedType = applyCurrentSubst(ctx, type);
-  console.log("[debug] generalize raw type", typeToString(appliedType));
-  const appliedEnv: TypeEnv = new Map();
-  for (const [name, scheme] of ctx.env.entries()) {
-    appliedEnv.set(name, applySubstitutionScheme(scheme, ctx.subst));
-  }
-  const scheme = generalize(appliedType, appliedEnv);
-  console.log("[debug] generalize free vars", Array.from(freeTypeVars(appliedType)).sort((a, b) => a - b));
-  console.log("[debug] generalize", {
-    quantifiers: scheme.quantifiers,
-    nonGeneralizable: Array.from(ctx.nonGeneralizable.values()),
-  });
-  if (ctx.nonGeneralizable.size === 0) {
-    return scheme;
-  }
-  const filtered = scheme.quantifiers.filter((id) => !ctx.nonGeneralizable.has(id));
-  ctx.nonGeneralizable.clear();
-  if (filtered.length === scheme.quantifiers.length) {
-    return scheme;
-  }
-  return {
-    quantifiers: filtered,
-    type: scheme.type,
-  };
-}
 
-function unifyTypes(a: Type, b: Type, subst: Substitution): Substitution {
-  const left = applySubstitution(a, subst);
-  const right = applySubstitution(b, subst);
-
-  if (left.kind === "var") {
-    return bindVar(left.id, right, subst);
-  }
-  if (right.kind === "var") {
-    return bindVar(right.id, left, subst);
-  }
-
-  if (left.kind === "func" && right.kind === "func") {
-    const subst1 = unifyTypes(left.from, right.from, subst);
-    return unifyTypes(left.to, right.to, subst1);
-  }
-
-  if (left.kind === "constructor" && right.kind === "constructor") {
-    if (left.name !== right.name || left.args.length !== right.args.length) {
-      // Enhanced error message with full type information
-      const leftStr = typeToString(left);
-      const rightStr = typeToString(right);
-      
-      // Apply current substitution to see the "real" types
-      const leftResolved = typeToString(applySubstitution(left, subst));
-      const rightResolved = typeToString(applySubstitution(right, subst));
-      
-      // Show substitution for debugging
-      const substStr = Array.from(subst.entries())
-        .slice(0, 10) // Limit to first 10 to avoid spam
-        .map(([id, type]) => `  't${id} -> ${typeToString(type)}`)
-        .join("\n");
-      
-      const msg = `Cannot unify types:\n  ${leftStr}\nwith:\n  ${rightStr}\n\nAfter substitution:\n  ${leftResolved}\nwith:\n  ${rightResolved}\n\nConstructor mismatch: ${left.name} vs ${right.name}\n\nCurrent substitution (first 10):\n${substStr}`;
-      throw inferError(msg);
-    }
-    let current = subst;
-    for (let i = 0; i < left.args.length; i++) {
-      current = unifyTypes(left.args[i], right.args[i], current);
-    }
-    return current;
-  }
-
-  if (left.kind === "tuple" && right.kind === "tuple") {
-    if (left.elements.length !== right.elements.length) {
-      throw inferError("Cannot unify tuples of different length");
-    }
-    let current = subst;
-    for (let i = 0; i < left.elements.length; i++) {
-      current = unifyTypes(left.elements[i], right.elements[i], current);
-    }
-    return current;
-  }
-
-  if (left.kind === right.kind) {
-    return subst;
-  }
-
-  const leftDesc = formatTypeForError(left);
-  const rightDesc = formatTypeForError(right);
-  throw inferError(`Type mismatch: cannot unify ${leftDesc} with ${rightDesc}`);
-}
-
-function bindVar(id: number, type: Type, subst: Substitution): Substitution {
-  const resolved = applySubstitution(type, subst);
-  if (resolved.kind === "var" && resolved.id === id) {
-    return subst;
-  }
-  if (occursInType(id, resolved)) {
-    throw inferError("Occurs check failed");
-  }
-  const next = new Map(subst);
-  next.set(id, resolved);
-  if (
-    resolved.kind === "constructor" &&
-    resolved.name === "RuntimeValue" &&
-    id === 22
-  ) {
-    console.log("[debug] bindVar t22 := RuntimeValue");
-  }
-  return next;
-}
-
-function formatTypeForError(type: Type): string {
-  const quantifiers = [...freeTypeVars(type)].sort((a, b) => a - b);
-  return formatScheme({ quantifiers, type });
-}

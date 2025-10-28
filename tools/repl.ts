@@ -2,7 +2,7 @@
 
 import { lex } from "../src/lexer.ts";
 import { ParseError, parseSurfaceProgram } from "../src/parser.ts";
-import { InferError, inferProgram } from "../src/infer.ts";
+import { InferError, inferProgram } from "../src/layer1infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { evaluateProgram } from "../src/eval.ts";
 import { formatRuntimeValue } from "../src/value_printer.ts";

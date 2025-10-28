@@ -7,9 +7,9 @@ import {
   inferPattern,
   unify,
   withScopedEnv,
-} from "./infer.ts";
+} from "./layer1infer.ts";
 import { cloneTypeScheme, freeTypeVars, freshTypeVar, instantiate, Type, typeToString } from "./types.ts";
-import { inferError } from "./infer.ts";
+import { inferError } from "./layer1infer.ts";
 
 export function inferMatchExpression(
   ctx: Context,
