@@ -355,6 +355,61 @@ Deno.test("composes nested bundle references", () => {
   assertEquals(bFormattedResult.value.value, "one");
 });
 
+Deno.test("supports recursive match bundles", () => {
+  const source = `
+    type List<T> = Nil | Cons<T, List<T>>;
+    let rec describeList = match(list) {
+      Nil => { "empty" },
+      Cons(_, Nil) => { "singleton" },
+      Cons(_, rest) => { describeList(rest) }
+    };
+    let emptyDesc = describeList(Nil);
+    let nested = describeList(Cons(1, Cons(2, Nil)));
+  `;
+
+  const summaries = inferTypes(source);
+  const describeBinding = summaries.find((entry) => entry.name === "describeList");
+  const emptyBinding = summaries.find((entry) => entry.name === "emptyDesc");
+  const nestedBinding = summaries.find((entry) => entry.name === "nested");
+  if (!describeBinding || !emptyBinding || !nestedBinding) {
+    throw new Error("expected describeList and result bindings");
+  }
+
+  assertEquals(describeBinding.type, "List<T> -> String");
+  assertEquals(emptyBinding.type, "String");
+  assertEquals(nestedBinding.type, "String");
+
+  const evaluation = evaluateSource(source);
+  const emptyValue = evaluation.summaries.find((entry) => entry.name === "emptyDesc");
+  const nestedValue = evaluation.summaries.find((entry) => entry.name === "nested");
+  if (!emptyValue || !nestedValue) {
+    throw new Error("expected runtime values for emptyDesc and nested");
+  }
+  if (emptyValue.value.kind !== "string" || nestedValue.value.kind !== "string") {
+    throw new Error("expected recursive match bundle results to be strings");
+  }
+
+  assertEquals(emptyValue.value.value, "empty");
+  assertEquals(nestedValue.value.value, "singleton");
+});
+
+Deno.test("rejects mutual bundle references without recursion", () => {
+  const source = `
+    let first = match {
+      second
+    };
+    let second = match {
+      first
+    };
+  `;
+
+  assertThrows(
+    () => inferTypes(source),
+    InferError,
+    "Unknown match bundle 'second'",
+  );
+});
+
 Deno.test("rejects non-exhaustive match expression", () => {
   const source = `
     type Option<T> = None | Some<T>;

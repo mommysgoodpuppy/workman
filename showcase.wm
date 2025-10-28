@@ -127,10 +127,22 @@ let isEven = (n) => {
 
 -- === Pattern Matching ===
 
-let describeNumber = match(n) {
+let zero = match {
   0 => { "zero" },
-  1 => { "one" },
+};
+let one = match {
+  1 => { "one" }
+};
+let other = match {
   _ => { "other" }
+};
+let grouped = match {
+  zero,
+  one
+};
+let describeNumber = match(n) {
+  grouped,
+  other
 };
 
 let boolToString = match(b) {
