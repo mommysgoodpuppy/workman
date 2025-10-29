@@ -10,7 +10,7 @@ import type {
   Program,
   SourceSpan,
 } from "./ast.ts";
-import { nextNodeId, resetNodeIds } from "./node_ids.ts";
+import { nextNodeId } from "./node_ids.ts";
 
 interface LoweringContext {
   counter: number;
@@ -158,47 +158,29 @@ function lowerFunctionParameters(
     }
   }
 
-  const normalizedParams: Parameter[] = new Array(parameters.length);
-  for (let index = 0; index < parameters.length; index += 1) {
-    const param = parameters[index];
-    if (param.pattern.kind === "variable") {
-      const name = param.pattern.name;
-      normalizedParams[index] = {
-        kind: "parameter",
-        pattern: { kind: "variable", name, span: param.pattern.span, id: nextNodeId() },
-        name,
-        annotation: param.annotation,
-        span: param.span,
-        id: nextNodeId(),
-      };
-    } else {
-      const name = freshParamName(ctx);
-      normalizedParams[index] = {
-        kind: "parameter",
-        pattern: { kind: "variable", name, span: param.pattern.span, id: nextNodeId() },
-        name,
-        annotation: param.annotation,
-        span: param.span,
-        id: nextNodeId(),
-      };
-    }
+  if (!needsLowering) {
+    // Variable-only parameter lists already respect ID invariants.
+    return { parameters, body };
   }
 
-  if (!needsLowering) {
-    return { parameters: normalizedParams, body };
-  }
+  // For variable parameters, we might want to keep them as is to preserve IDs.
+  // But if we need fresh IDs for patterns, we can modify them too.
+  // For simplicity, let's modify non-variable parameters in place.
 
   let currentBody = body;
   for (let index = parameters.length - 1; index >= 0; index -= 1) {
-    const original = parameters[index];
-    if (original.pattern.kind === "variable") {
+    const param = parameters[index];
+    if (param.pattern.kind === "variable") {
       continue;
     }
-    const targetName = normalizedParams[index].name!;
-    currentBody = wrapWithMatch(original.pattern, targetName, currentBody);
+    const originalPattern = param.pattern;
+    const targetName = freshParamName(ctx);
+    param.pattern = { kind: "variable", name: targetName, span: param.pattern.span, id: nextNodeId() };
+    param.name = targetName;
+    currentBody = wrapWithMatch(originalPattern, targetName, currentBody);
   }
 
-  return { parameters: normalizedParams, body: currentBody };
+  return { parameters, body: currentBody };
 }
 
 function wrapWithMatch(pattern: Pattern, tempName: string, body: BlockExpr): BlockExpr {

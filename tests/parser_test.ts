@@ -1,6 +1,36 @@
 import { lex } from "../src/lexer.ts";
+import { NodeId, Program } from "../src/ast.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { assertEquals } from "https://deno.land/std/assert/mod.ts";
+
+function collectNodeIds(program: Program): NodeId[] {
+  const ids: NodeId[] = [];
+  const seen = new Set<NodeId>();
+
+  function visit(node: any): void {
+    if (node && typeof node === 'object' && 'id' in node) {
+      if (!seen.has(node.id)) {
+        seen.add(node.id);
+        ids.push(node.id);
+      }
+    }
+
+    // Recursively visit all properties that might contain AST nodes
+    for (const key in node) {
+      if (node.hasOwnProperty(key)) {
+        const value = node[key];
+        if (Array.isArray(value)) {
+          value.forEach(visit);
+        } else if (value && typeof value === 'object') {
+          visit(value);
+        }
+      }
+    }
+  }
+
+  visit(program);
+  return ids.sort((a, b) => a - b);
+}
 
 Deno.test("parses simple type declaration", () => {
   const source = `type Option<T> = None | Some<T>;`;
@@ -69,6 +99,9 @@ let example = (input) => {
   assertEquals(matchExpr.bundle.arms.length, 2);
 
   const firstCase = matchExpr.bundle.arms[0];
+  if (firstCase.kind !== "match_pattern") {
+    throw new Error("expected match pattern arm");
+  }
   assertEquals(firstCase.pattern.kind, "constructor");
   if (firstCase.pattern.kind === "constructor") {
     assertEquals(firstCase.pattern.name, "Some");
@@ -76,6 +109,9 @@ let example = (input) => {
   }
 
   const secondCase = matchExpr.bundle.arms[1];
+  if (secondCase.kind !== "match_pattern") {
+    throw new Error("expected match pattern arm");
+  }
   assertEquals(secondCase.pattern.kind, "constructor");
   if (secondCase.pattern.kind === "constructor") {
     assertEquals(secondCase.pattern.name, "None");
@@ -118,4 +154,30 @@ Deno.test("parses tuple parameter patterns", () => {
   if (second.kind === "variable") {
     assertEquals(second.name, "b");
   }
+});
+
+Deno.test("parser assigns unique and deterministic node IDs", () => {
+  const source = `type Option<T> = None | Some<T>;`;
+  const tokens1 = lex(source);
+  const program1 = parseSurfaceProgram(tokens1);
+  const ids1 = collectNodeIds(program1);
+
+  // Parse the same source again
+  const tokens2 = lex(source);
+  const program2 = parseSurfaceProgram(tokens2);
+  const ids2 = collectNodeIds(program2);
+
+  // IDs should be deterministic - same source produces same IDs
+  assertEquals(ids1, ids2);
+
+  // Should have some IDs (at least the type declaration and its components)
+  assertEquals(ids1.length > 0, true);
+
+  // IDs should start from 0 and be strictly increasing
+  for (let i = 0; i < ids1.length - 1; i++) {
+    assertEquals(ids1[i] < ids1[i + 1], true);
+  }
+
+  // First ID should be 0
+  assertEquals(ids1[0], 0);
 });

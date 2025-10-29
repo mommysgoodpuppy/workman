@@ -1,7 +1,9 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { inferProgram, InferError } from "../src/layer1infer.ts";
+import { lowerTupleParameters } from "../src/lower_tuple_params.ts";
 import { formatScheme } from "../src/type_printer.ts";
+import { NodeId, Program } from "../src/ast.ts";
 import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
 
 const TEST_PRELUDE_SOURCE = `
@@ -14,6 +16,35 @@ function inferTypes(source: string) {
   const program = parseSurfaceProgram(tokens);
   const result = inferProgram(program);
   return result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+}
+
+function collectNodeIds(program: any): NodeId[] {
+  const ids: NodeId[] = [];
+  const seen = new Set<NodeId>();
+
+  function visit(node: any): void {
+    if (node && typeof node === 'object' && 'id' in node) {
+      if (!seen.has(node.id)) {
+        seen.add(node.id);
+        ids.push(node.id);
+      }
+    }
+
+    // Recursively visit all properties that might contain AST nodes
+    for (const key in node) {
+      if (node.hasOwnProperty(key)) {
+        const value = node[key];
+        if (Array.isArray(value)) {
+          value.forEach(visit);
+        } else if (value && typeof value === 'object') {
+          visit(value);
+        }
+      }
+    }
+  }
+
+  visit(program);
+  return ids.sort((a, b) => a - b);
 }
 
 Deno.test("infers polymorphic identity function", () => {
@@ -278,4 +309,65 @@ Deno.test("first-class match builds pattern functions", () => {
   }
   assertEquals(convert.type, "Option<T> -> Bool");
   assertEquals(value.type, "Bool");
+});
+
+Deno.test("lowering preserves and allocates node IDs correctly", () => {
+  const source = `
+    let swap = ((a, b)) => {
+      (b, a)
+    };
+  `;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+
+  // Collect IDs before lowering
+  const idsBefore = collectNodeIds(program);
+
+  // Apply lowering
+  lowerTupleParameters(program);
+
+  // Collect IDs after lowering
+  const idsAfter = collectNodeIds(program);
+
+  // Should have more IDs after lowering (synthetic nodes created)
+  assertEquals(idsAfter.length > idsBefore.length, true);
+
+  // Original IDs should be preserved (may be in different order due to new nodes)
+  for (const originalId of idsBefore) {
+    assertEquals(idsAfter.includes(originalId), true, `Original ID ${originalId} should be preserved ${idsAfter}`);
+  }
+
+  // New IDs should be strictly increasing and greater than existing ones
+  const maxOriginalId = Math.max(...idsBefore);
+  const newIds = idsAfter.filter(id => !idsBefore.includes(id));
+  for (const newId of newIds) {
+    assertEquals(newId > maxOriginalId, true, `New ID ${newId} should be greater than max original ID ${maxOriginalId}`);
+  }
+
+  // Verify the function still has the expected type
+  const result = inferProgram(program);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  assertEquals(summaries.length, 1);
+  assertEquals(summaries[0], { name: "swap", type: "(T, U) -> (U, T)" });
+});
+
+Deno.test("inference completes successfully with ID-annotated AST", () => {
+  const source = `
+    let identity = (x) => {
+      x
+    };
+  `;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+
+  // Run inference
+  const result = inferProgram(program);
+
+  // Verify the function has the expected type
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  assertEquals(summaries.length, 1);
+  assertEquals(summaries[0], { name: "identity", type: "T -> T" });
+
+  // Verify that the marked program was created
+  assertEquals(result.markedProgram.declarations.length, 1);
 });
