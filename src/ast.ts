@@ -3,8 +3,11 @@ export interface SourceSpan {
   end: number;
 }
 
+export type NodeId = number;
+
 interface NodeBase {
   span: SourceSpan;
+  id: NodeId;
 }
 
 export type Literal =

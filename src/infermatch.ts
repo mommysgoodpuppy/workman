@@ -5,6 +5,7 @@ import {
   ensureExhaustive,
   inferExpr,
   inferPattern,
+  markUnsupportedExpr,
   unify,
   withScopedEnv,
 } from "./layer1infer.ts";
@@ -19,24 +20,27 @@ export interface MatchBranchesResult {
 
 export function inferMatchExpression(
   ctx: Context,
+  expr: Expr,
   scrutinee: Expr,
   bundle: MatchBundle,
 ): Type {
   const scrutineeType = inferExpr(ctx, scrutinee);
-  const result = inferMatchBranches(ctx, scrutineeType, bundle);
+  const result = inferMatchBranches(ctx, expr, scrutineeType, bundle);
   return result.type;
 }
 
 export function inferMatchFunction(
   ctx: Context,
+  expr: Expr,
   parameters: Expr[],
   bundle: MatchBundle,
 ): Type {
   if (parameters.length !== 1) {
-    throw inferError("Match functions currently support exactly one argument");
+    markUnsupportedExpr(ctx, expr, "match_fn_arity");
+    return unknownType({ kind: "incomplete", reason: "match_fn_arity" });
   }
   const parameterType = inferExpr(ctx, parameters[0]);
-  const { type: resultType } = inferMatchBranches(ctx, parameterType, bundle);
+  const { type: resultType } = inferMatchBranches(ctx, expr, parameterType, bundle);
   return {
     kind: "func",
     from: applyCurrentSubst(ctx, parameterType),
@@ -49,7 +53,7 @@ export function inferMatchBundleLiteral(
   expr: MatchBundleLiteralExpr,
 ): Type {
   const param = freshTypeVar();
-  const { type: result } = inferMatchBranches(ctx, param, expr.bundle, false);
+  const { type: result } = inferMatchBranches(ctx, expr, param, expr.bundle, false);
   return {
     kind: "func",
     from: applyCurrentSubst(ctx, param),
@@ -59,6 +63,7 @@ export function inferMatchBundleLiteral(
 
 export function inferMatchBranches(
   ctx: Context,
+  expr: Expr,
   scrutineeType: Type,
   bundle: MatchBundle,
   exhaustive: boolean = true,
@@ -75,11 +80,9 @@ export function inferMatchBranches(
       const existingScheme = ctx.env.get(arm.name);
       const scheme = existingScheme ? cloneTypeScheme(existingScheme) : undefined;
       if (!scheme) {
-        throw inferError(
-          `Unknown match bundle '${arm.name}'`,
-          arm.span,
-          ctx.source,
-        );
+        markUnsupportedExpr(ctx, expr, "match_bundle_reference");
+        hasWildcard = true;
+        continue;
       }
       let instantiated = instantiate(scheme);
       instantiated = applyCurrentSubst(ctx, instantiated);
@@ -163,6 +166,7 @@ export function inferMatchBranches(
   if (exhaustive) {
     ensureExhaustive(
       ctx,
+      expr,
       applyCurrentSubst(ctx, scrutineeType),
       hasWildcard,
       coverageMap,

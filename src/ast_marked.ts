@@ -5,6 +5,7 @@ import type {
   Literal,
   ModuleImport,
   ModuleReexport,
+  NodeId,
   PrefixDeclaration,
   SourceSpan,
   TypeDeclaration,
@@ -14,6 +15,7 @@ import type { Type } from "./types.ts";
 
 interface MNodeBase {
   span: SourceSpan;
+  id: NodeId;
 }
 
 export interface MTypedNode extends MNodeBase {
@@ -87,6 +89,7 @@ export function blockStatementFrom(expr: MExpr): MExprStatement {
   return {
     kind: "expr_statement",
     span: expr.span,
+    id: expr.id,
     expression: expr,
   };
 }
@@ -151,14 +154,16 @@ export interface MMarkNotFunction extends MTypedNode {
   calleeType: Type;
 }
 
-export interface MMarkInconsistent extends MTypedNode {
-  kind: "mark_inconsistent";
-  subject: MExpr;
-  expected: Type;
-  actual: Type;
+export interface MMarkUnsupportedExpr extends MTypedNode {
+  kind: "mark_unsupported_expr";
+  exprKind: string;
 }
 
-export type MMarkExpr = MMarkFreeVar | MMarkNotFunction | MMarkInconsistent;
+export interface MMarkInconsistent extends MTypedNode {
+  kind: "mark_inconsistent";
+}
+
+export type MMarkExpr = MMarkFreeVar | MMarkNotFunction | MMarkInconsistent | MMarkUnsupportedExpr;
 
 export type MExpr =
   | MIdentifierExpr
@@ -247,6 +252,7 @@ export function isMarkedExpression(expr: MExpr): expr is MMarkExpr {
     case "mark_free_var":
     case "mark_not_function":
     case "mark_inconsistent":
+    case "mark_unsupported_expr":
       return true;
     default:
       return false;

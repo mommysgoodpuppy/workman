@@ -58,6 +58,10 @@ import {
   literalType,
   lookupEnv,
   markFreeVariable,
+  markInconsistent,
+  markNonExhaustive,
+  markNotFunction,
+  markUnsupportedExpr,
   unify,
   withScopedEnv,
 } from "./layer1/context.ts";
@@ -540,6 +544,10 @@ function registerInfixDeclaration(ctx: Context, decl: InfixDeclaration) {
   
   // Look up the actual implementation function
   const implScheme = lookupEnv(ctx, decl.implementation);
+  if (!implScheme) {
+    // Implementation not found - will be marked as free variable during inference
+    return;
+  }
   
   // Register it under the operator name
   ctx.env.set(opFuncName, implScheme);
@@ -551,6 +559,10 @@ function registerPrefixDeclaration(ctx: Context, decl: PrefixDeclaration) {
   
   // Look up the actual implementation function
   const implScheme = lookupEnv(ctx, decl.implementation);
+  if (!implScheme) {
+    // Implementation not found - will be marked as free variable during inference
+    return;
+  }
   
   // Register it under the operator name
   ctx.env.set(opFuncName, implScheme);
@@ -661,8 +673,11 @@ function inferLetBinding(
 
     if (annotation) {
       const annotated = convertTypeExpr(ctx, annotation, annotationScope);
-      unify(ctx, fnType, annotated);
-      fnType = applyCurrentSubst(ctx, annotated);
+      if (unify(ctx, fnType, annotated)) {
+        fnType = applyCurrentSubst(ctx, annotated);
+      } else {
+        fnType = unknownType({ kind: "incomplete", reason: "annotation_unify_failed" });
+      }
     }
 
     return fnType;
@@ -699,7 +714,8 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
       break;
     }
     default:
-      throw inferError(`Unknown block statement kind ${(statement as BlockStatement).kind}`);
+      // Unknown block statement kind - skip
+      break;
   }
 }
 
@@ -742,9 +758,18 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       return recordExprType(ctx, expr, instantiateAndApply(ctx, scheme));
     }
     case "literal":
-      return recordExprType(ctx, expr, literalType(expr.literal));
+      const litType = literalType(expr.literal);
+      if (litType.kind === "unknown" && litType.provenance.kind === "incomplete" && litType.provenance.reason === "literal.unsupported") {
+        const mark = markUnsupportedExpr(ctx, expr, "literal");
+        return recordExprType(ctx, expr, mark.type);
+      }
+      return recordExprType(ctx, expr, litType);
     case "constructor": {
       const scheme = lookupEnv(ctx, expr.name);
+      if (!scheme) {
+        const mark = markFreeVariable(ctx, expr, expr.name);
+        return recordExprType(ctx, expr, mark.type);
+      }
       const ctorType = instantiateAndApply(ctx, scheme);
       let result = ctorType;
       for (const arg of expr.args) {
@@ -755,7 +780,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       }
       const applied = applyCurrentSubst(ctx, result);
       if (applied.kind === "func") {
-        throw inferError(`Constructor ${expr.name} is not fully applied`);
+        const calleeMarked = materializeExpr(ctx, expr);
+        const argsMarked = expr.args.map((arg) => materializeExpr(ctx, arg));
+        const mark = markNotFunction(ctx, expr, calleeMarked, argsMarked, applied);
+        return recordExprType(ctx, expr, mark.type);
       }
       return recordExprType(ctx, expr, applied);
     }
@@ -769,8 +797,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
     }
     case "call": {
       let fnType = inferExpr(ctx, expr.callee);
-      for (const arg of expr.arguments) {
-        const argType = inferExpr(ctx, arg);
+      for (let index = 0; index < expr.arguments.length; index++) {
+        const argExpr = expr.arguments[index];
+        const argType = inferExpr(ctx, argExpr);
         const resultType = freshTypeVar();
         const calleeIdentifierName = expr.callee.kind === "identifier"
           ? expr.callee.name
@@ -799,25 +828,19 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         try {
           unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
         } catch (e) {
-          // Add context about which function call failed
-          const fnTypeStr = typeToString(applyCurrentSubst(ctx, fnType));
-          const argTypeStr = typeToString(applyCurrentSubst(ctx, argType));
-          if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
-            const snippet = ctx.source.slice(expr.span.start, expr.span.end);
-            console.log("[debug] failing call snippet:", snippet.trim());
-            console.log(
-              "[debug] resultType raw/applied:",
-              typeToString(resultType),
-              typeToString(applyCurrentSubst(ctx, resultType)),
-            );
-            if (resultType.kind === "var") {
-              const mapped = ctx.subst.get(resultType.id);
-              if (mapped) {
-                console.log("[debug] resultType mapped to:", typeToString(mapped));
-              }
-            }
+          const resolvedFn = applyCurrentSubst(ctx, fnType);
+          const calleeMarked = materializeExpr(ctx, expr.callee);
+          const argsMarked = expr.arguments.map((argument) => materializeExpr(ctx, argument));
+          if (resolvedFn.kind !== "func") {
+            const mark = markNotFunction(ctx, expr, calleeMarked, argsMarked, resolvedFn);
+            return recordExprType(ctx, expr, mark.type);
           }
-          throw inferError(`Type error in function call to '${calleeName}':\n  Function type: ${fnTypeStr}\n  Argument type: ${argTypeStr}\n\nOriginal error: ${e instanceof Error ? e.message : String(e)}`, expr.span, ctx.source);
+
+          const expectedArg = applyCurrentSubst(ctx, resolvedFn.from);
+          const actualArg = applyCurrentSubst(ctx, argType);
+          const subject = argsMarked[index];
+          const mark = markInconsistent(ctx, expr, subject, expectedArg, actualArg);
+          return recordExprType(ctx, expr, mark.type);
         }
         if (shouldLogFormatter) {
           console.log("[debug] formatter call after unify", {
@@ -850,9 +873,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       return recordExprType(ctx, expr, type);
     }
     case "match":
-      return recordExprType(ctx, expr, inferMatchExpression(ctx, expr.scrutinee, expr.bundle));
+      return recordExprType(ctx, expr, inferMatchExpression(ctx, expr, expr.scrutinee, expr.bundle));
     case "match_fn":
-      return recordExprType(ctx, expr, inferMatchFunction(ctx, expr.parameters, expr.bundle));
+      return recordExprType(ctx, expr, inferMatchFunction(ctx, expr, expr.parameters, expr.bundle));
     case "match_bundle_literal":
       return recordExprType(ctx, expr, inferMatchBundleLiteral(ctx, expr));
     case "binary": {
@@ -867,11 +890,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // This will be set during the declaration phase
       const opFuncName = `__op_${expr.operator}`;
       const scheme = lookupEnv(ctx, opFuncName);
+      if (!scheme) {
+        const mark = markFreeVariable(ctx, expr, opFuncName);
+        return recordExprType(ctx, expr, mark.type);
+      }
       const opType = instantiateAndApply(ctx, scheme);
       
       // Apply the function to both arguments
       const resultType1 = freshTypeVar();
-      unify(ctx, opType, { kind: "func", from: leftType, to: { kind: "func", from: rightType, to: resultType1 } });
+      if (!unify(ctx, opType, { kind: "func", from: leftType, to: { kind: "func", from: rightType, to: resultType1 } })) {
+        return recordExprType(ctx, expr, unknownType({ kind: "incomplete", reason: "binary_unify_failed" }));
+      }
       
       return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType1));
     }
@@ -883,16 +912,23 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // Look up the prefix operator's implementation function
       const opFuncName = `__prefix_${expr.operator}`;
       const scheme = lookupEnv(ctx, opFuncName);
+      if (!scheme) {
+        const mark = markFreeVariable(ctx, expr, opFuncName);
+        return recordExprType(ctx, expr, mark.type);
+      }
       const opType = instantiateAndApply(ctx, scheme);
       
       // Apply the function to the operand
       const resultType = freshTypeVar();
-      unify(ctx, opType, { kind: "func", from: operandType, to: resultType });
+      if (!unify(ctx, opType, { kind: "func", from: operandType, to: resultType })) {
+        return recordExprType(ctx, expr, unknownType({ kind: "incomplete", reason: "unary_unify_failed" }));
+      }
       
       return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType));
     }
     default:
-      throw inferError(`Unsupported expression kind ${(expr as Expr).kind}`);
+      const mark = markUnsupportedExpr(ctx, expr, (expr as Expr).kind);
+      return recordExprType(ctx, expr, mark.type);
   }
 }
 
@@ -926,10 +962,10 @@ function inferArrowFunction(ctx: Context, parameters: Parameter[], body: BlockEx
 
 function mergeBindings(target: Map<string, Type>, source: Map<string, Type>) {
   for (const [name, type] of source.entries()) {
-    if (target.has(name)) {
-      throw inferError(`Duplicate variable '${name}' in pattern`);
+    if (!target.has(name)) {
+      target.set(name, type);
     }
-    target.set(name, type);
+    // If duplicate, skip (already marked the pattern)
   }
 }
 
@@ -979,7 +1015,22 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
     }
     case "literal": {
       const litType = literalType(pattern.literal);
-      unify(ctx, expected, litType);
+      if (!unify(ctx, expected, litType)) {
+        const markType = unknownFromReason("pattern.literal.unify_failed");
+        const mark: MMarkPattern = {
+          kind: "mark_pattern",
+          span: pattern.span,
+          reason: "other",
+          data: { issue: "literal_unify_failed" },
+          type: markType,
+        } satisfies MMarkPattern;
+        return {
+          type: markType,
+          bindings: new Map(),
+          coverage: { kind: "none" },
+          marked: mark,
+        };
+      }
       const resolved = applyCurrentSubst(ctx, litType);
       return {
         type: resolved,
@@ -1048,7 +1099,27 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
       for (let i = 0; i < pattern.elements.length; i++) {
         const subPattern = pattern.elements[i];
         const elementType = resolved.elements[i];
-        const info = inferPattern(ctx, subPattern, elementType);
+        let info = inferPattern(ctx, subPattern, elementType);
+        for (const [name, type] of info.bindings.entries()) {
+          if (bindings.has(name)) {
+            // Duplicate variable, mark the sub-pattern
+            const markType = unknownFromReason(`pattern.duplicate_variable:${name}`);
+            const mark: MMarkPattern = {
+              kind: "mark_pattern",
+              span: subPattern.span,
+              reason: "other",
+              data: { issue: "duplicate_variable", name },
+              type: markType,
+            } satisfies MMarkPattern;
+            info = {
+              type: markType,
+              bindings: new Map(),
+              coverage: { kind: "none" },
+              marked: mark,
+            };
+            break; // mark the whole sub-pattern
+          }
+        }
         mergeBindings(bindings, info.bindings);
         markedElements.push(info.marked);
       }
@@ -1066,24 +1137,75 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
     }
     case "constructor": {
       const scheme = lookupEnv(ctx, pattern.name);
+      if (!scheme) {
+        const markType = unknownFromReason("pattern.constructor.not_found");
+        const mark: MMarkPattern = {
+          kind: "mark_pattern",
+          span: pattern.span,
+          reason: "wrong_constructor",
+          data: {
+            constructor: pattern.name,
+            issue: "not_found",
+          },
+          type: markType,
+        } satisfies MMarkPattern;
+        return {
+          type: markType,
+          bindings: new Map(),
+          coverage: { kind: "none" },
+          marked: mark,
+        };
+      }
       const ctorType = instantiateAndApply(ctx, scheme);
       let current = ctorType;
       const bindings = new Map<string, Type>();
       const markedArgs: MPattern[] = [];
       for (const argPattern of pattern.args) {
         const fnType = expectFunctionType(ctx, current, `Constructor ${pattern.name}`);
-        if (pattern.name === "Data") {
-          console.log(
-            "[debug] Data pattern field type:",
-            typeToString(applyCurrentSubst(ctx, fnType.from)),
-          );
+        let info = inferPattern(ctx, argPattern, fnType.from);
+        for (const [name, type] of info.bindings.entries()) {
+          if (bindings.has(name)) {
+            // Duplicate variable, mark the arg pattern
+            const markType = unknownFromReason(`pattern.duplicate_variable:${name}`);
+            const mark: MMarkPattern = {
+              kind: "mark_pattern",
+              span: argPattern.span,
+              reason: "other",
+              data: { issue: "duplicate_variable", name },
+              type: markType,
+            } satisfies MMarkPattern;
+            info = {
+              type: markType,
+              bindings: new Map(),
+              coverage: { kind: "none" },
+              marked: mark,
+            };
+            break;
+          }
         }
-        const info = inferPattern(ctx, argPattern, fnType.from);
         mergeBindings(bindings, info.bindings);
         markedArgs.push(info.marked);
         current = fnType.to;
       }
-      unify(ctx, expected, current);
+      if (!unify(ctx, expected, current)) {
+        const markType = unknownFromReason("pattern.constructor.unify_failed");
+        const mark: MMarkPattern = {
+          kind: "mark_pattern",
+          span: pattern.span,
+          reason: "wrong_constructor",
+          data: {
+            constructor: pattern.name,
+            issue: "unify_failed",
+          },
+          type: markType,
+        } satisfies MMarkPattern;
+        return {
+          type: markType,
+          bindings,
+          coverage: { kind: "none" },
+          marked: mark,
+        };
+      }
       const final = applyCurrentSubst(ctx, current);
       if (final.kind !== "constructor") {
         const markType = unknownFromReason("pattern.constructor.invalid_result");
@@ -1137,11 +1259,12 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
 
 export function ensureExhaustive(
   ctx: Context,
+  expr: Expr,
   scrutineeType: Type,
   hasWildcard: boolean,
   coverageMap: Map<string, Set<string>>,
   booleanCoverage: Set<"true" | "false">,
-) {
+): void {
   if (hasWildcard) return;
   const resolved = applyCurrentSubst(ctx, scrutineeType);
   if (resolved.kind === "bool") {
@@ -1149,7 +1272,7 @@ export function ensureExhaustive(
     if (!booleanCoverage.has("true")) missing.push("true");
     if (!booleanCoverage.has("false")) missing.push("false");
     if (missing.length > 0) {
-      throw inferError(`Non-exhaustive patterns, missing: ${missing.join(", ")}`);
+      markNonExhaustive(ctx, expr, expr.span, missing);
     }
     return;
   }
@@ -1163,7 +1286,7 @@ export function ensureExhaustive(
     .map((ctor) => ctor.name)
     .filter((name) => !seenForType.has(name));
   if (missing.length > 0) {
-    throw inferError(`Non-exhaustive patterns, missing: ${missing.join(", ")}`);
+    markNonExhaustive(ctx, expr, expr.span, missing);
   }
 }
 
