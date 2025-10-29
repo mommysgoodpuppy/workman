@@ -192,7 +192,7 @@ export function convertTypeExpr(
     case "type_unit":
       return { kind: "unit" };
     default:
-      throw inferError("Unsupported type expression", typeExpr.span, ctx.source);
+      throw inferError("Unsupported type expression", (typeExpr as any).span, ctx.source);
   }
 }
 

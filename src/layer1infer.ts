@@ -165,9 +165,9 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     declarations: markedDeclarations,
   };
 
-  console.log("[debug] final substitution entries", Array.from(ctx.subst.entries()).map(([id, type]) => [id, formatScheme({ quantifiers: [], type })]));
-  console.log("[debug] final summaries", finalSummaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) })));
-
+  /* console.debug("[debug] final substitution entries", Array.from(ctx.subst.entries()).map(([id, type]) => [id, formatScheme({ quantifiers: [], type })]));
+  console.debug("[debug] final summaries", finalSummaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) })));
+ */
   return {
     env: finalEnv,
     adtEnv: ctx.adtEnv,
@@ -837,20 +837,20 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           calleeIdentifierName === "listMap" &&
           ctx.source?.includes("Runtime value printer for Workman using std library")
         ) {
-          console.log("[debug] listMap arg type:", typeToString(applyCurrentSubst(ctx, argType)));
+          /* console.debug("[debug] listMap arg type:", typeToString(applyCurrentSubst(ctx, argType)));
           console.log(
             "[debug] fnType before unify:",
             typeToString(applyCurrentSubst(ctx, fnType)),
-          );
+          ); */
         }
         if (ctx.source?.includes("Runtime value printer for Workman using std library")) {
-          console.log("[debug] call callee:", calleeName);
+          /* console.debug("[debug] call callee:", calleeName); */
         }
         if (shouldLogFormatter) {
-          console.log("[debug] formatter call before unify", {
+          /* console.debug("[debug] formatter call before unify", {
             fnType: typeToString(applyCurrentSubst(ctx, fnType)),
             argType: typeToString(applyCurrentSubst(ctx, argType)),
-          });
+          }); */
         }
         try {
           unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
@@ -870,10 +870,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           return recordExprType(ctx, expr, mark.type);
         }
         if (shouldLogFormatter) {
-          console.log("[debug] formatter call after unify", {
+          /* console.debug("[debug] formatter call after unify", {
             resultType: typeToString(applyCurrentSubst(ctx, resultType)),
             fnType: typeToString(applyCurrentSubst(ctx, fnType)),
-          });
+          }); */
         }
         fnType = applyCurrentSubst(ctx, resultType);
       }
@@ -882,14 +882,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         ctx.source?.includes("Runtime value printer for Workman using std library") &&
         ctx.source.slice(expr.span.start, expr.span.end).includes("listMap")
       ) {
-        console.log("[debug] listMap call type:", typeToString(callType));
+        /* console.debug("[debug] listMap call type:", typeToString(callType));
         const fmtScheme = ctx.env.get("formatRuntimeValue");
         if (fmtScheme) {
           console.log(
             "[debug] formatRuntimeValue scheme after listMap:",
             formatScheme(applySubstitutionScheme(fmtScheme, ctx.subst)),
           );
-        }
+        } */
       }
       return recordExprType(ctx, expr, callType);
     }

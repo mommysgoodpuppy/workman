@@ -23,7 +23,7 @@ export function lowerMatchExpression(
       const marked: MMatchBundleReferenceArm = {
         kind: "match_bundle_reference",
         span: arm.span,
-        type: branches.type,
+        id: arm.id,
         name: arm.name,
         hasTrailingComma: arm.hasTrailingComma,
       };
@@ -33,6 +33,7 @@ export function lowerMatchExpression(
       const marked: MMatchPatternArm = {
         kind: "match_pattern",
         span: arm.span,
+        id: arm.id,
         pattern: info.marked,
         body: scrutinee, // placeholder; real lowering will replace this later
         hasTrailingComma: arm.hasTrailingComma,
@@ -44,6 +45,7 @@ export function lowerMatchExpression(
   const markedBundle: MMatchBundle = {
     kind: "match_bundle",
     span: bundle.span,
+    id: bundle.id,
     type: branches.type,
     arms: markedArms.map((entry) => entry.marked),
   };

@@ -16,6 +16,7 @@ import {
   unknownType
 } from "./types.ts";
 import { inferError, PatternInfo } from "./layer1infer.ts";
+import { LogChannel } from "@mommysgoodpuppy/logchannel"
 
 
 export interface MatchBranchesResult {
@@ -188,12 +189,12 @@ export function inferMatchBranches(
   const resolvedScrutinee = applyCurrentSubst(ctx, scrutineeType);
   const resultVars = freeTypeVars(resolvedResult);
   const scrutineeVars = freeTypeVars(resolvedScrutinee);
-  console.log("[debug] match result", {
+  /* console.debug("[debug] match result", {
     scrutinee: typeToString(resolvedScrutinee),
     result: typeToString(resolvedResult),
     resultVars: Array.from(resultVars),
     scrutineeVars: Array.from(scrutineeVars),
-  });
+  }); */
   for (const id of resultVars) {
     if (!scrutineeVars.has(id)) {
       ctx.nonGeneralizable.add(id);
