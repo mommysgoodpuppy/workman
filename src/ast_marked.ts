@@ -83,6 +83,14 @@ export interface MBlockExpr extends MTypedNode {
 
 export type MBlockStatement = MLetStatement | MExprStatement;
 
+export function blockStatementFrom(expr: MExpr): MExprStatement {
+  return {
+    kind: "expr_statement",
+    span: expr.span,
+    expression: expr,
+  };
+}
+
 export interface MLetStatement extends MNodeBase {
   kind: "let_statement";
   declaration: MLetDeclaration;
@@ -105,6 +113,7 @@ export interface MMatchPatternArm extends MNodeBase {
   pattern: MPattern;
   body: MExpr;
   hasTrailingComma: boolean;
+  type: Type;
 }
 
 export interface MMatchBundleReferenceArm extends MNodeBase {

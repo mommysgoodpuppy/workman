@@ -4,7 +4,8 @@ export type Provenance =
   | { kind: "error_free_var"; name: string }
   | { kind: "error_inconsistent"; expected: Type; actual: Type }
   | { kind: "error_not_function"; calleeType: Type }
-  | { kind: "error_unify_conflict"; typeA: Type; typeB: Type };
+  | { kind: "error_unify_conflict"; typeA: Type; typeB: Type }
+  | { kind: "incomplete"; reason: string };
 
 export type Type =
   | { kind: "var"; id: number }
@@ -33,6 +34,10 @@ export function resetTypeVarCounter(): void {
 
 export function freshTypeVar(): Type {
   return { kind: "var", id: nextTypeVarId++ };
+}
+
+export function unknownType(provenance: Provenance): Type {
+  return { kind: "unknown", provenance };
 }
 
 export function applySubstitution(type: Type, subst: Substitution): Type {
@@ -328,6 +333,8 @@ function cloneProvenance(provenance: Provenance): Provenance {
         typeA: cloneType(provenance.typeA),
         typeB: cloneType(provenance.typeB),
       };
+    case "incomplete":
+      return { ...provenance };
     default: {
       const _exhaustive: never = provenance;
       return _exhaustive;
@@ -349,6 +356,8 @@ export function provenanceToString(provenance: Provenance): string {
       return "?(inconsistent)";
     case "error_unify_conflict":
       return "?(conflict)";
+    case "incomplete":
+      return `?(incomplete:${provenance.reason})`;
     default: {
       const _exhaustive: never = provenance;
       return _exhaustive;

@@ -1,4 +1,12 @@
-import type { Literal, SourceSpan } from "../ast.ts";
+import type { Expr, Literal, MatchBundle, SourceSpan } from "../ast.ts";
+import type {
+  MExpr,
+  MMarkFreeVar,
+  MMarkInconsistent,
+  MMarkNotFunction,
+  MProgram,
+} from "../ast_marked.ts";
+import type { MatchBranchesResult } from "../infermatch.ts";
 import {
   applySubstitution,
   applySubstitutionScheme,
@@ -10,7 +18,12 @@ import {
   occursInType,
   resetTypeVarCounter,
   typeToString,
-  type { Substitution, Type, TypeEnv, TypeEnvADT, TypeScheme },
+  unknownType,
+  Substitution,
+  Type,
+  TypeEnv,
+  TypeEnvADT,
+  TypeScheme,
 } from "../types.ts";
 import { InferError } from "../error.ts";
 
@@ -21,6 +34,9 @@ export interface Context {
   source?: string;
   allBindings: Map<string, TypeScheme>;
   nonGeneralizable: Set<number>;
+  marks: Map<Expr, MExpr>;
+  nodeTypes: Map<Expr, Type>;
+  matchResults: Map<MatchBundle, MatchBranchesResult>;
 }
 
 export interface InferOptions {
@@ -36,6 +52,7 @@ export interface InferResult {
   adtEnv: TypeEnvADT;
   summaries: { name: string; scheme: TypeScheme }[];
   allBindings: Map<string, TypeScheme>;
+  markedProgram: MProgram;
 }
 
 export function createContext(options: InferOptions = {}): Context {
@@ -49,6 +66,9 @@ export function createContext(options: InferOptions = {}): Context {
     source: options.source,
     allBindings: new Map(),
     nonGeneralizable: new Set(),
+    marks: new Map(),
+    nodeTypes: new Map(),
+    matchResults: new Map(),
   };
 }
 
@@ -148,6 +168,59 @@ export function literalType(literal: Literal): Type {
 
 export function inferError(message: string, span?: SourceSpan, source?: string): InferError {
   return new InferError(message, span, source);
+}
+
+export function markFreeVariable(
+  ctx: Context,
+  expr: Expr,
+  name: string,
+): MMarkFreeVar {
+  const mark: MMarkFreeVar = {
+    kind: "mark_free_var",
+    span: expr.span,
+    type: unknownType({ kind: "error_free_var", name }),
+    name,
+  };
+  ctx.marks.set(expr, mark);
+  return mark;
+}
+
+export function markNotFunction(
+  ctx: Context,
+  expr: Expr,
+  callee: MExpr,
+  args: MExpr[],
+  calleeType: Type,
+): MMarkNotFunction {
+  const mark: MMarkNotFunction = {
+    kind: "mark_not_function",
+    span: expr.span,
+    type: unknownType({ kind: "error_not_function", calleeType }),
+    callee,
+    args,
+    calleeType,
+  };
+  ctx.marks.set(expr, mark);
+  return mark;
+}
+
+export function markInconsistent(
+  ctx: Context,
+  expr: Expr,
+  subject: MExpr,
+  expected: Type,
+  actual: Type,
+): MMarkInconsistent {
+  const mark: MMarkInconsistent = {
+    kind: "mark_inconsistent",
+    span: expr.span,
+    type: unknownType({ kind: "error_inconsistent", expected, actual }),
+    subject,
+    expected,
+    actual,
+  };
+  ctx.marks.set(expr, mark);
+  return mark;
 }
 
 function unifyTypes(a: Type, b: Type, subst: Substitution): Substitution {

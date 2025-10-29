@@ -5,6 +5,9 @@ import {
   Expr,
   InfixDeclaration,
   LetDeclaration,
+  MatchArm,
+  MatchBundle,
+  MatchBundleLiteralExpr,
   Parameter,
   Pattern,
   PrefixDeclaration,
@@ -22,8 +25,26 @@ import {
   applySubstitutionScheme,
   freshTypeVar,
   typeToString,
+  unknownType,
 } from "./types.ts";
 import { formatScheme } from "./type_printer.ts";
+import type {
+  MBlockExpr,
+  MBlockStatement,
+  MExpr,
+  MExprStatement,
+  MMatchArm,
+  MMatchBundle,
+  MMatchBundleReferenceArm,
+  MMatchPatternArm,
+  MMarkPattern,
+  MParameter,
+  MPattern,
+  MProgram,
+  MTopLevel,
+  MLetDeclaration,
+  MLetStatement,
+} from "./ast_marked.ts";
 import {
   Context,
   InferOptions,
@@ -36,6 +57,7 @@ import {
   instantiateAndApply,
   literalType,
   lookupEnv,
+  markFreeVariable,
   unify,
   withScopedEnv,
 } from "./layer1/context.ts";
@@ -46,7 +68,12 @@ import {
   registerTypeName,
   resetTypeParamsCache,
 } from "./layer1/declarations.ts";
-import { inferMatchExpression, inferMatchFunction, inferMatchBundleLiteral } from "./infermatch.ts";
+import {
+  inferMatchExpression,
+  inferMatchFunction,
+  inferMatchBundleLiteral,
+  type MatchInferenceResult,
+} from "./infermatch.ts";
 
 export type { Context, InferOptions, InferResult } from "./layer1/context.ts";
 export { InferError } from "./error.ts";
@@ -59,6 +86,12 @@ function expectParameterName(param: Parameter): string {
   return param.name;
 }
 
+function recordExprType(ctx: Context, expr: Expr, type: Type): Type {
+  const resolved = applyCurrentSubst(ctx, type);
+  ctx.nodeTypes.set(expr, resolved);
+  return resolved;
+}
+
 export function inferProgram(program: Program, options: InferOptions = {}): InferResult {
   lowerTupleParameters(program);
   const ctx = createContext({
@@ -69,6 +102,7 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     source: options.source ?? program.sourceText ?? undefined,
   });
   const summaries: { name: string; scheme: TypeScheme }[] = [];
+  const markedDeclarations: MTopLevel[] = [];
 
   // Clear the type params cache for this program
   resetTypeParamsCache();
@@ -97,10 +131,17 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
       for (const { name, scheme } of results) {
         summaries.push({ name, scheme: applySubstitutionScheme(scheme, ctx.subst) });
       }
+      const resolvedType = resolveTypeForName(ctx, decl.name);
+      const marked = materializeMarkedLet(ctx, decl, resolvedType);
+      markedDeclarations.push(marked);
     } else if (decl.kind === "infix") {
       registerInfixDeclaration(ctx, decl);
+      markedDeclarations.push({ kind: "infix", node: decl });
     } else if (decl.kind === "prefix") {
       registerPrefixDeclaration(ctx, decl);
+      markedDeclarations.push({ kind: "prefix", node: decl });
+    } else if (decl.kind === "type") {
+      markedDeclarations.push({ kind: "type", node: decl });
     }
   }
 
@@ -114,6 +155,12 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     scheme: applySubstitutionScheme(scheme, ctx.subst),
   }));
 
+  const markedProgram: MProgram = {
+    imports: program.imports,
+    reexports: program.reexports,
+    declarations: markedDeclarations,
+  };
+
   console.log("[debug] final substitution entries", Array.from(ctx.subst.entries()).map(([id, type]) => [id, formatScheme({ quantifiers: [], type })]));
   console.log("[debug] final summaries", finalSummaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) })));
 
@@ -122,7 +169,368 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     adtEnv: ctx.adtEnv,
     summaries: finalSummaries,
     allBindings: ctx.allBindings,
+    markedProgram,
   };
+}
+
+function resolveTypeForName(ctx: Context, name: string): Type | undefined {
+  const scheme = ctx.env.get(name) ?? ctx.allBindings.get(name);
+  if (!scheme) {
+    return undefined;
+  }
+  const applied = applySubstitutionScheme(scheme, ctx.subst);
+  return applied.type;
+}
+
+function materializeMarkedLet(
+  ctx: Context,
+  decl: LetDeclaration,
+  resolvedType: Type | undefined,
+): MLetDeclaration {
+  const parameters = decl.parameters.map((param) => materializeParameter(ctx, param));
+  const body = materializeBlockExpr(ctx, decl.body);
+  const type = resolvedType ?? unknownFromReason(`let:${decl.name}`);
+
+  const marked: MLetDeclaration = {
+    kind: "let",
+    span: decl.span,
+    name: decl.name,
+    parameters,
+    annotation: decl.annotation,
+    body,
+    isRecursive: decl.isRecursive,
+    type,
+  };
+
+  if (decl.isFirstClassMatch) {
+    marked.isFirstClassMatch = true;
+  }
+  if (decl.isArrowSyntax) {
+    marked.isArrowSyntax = true;
+  }
+  if (decl.export) {
+    marked.export = decl.export;
+  }
+  if (decl.leadingComments) {
+    marked.leadingComments = decl.leadingComments;
+  }
+  if (decl.trailingComment) {
+    marked.trailingComment = decl.trailingComment;
+  }
+  if (decl.hasBlankLineBefore) {
+    marked.hasBlankLineBefore = true;
+  }
+
+  if (decl.mutualBindings && decl.mutualBindings.length > 0) {
+    marked.mutualBindings = decl.mutualBindings.map((binding) =>
+      materializeMarkedLet(ctx, binding, undefined)
+    );
+  }
+
+  return marked;
+}
+
+function getExprTypeOrUnknown(ctx: Context, expr: Expr, reason: string): Type {
+  return ctx.nodeTypes.get(expr) ?? unknownFromReason(reason);
+}
+
+function unknownFromReason(reason: string): Type {
+  return unknownType({ kind: "incomplete", reason });
+}
+
+function materializeParameter(ctx: Context, param: Parameter): MParameter {
+  const pattern = materializePattern(ctx, param.pattern);
+  const annotationScope = new Map<string, Type>();
+  const explicitType = param.annotation ? convertTypeExpr(ctx, param.annotation, annotationScope) : undefined;
+  const type = explicitType ?? pattern.type ?? unknownFromReason(`parameter:${param.name ?? "_"}`);
+  return {
+    kind: "parameter",
+    span: param.span,
+    pattern,
+    name: param.name,
+    annotation: param.annotation,
+    type,
+  };
+}
+
+function materializePattern(ctx: Context, pattern: Pattern): MPattern {
+  switch (pattern.kind) {
+    case "wildcard":
+      return {
+        kind: "wildcard",
+        span: pattern.span,
+        type: unknownFromReason("pattern.wildcard"),
+      };
+    case "variable":
+      return {
+        kind: "variable",
+        span: pattern.span,
+        name: pattern.name,
+        type: unknownFromReason(`pattern.var:${pattern.name}`),
+      };
+    case "literal": {
+      const literal = pattern.literal;
+      const type = literalType(literal);
+      return {
+        kind: "literal",
+        span: pattern.span,
+        literal,
+        type,
+      };
+    }
+    case "tuple": {
+      const elements = pattern.elements.map((element) => materializePattern(ctx, element));
+      const type: Type = {
+        kind: "tuple",
+        elements: elements.map((el) => el.type ?? unknownFromReason("pattern.tuple.elem")),
+      };
+      return {
+        kind: "tuple",
+        span: pattern.span,
+        elements,
+        type,
+      };
+    }
+    case "constructor": {
+      const args = pattern.args.map((arg) => materializePattern(ctx, arg));
+      const type: Type = {
+        kind: "constructor",
+        name: pattern.name,
+        args: args.map((arg) => arg.type ?? unknownFromReason("pattern.constructor.arg")),
+      };
+      return {
+        kind: "constructor",
+        span: pattern.span,
+        name: pattern.name,
+        args,
+        type,
+      };
+    }
+    default:
+      return {
+        kind: "mark_pattern",
+        span: pattern.span,
+        reason: "other",
+        type: unknownFromReason("pattern.unknown"),
+      } satisfies MMarkPattern;
+  }
+}
+
+function materializeExpr(ctx: Context, expr: Expr): MExpr {
+  const existingMark = ctx.marks.get(expr);
+  if (existingMark) {
+    return existingMark;
+  }
+
+  switch (expr.kind) {
+    case "identifier":
+      return {
+        kind: "identifier",
+        span: expr.span,
+        name: expr.name,
+        type: getExprTypeOrUnknown(ctx, expr, `expr.id:${expr.name}`),
+      };
+    case "literal":
+      return {
+        kind: "literal",
+        span: expr.span,
+        literal: expr.literal,
+        type: getExprTypeOrUnknown(ctx, expr, "expr.literal"),
+      };
+    case "constructor": {
+      const args = expr.args.map((arg) => materializeExpr(ctx, arg));
+      return {
+        kind: "constructor",
+        span: expr.span,
+        name: expr.name,
+        args,
+        type: getExprTypeOrUnknown(ctx, expr, `expr.constructor:${expr.name}`),
+      };
+    }
+    case "tuple": {
+      const elements = expr.elements.map((element) => materializeExpr(ctx, element));
+      const type = getExprTypeOrUnknown(ctx, expr, "expr.tuple");
+      return {
+        kind: "tuple",
+        span: expr.span,
+        elements,
+        isMultiLine: expr.isMultiLine,
+        type,
+      };
+    }
+    case "call": {
+      const callee = materializeExpr(ctx, expr.callee);
+      const args = expr.arguments.map((arg) => materializeExpr(ctx, arg));
+      return {
+        kind: "call",
+        span: expr.span,
+        callee,
+        arguments: args,
+        type: getExprTypeOrUnknown(ctx, expr, "expr.call"),
+      };
+    }
+    case "binary": {
+      const left = materializeExpr(ctx, expr.left);
+      const right = materializeExpr(ctx, expr.right);
+      return {
+        kind: "binary",
+        span: expr.span,
+        operator: expr.operator,
+        left,
+        right,
+        type: getExprTypeOrUnknown(ctx, expr, `expr.binary:${expr.operator}`),
+      };
+    }
+    case "unary": {
+      const operand = materializeExpr(ctx, expr.operand);
+      return {
+        kind: "unary",
+        span: expr.span,
+        operator: expr.operator,
+        operand,
+        type: getExprTypeOrUnknown(ctx, expr, `expr.unary:${expr.operator}`),
+      };
+    }
+    case "arrow": {
+      const parameters = expr.parameters.map((param) => materializeParameter(ctx, param));
+      const body = materializeBlockExpr(ctx, expr.body);
+      return {
+        kind: "arrow",
+        span: expr.span,
+        parameters,
+        body,
+        type: getExprTypeOrUnknown(ctx, expr, "expr.arrow"),
+      };
+    }
+    case "block":
+      return materializeBlockExpr(ctx, expr);
+    case "match": {
+      const scrutinee = materializeExpr(ctx, expr.scrutinee);
+      const type = getExprTypeOrUnknown(ctx, expr, "expr.match");
+      const bundle = materializeMatchBundle(ctx, expr.bundle, type);
+      return {
+        kind: "match",
+        span: expr.span,
+        scrutinee,
+        bundle,
+        type,
+      };
+    }
+    case "match_fn": {
+      const parameters = expr.parameters.map((param) => materializeExpr(ctx, param));
+      const type = getExprTypeOrUnknown(ctx, expr, "expr.match_fn");
+      const bundle = materializeMatchBundle(ctx, expr.bundle, type);
+      return {
+        kind: "match_fn",
+        span: expr.span,
+        parameters,
+        bundle,
+        type,
+      };
+    }
+    case "match_bundle_literal": {
+      const type = getExprTypeOrUnknown(ctx, expr, "expr.match_bundle_literal");
+      const bundle = materializeMatchBundle(ctx, expr.bundle, type);
+      return {
+        kind: "match_bundle_literal",
+        span: expr.span,
+        bundle,
+        type,
+      };
+    }
+    default:
+      return {
+        kind: "block",
+        span: expr.span,
+        statements: [],
+        type: getExprTypeOrUnknown(ctx, expr, "expr.unknown"),
+      } as MBlockExpr;
+  }
+}
+
+function materializeBlockExpr(ctx: Context, block: BlockExpr): MBlockExpr {
+  const statements = block.statements.map((statement) => materializeBlockStatement(ctx, statement));
+  const result = block.result ? materializeExpr(ctx, block.result) : undefined;
+  const type = ctx.nodeTypes.get(block) ?? (result ? result.type : { kind: "unit" as const });
+  return {
+    kind: "block",
+    span: block.span,
+    statements,
+    result,
+    isMultiLine: block.isMultiLine,
+    type,
+  };
+}
+
+function materializeBlockStatement(ctx: Context, statement: BlockStatement): MBlockStatement {
+  switch (statement.kind) {
+    case "let_statement":
+      return {
+        kind: "let_statement",
+        span: statement.span,
+        declaration: materializeMarkedLet(ctx, statement.declaration, undefined),
+      } satisfies MLetStatement;
+    case "expr_statement":
+      return {
+        kind: "expr_statement",
+        span: statement.span,
+        expression: materializeExpr(ctx, statement.expression),
+      } satisfies MExprStatement;
+    default:
+      return {
+        kind: "expr_statement",
+        span: statement.span,
+        expression: materializeExpr(ctx, (statement as BlockStatement & { expression: Expr }).expression),
+      } satisfies MExprStatement;
+  }
+}
+
+function materializeMatchBundle(ctx: Context, bundle: MatchBundle, inferredType?: Type): MMatchBundle {
+  const matchResult = ctx.matchResults.get(bundle);
+  const patternInfos = matchResult?.patternInfos ?? [];
+  const resolvedBundleType = matchResult?.type ?? inferredType ?? unknownFromReason("match.bundle");
+  const arms: MMatchArm[] = [];
+  let patternIndex = 0;
+
+  for (const arm of bundle.arms) {
+    if (arm.kind === "match_bundle_reference") {
+      const marked: MMatchBundleReferenceArm = {
+        kind: "match_bundle_reference",
+        span: arm.span,
+        name: arm.name,
+        hasTrailingComma: arm.hasTrailingComma,
+        type: resolvedBundleType,
+      } satisfies MMatchBundleReferenceArm;
+      arms.push(marked);
+      continue;
+    }
+
+    const info = patternInfos[patternIndex++];
+    const pattern = info?.marked ?? materializePattern(ctx, arm.pattern);
+    const body = materializeExpr(ctx, arm.body);
+    const armType = matchResult?.type ?? body.type;
+
+    const marked: MMatchPatternArm = {
+      kind: "match_pattern",
+      span: arm.span,
+      pattern,
+      body,
+      hasTrailingComma: arm.hasTrailingComma,
+      type: armType,
+    } satisfies MMatchPatternArm;
+    arms.push(marked);
+  }
+
+  if (matchResult) {
+    ctx.matchResults.delete(bundle);
+  }
+
+  return {
+    kind: "match_bundle",
+    span: bundle.span,
+    arms,
+    type: resolvedBundleType,
+  } satisfies MMatchBundle;
 }
 
 function registerInfixDeclaration(ctx: Context, decl: InfixDeclaration) {
@@ -269,7 +677,10 @@ function inferBlockExpr(ctx: Context, block: BlockExpr): Type {
 
     if (block.result) {
       const resultType = inferExpr(ctx, block.result);
-      return applyCurrentSubst(ctx, resultType);
+      const resolved = applyCurrentSubst(ctx, resultType);
+      ctx.nodeTypes.set(block.result, resolved);
+      ctx.nodeTypes.set(block, resolved);
+      return resolved;
     }
 
     return { kind: "unit" };
@@ -295,7 +706,12 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
 export function inferExpr(ctx: Context, expr: Expr): Type {
   switch (expr.kind) {
     case "identifier": {
-      const scheme = lookupEnv(ctx, expr.name);
+      const scheme = ctx.env.get(expr.name);
+      if (!scheme) {
+        const mark = markFreeVariable(ctx, expr, expr.name);
+        ctx.nodeTypes.set(expr, mark.type);
+        return mark.type;
+      }
       if (
         expr.name === "formatRuntimeValue" &&
         ctx.source?.includes("Runtime value printer for Workman using std library")
@@ -323,10 +739,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
         );
       }
-      return instantiateAndApply(ctx, scheme);
+      return recordExprType(ctx, expr, instantiateAndApply(ctx, scheme));
     }
     case "literal":
-      return literalType(expr.literal);
+      return recordExprType(ctx, expr, literalType(expr.literal));
     case "constructor": {
       const scheme = lookupEnv(ctx, expr.name);
       const ctorType = instantiateAndApply(ctx, scheme);
@@ -341,14 +757,15 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (applied.kind === "func") {
         throw inferError(`Constructor ${expr.name} is not fully applied`);
       }
-      return applied;
+      return recordExprType(ctx, expr, applied);
     }
     case "tuple": {
       const elements = expr.elements.map((el) => inferExpr(ctx, el));
-      return applyCurrentSubst(ctx, {
+      const tupleType = applyCurrentSubst(ctx, {
         kind: "tuple",
         elements: elements.map((t) => applyCurrentSubst(ctx, t)),
       });
+      return recordExprType(ctx, expr, tupleType);
     }
     case "call": {
       let fnType = inferExpr(ctx, expr.callee);
@@ -424,18 +841,20 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           );
         }
       }
-      return callType;
+      return recordExprType(ctx, expr, callType);
     }
     case "arrow":
-      return inferArrowFunction(ctx, expr.parameters, expr.body);
-    case "block":
-      return inferBlockExpr(ctx, expr);
+      return recordExprType(ctx, expr, inferArrowFunction(ctx, expr.parameters, expr.body));
+    case "block": {
+      const type = inferBlockExpr(ctx, expr);
+      return recordExprType(ctx, expr, type);
+    }
     case "match":
-      return inferMatchExpression(ctx, expr.scrutinee, expr.bundle);
+      return recordExprType(ctx, expr, inferMatchExpression(ctx, expr.scrutinee, expr.bundle));
     case "match_fn":
-      return inferMatchFunction(ctx, expr.parameters, expr.bundle);
+      return recordExprType(ctx, expr, inferMatchFunction(ctx, expr.parameters, expr.bundle));
     case "match_bundle_literal":
-      return inferMatchBundleLiteral(ctx, expr);
+      return recordExprType(ctx, expr, inferMatchBundleLiteral(ctx, expr));
     case "binary": {
       // Binary operators are desugared to function calls
       // e.g., `a + b` becomes `add(a, b)` where `add` is the implementation function
@@ -454,7 +873,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const resultType1 = freshTypeVar();
       unify(ctx, opType, { kind: "func", from: leftType, to: { kind: "func", from: rightType, to: resultType1 } });
       
-      return applyCurrentSubst(ctx, resultType1);
+      return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType1));
     }
     case "unary": {
       // Unary operators are desugared to function calls
@@ -470,7 +889,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const resultType = freshTypeVar();
       unify(ctx, opType, { kind: "func", from: operandType, to: resultType });
       
-      return applyCurrentSubst(ctx, resultType);
+      return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType));
     }
     default:
       throw inferError(`Unsupported expression kind ${(expr as Expr).kind}`);
@@ -524,30 +943,57 @@ interface PatternInfo {
   type: Type;
   bindings: Map<string, Type>;
   coverage: PatternCoverage;
+  marked: MPattern;
 }
 
 export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): PatternInfo {
   switch (pattern.kind) {
     case "wildcard": {
       const target = applyCurrentSubst(ctx, expected);
-      return { type: target, bindings: new Map(), coverage: { kind: "wildcard" } };
+      return {
+        type: target,
+        bindings: new Map(),
+        coverage: { kind: "wildcard" },
+        marked: {
+          kind: "wildcard",
+          span: pattern.span,
+          type: target,
+        },
+      };
     }
     case "variable": {
       const target = applyCurrentSubst(ctx, expected);
       const bindings = new Map<string, Type>();
       bindings.set(pattern.name, target);
-      return { type: target, bindings, coverage: { kind: "wildcard" } };
+      return {
+        type: target,
+        bindings,
+        coverage: { kind: "wildcard" },
+        marked: {
+          kind: "variable",
+          span: pattern.span,
+          type: target,
+          name: pattern.name,
+        },
+      };
     }
     case "literal": {
       const litType = literalType(pattern.literal);
       unify(ctx, expected, litType);
+      const resolved = applyCurrentSubst(ctx, litType);
       return {
-        type: applyCurrentSubst(ctx, litType),
+        type: resolved,
         bindings: new Map(),
         coverage:
           pattern.literal.kind === "bool"
             ? { kind: "bool", value: pattern.literal.value }
             : { kind: "none" },
+        marked: {
+          kind: "literal",
+          span: pattern.span,
+          type: resolved,
+          literal: pattern.literal,
+        },
       };
     }
     case "tuple": {
@@ -559,22 +1005,63 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
       }
       const resolved = applyCurrentSubst(ctx, expected);
       if (resolved.kind !== "tuple") {
-        throw inferError("Expected tuple type for tuple pattern");
+        const markType = unknownFromReason("pattern.tuple.expected_tuple");
+        const mark: MMarkPattern = {
+          kind: "mark_pattern",
+          span: pattern.span,
+          reason: "other",
+          data: {
+            issue: "expected_tuple",
+            actual: typeToString(resolved),
+          },
+          type: markType,
+        } satisfies MMarkPattern;
+        return {
+          type: markType,
+          bindings: new Map(),
+          coverage: { kind: "none" },
+          marked: mark,
+        };
       }
       if (resolved.elements.length !== pattern.elements.length) {
-        throw inferError("Tuple pattern arity mismatch");
+        const markType = unknownFromReason("pattern.tuple.arity_mismatch");
+        const mark: MMarkPattern = {
+          kind: "mark_pattern",
+          span: pattern.span,
+          reason: "other",
+          data: {
+            issue: "tuple_arity",
+            expected: resolved.elements.length,
+            actual: pattern.elements.length,
+          },
+          type: markType,
+        } satisfies MMarkPattern;
+        return {
+          type: markType,
+          bindings: new Map(),
+          coverage: { kind: "none" },
+          marked: mark,
+        };
       }
       const bindings = new Map<string, Type>();
+      const markedElements: MPattern[] = [];
       for (let i = 0; i < pattern.elements.length; i++) {
         const subPattern = pattern.elements[i];
         const elementType = resolved.elements[i];
         const info = inferPattern(ctx, subPattern, elementType);
         mergeBindings(bindings, info.bindings);
+        markedElements.push(info.marked);
       }
       return {
         type: resolved,
         bindings,
         coverage: { kind: "none" },
+        marked: {
+          kind: "tuple",
+          span: pattern.span,
+          type: resolved,
+          elements: markedElements,
+        },
       };
     }
     case "constructor": {
@@ -582,6 +1069,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
       const ctorType = instantiateAndApply(ctx, scheme);
       let current = ctorType;
       const bindings = new Map<string, Type>();
+      const markedArgs: MPattern[] = [];
       for (const argPattern of pattern.args) {
         const fnType = expectFunctionType(ctx, current, `Constructor ${pattern.name}`);
         if (pattern.name === "Data") {
@@ -592,21 +1080,58 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         }
         const info = inferPattern(ctx, argPattern, fnType.from);
         mergeBindings(bindings, info.bindings);
+        markedArgs.push(info.marked);
         current = fnType.to;
       }
       unify(ctx, expected, current);
       const final = applyCurrentSubst(ctx, current);
       if (final.kind !== "constructor") {
-        throw inferError(`Constructor pattern '${pattern.name}' does not result in a data type`);
+        const markType = unknownFromReason("pattern.constructor.invalid_result");
+        const mark: MMarkPattern = {
+          kind: "mark_pattern",
+          span: pattern.span,
+          reason: "wrong_constructor",
+          data: {
+            constructor: pattern.name,
+            actual: typeToString(final),
+          },
+          type: markType,
+        } satisfies MMarkPattern;
+        return {
+          type: markType,
+          bindings,
+          coverage: { kind: "none" },
+          marked: mark,
+        };
       }
       return {
         type: final,
         bindings,
         coverage: { kind: "constructor", typeName: final.name, ctor: pattern.name },
+        marked: {
+          kind: "constructor",
+          span: pattern.span,
+          type: final,
+          name: pattern.name,
+          args: markedArgs,
+        },
       };
     }
     default:
-      throw inferError("Unsupported pattern kind");
+      const markType = unknownFromReason("pattern.unsupported_kind");
+      const mark: MMarkPattern = {
+        kind: "mark_pattern",
+        span: pattern.span,
+        reason: "other",
+        data: { issue: "unsupported_kind", kind: (pattern as Pattern).kind },
+        type: markType,
+      } satisfies MMarkPattern;
+      return {
+        type: markType,
+        bindings: new Map(),
+        coverage: { kind: "none" },
+        marked: mark,
+      };
   }
 }
 
