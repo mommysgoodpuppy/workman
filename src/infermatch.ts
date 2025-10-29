@@ -1,16 +1,22 @@
 import { Expr, MatchBundle, MatchBundleLiteralExpr } from "./ast.ts";
 import {
-  applyCurrentSubst,
   Context,
   ensureExhaustive,
   inferExpr,
-  inferPattern,
-  markUnsupportedExpr,
-  unify,
-  withScopedEnv,
+  inferPattern
 } from "./layer1infer.ts";
-import { cloneTypeScheme, freeTypeVars, freshTypeVar, instantiate, Type, typeToString } from "./types.ts";
-import { inferError } from "./layer1infer.ts";
+import { applyCurrentSubst, markUnsupportedExpr, unify, withScopedEnv } from "./layer1/context.ts"
+import {
+  cloneTypeScheme,
+  freeTypeVars,
+  freshTypeVar,
+  instantiate,
+  Type,
+  typeToString,
+  unknownType
+} from "./types.ts";
+import { inferError, PatternInfo } from "./layer1infer.ts";
+
 
 export interface MatchBranchesResult {
   type: Type;

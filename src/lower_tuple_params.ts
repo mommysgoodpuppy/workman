@@ -10,6 +10,7 @@ import type {
   Program,
   SourceSpan,
 } from "./ast.ts";
+import { nextNodeId, resetNodeIds } from "./node_ids.ts";
 
 interface LoweringContext {
   counter: number;
@@ -164,19 +165,21 @@ function lowerFunctionParameters(
       const name = param.pattern.name;
       normalizedParams[index] = {
         kind: "parameter",
-        pattern: { kind: "variable", name, span: param.pattern.span },
+        pattern: { kind: "variable", name, span: param.pattern.span, id: nextNodeId() },
         name,
         annotation: param.annotation,
         span: param.span,
+        id: nextNodeId(),
       };
     } else {
       const name = freshParamName(ctx);
       normalizedParams[index] = {
         kind: "parameter",
-        pattern: { kind: "variable", name, span: param.pattern.span },
+        pattern: { kind: "variable", name, span: param.pattern.span, id: nextNodeId() },
         name,
         annotation: param.annotation,
         span: param.span,
+        id: nextNodeId(),
       };
     }
   }
@@ -204,6 +207,7 @@ function wrapWithMatch(pattern: Pattern, tempName: string, body: BlockExpr): Blo
     kind: "identifier" as const,
     name: tempName,
     span: scrutineeSpan,
+    id: nextNodeId(),
   };
 
   const armSpan: SourceSpan = {
@@ -217,6 +221,7 @@ function wrapWithMatch(pattern: Pattern, tempName: string, body: BlockExpr): Blo
     body,
     hasTrailingComma: false,
     span: armSpan,
+    id: nextNodeId(),
   };
 
   const matchSpan: SourceSpan = {
@@ -228,6 +233,7 @@ function wrapWithMatch(pattern: Pattern, tempName: string, body: BlockExpr): Blo
     kind: "match_bundle",
     arms: [arm],
     span: matchSpan,
+    id: nextNodeId(),
   };
 
   const matchExpr = {
@@ -235,6 +241,7 @@ function wrapWithMatch(pattern: Pattern, tempName: string, body: BlockExpr): Blo
     scrutinee,
     bundle,
     span: matchSpan,
+    id: nextNodeId(),
   };
 
   return {
@@ -242,6 +249,7 @@ function wrapWithMatch(pattern: Pattern, tempName: string, body: BlockExpr): Blo
     statements: [],
     result: matchExpr,
     span: matchSpan,
+    id: nextNodeId(),
   };
 }
 

@@ -161,6 +161,9 @@ export interface MMarkUnsupportedExpr extends MTypedNode {
 
 export interface MMarkInconsistent extends MTypedNode {
   kind: "mark_inconsistent";
+  subject: MExpr;
+  expected: Type;
+  actual: Type;
 }
 
 export type MMarkExpr = MMarkFreeVar | MMarkNotFunction | MMarkInconsistent | MMarkUnsupportedExpr;

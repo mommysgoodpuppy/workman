@@ -3,6 +3,7 @@ import {
   BlockStatement,
   ConstructorAlias,
   Expr,
+  ExprStatement,
   InfixDeclaration,
   LetDeclaration,
   MatchArm,
@@ -76,7 +77,6 @@ import {
   inferMatchExpression,
   inferMatchFunction,
   inferMatchBundleLiteral,
-  type MatchInferenceResult,
 } from "./infermatch.ts";
 
 export type { Context, InferOptions, InferResult } from "./layer1/context.ts";
@@ -103,7 +103,7 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     initialAdtEnv: options.initialAdtEnv,
     registerPrelude: options.registerPrelude,
     resetCounter: options.resetCounter,
-    source: options.source ?? program.sourceText ?? undefined,
+    source: options.source ?? undefined,
   });
   const summaries: { name: string; scheme: TypeScheme }[] = [];
   const markedDeclarations: MTopLevel[] = [];
@@ -198,6 +198,7 @@ function materializeMarkedLet(
   const marked: MLetDeclaration = {
     kind: "let",
     span: decl.span,
+    id: decl.id,
     name: decl.name,
     parameters,
     annotation: decl.annotation,
@@ -250,6 +251,7 @@ function materializeParameter(ctx: Context, param: Parameter): MParameter {
   return {
     kind: "parameter",
     span: param.span,
+    id: param.id,
     pattern,
     name: param.name,
     annotation: param.annotation,
@@ -263,12 +265,14 @@ function materializePattern(ctx: Context, pattern: Pattern): MPattern {
       return {
         kind: "wildcard",
         span: pattern.span,
+        id: pattern.id,
         type: unknownFromReason("pattern.wildcard"),
       };
     case "variable":
       return {
         kind: "variable",
         span: pattern.span,
+        id: pattern.id,
         name: pattern.name,
         type: unknownFromReason(`pattern.var:${pattern.name}`),
       };
@@ -278,6 +282,7 @@ function materializePattern(ctx: Context, pattern: Pattern): MPattern {
       return {
         kind: "literal",
         span: pattern.span,
+        id: pattern.id,
         literal,
         type,
       };
@@ -291,6 +296,7 @@ function materializePattern(ctx: Context, pattern: Pattern): MPattern {
       return {
         kind: "tuple",
         span: pattern.span,
+        id: pattern.id,
         elements,
         type,
       };
@@ -305,6 +311,7 @@ function materializePattern(ctx: Context, pattern: Pattern): MPattern {
       return {
         kind: "constructor",
         span: pattern.span,
+        id: pattern.id,
         name: pattern.name,
         args,
         type,
@@ -313,7 +320,8 @@ function materializePattern(ctx: Context, pattern: Pattern): MPattern {
     default:
       return {
         kind: "mark_pattern",
-        span: pattern.span,
+        span: (pattern as any).span,
+        id: (pattern as any).id,
         reason: "other",
         type: unknownFromReason("pattern.unknown"),
       } satisfies MMarkPattern;
@@ -331,6 +339,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "identifier",
         span: expr.span,
+        id: expr.id,
         name: expr.name,
         type: getExprTypeOrUnknown(ctx, expr, `expr.id:${expr.name}`),
       };
@@ -338,6 +347,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "literal",
         span: expr.span,
+        id: expr.id,
         literal: expr.literal,
         type: getExprTypeOrUnknown(ctx, expr, "expr.literal"),
       };
@@ -346,6 +356,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "constructor",
         span: expr.span,
+        id: expr.id,
         name: expr.name,
         args,
         type: getExprTypeOrUnknown(ctx, expr, `expr.constructor:${expr.name}`),
@@ -357,6 +368,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "tuple",
         span: expr.span,
+        id: expr.id,
         elements,
         isMultiLine: expr.isMultiLine,
         type,
@@ -368,6 +380,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "call",
         span: expr.span,
+        id: expr.id,
         callee,
         arguments: args,
         type: getExprTypeOrUnknown(ctx, expr, "expr.call"),
@@ -379,6 +392,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "binary",
         span: expr.span,
+        id: expr.id,
         operator: expr.operator,
         left,
         right,
@@ -390,6 +404,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "unary",
         span: expr.span,
+        id: expr.id,
         operator: expr.operator,
         operand,
         type: getExprTypeOrUnknown(ctx, expr, `expr.unary:${expr.operator}`),
@@ -401,6 +416,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "arrow",
         span: expr.span,
+        id: expr.id,
         parameters,
         body,
         type: getExprTypeOrUnknown(ctx, expr, "expr.arrow"),
@@ -415,6 +431,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "match",
         span: expr.span,
+        id: expr.id,
         scrutinee,
         bundle,
         type,
@@ -427,6 +444,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "match_fn",
         span: expr.span,
+        id: expr.id,
         parameters,
         bundle,
         type,
@@ -438,6 +456,7 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
       return {
         kind: "match_bundle_literal",
         span: expr.span,
+        id: expr.id,
         bundle,
         type,
       };
@@ -445,7 +464,8 @@ function materializeExpr(ctx: Context, expr: Expr): MExpr {
     default:
       return {
         kind: "block",
-        span: expr.span,
+        span: (expr as Expr).span,
+        id: (expr as Expr).id,
         statements: [],
         type: getExprTypeOrUnknown(ctx, expr, "expr.unknown"),
       } as MBlockExpr;
@@ -459,6 +479,7 @@ function materializeBlockExpr(ctx: Context, block: BlockExpr): MBlockExpr {
   return {
     kind: "block",
     span: block.span,
+    id: block.id,
     statements,
     result,
     isMultiLine: block.isMultiLine,
@@ -472,19 +493,23 @@ function materializeBlockStatement(ctx: Context, statement: BlockStatement): MBl
       return {
         kind: "let_statement",
         span: statement.span,
+        id: statement.id,
         declaration: materializeMarkedLet(ctx, statement.declaration, undefined),
       } satisfies MLetStatement;
     case "expr_statement":
       return {
         kind: "expr_statement",
         span: statement.span,
+        id: statement.id,
         expression: materializeExpr(ctx, statement.expression),
       } satisfies MExprStatement;
     default:
+      const exprStmt = statement as ExprStatement;
       return {
         kind: "expr_statement",
-        span: statement.span,
-        expression: materializeExpr(ctx, (statement as BlockStatement & { expression: Expr }).expression),
+        span: exprStmt.span,
+        id: exprStmt.id,
+        expression: materializeExpr(ctx, exprStmt.expression),
       } satisfies MExprStatement;
   }
 }
@@ -501,9 +526,9 @@ function materializeMatchBundle(ctx: Context, bundle: MatchBundle, inferredType?
       const marked: MMatchBundleReferenceArm = {
         kind: "match_bundle_reference",
         span: arm.span,
+        id: arm.id,
         name: arm.name,
         hasTrailingComma: arm.hasTrailingComma,
-        type: resolvedBundleType,
       } satisfies MMatchBundleReferenceArm;
       arms.push(marked);
       continue;
@@ -517,6 +542,7 @@ function materializeMatchBundle(ctx: Context, bundle: MatchBundle, inferredType?
     const marked: MMatchPatternArm = {
       kind: "match_pattern",
       span: arm.span,
+      id: arm.id,
       pattern,
       body,
       hasTrailingComma: arm.hasTrailingComma,
@@ -532,6 +558,7 @@ function materializeMatchBundle(ctx: Context, bundle: MatchBundle, inferredType?
   return {
     kind: "match_bundle",
     span: bundle.span,
+    id: bundle.id,
     arms,
     type: resolvedBundleType,
   } satisfies MMatchBundle;
@@ -975,7 +1002,7 @@ type PatternCoverage =
   | { kind: "bool"; value: boolean }
   | { kind: "none" };
 
-interface PatternInfo {
+export interface PatternInfo {
   type: Type;
   bindings: Map<string, Type>;
   coverage: PatternCoverage;
@@ -993,6 +1020,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         marked: {
           kind: "wildcard",
           span: pattern.span,
+          id: pattern.id,
           type: target,
         },
       };
@@ -1008,6 +1036,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         marked: {
           kind: "variable",
           span: pattern.span,
+          id: pattern.id,
           type: target,
           name: pattern.name,
         },
@@ -1020,6 +1049,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         const mark: MMarkPattern = {
           kind: "mark_pattern",
           span: pattern.span,
+          id: pattern.id,
           reason: "other",
           data: { issue: "literal_unify_failed" },
           type: markType,
@@ -1042,6 +1072,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         marked: {
           kind: "literal",
           span: pattern.span,
+          id: pattern.id,
           type: resolved,
           literal: pattern.literal,
         },
@@ -1060,6 +1091,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         const mark: MMarkPattern = {
           kind: "mark_pattern",
           span: pattern.span,
+          id: pattern.id,
           reason: "other",
           data: {
             issue: "expected_tuple",
@@ -1079,6 +1111,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         const mark: MMarkPattern = {
           kind: "mark_pattern",
           span: pattern.span,
+          id: pattern.id,
           reason: "other",
           data: {
             issue: "tuple_arity",
@@ -1107,6 +1140,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
             const mark: MMarkPattern = {
               kind: "mark_pattern",
               span: subPattern.span,
+              id: subPattern.id,
               reason: "other",
               data: { issue: "duplicate_variable", name },
               type: markType,
@@ -1130,6 +1164,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         marked: {
           kind: "tuple",
           span: pattern.span,
+          id: pattern.id,
           type: resolved,
           elements: markedElements,
         },
@@ -1142,6 +1177,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         const mark: MMarkPattern = {
           kind: "mark_pattern",
           span: pattern.span,
+          id: pattern.id,
           reason: "wrong_constructor",
           data: {
             constructor: pattern.name,
@@ -1170,6 +1206,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
             const mark: MMarkPattern = {
               kind: "mark_pattern",
               span: argPattern.span,
+              id: argPattern.id,
               reason: "other",
               data: { issue: "duplicate_variable", name },
               type: markType,
@@ -1192,6 +1229,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         const mark: MMarkPattern = {
           kind: "mark_pattern",
           span: pattern.span,
+          id: pattern.id,
           reason: "wrong_constructor",
           data: {
             constructor: pattern.name,
@@ -1212,6 +1250,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         const mark: MMarkPattern = {
           kind: "mark_pattern",
           span: pattern.span,
+          id: pattern.id,
           reason: "wrong_constructor",
           data: {
             constructor: pattern.name,
@@ -1233,6 +1272,7 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
         marked: {
           kind: "constructor",
           span: pattern.span,
+          id: pattern.id,
           type: final,
           name: pattern.name,
           args: markedArgs,
@@ -1243,7 +1283,8 @@ export function inferPattern(ctx: Context, pattern: Pattern, expected: Type): Pa
       const markType = unknownFromReason("pattern.unsupported_kind");
       const mark: MMarkPattern = {
         kind: "mark_pattern",
-        span: pattern.span,
+        span: (pattern as Pattern).span,
+        id: (pattern as Pattern).id,
         reason: "other",
         data: { issue: "unsupported_kind", kind: (pattern as Pattern).kind },
         type: markType,

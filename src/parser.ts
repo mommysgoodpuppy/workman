@@ -1,5 +1,6 @@
 import { Token } from "./token.ts";
 import { ParseError, expectedTokenError, unexpectedTokenError } from "./error.ts";
+import { nextNodeId, resetNodeIds } from "./node_ids.ts";
 import type {
   Associativity,
   BlockExpr,
@@ -38,6 +39,7 @@ export function parseSurfaceProgram(
   initialOperators?: Map<string, OperatorInfo>,
   initialPrefixOperators?: Set<string>
 ): Program {
+  resetNodeIds(0); // Reset IDs before parsing
   const parser = new SurfaceParser(tokens, source, preserveComments, initialOperators, initialPrefixOperators);
   return parser.parseProgram();
 }
@@ -46,7 +48,6 @@ class SurfaceParser {
   private index = 0;
   private operators: Map<string, OperatorInfo>;
   private prefixOperators: Set<string>;
-  private idCounter = 0;
 
   constructor(
     private readonly tokens: Token[],
@@ -57,10 +58,6 @@ class SurfaceParser {
   ) {
     this.operators = initialOperators ? new Map(initialOperators) : new Map();
     this.prefixOperators = initialPrefixOperators ? new Set(initialPrefixOperators) : new Set();
-  }
-
-  private nextId(): number {
-    return this.idCounter++;
   }
 
   parseProgram(): Program {
@@ -146,7 +143,7 @@ class SurfaceParser {
       source: sourceToken.value,
       specifiers,
       span: this.spanFrom(fromToken.start, endToken.end),
-      id: this.nextId(),
+      id: nextNodeId(),
     };
   }
 
@@ -159,7 +156,7 @@ class SurfaceParser {
         kind: "namespace",
         local: aliasToken.value,
         span: this.createSpan(starToken, aliasToken),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
       return { specifiers: [specifier], endToken: aliasToken };
     }
@@ -180,7 +177,7 @@ class SurfaceParser {
           imported: importedToken.value,
           local: localToken.value,
           span: this.createSpan(importedToken, endToken),
-          id: this.nextId(),
+          id: nextNodeId(),
         };
         specifiers.push(specifier);
       } while (this.matchSymbol(","));
@@ -201,7 +198,7 @@ class SurfaceParser {
       source: sourceToken.value,
       typeExports,
       span: this.spanFrom(exportToken.start, endToken.end),
-      id: this.nextId(),
+      id: nextNodeId(),
     };
   }
 
@@ -232,7 +229,7 @@ class SurfaceParser {
       name: nameToken.value,
       exportConstructors,
       span: this.spanFrom(nameToken.start, endToken.end),
-      id: this.nextId(),
+      id: nextNodeId(),
     };
   }
 
@@ -335,7 +332,7 @@ class SurfaceParser {
           kind: "variable",
           name: paramName,
           span: scrutinee.span,
-          id: this.nextId(),
+          id: nextNodeId(),
         };
         const parameters: Parameter[] = [{
           kind: "parameter",
@@ -343,7 +340,7 @@ class SurfaceParser {
           name: paramName,
           annotation: undefined,
           span: scrutinee.span,
-          id: this.nextId(),
+          id: nextNodeId(),
         }];
       
       // Detect if the match expression is multi-line
@@ -359,7 +356,7 @@ class SurfaceParser {
         result: initializer,
         span: initializer.span,
         isMultiLine,
-        id: this.nextId(),
+        id: nextNodeId(),
       };
       return {
         kind: "let",
@@ -370,7 +367,7 @@ class SurfaceParser {
         isRecursive,
         isFirstClassMatch: true,
         span: this.spanFrom(startPos, body.span.end),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
     }
     
@@ -386,7 +383,7 @@ class SurfaceParser {
         body: initializer,
         isRecursive,
         span: this.spanFrom(startPos, initializer.span.end),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
     }
 
@@ -401,7 +398,7 @@ class SurfaceParser {
         isRecursive,
         isArrowSyntax: true,
         span: this.spanFrom(startPos, body.span.end),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
     }
 
@@ -414,7 +411,7 @@ class SurfaceParser {
       statements: [],
       result: initializer,
       span: initializer.span,
-      id: this.nextId(),
+      id: nextNodeId(),
     };
 
     return {
@@ -425,7 +422,7 @@ class SurfaceParser {
       body,
       isRecursive,
       span: this.spanFrom(startPos, body.span.end),
-      id: this.nextId(),
+      id: nextNodeId(),
     };
   }
 
@@ -453,7 +450,7 @@ class SurfaceParser {
           name: pattern.kind === "variable" ? pattern.name : undefined,
           annotation,
           span: this.spanFrom(pattern.span.start, spanEnd),
-          id: this.nextId(),
+          id: nextNodeId(),
         });
       } while (this.matchSymbol(","));
     }
@@ -495,7 +492,7 @@ class SurfaceParser {
           kind: "let_statement",
           declaration,
           span: declaration.span,
-          id: this.nextId(),
+          id: nextNodeId(),
         });
         this.expectSymbol(";");
         continue;
@@ -507,7 +504,7 @@ class SurfaceParser {
           kind: "expr_statement",
           expression,
           span: expression.span,
-          id: this.nextId(),
+          id: nextNodeId(),
         });
         continue;
       }
@@ -525,7 +522,7 @@ class SurfaceParser {
       isMultiLine = blockText.includes("\n");
     }
     
-    return { kind: "block", statements, result, span, isMultiLine, id: this.nextId() };
+    return { kind: "block", statements, result, span, isMultiLine, id: nextNodeId() };
   }
 
   private parseTypeDeclaration(exportToken?: Token): TypeDeclaration {
@@ -541,7 +538,7 @@ class SurfaceParser {
       typeParams,
       members,
       span: this.spanFrom(typeToken.start, endToken.end),
-      id: this.nextId(),
+      id: nextNodeId(),
     };
     if (exportToken) {
       declaration.export = {
@@ -589,7 +586,7 @@ class SurfaceParser {
       precedence,
       implementation,
       span: this.spanFrom(infixToken.start, implToken.end),
-      id: this.nextId(),
+      id: nextNodeId(),
     };
     
     if (exportToken) {
@@ -627,7 +624,7 @@ class SurfaceParser {
       operator,
       implementation,
       span: this.spanFrom(prefixToken.start, implToken.end),
-      id: this.nextId(),
+      id: nextNodeId(),
     };
     
     if (exportToken) {
@@ -645,7 +642,7 @@ class SurfaceParser {
     if (!this.checkSymbol(">")) {
       do {
         const ident = this.expectTypeParamName();
-        params.push({ name: ident.value, span: this.createSpan(ident, ident), id: this.nextId() });
+        params.push({ name: ident.value, span: this.createSpan(ident, ident), id: nextNodeId() });
       } while (this.matchSymbol(","));
     }
     this.expectSymbol(">");
@@ -673,11 +670,11 @@ class SurfaceParser {
         name: ctor.value,
         typeArgs,
         span: this.spanFrom(ctor.start, typeArgs.length > 0 ? typeArgs[typeArgs.length - 1].span.end : ctor.end),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
     }
     const type = this.parseTypeExpr();
-    return { kind: "alias", type, span: type.span, id: this.nextId() };
+    return { kind: "alias", type, span: type.span, id: nextNodeId() };
   }
 
   private parseTypeArguments(): TypeExpr[] {
@@ -705,7 +702,7 @@ class SurfaceParser {
           kind: "match_bundle_literal",
           bundle,
           span,
-          id: this.nextId(),
+          id: nextNodeId(),
         };
       }
 
@@ -731,7 +728,7 @@ class SurfaceParser {
           parameters: args,
           bundle,
           span: this.spanFrom(matchToken.start, span.end),
-          id: this.nextId(),
+          id: nextNodeId(),
         };
       }
 
@@ -741,7 +738,7 @@ class SurfaceParser {
         scrutinee: args[0],
         bundle,
         span: this.spanFrom(matchToken.start, span.end),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
     }
     return this.parseArrowOrLower();
@@ -767,7 +764,7 @@ class SurfaceParser {
           parameters: params,
           body,
           span: this.spanFrom(params[0]?.span.start ?? this.previous().start, body.span.end),
-          id: this.nextId(),
+          id: nextNodeId(),
         };
       }
     }
@@ -816,7 +813,7 @@ class SurfaceParser {
         left,
         right,
         span: this.spanFrom(left.span.start, right.span.end),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
     }
     
@@ -847,7 +844,7 @@ class SurfaceParser {
           callee: expr,
           arguments: args,
           span: this.spanFrom(expr.span.start, _close.end),
-          id: this.nextId(),
+          id: nextNodeId(),
         };
       }
     }
@@ -859,46 +856,46 @@ class SurfaceParser {
     switch (token.kind) {
       case "identifier": {
         const ident = this.consume();
-        return { kind: "identifier", name: ident.value, span: this.createSpan(ident, ident), id: this.nextId() } as Expr;
+        return { kind: "identifier", name: ident.value, span: this.createSpan(ident, ident), id: nextNodeId() } as Expr;
       }
       case "constructor": {
         const ctor = this.consume();
-        return { kind: "constructor", name: ctor.value, args: [], span: this.createSpan(ctor, ctor), id: this.nextId() } as Expr;
+        return { kind: "constructor", name: ctor.value, args: [], span: this.createSpan(ctor, ctor), id: nextNodeId() } as Expr;
       }
       case "number": {
         const num = this.consume();
         return {
           kind: "literal",
-          literal: { kind: "int", value: Number(num.value), span: this.createSpan(num, num), id: this.nextId() },
+          literal: { kind: "int", value: Number(num.value), span: this.createSpan(num, num), id: nextNodeId() },
           span: this.createSpan(num, num),
-          id: this.nextId(),
+          id: nextNodeId(),
         } as Expr;
       }
       case "char": {
         const ch = this.consume();
         return {
           kind: "literal",
-          literal: { kind: "char", value: ch.value, span: this.createSpan(ch, ch), id: this.nextId() },
+          literal: { kind: "char", value: ch.value, span: this.createSpan(ch, ch), id: nextNodeId() },
           span: this.createSpan(ch, ch),
-          id: this.nextId(),
+          id: nextNodeId(),
         } as Expr;
       }
       case "string": {
         const str = this.consume();
         return {
           kind: "literal",
-          literal: { kind: "string", value: str.value, span: this.createSpan(str, str), id: this.nextId() },
+          literal: { kind: "string", value: str.value, span: this.createSpan(str, str), id: nextNodeId() },
           span: this.createSpan(str, str),
-          id: this.nextId(),
+          id: nextNodeId(),
         } as Expr;
       }
       case "bool": {
         const bool = this.consume();
         return {
           kind: "literal",
-          literal: { kind: "bool", value: bool.value === "true", span: this.createSpan(bool, bool), id: this.nextId() },
+          literal: { kind: "bool", value: bool.value === "true", span: this.createSpan(bool, bool), id: nextNodeId() },
           span: this.createSpan(bool, bool),
-          id: this.nextId(),
+          id: nextNodeId(),
         } as Expr;
       }
       case "symbol": {
@@ -919,7 +916,7 @@ class SurfaceParser {
             operator: opToken.value,
             operand,
             span: this.spanFrom(opToken.start, operand.span.end),
-            id: this.nextId(),
+            id: nextNodeId(),
           } as Expr;
         }
         // Otherwise, it's an unexpected operator
@@ -943,9 +940,9 @@ class SurfaceParser {
       const span = this.spanFrom(open.start, close.end);
       return {
         kind: "literal",
-        literal: { kind: "unit", span, id: this.nextId() },
+        literal: { kind: "unit", span, id: nextNodeId() },
         span,
-        id: this.nextId(),
+        id: nextNodeId(),
       } as Expr;
     }
     if (elements.length === 1) {
@@ -964,7 +961,7 @@ class SurfaceParser {
       elements,
       span: this.spanFrom(open.start, close.end),
       isMultiLine,
-      id: this.nextId(),
+      id: nextNodeId(),
     } as Expr;
   }
 
@@ -991,7 +988,7 @@ class SurfaceParser {
           parameters,
           result,
           span: this.spanFrom(open.start, result.span.end),
-          id: this.nextId(),
+          id: nextNodeId(),
         };
       }
       this.index = snapshot;
@@ -1011,7 +1008,7 @@ class SurfaceParser {
         kind: "type_var",
         name: ident.value,
         span: this.createSpan(ident, ident),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
     }
 
@@ -1024,7 +1021,7 @@ class SurfaceParser {
         name: ctor.value,
         typeArgs,
         span: this.spanFrom(ctor.start, end),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
     }
 
@@ -1035,7 +1032,7 @@ class SurfaceParser {
     const open = this.expectSymbol("(");
     if (this.checkSymbol(")")) {
       const close = this.expectSymbol(")");
-      return { kind: "type_unit", span: this.spanFrom(open.start, close.end), id: this.nextId() };
+      return { kind: "type_unit", span: this.spanFrom(open.start, close.end), id: nextNodeId() };
     }
 
     const elements: TypeExpr[] = [];
@@ -1054,7 +1051,7 @@ class SurfaceParser {
       kind: "type_tuple",
       elements,
       span: this.spanFrom(open.start, close.end),
-      id: this.nextId(),
+      id: nextNodeId(),
     };
   }
 
@@ -1070,12 +1067,12 @@ class SurfaceParser {
     const token = this.peek();
     if (token.kind === "symbol" && token.value === "_") {
       const underscore = this.consume();
-      return { kind: "wildcard", span: this.createSpan(underscore, underscore), id: this.nextId() };
+      return { kind: "wildcard", span: this.createSpan(underscore, underscore), id: nextNodeId() };
     }
 
     if (token.kind === "identifier") {
       const ident = this.consume();
-      return { kind: "variable", name: ident.value, span: this.createSpan(ident, ident), id: this.nextId() };
+      return { kind: "variable", name: ident.value, span: this.createSpan(ident, ident), id: nextNodeId() };
     }
 
     if (token.kind === "number") {
@@ -1084,9 +1081,9 @@ class SurfaceParser {
         kind: "int" as const,
         value: Number(num.value),
         span: this.createSpan(num, num),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
-      return { kind: "literal", literal, span: literal.span, id: this.nextId() };
+      return { kind: "literal", literal, span: literal.span, id: nextNodeId() };
     }
 
     if (token.kind === "bool") {
@@ -1095,9 +1092,9 @@ class SurfaceParser {
         kind: "bool" as const,
         value: bool.value === "true",
         span: this.createSpan(bool, bool),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
-      return { kind: "literal", literal, span: literal.span, id: this.nextId() };
+      return { kind: "literal", literal, span: literal.span, id: nextNodeId() };
     }
 
     if (token.kind === "char") {
@@ -1106,9 +1103,9 @@ class SurfaceParser {
         kind: "char" as const,
         value: ch.value,
         span: this.createSpan(ch, ch),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
-      return { kind: "literal", literal, span: literal.span, id: this.nextId() };
+      return { kind: "literal", literal, span: literal.span, id: nextNodeId() };
     }
 
     if (token.kind === "constructor") {
@@ -1128,7 +1125,7 @@ class SurfaceParser {
         name: ctor.value,
         args,
         span: this.spanFrom(ctor.start, end),
-        id: this.nextId(),
+        id: nextNodeId(),
       };
     }
 
@@ -1146,7 +1143,7 @@ class SurfaceParser {
         const single = elements[0];
         return { ...single, span: this.spanFrom(open.start, close.end) };
       }
-      return { kind: "tuple", elements, span: this.spanFrom(open.start, close.end), id: this.nextId() };
+      return { kind: "tuple", elements, span: this.spanFrom(open.start, close.end), id: nextNodeId() };
     }
 
     throw this.error("Expected pattern", token);
@@ -1177,7 +1174,7 @@ class SurfaceParser {
               name: identifier.value,
               hasTrailingComma: hasComma,
               span,
-              id: this.nextId(),
+              id: nextNodeId(),
             });
             if (!hasComma || this.checkSymbol("}")) {
               break;
@@ -1204,7 +1201,7 @@ class SurfaceParser {
           body,
           hasTrailingComma: hasComma,
           span,
-          id: this.nextId(),
+          id: nextNodeId(),
         });
         if (!hasComma || this.checkSymbol("}")) {
           break;
@@ -1221,7 +1218,7 @@ class SurfaceParser {
       kind: "match_bundle",
       arms,
       span,
-      id: this.nextId(),
+      id: nextNodeId(),
     };
     return { bundle, span };
   }

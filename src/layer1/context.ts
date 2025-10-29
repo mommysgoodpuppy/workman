@@ -116,8 +116,12 @@ export interface UnifyFailure {
 
 export type UnifyResult = { success: true; subst: Substitution } | { success: false; reason: UnifyFailure };
 
-export function lookupEnv(ctx: Context, name: string): TypeScheme | null {
-  return ctx.env.get(name) ?? null;
+export function lookupEnv(ctx: Context, name: string): TypeScheme {
+  const scheme = ctx.env.get(name);
+  if (!scheme) {
+    throw inferError(`Unknown identifier '${name}'`);
+  }
+  return scheme;
 }
 
 export function generalizeInContext(ctx: Context, type: Type): TypeScheme {
@@ -178,6 +182,7 @@ export function markFreeVariable(
   const mark: MMarkFreeVar = {
     kind: "mark_free_var",
     span: expr.span,
+    id: expr.id,
     type: unknownType({ kind: "error_free_var", name }),
     name,
   };
@@ -195,10 +200,31 @@ export function markNotFunction(
   const mark: MMarkNotFunction = {
     kind: "mark_not_function",
     span: expr.span,
+    id: expr.id,
     type: unknownType({ kind: "error_not_function", calleeType }),
     callee,
     args,
     calleeType,
+  };
+  ctx.marks.set(expr, mark);
+  return mark;
+}
+
+export function markInconsistent(
+  ctx: Context,
+  expr: Expr,
+  subject: MExpr,
+  expected: Type,
+  actual: Type,
+): MMarkInconsistent {
+  const mark: MMarkInconsistent = {
+    kind: "mark_inconsistent",
+    span: expr.span,
+    id: expr.id,
+    type: unknownType({ kind: "error_inconsistent", expected, actual }),
+    subject,
+    expected,
+    actual,
   };
   ctx.marks.set(expr, mark);
   return mark;
@@ -212,6 +238,7 @@ export function markUnsupportedExpr(
   const mark: MMarkUnsupportedExpr = {
     kind: "mark_unsupported_expr",
     span: expr.span,
+    id: expr.id,
     type: unknownType({ kind: "incomplete", reason: "expr.unsupported" }),
     exprKind,
   };
@@ -224,13 +251,13 @@ export function markNonExhaustive(
   expr: Expr,
   scrutineeSpan: SourceSpan,
   missingCases: string[],
-): MMarkPattern {
-  const mark: MMarkPattern = {
-    kind: "mark_pattern",
+): MMarkUnsupportedExpr {
+  const mark: MMarkUnsupportedExpr = {
+    kind: "mark_unsupported_expr",
     span: expr.span,
-    reason: "non_exhaustive",
-    data: { missingCases, scrutineeSpan },
+    id: expr.id,
     type: unknownType({ kind: "incomplete", reason: "non_exhaustive" }),
+    exprKind: "match_non_exhaustive",
   };
   ctx.marks.set(expr, mark);
   return mark;
@@ -313,4 +340,13 @@ function bindVar(id: number, type: Type, subst: Substitution): UnifyResult {
   const next = new Map(subst);
   next.set(id, resolved);
   return { success: true, subst: next };
+}
+
+export function unify(ctx: Context, a: Type, b: Type): boolean {
+  const result = unifyTypes(a, b, ctx.subst);
+  if (result.success) {
+    ctx.subst = composeSubstitution(ctx.subst, result.subst);
+    return true;
+  }
+  return false;
 }
