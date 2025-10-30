@@ -4,7 +4,7 @@ import { inferProgram, InferResult } from "../src/layer1infer.ts";
 import { lowerTupleParameters } from "../src/lower_tuple_params.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { NodeId, Program } from "../src/ast.ts";
-import { assertEquals, assertFalse, assertObjectMatch, assertExists, assertThrows } from "https://deno.land/std/assert/mod.ts";
+import { assertEquals, assertFalse, assertObjectMatch, assertExists } from "https://deno.land/std/assert/mod.ts";
 
 const TEST_PRELUDE_SOURCE = `
   type List<T> = Nil | Cons<T, List<T>>;
