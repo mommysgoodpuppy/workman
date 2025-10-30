@@ -278,8 +278,8 @@ export function markTypeDeclInvalidMember(
 ): MMarkTypeDeclInvalidMember {
   const mark: MMarkTypeDeclInvalidMember = {
     kind: "mark_type_decl_invalid_member",
-    span: member.span,
-    id: member.id,
+    span: decl.span, // Use decl span for consistency
+    id: decl.id, // Use decl id for provenance
     declaration: decl,
     member,
   };

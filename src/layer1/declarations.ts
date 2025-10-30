@@ -12,7 +12,6 @@ import {
   inferError,
   lookupEnv,
   expectFunctionType,
-  ExpectFunctionResult,
   markTypeDeclDuplicate,
   markTypeDeclInvalidMember,
   markTypeExprUnknown,
@@ -71,17 +70,76 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
     typeScope.set(param.name, parameterTypes[index]);
   });
 
-  const constructors: ConstructorInfo[] = [];
+  const stagedConstructors: ConstructorInfo[] = [];
+  const stagedEnvEntries: string[] = [];
+
   for (const member of decl.members) {
     if (member.kind !== "constructor") {
+      // Purge on failure: remove ADT entry and cached params
+      ctx.adtEnv.delete(decl.name);
+      typeParamsCache.delete(decl.name);
+      // Remove any staged env entries
+      for (const name of stagedEnvEntries) {
+        ctx.env.delete(name);
+      }
       return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
     }
+
+    // Preflight lookup: check if constructor name already exists
+    const existingScheme = lookupEnv(ctx, member.name);
+    if (existingScheme) {
+      // Purge on failure
+      ctx.adtEnv.delete(decl.name);
+      typeParamsCache.delete(decl.name);
+      for (const name of stagedEnvEntries) {
+        ctx.env.delete(name);
+      }
+      // Create a collision mark (reuse invalid member for now, but with decl id)
+      const mark: MMarkTypeDeclInvalidMember = {
+        kind: "mark_type_decl_invalid_member",
+        span: decl.span,
+        id: decl.id, // Use decl id for provenance
+        declaration: decl,
+        member,
+      };
+      return { success: false, mark };
+    }
+
     const info = buildConstructorInfo(ctx, decl.name, parameterTypes, member, typeScope);
-    constructors.push(info);
-    ctx.env.set(member.name, info.scheme);
+
+    // Shape validation: ensure the scheme returns the ADT constructor
+    let currentType = info.scheme.type;
+    let isValidFunction = true;
+    while (currentType.kind === "func") {
+      const expectResult = expectFunctionType(ctx, currentType, `Constructor ${member.name}`);
+      if (!expectResult.success) {
+        isValidFunction = false;
+        break;
+      }
+      currentType = expectResult.to;
+    }
+    // After unwrapping all functions, it should be the ADT constructor
+    const returnsAdt = currentType.kind === "constructor" && currentType.name === decl.name;
+    if (!isValidFunction || !returnsAdt) {
+      // Purge on failure
+      ctx.adtEnv.delete(decl.name);
+      typeParamsCache.delete(decl.name);
+      for (const name of stagedEnvEntries) {
+        ctx.env.delete(name);
+      }
+      return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
+    }
+
+    stagedConstructors.push(info);
+    stagedEnvEntries.push(member.name);
   }
 
-  adtInfo.constructors.push(...constructors);
+  // All validations passed, commit changes
+  for (const info of stagedConstructors) {
+    ctx.env.set(info.name, info.scheme);
+  }
+  adtInfo.constructors.push(...stagedConstructors);
+
   return { success: true };
 }
 
