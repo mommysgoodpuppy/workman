@@ -3,9 +3,15 @@ import {
   Context,
   ensureExhaustive,
   inferExpr,
-  inferPattern
+  inferPattern,
 } from "./infer.ts";
-import { applyCurrentSubst, markUnsupportedExpr, unify, withScopedEnv } from "./context.ts"
+import {
+  applyCurrentSubst,
+  markUnsupportedExpr,
+  recordBranchJoinConstraint,
+  unify,
+  withScopedEnv,
+} from "./context.ts";
 import {
   cloneTypeScheme,
   freeTypeVars,
@@ -31,7 +37,14 @@ export function inferMatchExpression(
   bundle: MatchBundle,
 ): Type {
   const scrutineeType = inferExpr(ctx, scrutinee);
-  const result = inferMatchBranches(ctx, expr, scrutineeType, bundle);
+  const result = inferMatchBranches(
+    ctx,
+    expr,
+    scrutineeType,
+    bundle,
+    true,
+    scrutinee,
+  );
   return result.type;
 }
 
@@ -46,7 +59,14 @@ export function inferMatchFunction(
     return unknownType({ kind: "incomplete", reason: "match_fn_arity" });
   }
   const parameterType = inferExpr(ctx, parameters[0]);
-  const { type: resultType } = inferMatchBranches(ctx, expr, parameterType, bundle);
+  const { type: resultType } = inferMatchBranches(
+    ctx,
+    expr,
+    parameterType,
+    bundle,
+    true,
+    parameters[0],
+  );
   return {
     kind: "func",
     from: applyCurrentSubst(ctx, parameterType),
@@ -59,7 +79,13 @@ export function inferMatchBundleLiteral(
   expr: MatchBundleLiteralExpr,
 ): Type {
   const param = freshTypeVar();
-  const { type: result } = inferMatchBranches(ctx, expr, param, expr.bundle, false);
+  const { type: result } = inferMatchBranches(
+    ctx,
+    expr,
+    param,
+    expr.bundle,
+    false,
+  );
   return {
     kind: "func",
     from: applyCurrentSubst(ctx, param),
@@ -73,6 +99,7 @@ export function inferMatchBranches(
   scrutineeType: Type,
   bundle: MatchBundle,
   exhaustive: boolean = true,
+  scrutineeExpr?: Expr,
 ): MatchBranchesResult {
   let resultType: Type | null = null;
   const coverageMap = new Map<string, Set<string>>();
@@ -80,6 +107,7 @@ export function inferMatchBranches(
   let hasWildcard = false;
   const patternInfos: PatternInfo[] = [];
   const bodyTypes: Type[] = [];
+  const branchBodies: Expr[] = [];
 
   for (const arm of bundle.arms) {
     if (arm.kind === "match_bundle_reference") {
@@ -124,6 +152,9 @@ export function inferMatchBranches(
     const expected = applyCurrentSubst(ctx, scrutineeType);
     const patternInfo = inferPattern(ctx, arm.pattern, expected);
     patternInfos.push(patternInfo);
+    if (arm.kind === "match_pattern") {
+      branchBodies.push(arm.body);
+    }
     if (patternInfo.coverage.kind === "wildcard") {
       hasWildcard = true;
     } else if (patternInfo.coverage.kind === "constructor") {
@@ -182,6 +213,10 @@ export function inferMatchBranches(
 
   if (!resultType) {
     resultType = freshTypeVar();
+  }
+
+  if (branchBodies.length > 0) {
+    recordBranchJoinConstraint(ctx, expr, branchBodies, scrutineeExpr);
   }
 
   const resolvedResult = applyCurrentSubst(ctx, resultType);

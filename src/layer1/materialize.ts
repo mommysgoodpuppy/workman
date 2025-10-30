@@ -1,14 +1,50 @@
-import { BlockExpr, BlockStatement, Expr, ExprStatement, LetDeclaration, MatchBundle, Parameter, Pattern, TypeExpr } from "../ast.ts";
-import type { MMatchBundle, MMatchArm, MMatchBundleReferenceArm, MMatchPatternArm, MLetStatement, MBlockExpr, MBlockStatement, MExpr, MExprStatement, MLetDeclaration, MMarkPattern, MParameter, MPattern, MTypeExpr } from "../ast_marked.ts";
+import {
+  BlockExpr,
+  BlockStatement,
+  Expr,
+  ExprStatement,
+  LetDeclaration,
+  MatchBundle,
+  Parameter,
+  Pattern,
+  TypeExpr,
+} from "../ast.ts";
+import type {
+  MBlockExpr,
+  MBlockStatement,
+  MExpr,
+  MExprStatement,
+  MLetDeclaration,
+  MLetStatement,
+  MMarkPattern,
+  MMatchArm,
+  MMatchBundle,
+  MMatchBundleReferenceArm,
+  MMatchPatternArm,
+  MParameter,
+  MPattern,
+  MTypeExpr,
+} from "../ast_marked.ts";
 import { Type } from "../types.ts";
-import { Context, literalType } from "./context.ts";
+import {
+  Context,
+  holeOriginFromExpr,
+  holeOriginFromPattern,
+  literalType,
+  registerHoleForType,
+} from "./context.ts";
 import { convertTypeExpr } from "./declarations.ts";
 import { getExprTypeOrUnknown, unknownFromReason } from "./infer.ts";
 
-export function materializeMatchBundle(ctx: Context, bundle: MatchBundle, inferredType?: Type): MMatchBundle {
+export function materializeMatchBundle(
+  ctx: Context,
+  bundle: MatchBundle,
+  inferredType?: Type,
+): MMatchBundle {
   const matchResult = ctx.matchResults.get(bundle);
   const patternInfos = matchResult?.patternInfos ?? [];
-  const resolvedBundleType = matchResult?.type ?? inferredType ?? unknownFromReason("match.bundle");
+  const resolvedBundleType = matchResult?.type ?? inferredType ??
+    unknownFromReason("match.bundle");
   const arms: MMatchArm[] = [];
   let patternIndex = 0;
 
@@ -55,10 +91,16 @@ export function materializeMatchBundle(ctx: Context, bundle: MatchBundle, inferr
   } satisfies MMatchBundle;
 }
 
-export function materializeBlockExpr(ctx: Context, block: BlockExpr): MBlockExpr {
-  const statements = block.statements.map((statement) => materializeBlockStatement(ctx, statement));
+export function materializeBlockExpr(
+  ctx: Context,
+  block: BlockExpr,
+): MBlockExpr {
+  const statements = block.statements.map((statement) =>
+    materializeBlockStatement(ctx, statement)
+  );
   const result = block.result ? materializeExpr(ctx, block.result) : undefined;
-  const type = ctx.nodeTypes.get(block) ?? (result ? result.type : { kind: "unit" as const });
+  const type = ctx.nodeTypes.get(block) ??
+    (result ? result.type : { kind: "unit" as const });
   return {
     kind: "block",
     span: block.span,
@@ -70,14 +112,21 @@ export function materializeBlockExpr(ctx: Context, block: BlockExpr): MBlockExpr
   };
 }
 
-export function materializeBlockStatement(ctx: Context, statement: BlockStatement): MBlockStatement {
+export function materializeBlockStatement(
+  ctx: Context,
+  statement: BlockStatement,
+): MBlockStatement {
   switch (statement.kind) {
     case "let_statement":
       return {
         kind: "let_statement",
         span: statement.span,
         id: statement.id,
-        declaration: materializeMarkedLet(ctx, statement.declaration, undefined),
+        declaration: materializeMarkedLet(
+          ctx,
+          statement.declaration,
+          undefined,
+        ),
       } satisfies MLetStatement;
     case "expr_statement":
       return {
@@ -132,7 +181,9 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
       };
     }
     case "tuple": {
-      const elements = expr.elements.map((element) => materializeExpr(ctx, element));
+      const elements = expr.elements.map((element) =>
+        materializeExpr(ctx, element)
+      );
       const type = getExprTypeOrUnknown(ctx, expr, "expr.tuple");
       return {
         kind: "tuple",
@@ -146,13 +197,15 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
     case "call": {
       const callee = materializeExpr(ctx, expr.callee);
       const args = expr.arguments.map((arg) => materializeExpr(ctx, arg));
+      const type = getExprTypeOrUnknown(ctx, expr, "expr.call");
+      registerHoleForType(ctx, holeOriginFromExpr(expr), type);
       return {
         kind: "call",
         span: expr.span,
         id: expr.id,
         callee,
         arguments: args,
-        type: getExprTypeOrUnknown(ctx, expr, "expr.call"),
+        type,
       };
     }
     case "binary": {
@@ -180,7 +233,9 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
       };
     }
     case "arrow": {
-      const parameters = expr.parameters.map((param) => materializeParameter(ctx, param));
+      const parameters = expr.parameters.map((param) =>
+        materializeParameter(ctx, param)
+      );
       const body = materializeBlockExpr(ctx, expr.body);
       return {
         kind: "arrow",
@@ -207,7 +262,9 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
       };
     }
     case "match_fn": {
-      const parameters = expr.parameters.map((param) => materializeExpr(ctx, param));
+      const parameters = expr.parameters.map((param) =>
+        materializeExpr(ctx, param)
+      );
       const type = getExprTypeOrUnknown(ctx, expr, "expr.match_fn");
       const bundle = materializeMatchBundle(ctx, expr.bundle, type);
       return {
@@ -244,9 +301,11 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
 export function materializeMarkedLet(
   ctx: Context,
   decl: LetDeclaration,
-  resolvedType: Type | undefined
+  resolvedType: Type | undefined,
 ): MLetDeclaration {
-  const parameters = decl.parameters.map((param) => materializeParameter(ctx, param));
+  const parameters = decl.parameters.map((param) =>
+    materializeParameter(ctx, param)
+  );
   const body = materializeBlockExpr(ctx, decl.body);
   const type = resolvedType ?? unknownFromReason(`let:${decl.name}`);
 
@@ -256,7 +315,9 @@ export function materializeMarkedLet(
     id: decl.id,
     name: decl.name,
     parameters,
-    annotation: decl.annotation ? materializeTypeExpr(ctx, decl.annotation) : undefined,
+    annotation: decl.annotation
+      ? materializeTypeExpr(ctx, decl.annotation)
+      : undefined,
     body,
     isRecursive: decl.isRecursive,
     type,
@@ -282,25 +343,34 @@ export function materializeMarkedLet(
   }
 
   if (decl.mutualBindings && decl.mutualBindings.length > 0) {
-    marked.mutualBindings = decl.mutualBindings.map((binding) => materializeMarkedLet(ctx, binding, undefined)
+    marked.mutualBindings = decl.mutualBindings.map((binding) =>
+      materializeMarkedLet(ctx, binding, undefined)
     );
   }
 
   return marked;
 }
 
-export function materializeParameter(ctx: Context, param: Parameter): MParameter {
+export function materializeParameter(
+  ctx: Context,
+  param: Parameter,
+): MParameter {
   const pattern = materializePattern(ctx, param.pattern);
   const annotationScope = new Map<string, Type>();
-  const explicitType = param.annotation ? convertTypeExpr(ctx, param.annotation, annotationScope) : undefined;
-  const type = explicitType ?? pattern.type ?? unknownFromReason(`parameter:${param.name ?? "_"}`);
+  const explicitType = param.annotation
+    ? convertTypeExpr(ctx, param.annotation, annotationScope)
+    : undefined;
+  const type = explicitType ?? pattern.type ??
+    unknownFromReason(`parameter:${param.name ?? "_"}`);
   return {
     kind: "parameter",
     span: param.span,
     id: param.id,
     pattern,
     name: param.name,
-    annotation: param.annotation ? materializeTypeExpr(ctx, param.annotation) : undefined,
+    annotation: param.annotation
+      ? materializeTypeExpr(ctx, param.annotation)
+      : undefined,
     type,
   };
 }
@@ -308,19 +378,23 @@ export function materializeParameter(ctx: Context, param: Parameter): MParameter
 export function materializePattern(ctx: Context, pattern: Pattern): MPattern {
   switch (pattern.kind) {
     case "wildcard":
+      const type = unknownFromReason("pattern.wildcard");
+      registerHoleForType(ctx, holeOriginFromPattern(pattern), type);
       return {
         kind: "wildcard",
         span: pattern.span,
         id: pattern.id,
-        type: unknownFromReason("pattern.wildcard"),
+        type,
       };
     case "variable":
+      const type = unknownFromReason(`pattern.var:${pattern.name}`);
+      registerHoleForType(ctx, holeOriginFromPattern(pattern), type);
       return {
         kind: "variable",
         span: pattern.span,
         id: pattern.id,
         name: pattern.name,
-        type: unknownFromReason(`pattern.var:${pattern.name}`),
+        type,
       };
     case "literal": {
       const literal = pattern.literal;
@@ -334,11 +408,16 @@ export function materializePattern(ctx: Context, pattern: Pattern): MPattern {
       };
     }
     case "tuple": {
-      const elements = pattern.elements.map((element) => materializePattern(ctx, element));
+      const elements = pattern.elements.map((element) =>
+        materializePattern(ctx, element)
+      );
       const type: Type = {
         kind: "tuple",
-        elements: elements.map((el) => el.type ?? unknownFromReason("pattern.tuple.elem")),
+        elements: elements.map((el) =>
+          el.type ?? unknownFromReason("pattern.tuple.elem")
+        ),
       };
+      registerHoleForType(ctx, holeOriginFromPattern(pattern), type);
       return {
         kind: "tuple",
         span: pattern.span,
@@ -352,8 +431,11 @@ export function materializePattern(ctx: Context, pattern: Pattern): MPattern {
       const type: Type = {
         kind: "constructor",
         name: pattern.name,
-        args: args.map((arg) => arg.type ?? unknownFromReason("pattern.constructor.arg")),
+        args: args.map((arg) =>
+          arg.type ?? unknownFromReason("pattern.constructor.arg")
+        ),
       };
+      registerHoleForType(ctx, holeOriginFromPattern(pattern), type);
       return {
         kind: "constructor",
         span: pattern.span,
@@ -374,8 +456,10 @@ export function materializePattern(ctx: Context, pattern: Pattern): MPattern {
   }
 }
 
-
-export function materializeTypeExpr(ctx: Context, typeExpr: TypeExpr): MTypeExpr {
+export function materializeTypeExpr(
+  ctx: Context,
+  typeExpr: TypeExpr,
+): MTypeExpr {
   const existingMark = ctx.typeExprMarks.get(typeExpr);
   if (existingMark) {
     return existingMark;
@@ -394,7 +478,9 @@ export function materializeTypeExpr(ctx: Context, typeExpr: TypeExpr): MTypeExpr
         kind: "type_fn",
         span: typeExpr.span,
         id: typeExpr.id,
-        parameters: typeExpr.parameters.map((param) => materializeTypeExpr(ctx, param)),
+        parameters: typeExpr.parameters.map((param) =>
+          materializeTypeExpr(ctx, param)
+        ),
         result: materializeTypeExpr(ctx, typeExpr.result),
       };
     case "type_ref":
