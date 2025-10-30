@@ -2,7 +2,7 @@
 
 import { lex } from "../../../src/lexer.ts";
 import { parseSurfaceProgram } from "../../../src/parser.ts";
-import { inferProgram } from "../../../src/layer1infer.ts";
+import { inferProgram } from "../../../src/layer1/infer.ts";
 import { lowerToCore } from "./lower_to_core.ts";
 import { lowerToMir } from "./lower_to_mir.ts";
 import { generateESM } from "./codegen.ts";

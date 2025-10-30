@@ -1,6 +1,6 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { inferProgram, InferError } from "../src/layer1infer.ts";
+import { inferProgram, InferError } from "../src/layer1/infer.ts";
 import { evaluateProgram } from "../src/eval.ts";
 import type { TypeScheme } from "../src/types.ts";
 import type { RuntimeValue, NativeFunctionValue } from "../src/value.ts";

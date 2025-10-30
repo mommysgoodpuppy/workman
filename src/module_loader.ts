@@ -12,7 +12,7 @@ import type {
 } from "./ast.ts";
 import type { TypeInfo, TypeScheme } from "./types.ts";
 import { cloneTypeInfo, cloneTypeScheme } from "./types.ts";
-import { inferProgram, InferError } from "./layer1infer.ts";
+import { inferProgram, InferError } from "./layer1/infer.ts";
 import { evaluateProgram } from "./eval.ts";
 import type { RuntimeValue } from "./value.ts";
 import { lookupValue } from "./value.ts";

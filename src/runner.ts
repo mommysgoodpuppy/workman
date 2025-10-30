@@ -1,6 +1,6 @@
 import { lex } from "./lexer.ts";
 import { parseSurfaceProgram, ParseError } from "./parser.ts";
-import { inferProgram, InferError } from "./layer1infer.ts";
+import { inferProgram, InferError } from "./layer1/infer.ts";
 import { formatScheme } from "./type_printer.ts";
 import { evaluateProgram } from "./eval.ts";
 import { formatRuntimeValue } from "./value_printer.ts";

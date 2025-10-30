@@ -1,6 +1,6 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { inferProgram, InferResult } from "../src/layer1infer.ts";
+import { inferProgram, InferResult } from "../src/layer1/infer.ts";
 import { lowerTupleParameters } from "../src/lower_tuple_params.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { NodeId, Program } from "../src/ast.ts";

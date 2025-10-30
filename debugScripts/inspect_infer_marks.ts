@@ -1,6 +1,6 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { inferProgram } from "../src/layer1infer.ts";
+import { inferProgram } from "../src/layer1/infer.ts";
 
 const TEST_PRELUDE_SOURCE = `
   type List<T> = Nil | Cons<T, List<T>>;

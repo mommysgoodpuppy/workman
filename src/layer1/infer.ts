@@ -7,7 +7,6 @@ import {
   InfixDeclaration,
   LetDeclaration,
   MatchArm,
-  MatchBundle,
   MatchBundleLiteralExpr,
   Parameter,
   Pattern,
@@ -15,8 +14,8 @@ import {
   Program,
   TypeDeclaration,
   TypeExpr,
-} from "./ast.ts";
-import { lowerTupleParameters } from "./lower_tuple_params.ts";
+} from "../ast.ts";
+import { lowerTupleParameters } from "../lower_tuple_params.ts";
 import {
   ConstructorInfo,
   Type,
@@ -27,8 +26,8 @@ import {
   freshTypeVar,
   typeToString,
   unknownType,
-} from "./types.ts";
-import { formatScheme } from "./type_printer.ts";
+} from "../types.ts";
+import { formatScheme } from "../type_printer.ts";
 import type {
   MBlockExpr,
   MBlockStatement,
@@ -36,17 +35,13 @@ import type {
   MExprStatement,
   MLetDeclaration,
   MLetStatement,
-  MMatchArm,
-  MMatchBundle,
-  MMatchBundleReferenceArm,
-  MMatchPatternArm,
   MMarkPattern,
   MParameter,
   MPattern,
   MProgram,
   MTopLevel,
   MTypeExpr,
-} from "./ast_marked.ts";
+} from "../ast_marked.ts";
 import {
   Context,
   InferOptions,
@@ -67,7 +62,7 @@ import {
   markUnsupportedExpr,
   unify,
   withScopedEnv,
-} from "./layer1/context.ts";
+} from "./context.ts";
 import {
   convertTypeExpr,
   registerPrelude,
@@ -76,16 +71,17 @@ import {
   RegisterTypeResult,
   RegisterConstructorsResult,
   resetTypeParamsCache,
-} from "./layer1/declarations.ts";
+} from "./declarations.ts";
 import {
   inferMatchExpression,
   inferMatchFunction,
   inferMatchBundleLiteral,
 } from "./infermatch.ts";
+import { materializeMatchBundle } from "./match.ts";
 
-export type { Context, InferOptions, InferResult } from "./layer1/context.ts";
-export { InferError } from "./error.ts";
-export { inferError } from "./layer1/context.ts";
+export type { Context, InferOptions, InferResult } from "./context.ts";
+export { InferError } from "../error.ts";
+export { inferError } from "./context.ts";
 
 function expectParameterName(param: Parameter): string {
   if (!param.name) {
@@ -258,7 +254,7 @@ function getExprTypeOrUnknown(ctx: Context, expr: Expr, reason: string): Type {
   return ctx.nodeTypes.get(expr) ?? unknownFromReason(reason);
 }
 
-function unknownFromReason(reason: string): Type {
+export function unknownFromReason(reason: string): Type {
   return unknownType({ kind: "incomplete", reason });
 }
 
@@ -308,7 +304,7 @@ function materializeTypeExpr(ctx: Context, typeExpr: TypeExpr): MTypeExpr {
   }
 }
 
-function materializePattern(ctx: Context, pattern: Pattern): MPattern {
+export function materializePattern(ctx: Context, pattern: Pattern): MPattern {
   switch (pattern.kind) {
     case "wildcard":
       return {
@@ -377,7 +373,7 @@ function materializePattern(ctx: Context, pattern: Pattern): MPattern {
   }
 }
 
-function materializeExpr(ctx: Context, expr: Expr): MExpr {
+export function materializeExpr(ctx: Context, expr: Expr): MExpr {
   const existingMark = ctx.marks.get(expr);
   if (existingMark) {
     return existingMark;
@@ -577,56 +573,6 @@ function materializeBlockStatement(ctx: Context, statement: BlockStatement): MBl
         expression: materializeExpr(ctx, exprStmt.expression),
       } satisfies MExprStatement;
   }
-}
-
-function materializeMatchBundle(ctx: Context, bundle: MatchBundle, inferredType?: Type): MMatchBundle {
-  const matchResult = ctx.matchResults.get(bundle);
-  const patternInfos = matchResult?.patternInfos ?? [];
-  const resolvedBundleType = matchResult?.type ?? inferredType ?? unknownFromReason("match.bundle");
-  const arms: MMatchArm[] = [];
-  let patternIndex = 0;
-
-  for (const arm of bundle.arms) {
-    if (arm.kind === "match_bundle_reference") {
-      const marked: MMatchBundleReferenceArm = {
-        kind: "match_bundle_reference",
-        span: arm.span,
-        id: arm.id,
-        name: arm.name,
-        hasTrailingComma: arm.hasTrailingComma,
-      } satisfies MMatchBundleReferenceArm;
-      arms.push(marked);
-      continue;
-    }
-
-    const info = patternInfos[patternIndex++];
-    const pattern = info?.marked ?? materializePattern(ctx, arm.pattern);
-    const body = materializeExpr(ctx, arm.body);
-    const armType = matchResult?.type ?? body.type;
-
-    const marked: MMatchPatternArm = {
-      kind: "match_pattern",
-      span: arm.span,
-      id: arm.id,
-      pattern,
-      body,
-      hasTrailingComma: arm.hasTrailingComma,
-      type: armType,
-    } satisfies MMatchPatternArm;
-    arms.push(marked);
-  }
-
-  if (matchResult) {
-    ctx.matchResults.delete(bundle);
-  }
-
-  return {
-    kind: "match_bundle",
-    span: bundle.span,
-    id: bundle.id,
-    arms,
-    type: resolvedBundleType,
-  } satisfies MMatchBundle;
 }
 
 function registerInfixDeclaration(ctx: Context, decl: InfixDeclaration) {

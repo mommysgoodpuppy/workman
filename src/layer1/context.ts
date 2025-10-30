@@ -17,7 +17,7 @@ import type {
   MTypeExprMark,
   MTopLevelMark,
 } from "../ast_marked.ts";
-import type { MatchBranchesResult } from "../infermatch.ts";
+import type { MatchBranchesResult } from "./infermatch.ts";
 import {
   applySubstitution,
   applySubstitutionScheme,

@@ -1,6 +1,6 @@
 import { runEntryPath } from "./module_loader.ts";
 import { ParseError } from "./parser.ts";
-import { InferError } from "./layer1infer.ts";
+import { InferError } from "./layer1/infer.ts";
 
 if (import.meta.main) {
   if (Deno.args.length === 0) {

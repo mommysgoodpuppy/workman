@@ -1,11 +1,11 @@
-import { Expr, MatchBundle, MatchBundleLiteralExpr } from "./ast.ts";
+import { Expr, MatchBundle, MatchBundleLiteralExpr } from "../ast.ts";
 import {
   Context,
   ensureExhaustive,
   inferExpr,
   inferPattern
-} from "./layer1infer.ts";
-import { applyCurrentSubst, markUnsupportedExpr, unify, withScopedEnv } from "./layer1/context.ts"
+} from "./infer.ts";
+import { applyCurrentSubst, markUnsupportedExpr, unify, withScopedEnv } from "./context.ts"
 import {
   cloneTypeScheme,
   freeTypeVars,
@@ -14,9 +14,8 @@ import {
   Type,
   typeToString,
   unknownType
-} from "./types.ts";
-import { inferError, PatternInfo } from "./layer1infer.ts";
-import { LogChannel } from "@mommysgoodpuppy/logchannel"
+} from "../types.ts";
+import { PatternInfo } from "./infer.ts";
 
 
 export interface MatchBranchesResult {

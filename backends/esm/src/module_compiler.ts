@@ -1,8 +1,8 @@
 // Multi-module compilation orchestrator
 
 import type { ModuleGraph, ModuleNode } from "./module_resolver.ts";
-import { inferProgram } from "../../../src/layer1infer.ts";
-import type { InferResult } from "../../../src/layer1infer.ts";
+import { inferProgram } from "../../../src/layer1/infer.ts";
+import type { InferResult } from "../../../src/layer1/infer.ts";
 import type { TypeEnv, TypeEnvADT } from "../../../src/types.ts";
 import { lowerToCore } from "./lower_to_core.ts";
 import { lowerToMir } from "./lower_to_mir.ts";

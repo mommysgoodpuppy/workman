@@ -3,7 +3,7 @@
 
 import type { Program, Expr, Pattern, LetDeclaration, TypeDeclaration, BlockExpr } from "../../../src/ast.ts";
 import type { Type, TypeEnv, TypeEnvADT, TypeScheme } from "../../../src/types.ts";
-import type { InferResult } from "../../../src/layer1infer.ts";
+import type { InferResult } from "../../../src/layer1/infer.ts";
 import {
   CoreExpr,
   CorePattern,
