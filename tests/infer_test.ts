@@ -1,10 +1,10 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { inferProgram, InferError } from "../src/layer1infer.ts";
+import { inferProgram, InferResult } from "../src/layer1infer.ts";
 import { lowerTupleParameters } from "../src/lower_tuple_params.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { NodeId, Program } from "../src/ast.ts";
-import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
+import { assertEquals, assertFalse, assertObjectMatch, assertExists, assertThrows } from "https://deno.land/std/assert/mod.ts";
 
 const TEST_PRELUDE_SOURCE = `
   type List<T> = Nil | Cons<T, List<T>>;
@@ -15,7 +15,7 @@ function inferTypes(source: string) {
   const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
   const program = parseSurfaceProgram(tokens);
   const result = inferProgram(program);
-  return result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  return result;
 }
 
 function collectNodeIds(program: any): NodeId[] {
@@ -53,7 +53,8 @@ Deno.test("infers polymorphic identity function", () => {
       x
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   assertEquals(summaries.length, 1);
   assertEquals(summaries[0], { name: "id", type: "T -> T" });
 });
@@ -68,7 +69,8 @@ Deno.test("infers constructors and ADT match", () => {
       }
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const binding = summaries.find((entry) => entry.name === "mapOption");
   if (!binding) {
     throw new Error("expected mapOption binding");
@@ -85,11 +87,11 @@ Deno.test("rejects non-exhaustive match", () => {
       }
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "Non-exhaustive patterns",
-  );
+  const result = inferTypes(source);
+
+  const marks = Array.from(result.marks.values());
+  const nonExhaustiveMark = marks.find((mark) => mark.kind === "mark_unsupported_expr" && mark.exprKind === "match_non_exhaustive");
+  assertExists(nonExhaustiveMark);
 });
 
 Deno.test("supports annotated let bindings", () => {
@@ -101,7 +103,8 @@ Deno.test("supports annotated let bindings", () => {
       id(3)
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const idBinding = summaries.find((entry) => entry.name === "id");
   const threeBinding = summaries.find((entry) => entry.name === "three");
   if (!idBinding || !threeBinding) {
@@ -120,7 +123,8 @@ Deno.test("infers tuple pattern matches", () => {
       }
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const binding = summaries.find((entry) => entry.name === "fst");
   if (!binding) {
     throw new Error("expected fst binding");
@@ -134,7 +138,8 @@ Deno.test("infers tuple parameter destructuring", () => {
       (b, a)
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const swap = summaries.find((entry) => entry.name === "swap");
   if (!swap) {
     throw new Error("expected swap binding");
@@ -148,7 +153,8 @@ Deno.test("infers tuple literal types", () => {
       (1, true)
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const pair = summaries.find((entry) => entry.name === "pair");
   if (!pair) {
     throw new Error("expected pair binding");
@@ -167,7 +173,8 @@ Deno.test("generalizes tuple-producing functions", () => {
       (ints, bools)
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const dup = summaries.find((entry) => entry.name === "dup");
   if (!dup) {
     throw new Error("expected dup binding");
@@ -187,7 +194,8 @@ Deno.test("block let generalization allows multiple instantiations", () => {
       (id(1), id(true))
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const binding = summaries.find((entry) => entry.name === "useId");
   if (!binding) {
     throw new Error("expected useId binding");
@@ -204,7 +212,8 @@ Deno.test("type annotation reuses named variables", () => {
       }
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const choose = summaries.find((entry) => entry.name === "choose");
   if (!choose) {
     throw new Error("expected choose binding");
@@ -218,11 +227,18 @@ Deno.test("occurs check triggers on ill-typed recursion", () => {
       _ => { loop(loop) }
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "Occurs check failed",
-  );
+  // Should not throw, but produce unknown types or marks
+  const result = inferTypes(source);
+  const marks = Array.from(result.marks.values());
+  const occurs = marks.find((mark) => mark.kind === "mark_occurs_check");
+  assertExists(occurs);
+  if (occurs?.kind !== "mark_occurs_check") {
+    throw new Error("expected mark_occurs_check");
+  }
+  assertEquals(occurs.subject.kind, "identifier");
+  assertEquals(occurs.subject.kind === "identifier" ? occurs.subject.name : undefined, "loop");
+  assertEquals(occurs.left.kind, "var");
+  assertEquals(occurs.right.kind, "func");
 });
 
 Deno.test("constructor arity mismatch fails", () => {
@@ -232,11 +248,11 @@ Deno.test("constructor arity mismatch fails", () => {
       Pair(1)
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "not fully applied",
-  );
+  const result = inferTypes(source);
+
+  const marks = Array.from(result.marks.values());
+  const notFunctionMark = marks.find((mark) => mark.kind === "mark_not_function");
+  assertExists(notFunctionMark);
 });
 
 Deno.test("rejects duplicate pattern bindings", () => {
@@ -248,11 +264,25 @@ Deno.test("rejects duplicate pattern bindings", () => {
       }
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "Duplicate variable",
-  );
+  const result = inferTypes(source);
+
+  // Find mark_pattern in the marked program
+  function findMarkPattern(node: any): any {
+    if (node && typeof node === 'object') {
+      if (node.kind === 'mark_pattern' && node.data?.issue === 'duplicate_variable') {
+        return node;
+      }
+      for (const key in node) {
+        const found = findMarkPattern(node[key]);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  const mark = findMarkPattern(result.markedProgram);
+  assertExists(mark);
+  assertEquals(mark.data.name, "x");
 });
 
 Deno.test("rejects annotation mismatches", () => {
@@ -261,10 +291,18 @@ Deno.test("rejects annotation mismatches", () => {
       x
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-  );
+  // Should not throw
+  const result = inferTypes(source);
+  const marks = Array.from(result.marks.values());
+  const inconsistent = marks.find((mark) => mark.kind === "mark_inconsistent");
+  assertExists(inconsistent);
+  if (inconsistent?.kind !== "mark_inconsistent") {
+    throw new Error("expected mark_inconsistent");
+  }
+  assertEquals(inconsistent.subject.kind, "identifier");
+  assertEquals(inconsistent.subject.kind === "identifier" ? inconsistent.subject.name : undefined, "x");
+  assertEquals(inconsistent.expected.kind, "bool");
+  assertEquals(inconsistent.actual.kind, "func");
 });
 
 Deno.test("supports list prelude constructors", () => {
@@ -276,7 +314,8 @@ Deno.test("supports list prelude constructors", () => {
       Cons(true, Nil)
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const singleton = summaries.find((entry) => entry.name === "singleton");
   const two = summaries.find((entry) => entry.name === "two");
   if (!singleton || !two) {
@@ -301,7 +340,8 @@ Deno.test("first-class match builds pattern functions", () => {
       toBoolean()(Some(42))
     };
   `;
-  const summaries = inferTypes(source);
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   const convert = summaries.find((entry) => entry.name === "toBoolean");
   const value = summaries.find((entry) => entry.name === "value");
   if (!convert || !value) {
@@ -309,6 +349,69 @@ Deno.test("first-class match builds pattern functions", () => {
   }
   assertEquals(convert.type, "Option<T> -> Bool");
   assertEquals(value.type, "Bool");
+});
+
+Deno.test("type constructor name collisions produce invalid member mark", () => {
+  const source = `
+type Option = None | None;
+`;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+  const result = inferProgram(program);
+
+  const marks = result.markedProgram.declarations.filter((decl) => decl.kind === "mark_type_decl_invalid_member");
+  assertEquals(marks.length, 1);
+  const mark = marks[0];
+  if (mark.kind !== "mark_type_decl_invalid_member") {
+    throw new Error("expected mark_type_decl_invalid_member");
+  }
+  assertEquals(mark.declaration.name, "Option");
+  assertEquals(mark.member.kind, "constructor");
+  if (mark.member.kind === "constructor") {
+    assertEquals(mark.member.name, "None");
+  }
+});
+
+Deno.test("let annotation arity errors surface mark_type_expr_arity", () => {
+  const source = `
+let bad: Int<Int> = () => {
+  0
+};
+`;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+  const result = inferProgram(program);
+
+  const letDecl = result.markedProgram.declarations.find((decl) => decl.kind === "let");
+  assertExists(letDecl);
+  if (letDecl?.kind !== "let") {
+    throw new Error("expected let declaration");
+  }
+
+  assertExists(letDecl.annotation);
+  if (!letDecl.annotation) {
+    throw new Error("expected annotation");
+  }
+  assertEquals(letDecl.annotation.kind, "mark_type_expr_arity");
+});
+
+Deno.test("infer handles duplicate type declarations with mark", () => {
+  const source = `
+type Option = None;
+type Option = Some;
+`;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+  const result = inferProgram(program);
+
+  assertEquals(result.markedProgram.declarations.length, 2);
+  const mark = result.markedProgram.declarations.find((decl) => decl.kind === "mark_type_decl_duplicate");
+  assertExists(mark);
+  if (mark?.kind !== "mark_type_decl_duplicate") {
+    throw new Error("expected mark_type_decl_duplicate");
+  }
+  assertEquals(mark.declaration.name, "Option");
+  assertEquals(mark.duplicate.name, "Option");
 });
 
 Deno.test("lowering preserves and allocates node IDs correctly", () => {

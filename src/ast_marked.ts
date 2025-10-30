@@ -154,6 +154,13 @@ export interface MMarkNotFunction extends MTypedNode {
   calleeType: Type;
 }
 
+export interface MMarkOccursCheck extends MTypedNode {
+  kind: "mark_occurs_check";
+  subject: MExpr;
+  left: Type;
+  right: Type;
+}
+
 export interface MMarkUnsupportedExpr extends MTypedNode {
   kind: "mark_unsupported_expr";
   exprKind: string;
@@ -218,7 +225,12 @@ export type MTypeExpr =
   | MTypeUnit
   | MTypeExprMark;
 
-export type MMarkExpr = MMarkFreeVar | MMarkNotFunction | MMarkInconsistent | MMarkUnsupportedExpr;
+export type MMarkExpr =
+  | MMarkFreeVar
+  | MMarkNotFunction
+  | MMarkOccursCheck
+  | MMarkInconsistent
+  | MMarkUnsupportedExpr;
 
 export type MExpr =
   | MIdentifierExpr
@@ -294,12 +306,18 @@ export interface MLetDeclaration extends MTypedNode {
 export interface MMarkTypeDeclDuplicate extends MNodeBase {
   kind: "mark_type_decl_duplicate";
   declaration: TypeDeclaration;
+  duplicate: TypeDeclaration;
 }
 
 export interface MMarkTypeDeclInvalidMember extends MNodeBase {
   kind: "mark_type_decl_invalid_member";
   declaration: TypeDeclaration;
   member: TypeDeclaration["members"][0];
+}
+
+export interface MMarkInternal extends MNodeBase {
+  kind: "mark_internal";
+  reason: string;
 }
 
 export interface MMarkTypeExprUnknown extends MNodeBase {
@@ -322,7 +340,7 @@ export interface MMarkTypeExprUnsupported extends MNodeBase {
   type: Type;
 }
 
-export type MTopLevelMark = MMarkTypeDeclDuplicate | MMarkTypeDeclInvalidMember;
+export type MTopLevelMark = MMarkTypeDeclDuplicate | MMarkTypeDeclInvalidMember | MMarkInternal;
 export type MTypeExprMark = MMarkTypeExprUnknown | MMarkTypeExprArity | MMarkTypeExprUnsupported;
 
 export type MTopLevel =
@@ -342,6 +360,7 @@ export function isMarkedExpression(expr: MExpr): expr is MMarkExpr | MTypeExprMa
   switch (expr.kind) {
     case "mark_free_var":
     case "mark_not_function":
+    case "mark_occurs_check":
     case "mark_inconsistent":
     case "mark_unsupported_expr":
     case "mark_type_expr_unknown":

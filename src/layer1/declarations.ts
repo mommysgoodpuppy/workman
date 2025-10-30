@@ -8,7 +8,7 @@ import {
   freshTypeVar,
   unknownType,
 } from "../types.ts";
-import { 
+import {
   inferError,
   lookupEnv,
   expectFunctionType,
@@ -17,6 +17,7 @@ import {
   markTypeExprUnknown,
   markTypeExprArity,
   markTypeExprUnsupported,
+  markInternal,
 } from "./context.ts";
 
 type TypeScope = Map<string, Type>;
@@ -72,6 +73,7 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
 
   const stagedConstructors: ConstructorInfo[] = [];
   const stagedEnvEntries: string[] = [];
+  const seenConstructorNames = new Set<string>();
 
   for (const member of decl.members) {
     if (member.kind !== "constructor") {
@@ -85,6 +87,16 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
       return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
     }
 
+    if (seenConstructorNames.has(member.name)) {
+      ctx.adtEnv.delete(decl.name);
+      typeParamsCache.delete(decl.name);
+      for (const name of stagedEnvEntries) {
+        ctx.env.delete(name);
+      }
+      return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
+    }
+    seenConstructorNames.add(member.name);
+
     // Preflight lookup: check if constructor name already exists
     const existingScheme = lookupEnv(ctx, member.name);
     if (existingScheme) {
@@ -94,15 +106,7 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
       for (const name of stagedEnvEntries) {
         ctx.env.delete(name);
       }
-      // Create a collision mark (reuse invalid member for now, but with decl id)
-      const mark: MMarkTypeDeclInvalidMember = {
-        kind: "mark_type_decl_invalid_member",
-        span: decl.span,
-        id: decl.id, // Use decl id for provenance
-        declaration: decl,
-        member,
-      };
-      return { success: false, mark };
+      return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
     }
 
     const info = buildConstructorInfo(ctx, decl.name, parameterTypes, member, typeScope);
@@ -387,15 +391,7 @@ function registerIntBinaryPrimitive(ctx: Context, name: string, aliasOf?: string
 function registerPrintPrimitive(ctx: Context, name: string, aliasOf?: string): void {
   const typeVar = freshTypeVar();
   if (typeVar.kind !== "var") {
-    // This should not happen, but create a mark with internal provenance
-    const mark = {
-      kind: "mark_type_expr_unsupported" as const,
-      span: { start: 0, end: 0 }, // Internal, no real span
-      id: -1, // Internal
-      type: unknownType({ kind: "error_internal", reason: "fresh_type_var_not_var" }),
-    };
-    // Since this is internal and not attached to a real typeExpr, we'll just log and continue
-    console.warn("Internal error: fresh type variable was not a var");
+    markInternal(ctx, "fresh_type_var_not_var");
     return;
   }
 

@@ -63,6 +63,7 @@ import {
   markInconsistent,
   markNonExhaustive,
   markNotFunction,
+  markOccursCheck,
   markUnsupportedExpr,
   unify,
   withScopedEnv,
@@ -131,6 +132,10 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     }
   }
 
+  if (ctx.topLevelMarks.length > 0) {
+    markedDeclarations.push(...ctx.topLevelMarks);
+  }
+
   // Pass 2: Register constructors (now all type names are known)
   for (const decl of program.declarations) {
     if (decl.kind === "type" && successfulTypeDecls.has(decl)) {
@@ -187,6 +192,7 @@ export function inferProgram(program: Program, options: InferOptions = {}): Infe
     summaries: finalSummaries,
     allBindings: ctx.allBindings,
     markedProgram,
+    marks: ctx.marks,
   };
 }
 
@@ -762,7 +768,17 @@ function inferLetBinding(
       if (unify(ctx, fnType, annotated)) {
         fnType = applyCurrentSubst(ctx, annotated);
       } else {
-        fnType = unknownType({ kind: "incomplete", reason: "annotation_unify_failed" });
+        const failure = ctx.lastUnifyFailure;
+        const subject = materializeExpr(ctx, body.result ?? body);
+        if (failure?.kind === "occurs_check") {
+          const mark = markOccursCheck(ctx, body, subject, failure.left, failure.right);
+          fnType = mark.type;
+        } else {
+          const expected = applyCurrentSubst(ctx, annotated);
+          const actual = applyCurrentSubst(ctx, fnType);
+          const mark = markInconsistent(ctx, body, subject, expected, actual);
+          fnType = mark.type;
+        }
       }
     }
 
@@ -865,7 +881,18 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           // This should be handled by marking, but for now continue with unknown
           return recordExprType(ctx, expr, unknownType({ kind: "incomplete", reason: "constructor_not_function" }));
         }
-        unify(ctx, fnType.from, argType);
+        if (!unify(ctx, fnType.from, argType)) {
+          const failure = ctx.lastUnifyFailure;
+          const subject = materializeExpr(ctx, arg);
+          if (failure?.kind === "occurs_check") {
+            const mark = markOccursCheck(ctx, expr, subject, failure.left, failure.right);
+            return recordExprType(ctx, expr, mark.type);
+          }
+          const resolvedFn = applyCurrentSubst(ctx, fnType.from);
+          const resolvedArg = applyCurrentSubst(ctx, argType);
+          const mark = markInconsistent(ctx, expr, subject, resolvedFn, resolvedArg);
+          return recordExprType(ctx, expr, mark.type);
+        }
         result = fnType.to;
       }
       const applied = applyCurrentSubst(ctx, result);
@@ -915,12 +942,19 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             argType: typeToString(applyCurrentSubst(ctx, argType)),
           }); */
         }
-        try {
-          unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
-        } catch (e) {
-          const resolvedFn = applyCurrentSubst(ctx, fnType);
+        const unifySucceeded = unify(ctx, fnType, { kind: "func", from: argType, to: resultType });
+        if (!unifySucceeded) {
+          const failure = ctx.lastUnifyFailure;
           const calleeMarked = materializeExpr(ctx, expr.callee);
           const argsMarked = expr.arguments.map((argument) => materializeExpr(ctx, argument));
+          const subject = argsMarked[index];
+
+          if (failure?.kind === "occurs_check") {
+            const mark = markOccursCheck(ctx, expr, subject, failure.left, failure.right);
+            return recordExprType(ctx, expr, mark.type);
+          }
+
+          const resolvedFn = applyCurrentSubst(ctx, fnType);
           if (resolvedFn.kind !== "func") {
             const mark = markNotFunction(ctx, expr, calleeMarked, argsMarked, resolvedFn);
             return recordExprType(ctx, expr, mark.type);
@@ -928,7 +962,6 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
           const expectedArg = applyCurrentSubst(ctx, resolvedFn.from);
           const actualArg = applyCurrentSubst(ctx, argType);
-          const subject = argsMarked[index];
           const mark = markInconsistent(ctx, expr, subject, expectedArg, actualArg);
           return recordExprType(ctx, expr, mark.type);
         }
@@ -989,7 +1022,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // Apply the function to both arguments
       const resultType1 = freshTypeVar();
       if (!unify(ctx, opType, { kind: "func", from: leftType, to: { kind: "func", from: rightType, to: resultType1 } })) {
-        return recordExprType(ctx, expr, unknownType({ kind: "incomplete", reason: "binary_unify_failed" }));
+        const failure = ctx.lastUnifyFailure;
+        if (failure?.kind === "occurs_check") {
+          const mark = markOccursCheck(ctx, expr, materializeExpr(ctx, expr.left), failure.left, failure.right);
+          return recordExprType(ctx, expr, mark.type);
+        }
+        const expected = applyCurrentSubst(ctx, opType);
+        const mark = markInconsistent(ctx, expr, materializeExpr(ctx, expr.left), expected, applyCurrentSubst(ctx, leftType));
+        return recordExprType(ctx, expr, mark.type);
       }
       
       return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType1));
@@ -1011,7 +1051,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // Apply the function to the operand
       const resultType = freshTypeVar();
       if (!unify(ctx, opType, { kind: "func", from: operandType, to: resultType })) {
-        return recordExprType(ctx, expr, unknownType({ kind: "incomplete", reason: "unary_unify_failed" }));
+        const failure = ctx.lastUnifyFailure;
+        if (failure?.kind === "occurs_check") {
+          const mark = markOccursCheck(ctx, expr, materializeExpr(ctx, expr.operand), failure.left, failure.right);
+          return recordExprType(ctx, expr, mark.type);
+        }
+        const expected = applyCurrentSubst(ctx, opType);
+        const mark = markInconsistent(ctx, expr, materializeExpr(ctx, expr.operand), expected, applyCurrentSubst(ctx, operandType));
+        return recordExprType(ctx, expr, mark.type);
       }
       
       return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType));

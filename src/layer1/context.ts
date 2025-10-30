@@ -4,8 +4,10 @@ import type {
   MMarkFreeVar,
   MMarkInconsistent,
   MMarkNotFunction,
+  MMarkOccursCheck,
   MMarkTypeDeclDuplicate,
   MMarkTypeDeclInvalidMember,
+  MMarkInternal,
   MMarkTypeExprArity,
   MMarkTypeExprUnknown,
   MMarkTypeExprUnsupported,
@@ -13,6 +15,7 @@ import type {
   MProgram,
   MTypeExpr,
   MTypeExprMark,
+  MTopLevelMark,
 } from "../ast_marked.ts";
 import type { MatchBranchesResult } from "../infermatch.ts";
 import {
@@ -46,6 +49,8 @@ export interface Context {
   typeExprMarks: Map<TypeExpr, MTypeExpr>;
   nodeTypes: Map<Expr, Type>;
   matchResults: Map<MatchBundle, MatchBranchesResult>;
+  topLevelMarks: MTopLevelMark[];
+  lastUnifyFailure: UnifyFailure | null;
 }
 
 export interface InferOptions {
@@ -62,6 +67,7 @@ export interface InferResult {
   summaries: { name: string; scheme: TypeScheme }[];
   allBindings: Map<string, TypeScheme>;
   markedProgram: MProgram;
+  marks: Map<Expr, MExpr>;
 }
 
 export function createContext(options: InferOptions = {}): Context {
@@ -79,6 +85,8 @@ export function createContext(options: InferOptions = {}): Context {
     typeExprMarks: new Map(),
     nodeTypes: new Map(),
     matchResults: new Map(),
+    topLevelMarks: [],
+    lastUnifyFailure: null,
   };
 }
 
@@ -221,6 +229,28 @@ export function markNotFunction(
   return mark;
 }
 
+export function markOccursCheck(
+  ctx: Context,
+  expr: Expr,
+  subject: MExpr,
+  left: Type,
+  right: Type,
+): MMarkOccursCheck {
+  const resolvedLeft = applyCurrentSubst(ctx, left);
+  const resolvedRight = applyCurrentSubst(ctx, right);
+  const mark: MMarkOccursCheck = {
+    kind: "mark_occurs_check",
+    span: expr.span,
+    id: expr.id,
+    type: unknownType({ kind: "error_occurs_check", left: resolvedLeft, right: resolvedRight }),
+    subject,
+    left: resolvedLeft,
+    right: resolvedRight,
+  };
+  ctx.marks.set(expr, mark);
+  return mark;
+}
+
 export function markInconsistent(
   ctx: Context,
   expr: Expr,
@@ -266,6 +296,7 @@ export function markTypeDeclDuplicate(
     span: decl.span,
     id: decl.id,
     declaration: decl,
+    duplicate: decl,
   };
   // Note: Top-level marks don't use ctx.marks since they're not expressions
   return mark;
@@ -283,6 +314,17 @@ export function markTypeDeclInvalidMember(
     declaration: decl,
     member,
   };
+  return mark;
+}
+
+export function markInternal(ctx: Context, reason: string): MMarkInternal {
+  const mark: MMarkInternal = {
+    kind: "mark_internal",
+    span: { start: 0, end: 0 },
+    id: -1,
+    reason,
+  };
+  ctx.topLevelMarks.push(mark);
   return mark;
 }
 
@@ -434,7 +476,9 @@ export function unify(ctx: Context, a: Type, b: Type): boolean {
   const result = unifyTypes(a, b, ctx.subst);
   if (result.success) {
     ctx.subst = composeSubstitution(ctx.subst, result.subst);
+    ctx.lastUnifyFailure = null;
     return true;
   }
+  ctx.lastUnifyFailure = result.reason;
   return false;
 }

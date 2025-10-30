@@ -1,0 +1,3 @@
+let tricky: Bool = (x: Int) => {
+  x
+};

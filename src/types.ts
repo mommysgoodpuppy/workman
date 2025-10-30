@@ -4,6 +4,7 @@ export type Provenance =
   | { kind: "error_free_var"; name: string }
   | { kind: "error_inconsistent"; expected: Type; actual: Type }
   | { kind: "error_not_function"; calleeType: Type }
+  | { kind: "error_occurs_check"; left: Type; right: Type }
   | { kind: "error_unify_conflict"; typeA: Type; typeB: Type }
   | { kind: "error_type_expr_unknown"; name: string }
   | { kind: "error_type_expr_arity"; expected: number; actual: number }
@@ -325,6 +326,12 @@ function cloneProvenance(provenance: Provenance): Provenance {
         kind: "error_not_function",
         calleeType: cloneType(provenance.calleeType),
       };
+    case "error_occurs_check":
+      return {
+        kind: "error_occurs_check",
+        left: cloneType(provenance.left),
+        right: cloneType(provenance.right),
+      };
     case "error_inconsistent":
       return {
         kind: "error_inconsistent",
@@ -360,6 +367,8 @@ export function provenanceToString(provenance: Provenance): string {
       return `?(free ${provenance.name})`;
     case "error_not_function":
       return "?(not-function)";
+    case "error_occurs_check":
+      return "?(occurs-check)";
     case "error_inconsistent":
       return "?(inconsistent)";
     case "error_unify_conflict":
