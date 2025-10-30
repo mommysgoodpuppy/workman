@@ -5,6 +5,10 @@ export type Provenance =
   | { kind: "error_inconsistent"; expected: Type; actual: Type }
   | { kind: "error_not_function"; calleeType: Type }
   | { kind: "error_unify_conflict"; typeA: Type; typeB: Type }
+  | { kind: "error_type_expr_unknown"; name: string }
+  | { kind: "error_type_expr_arity"; expected: number; actual: number }
+  | { kind: "error_type_expr_unsupported" }
+  | { kind: "error_internal"; reason: string }
   | { kind: "incomplete"; reason: string };
 
 export type Type =
@@ -333,6 +337,10 @@ function cloneProvenance(provenance: Provenance): Provenance {
         typeA: cloneType(provenance.typeA),
         typeB: cloneType(provenance.typeB),
       };
+    case "error_type_expr_unknown":
+    case "error_type_expr_arity":
+    case "error_type_expr_unsupported":
+    case "error_internal":
     case "incomplete":
       return { ...provenance };
     default: {
@@ -356,6 +364,14 @@ export function provenanceToString(provenance: Provenance): string {
       return "?(inconsistent)";
     case "error_unify_conflict":
       return "?(conflict)";
+    case "error_type_expr_unknown":
+      return `?(unknown type: ${provenance.name})`;
+    case "error_type_expr_arity":
+      return `?(arity mismatch: expected ${provenance.expected}, got ${provenance.actual})`;
+    case "error_type_expr_unsupported":
+      return "?(unsupported type expression)";
+    case "error_internal":
+      return `?(internal error: ${provenance.reason})`;
     case "incomplete":
       return `?(incomplete:${provenance.reason})`;
     default: {

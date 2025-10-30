@@ -302,7 +302,28 @@ export interface MMarkTypeDeclInvalidMember extends MNodeBase {
   member: TypeDeclaration["members"][0];
 }
 
+export interface MMarkTypeExprUnknown extends MNodeBase {
+  kind: "mark_type_expr_unknown";
+  type: Type;
+  typeExpr: TypeExpr;
+  reason: string;
+}
+
+export interface MMarkTypeExprArity extends MNodeBase {
+  kind: "mark_type_expr_arity";
+  type: Type;
+  typeExpr: TypeExpr;
+  expected: number;
+  actual: number;
+}
+
+export interface MMarkTypeExprUnsupported extends MNodeBase {
+  kind: "mark_type_expr_unsupported";
+  type: Type;
+}
+
 export type MTopLevelMark = MMarkTypeDeclDuplicate | MMarkTypeDeclInvalidMember;
+export type MTypeExprMark = MMarkTypeExprUnknown | MMarkTypeExprArity | MMarkTypeExprUnsupported;
 
 export type MTopLevel =
   | MLetDeclaration

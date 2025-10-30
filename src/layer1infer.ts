@@ -299,13 +299,6 @@ function materializeTypeExpr(ctx: Context, typeExpr: TypeExpr): MTypeExpr {
         span: typeExpr.span,
         id: typeExpr.id,
       };
-    default:
-      // This shouldn't happen with valid AST
-      return {
-        kind: "type_unit", // fallback
-        span: typeExpr.span,
-        id: typeExpr.id,
-      };
   }
 }
 

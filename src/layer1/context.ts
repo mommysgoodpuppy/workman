@@ -1,4 +1,4 @@
-import type { Expr, Literal, MatchBundle, SourceSpan } from "../ast.ts";
+import type { Expr, TypeExpr, Literal, MatchBundle, SourceSpan, TypeDeclaration } from "../ast.ts";
 import type {
   MExpr,
   MMarkFreeVar,
@@ -334,6 +334,20 @@ export function markNonExhaustive(
     exprKind: "match_non_exhaustive",
   };
   ctx.marks.set(expr, mark);
+  return mark;
+}
+
+export function markTypeExprUnsupported(
+  ctx: Context,
+  typeExpr: TypeExpr,
+): MMarkTypeExprUnsupported {
+  const mark: MMarkTypeExprUnsupported = {
+    kind: "mark_type_expr_unsupported",
+    span: typeExpr.span,
+    id: typeExpr.id,
+    type: unknownType({ kind: "error_type_expr_unsupported" }),
+    typeExpr: typeExpr,
+  };
   return mark;
 }
 
