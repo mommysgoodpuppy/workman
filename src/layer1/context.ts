@@ -1,5 +1,4 @@
 import type {
-  BlockExpr,
   Expr,
   Literal,
   MatchBundle,
@@ -208,7 +207,7 @@ export function recordAnnotationConstraint(
   origin: NodeId,
   annotation: TypeExpr,
   value: Expr,
-  subject?: Expr | BlockExpr,
+  subject?: Expr,
 ): void {
   ctx.constraintStubs.push({
     kind: "annotation",
@@ -422,7 +421,6 @@ export function expectFunctionType(
 export function literalType(literal: Literal): Type {
   switch (literal.kind) {
     case "int":
-      recordNumericLiteralConstraint(ctx, literal);
       return { kind: "int" };
     case "bool":
       return { kind: "bool" };

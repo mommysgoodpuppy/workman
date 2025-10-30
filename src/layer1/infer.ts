@@ -191,7 +191,7 @@ function inferLetDeclaration(
     }
     ctx.allBindings.set(decl.name, scheme); // Track in allBindings
     if (decl.annotation) {
-      recordAnnotationConstraint(ctx, decl, decl.annotation);
+      recordAnnotationConstraint(ctx, decl.id, decl.annotation, decl.body.result ?? decl.body);
     }
     return [{ name: decl.name, scheme }];
   }
@@ -258,7 +258,7 @@ function inferLetDeclaration(
 
   for (const binding of allBindings) {
     if (binding.annotation) {
-      recordAnnotationConstraint(ctx, binding, binding.annotation);
+      recordAnnotationConstraint(ctx, binding.id, binding.annotation, binding.body.result ?? binding.body);
     }
   }
 
@@ -619,17 +619,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             return recordExprType(ctx, expr, mark.type);
           }
 
-      const expectedArg = applyCurrentSubst(ctx, resolvedFn.from);
-      const actualArg = applyCurrentSubst(ctx, argType);
-      const mark = markInconsistent(
-        ctx,
-        expr,
-        subject,
-        expectedArg,
-        actualArg,
-      );
-      return recordExprType(ctx, expr, mark.type);
-    }
+          const expectedArg = applyCurrentSubst(ctx, resolvedFn.from);
+          const actualArg = applyCurrentSubst(ctx, argType);
+          const mark = markInconsistent(
+            ctx,
+            expr,
+            subject,
+            expectedArg,
+            actualArg,
+          );
+          return recordExprType(ctx, expr, mark.type);
+        }
         if (shouldLogFormatter) {
           /* console.debug("[debug] formatter call after unify", {
             resultType: typeToString(applyCurrentSubst(ctx, resultType)),
@@ -640,7 +640,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         recordCallConstraint(ctx, expr, expr.callee, argExpr, expr, index);
 
         fnType = applyCurrentSubst(ctx, resultType);
-    }
+      }
       const callType = applyCurrentSubst(ctx, fnType);
       if (
         ctx.source?.includes(
@@ -730,49 +730,67 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           applyCurrentSubst(ctx, leftType),
         );
         return recordExprType(ctx, expr, mark.type);
+      }
+
+      if (NUMERIC_BINARY_OPERATORS.has(expr.operator)) {
+        recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+      }
+      if (COMPARISON_OPERATORS.has(expr.operator)) {
+        recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+        recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+      }
+      if (BOOLEAN_BINARY_OPERATORS.has(expr.operator)) {
+        recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+      }
+
+      return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType1));
     }
+    case "unary": {
+      // Unary operators are desugared to function calls
+      // e.g., `!x` becomes `not(x)` where `not` is the implementation function
+      const operandType = inferExpr(ctx, expr.operand);
 
-    return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType1));
-  }
-  case "unary": {
-    // Unary operators are desugared to function calls
-    // e.g., `!x` becomes `not(x)` where `not` is the implementation function
-    const operandType = inferExpr(ctx, expr.operand);
+      // Look up the prefix operator's implementation function
+      const opFuncName = `__prefix_${expr.operator}`;
+      const scheme = lookupEnv(ctx, opFuncName);
+      if (!scheme) {
+        const mark = markFreeVariable(ctx, expr, opFuncName);
+        return recordExprType(ctx, expr, mark.type);
+      }
+      const opType = instantiateAndApply(ctx, scheme);
 
-    // Look up the prefix operator's implementation function
-    const opFuncName = `__prefix_${expr.operator}`;
-    const scheme = lookupEnv(ctx, opFuncName);
-    if (!scheme) {
-      const mark = markFreeVariable(ctx, expr, opFuncName);
-      return recordExprType(ctx, expr, mark.type);
-    }
-    const opType = instantiateAndApply(ctx, scheme);
-
-    // Apply the function to the operand
-    const resultType = freshTypeVar();
-    if (
-      !unify(ctx, opType, { kind: "func", from: operandType, to: resultType })
-    ) {
-      const failure = ctx.lastUnifyFailure;
-      if (failure?.kind === "occurs_check") {
-        const mark = markOccursCheck(
+      // Apply the function to the operand
+      const resultType = freshTypeVar();
+      if (
+        !unify(ctx, opType, { kind: "func", from: operandType, to: resultType })
+      ) {
+        const failure = ctx.lastUnifyFailure;
+        if (failure?.kind === "occurs_check") {
+          const mark = markOccursCheck(
+            ctx,
+            expr,
+            materializeExpr(ctx, expr.operand),
+            failure.left,
+            failure.right,
+          );
+          return recordExprType(ctx, expr, mark.type);
+        }
+        const expected = applyCurrentSubst(ctx, opType);
+        const mark = markInconsistent(
           ctx,
           expr,
           materializeExpr(ctx, expr.operand),
-          failure.left,
-          failure.right,
+          expected,
+          applyCurrentSubst(ctx, operandType),
         );
         return recordExprType(ctx, expr, mark.type);
       }
-      const expected = applyCurrentSubst(ctx, opType);
-      const mark = markInconsistent(
-        ctx,
-        expr,
-        materializeExpr(ctx, expr.operand),
-        expected,
-        applyCurrentSubst(ctx, operandType),
-      );
-      return recordExprType(ctx, expr, mark.type);
+
+      if (NUMERIC_UNARY_OPERATORS.has(expr.operator)) {
+        recordNumericConstraint(ctx, expr, [expr.operand], expr.operator);
+      }
+      if (BOOLEAN_UNARY_OPERATORS.has(expr.operator)) {
+        recordBooleanConstraint(ctx, expr, [expr.operand], expr.operator);
       }
 
       return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType));
