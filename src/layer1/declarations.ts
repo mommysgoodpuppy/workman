@@ -1,12 +1,24 @@
 import type { ConstructorAlias, TypeDeclaration, TypeExpr } from "../ast.ts";
 import type { Context } from "./context.ts";
+import { MMarkTypeDeclDuplicate, MMarkTypeDeclInvalidMember } from "../ast_marked.ts";
 import {
   ConstructorInfo,
   Type,
   TypeScheme,
   freshTypeVar,
+  unknownType,
 } from "../types.ts";
-import { inferError } from "./context.ts";
+import { 
+  inferError,
+  lookupEnv,
+  expectFunctionType,
+  ExpectFunctionResult,
+  markTypeDeclDuplicate,
+  markTypeDeclInvalidMember,
+  markTypeExprUnknown,
+  markTypeExprArity,
+  markTypeExprUnsupported,
+} from "./context.ts";
 
 type TypeScope = Map<string, Type>;
 
@@ -16,9 +28,11 @@ export function resetTypeParamsCache(): void {
   typeParamsCache.clear();
 }
 
-export function registerTypeName(ctx: Context, decl: TypeDeclaration): void {
+export type RegisterTypeResult = { success: true } | { success: false; mark: MMarkTypeDeclDuplicate };
+
+export function registerTypeName(ctx: Context, decl: TypeDeclaration): RegisterTypeResult {
   if (ctx.adtEnv.has(decl.name)) {
-    throw inferError(`Type '${decl.name}' is already defined`, decl.span, ctx.source);
+    return { success: false, mark: markTypeDeclDuplicate(ctx, decl) };
   }
 
   const parameterTypes = decl.typeParams.map(() => freshTypeVar());
@@ -34,17 +48,22 @@ export function registerTypeName(ctx: Context, decl: TypeDeclaration): void {
   ctx.adtEnv.set(decl.name, adtInfo);
 
   typeParamsCache.set(decl.name, parameterTypes);
+  return { success: true };
 }
 
-export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): void {
+export type RegisterConstructorsResult = { success: true } | { success: false; mark: MMarkTypeDeclInvalidMember };
+
+export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): RegisterConstructorsResult {
   const adtInfo = ctx.adtEnv.get(decl.name);
   if (!adtInfo) {
-    throw inferError(`Internal error: Type '${decl.name}' not pre-registered`);
+    // This should not happen if registerTypeName was called first, but handle gracefully
+    return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0] || decl) };
   }
 
   const parameterTypes = typeParamsCache.get(decl.name);
   if (!parameterTypes) {
-    throw inferError(`Internal error: Type parameters not cached for '${decl.name}'`);
+    // This should not happen if registerTypeName was called first, but handle gracefully
+    return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0] || decl) };
   }
 
   const typeScope: TypeScope = new Map();
@@ -55,11 +74,7 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): v
   const constructors: ConstructorInfo[] = [];
   for (const member of decl.members) {
     if (member.kind !== "constructor") {
-      throw inferError(
-        `Type '${decl.name}' only supports constructor members in this version (found alias member)`,
-        member.span,
-        ctx.source,
-      );
+      return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
     }
     const info = buildConstructorInfo(ctx, decl.name, parameterTypes, member, typeScope);
     constructors.push(info);
@@ -67,6 +82,7 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): v
   }
 
   adtInfo.constructors.push(...constructors);
+  return { success: true };
 }
 
 export interface ConvertTypeOptions {
@@ -86,7 +102,9 @@ export function convertTypeExpr(
         return existing;
       }
       if (!options.allowNewVariables) {
-        throw inferError(`Unknown type variable '${typeExpr.name}'`, typeExpr.span, ctx.source);
+        const mark = markTypeExprUnknown(ctx, typeExpr, `Unknown type variable '${typeExpr.name}'`);
+        ctx.typeExprMarks.set(typeExpr, mark);
+        return unknownType({ kind: "error_type_expr_unknown", name: typeExpr.name });
       }
       const fresh = freshTypeVar();
       scope.set(typeExpr.name, fresh);
@@ -94,7 +112,9 @@ export function convertTypeExpr(
     }
     case "type_fn": {
       if (typeExpr.parameters.length === 0) {
-        throw inferError("Function type must include at least one parameter", typeExpr.span, ctx.source);
+        const mark = markTypeExprArity(ctx, typeExpr, 1, 0);
+        ctx.typeExprMarks.set(typeExpr, mark);
+        return unknownType({ kind: "error_type_expr_arity", expected: 1, actual: 0 });
       }
       const result = convertTypeExpr(ctx, typeExpr.result, scope, options);
       return typeExpr.parameters.reduceRight<Type>((acc, param) => {
@@ -114,27 +134,37 @@ export function convertTypeExpr(
       switch (typeExpr.name) {
         case "Int":
           if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'Int' does not accept arguments", typeExpr.span, ctx.source);
+            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            ctx.typeExprMarks.set(typeExpr, mark);
+            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
           }
           return { kind: "int" };
         case "Bool":
           if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'Bool' does not accept arguments", typeExpr.span, ctx.source);
+            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            ctx.typeExprMarks.set(typeExpr, mark);
+            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
           }
           return { kind: "bool" };
         case "Char":
           if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'Char' does not accept arguments", typeExpr.span, ctx.source);
+            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            ctx.typeExprMarks.set(typeExpr, mark);
+            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
           }
           return { kind: "char" };
         case "Unit":
           if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'Unit' does not accept arguments", typeExpr.span, ctx.source);
+            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            ctx.typeExprMarks.set(typeExpr, mark);
+            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
           }
           return { kind: "unit" };
         case "String":
           if (typeExpr.typeArgs.length > 0) {
-            throw inferError("Type constructor 'String' does not accept arguments", typeExpr.span, ctx.source);
+            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            ctx.typeExprMarks.set(typeExpr, mark);
+            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
           }
           return { kind: "string" };
       }
@@ -144,11 +174,9 @@ export function convertTypeExpr(
       if (typeExpr.typeArgs.length === 0) {
         if (typeInfo) {
           if (typeInfo.parameters.length > 0) {
-            throw inferError(
-              `Type constructor '${typeExpr.name}' expects ${typeInfo.parameters.length} type argument(s)`,
-              typeExpr.span,
-              ctx.source,
-            );
+            const mark = markTypeExprArity(ctx, typeExpr, typeInfo.parameters.length, 0);
+            ctx.typeExprMarks.set(typeExpr, mark);
+            return unknownType({ kind: "error_type_expr_arity", expected: typeInfo.parameters.length, actual: 0 });
           }
           return {
             kind: "constructor",
@@ -161,19 +189,21 @@ export function convertTypeExpr(
           scope.set(typeExpr.name, fresh);
           return fresh;
         }
-        throw inferError(`Unknown type constructor '${typeExpr.name}'`, typeExpr.span, ctx.source);
+        const mark = markTypeExprUnknown(ctx, typeExpr, `Unknown type constructor '${typeExpr.name}'`);
+        ctx.typeExprMarks.set(typeExpr, mark);
+        return unknownType({ kind: "error_type_expr_unknown", name: typeExpr.name });
       }
 
       if (!typeInfo) {
-        throw inferError(`Unknown type constructor '${typeExpr.name}'`, typeExpr.span, ctx.source);
+        const mark = markTypeExprUnknown(ctx, typeExpr, `Unknown type constructor '${typeExpr.name}'`);
+        ctx.typeExprMarks.set(typeExpr, mark);
+        return unknownType({ kind: "error_type_expr_unknown", name: typeExpr.name });
       }
 
       if (typeInfo.parameters.length !== typeExpr.typeArgs.length) {
-        throw inferError(
-          `Type constructor '${typeExpr.name}' expects ${typeInfo.parameters.length} type argument(s)`,
-          typeExpr.span,
-          ctx.source,
-        );
+        const mark = markTypeExprArity(ctx, typeExpr, typeInfo.parameters.length, typeExpr.typeArgs.length);
+        ctx.typeExprMarks.set(typeExpr, mark);
+        return unknownType({ kind: "error_type_expr_arity", expected: typeInfo.parameters.length, actual: typeExpr.typeArgs.length });
       }
 
       const args = typeExpr.typeArgs.map((arg) => convertTypeExpr(ctx, arg, scope, options));
@@ -192,7 +222,9 @@ export function convertTypeExpr(
     case "type_unit":
       return { kind: "unit" };
     default:
-      throw inferError("Unsupported type expression", (typeExpr as any).span, ctx.source);
+      const mark = markTypeExprUnsupported(ctx, typeExpr);
+      ctx.typeExprMarks.set(typeExpr, mark);
+      return unknownType({ kind: "error_type_expr_unsupported" });
   }
 }
 
@@ -297,7 +329,16 @@ function registerIntBinaryPrimitive(ctx: Context, name: string, aliasOf?: string
 function registerPrintPrimitive(ctx: Context, name: string, aliasOf?: string): void {
   const typeVar = freshTypeVar();
   if (typeVar.kind !== "var") {
-    throw inferError("Expected fresh type variable");
+    // This should not happen, but create a mark with internal provenance
+    const mark = {
+      kind: "mark_type_expr_unsupported" as const,
+      span: { start: 0, end: 0 }, // Internal, no real span
+      id: -1, // Internal
+      type: unknownType({ kind: "error_internal", reason: "fresh_type_var_not_var" }),
+    };
+    // Since this is internal and not attached to a real typeExpr, we'll just log and continue
+    console.warn("Internal error: fresh type variable was not a var");
+    return;
   }
 
   const scheme: TypeScheme = {

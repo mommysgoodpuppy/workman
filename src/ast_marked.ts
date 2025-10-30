@@ -67,7 +67,7 @@ export interface MParameter extends MTypedNode {
   kind: "parameter";
   pattern: MPattern;
   name?: string;
-  annotation?: TypeExpr;
+  annotation?: MTypeExpr;
 }
 
 export interface MArrowFunctionExpr extends MTypedNode {
@@ -166,6 +166,58 @@ export interface MMarkInconsistent extends MTypedNode {
   actual: Type;
 }
 
+export interface MMarkTypeExprUnknown extends MTypedNode {
+  kind: "mark_type_expr_unknown";
+  typeExpr: TypeExpr;
+  reason: string;
+}
+
+export interface MMarkTypeExprArity extends MTypedNode {
+  kind: "mark_type_expr_arity";
+  typeExpr: TypeExpr;
+  expected: number;
+  actual: number;
+}
+
+export interface MMarkTypeExprUnsupported extends MTypedNode {
+  kind: "mark_type_expr_unsupported";
+  typeExpr: TypeExpr;
+}
+
+export interface MTypeVariable extends MNodeBase {
+  kind: "type_var";
+  name: string;
+}
+
+export interface MTypeFunction extends MNodeBase {
+  kind: "type_fn";
+  parameters: MTypeExpr[];
+  result: MTypeExpr;
+}
+
+export interface MTypeReference extends MNodeBase {
+  kind: "type_ref";
+  name: string;
+  typeArgs: MTypeExpr[];
+}
+
+export interface MTypeTuple extends MNodeBase {
+  kind: "type_tuple";
+  elements: MTypeExpr[];
+}
+
+export interface MTypeUnit extends MNodeBase {
+  kind: "type_unit";
+}
+
+export type MTypeExpr =
+  | MTypeVariable
+  | MTypeFunction
+  | MTypeReference
+  | MTypeTuple
+  | MTypeUnit
+  | MTypeExprMark;
+
 export type MMarkExpr = MMarkFreeVar | MMarkNotFunction | MMarkInconsistent | MMarkUnsupportedExpr;
 
 export type MExpr =
@@ -181,7 +233,8 @@ export type MExpr =
   | MMatchExpr
   | MMatchFunctionExpr
   | MMatchBundleLiteralExpr
-  | MMarkExpr;
+  | MMarkExpr
+  | MTypeExprMark;
 
 export type MPattern =
   | MWildcardPattern
@@ -226,7 +279,7 @@ export interface MLetDeclaration extends MTypedNode {
   kind: "let";
   name: string;
   parameters: MParameter[];
-  annotation?: TypeExpr;
+  annotation?: MTypeExpr;
   body: MBlockExpr;
   isRecursive: boolean;
   isFirstClassMatch?: boolean;
@@ -238,11 +291,25 @@ export interface MLetDeclaration extends MTypedNode {
   hasBlankLineBefore?: boolean;
 }
 
+export interface MMarkTypeDeclDuplicate extends MNodeBase {
+  kind: "mark_type_decl_duplicate";
+  declaration: TypeDeclaration;
+}
+
+export interface MMarkTypeDeclInvalidMember extends MNodeBase {
+  kind: "mark_type_decl_invalid_member";
+  declaration: TypeDeclaration;
+  member: TypeDeclaration["members"][0];
+}
+
+export type MTopLevelMark = MMarkTypeDeclDuplicate | MMarkTypeDeclInvalidMember;
+
 export type MTopLevel =
   | MLetDeclaration
   | { kind: "type"; node: TypeDeclaration }
   | { kind: "prefix"; node: PrefixDeclaration }
-  | { kind: "infix"; node: InfixDeclaration };
+  | { kind: "infix"; node: InfixDeclaration }
+  | MTopLevelMark;
 
 export interface MProgram {
   imports: ModuleImport[];
@@ -250,12 +317,15 @@ export interface MProgram {
   declarations: MTopLevel[];
 }
 
-export function isMarkedExpression(expr: MExpr): expr is MMarkExpr {
+export function isMarkedExpression(expr: MExpr): expr is MMarkExpr | MTypeExprMark {
   switch (expr.kind) {
     case "mark_free_var":
     case "mark_not_function":
     case "mark_inconsistent":
     case "mark_unsupported_expr":
+    case "mark_type_expr_unknown":
+    case "mark_type_expr_arity":
+    case "mark_type_expr_unsupported":
       return true;
     default:
       return false;

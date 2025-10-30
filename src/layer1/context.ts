@@ -4,8 +4,15 @@ import type {
   MMarkFreeVar,
   MMarkInconsistent,
   MMarkNotFunction,
+  MMarkTypeDeclDuplicate,
+  MMarkTypeDeclInvalidMember,
+  MMarkTypeExprArity,
+  MMarkTypeExprUnknown,
+  MMarkTypeExprUnsupported,
   MMarkUnsupportedExpr,
   MProgram,
+  MTypeExpr,
+  MTypeExprMark,
 } from "../ast_marked.ts";
 import type { MatchBranchesResult } from "../infermatch.ts";
 import {
@@ -36,6 +43,7 @@ export interface Context {
   allBindings: Map<string, TypeScheme>;
   nonGeneralizable: Set<number>;
   marks: Map<Expr, MExpr>;
+  typeExprMarks: Map<TypeExpr, MTypeExpr>;
   nodeTypes: Map<Expr, Type>;
   matchResults: Map<MatchBundle, MatchBranchesResult>;
 }
@@ -68,6 +76,7 @@ export function createContext(options: InferOptions = {}): Context {
     allBindings: new Map(),
     nonGeneralizable: new Set(),
     marks: new Map(),
+    typeExprMarks: new Map(),
     nodeTypes: new Map(),
     matchResults: new Map(),
   };
@@ -116,10 +125,10 @@ export interface UnifyFailure {
 
 export type UnifyResult = { success: true; subst: Substitution } | { success: false; reason: UnifyFailure };
 
-export function lookupEnv(ctx: Context, name: string): TypeScheme {
+export function lookupEnv(ctx: Context, name: string): TypeScheme | null {
   const scheme = ctx.env.get(name);
   if (!scheme) {
-    throw inferError(`Unknown identifier '${name}'`);
+    return null;
   }
   return scheme;
 }
@@ -145,12 +154,14 @@ export function generalizeInContext(ctx: Context, type: Type): TypeScheme {
   };
 }
 
-export function expectFunctionType(ctx: Context, type: Type, description: string): { from: Type; to: Type } {
+export type ExpectFunctionResult = { success: true; from: Type; to: Type } | { success: false; type: Type };
+
+export function expectFunctionType(ctx: Context, type: Type, description: string): ExpectFunctionResult {
   const resolved = applyCurrentSubst(ctx, type);
   if (resolved.kind !== "func") {
-    throw inferError(`${description} is not fully applied`);
+    return { success: false, type: resolved };
   }
-  return resolved;
+  return { success: true, from: resolved.from, to: resolved.to };
 }
 
 export function literalType(literal: Literal): Type {
@@ -246,6 +257,69 @@ export function markUnsupportedExpr(
   return mark;
 }
 
+export function markTypeDeclDuplicate(
+  ctx: Context,
+  decl: TypeDeclaration,
+): MMarkTypeDeclDuplicate {
+  const mark: MMarkTypeDeclDuplicate = {
+    kind: "mark_type_decl_duplicate",
+    span: decl.span,
+    id: decl.id,
+    declaration: decl,
+  };
+  // Note: Top-level marks don't use ctx.marks since they're not expressions
+  return mark;
+}
+
+export function markTypeDeclInvalidMember(
+  ctx: Context,
+  decl: TypeDeclaration,
+  member: TypeDeclaration["members"][0],
+): MMarkTypeDeclInvalidMember {
+  const mark: MMarkTypeDeclInvalidMember = {
+    kind: "mark_type_decl_invalid_member",
+    span: member.span,
+    id: member.id,
+    declaration: decl,
+    member,
+  };
+  return mark;
+}
+
+export function markTypeExprUnknown(
+  ctx: Context,
+  typeExpr: TypeExpr,
+  reason: string,
+): MMarkTypeExprUnknown {
+  const mark: MMarkTypeExprUnknown = {
+    kind: "mark_type_expr_unknown",
+    span: typeExpr.span,
+    id: typeExpr.id,
+    type: unknownType({ kind: "error_type_expr_unknown", name: reason }),
+    typeExpr,
+    reason,
+  };
+  return mark;
+}
+
+export function markTypeExprArity(
+  ctx: Context,
+  typeExpr: TypeExpr,
+  expected: number,
+  actual: number,
+): MMarkTypeExprArity {
+  const mark: MMarkTypeExprArity = {
+    kind: "mark_type_expr_arity",
+    span: typeExpr.span,
+    id: typeExpr.id,
+    type: unknownType({ kind: "error_type_expr_arity", expected, actual }),
+    typeExpr,
+    expected,
+    actual,
+  };
+  return mark;
+}
+
 export function markNonExhaustive(
   ctx: Context,
   expr: Expr,
@@ -256,7 +330,7 @@ export function markNonExhaustive(
     kind: "mark_unsupported_expr",
     span: expr.span,
     id: expr.id,
-    type: unknownType({ kind: "incomplete", reason: "non_exhaustive" }),
+    type: unknownType({ kind: "incomplete", reason: "match.non_exhaustive" }),
     exprKind: "match_non_exhaustive",
   };
   ctx.marks.set(expr, mark);
