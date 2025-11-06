@@ -134,7 +134,7 @@ interface SolverState {
 function solveCallConstraint(state: SolverState, stub: ConstraintStub & { kind: "call" }): void {
   const callee = getTypeForNode(state, stub.callee);
   const argument = getTypeForNode(state, stub.argument);
-  const result = getTypeForNode(state, stub.result);
+  const result = applySubstitution(stub.resultType, state.substitution);
   const target: Type = { kind: "func", from: argument, to: result };
   const unified = unifyTypes(callee, target, state.substitution);
   if (unified.success) {

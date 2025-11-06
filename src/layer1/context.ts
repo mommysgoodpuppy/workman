@@ -146,6 +146,7 @@ export type ConstraintStub =
       callee: NodeId;
       argument: NodeId;
       result: NodeId;
+      resultType: Type;
       index: number;
     }
   | {
@@ -189,6 +190,7 @@ export function recordCallConstraint(
   callee: Expr,
   argument: Expr,
   result: Expr,
+  resultType: Type,
   index: number,
 ): void {
   ctx.constraintStubs.push({
@@ -197,6 +199,7 @@ export function recordCallConstraint(
     callee: callee.id,
     argument: argument.id,
     result: result.id,
+    resultType,
     index,
   });
 }

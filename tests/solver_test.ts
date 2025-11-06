@@ -70,7 +70,15 @@ function findLetDeclaration(program: MProgram, name: string): MLetDeclaration | 
 
 Deno.test("solver surfaces not_function diagnostic when call callee is non-function", () => {
   const stubs: ConstraintStub[] = [
-    { kind: "call", origin: 1, callee: 2, argument: 3, result: 4, index: 0 },
+    {
+      kind: "call",
+      origin: 1,
+      callee: 2,
+      argument: 3,
+      result: 4,
+      resultType: { kind: "int" },
+      index: 0,
+    },
   ];
   const nodeTypeById: Map<NodeId, Type> = new Map([
     [2, { kind: "int" }],

@@ -605,7 +605,15 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             argType: typeToString(applyCurrentSubst(ctx, argType)),
           }); */
         }
-        recordCallConstraint(ctx, expr, expr.callee, argExpr, expr, index);
+        recordCallConstraint(
+          ctx,
+          expr,
+          expr.callee,
+          argExpr,
+          expr,
+          resultType,
+          index,
+        );
         const unifySucceeded = unify(ctx, fnType, {
           kind: "func",
           from: argType,
