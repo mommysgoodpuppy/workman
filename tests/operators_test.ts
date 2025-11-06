@@ -1,10 +1,13 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { inferProgram, InferError } from "../src/layer1/infer.ts";
+import { inferProgram } from "../src/layer1/infer.ts";
 import { evaluateProgram } from "../src/eval.ts";
 import type { TypeScheme } from "../src/types.ts";
 import type { RuntimeValue, NativeFunctionValue } from "../src/value.ts";
-import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
+import {
+  assertEquals,
+  assertExists,
+} from "https://deno.land/std/assert/mod.ts";
 import { formatScheme } from "../src/type_printer.ts";
 
 // ============================================================================
@@ -278,11 +281,18 @@ Deno.test("infer: type checks operator arguments", () => {
     infixl 6 + = add;
     let result = MyTrue + MyFalse;
   `;
-  
-  assertThrows(
-    () => inferTypes(source),
-    InferError
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+  const result = inferProgram(program);
+  const inconsistent = Array.from(result.marks.values()).find((mark) =>
+    mark.kind === "mark_inconsistent"
   );
+  assertExists(inconsistent, "expected inconsistent mark for operator arguments");
+  if (inconsistent?.kind !== "mark_inconsistent") {
+    throw new Error("expected mark_inconsistent");
+  }
+  assertEquals(inconsistent.expected.kind, "func");
+  assertEquals(inconsistent.actual.kind, "constructor");
 });
 
 Deno.test("infer: handles operator with function return type", () => {

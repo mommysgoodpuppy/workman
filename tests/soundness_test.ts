@@ -1,8 +1,12 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { inferProgram, InferError } from "../src/layer1/infer.ts";
+import { inferProgram } from "../src/layer1/infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
-import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+} from "https://deno.land/std/assert/mod.ts";
 
 const TEST_PRELUDE_SOURCE = `
   type List<T> = Nil | Cons<T, List<T>>;
@@ -14,6 +18,13 @@ function inferTypes(source: string) {
   const program = parseSurfaceProgram(tokens);
   const result = inferProgram(program);
   return result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+}
+
+function inferModule(source: string) {
+  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
+  const program = parseSurfaceProgram(tokens);
+  const result = inferProgram(program);
+  return { program, result };
 }
 
 // ============================================================================
@@ -196,11 +207,11 @@ Deno.test("rejects undefined constructor", () => {
       Maybe(v) => { v }
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "Unknown identifier"
+  const { result } = inferModule(source);
+  const mark = Array.from(result.marks.values()).find((entry) =>
+    entry.kind === "mark_free_var" && entry.name === "v"
   );
+  assertExists(mark, "expected mark_free_var for unbound pattern variable from undefined constructor");
 });
 
 Deno.test("rejects undefined variable", () => {
@@ -209,11 +220,11 @@ Deno.test("rejects undefined variable", () => {
       undefinedVar
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "Unknown identifier"
+  const { result } = inferModule(source);
+  const mark = Array.from(result.marks.values()).find((entry) =>
+    entry.kind === "mark_free_var" && entry.name === "undefinedVar"
   );
+  assertExists(mark, "expected mark_free_var for undefined variable");
 });
 
 Deno.test("rejects constructor arity mismatch", () => {
@@ -223,9 +234,14 @@ Deno.test("rejects constructor arity mismatch", () => {
       Pair(x) => { x }
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError
+  const { result } = inferModule(source);
+  const hasInvalidPatternHole = Array.from(result.holes.values()).some((hole) =>
+    hole.provenance.kind === "incomplete" &&
+    hole.provenance.reason === "pattern.constructor.invalid_result"
+  );
+  assert(
+    hasInvalidPatternHole,
+    "expected hole with pattern.constructor.invalid_result provenance",
   );
 });
 
@@ -235,10 +251,11 @@ Deno.test("rejects type annotation mismatch with clear error", () => {
       x
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError
+  const { result } = inferModule(source);
+  const inconsistent = Array.from(result.marks.values()).find((entry) =>
+    entry.kind === "mark_inconsistent"
   );
+  assertExists(inconsistent, "expected mark_inconsistent for annotation mismatch");
 });
 
 // ============================================================================
@@ -345,11 +362,12 @@ Deno.test("non-exhaustive match on polymorphic input is rejected", () => {
       }
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "Non-exhaustive patterns"
+  const { result } = inferModule(source);
+  const nonExhaustive = Array.from(result.marks.values()).find((entry) =>
+    entry.kind === "mark_unsupported_expr" &&
+    entry.exprKind === "match_non_exhaustive"
   );
+  assertExists(nonExhaustive, "expected non-exhaustive match mark");
 });
 
 Deno.test("constructor partially applied triggers error", () => {
@@ -359,11 +377,11 @@ Deno.test("constructor partially applied triggers error", () => {
       Pair(1)
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "not fully applied"
+  const { result } = inferModule(source);
+  const notFunction = Array.from(result.marks.values()).find((entry) =>
+    entry.kind === "mark_not_function"
   );
+  assertExists(notFunction, "expected mark_not_function for partial constructor application");
 });
 
 Deno.test("occurs check failure surfaces error", () => {
@@ -372,11 +390,11 @@ Deno.test("occurs check failure surfaces error", () => {
       _ => { self(self) }
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "Occurs check failed"
+  const { result } = inferModule(source);
+  const occurs = Array.from(result.marks.values()).find((entry) =>
+    entry.kind === "mark_occurs_check"
   );
+  assertExists(occurs, "expected mark_occurs_check for self application");
 });
 
 Deno.test("annotation mismatch within block let is rejected", () => {
@@ -386,8 +404,9 @@ Deno.test("annotation mismatch within block let is rejected", () => {
       id(true)
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError
+  const { result } = inferModule(source);
+  const inconsistent = Array.from(result.marks.values()).find((entry) =>
+    entry.kind === "mark_inconsistent"
   );
+  assertExists(inconsistent, "expected mark_inconsistent within block let");
 });

@@ -33,6 +33,7 @@ import type {
   MPattern,
   MProgram,
   MTopLevel,
+  MTypeExpr,
 } from "../ast_marked.ts";
 import {
   applyCurrentSubst,
@@ -915,6 +916,11 @@ export function inferProgram(
     declarations: markedDeclarations,
   };
 
+  const typeExprMarks: Map<NodeId, MTypeExpr> = new Map();
+  for (const [typeExpr, mark] of ctx.typeExprMarks.entries()) {
+    typeExprMarks.set(typeExpr.id, mark);
+  }
+
   /* console.debug("[debug] final substitution entries", Array.from(ctx.subst.entries()).map(([id, type]) => [id, formatScheme({ quantifiers: [], type })]));
   console.debug("[debug] final summaries", finalSummaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) })));
  */
@@ -925,6 +931,7 @@ export function inferProgram(
     allBindings: ctx.allBindings,
     markedProgram,
     marks: ctx.marks,
+    typeExprMarks,
     holes: ctx.holes,
     constraintStubs: ctx.constraintStubs,
     nodeTypeById,

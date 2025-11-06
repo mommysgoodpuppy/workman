@@ -80,6 +80,7 @@ export interface InferResult {
   allBindings: Map<string, TypeScheme>;
   markedProgram: MProgram;
   marks: Map<Expr, MExpr>;
+  typeExprMarks: Map<NodeId, MTypeExpr>;
   holes: Map<HoleId, UnknownInfo>;
   constraintStubs: ConstraintStub[];
   nodeTypeById: Map<NodeId, Type>;

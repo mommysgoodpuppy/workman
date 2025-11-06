@@ -1,8 +1,11 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { inferProgram, InferError } from "../src/layer1/infer.ts";
+import { inferProgram } from "../src/layer1/infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
-import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
+import {
+  assertEquals,
+  assertExists,
+} from "https://deno.land/std/assert/mod.ts";
 
 const TEST_PRELUDE_SOURCE = `
   type List<T> = Nil | Cons<T, List<T>>;
@@ -158,24 +161,36 @@ Deno.test("rejects non-recursive function calling itself", () => {
       _ => { bad(0) }
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "Unknown identifier"
+  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
+  const program = parseSurfaceProgram(tokens);
+  const result = inferProgram(program);
+  const marks = Array.from(result.marks.values());
+  const freeVar = marks.find((mark) =>
+    mark.kind === "mark_free_var" && mark.name === "bad"
   );
+  assertExists(freeVar, "expected free variable mark for self call");
+  const notFunction = marks.find((mark) => mark.kind === "mark_not_function");
+  assertExists(notFunction, "expected not_function mark for bad(0)");
 });
 
 Deno.test("rejects type mismatch in recursive call", () => {
   const source = `
     let rec bad = match(n) {
       0 => { true },
-      _ => { bad(true) }
+      _ => { bad(n) }
     };
+    let res = bad(true);
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError
+  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
+  const program = parseSurfaceProgram(tokens);
+  const result = inferProgram(program);
+  const inconsistent = Array.from(result.marks.values()).find((mark) =>
+    mark.kind === "mark_inconsistent"
   );
+  assertExists(inconsistent, "expected mark_inconsistent for bad(true)");
+  if (inconsistent?.kind === "mark_inconsistent") {
+    assertEquals(inconsistent.actual.kind, "bool");
+  }
 });
 
 Deno.test("rejects mutual recursion without 'and'", () => {
@@ -189,9 +204,14 @@ Deno.test("rejects mutual recursion without 'and'", () => {
       _ => { isEven(0) }
     };
   `;
-  assertThrows(
-    () => inferTypes(source),
-    InferError,
-    "Unknown identifier"
+  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
+  const program = parseSurfaceProgram(tokens);
+  const result = inferProgram(program);
+  const marks = Array.from(result.marks.values());
+  const freeVar = marks.find((mark) =>
+    mark.kind === "mark_free_var" && mark.name === "isOdd"
   );
+  assertExists(freeVar, "expected free variable mark for isOdd");
+  const notFunction = marks.find((mark) => mark.kind === "mark_not_function");
+  assertExists(notFunction, "expected not_function mark for isOdd(0)");
 });
