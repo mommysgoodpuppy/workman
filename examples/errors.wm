@@ -12,17 +12,15 @@ let callNonFunction = () => {
 let branchMismatch = (flag) => {
   match (flag) {
     true => { 1 },
+    -- Returns Bool instead of Int, triggering branch_mismatch
     false => { false }
   }
 };
 
 -- Layer 2: not_boolean diagnostic
 let booleanMismatch = () => {
-  if (1) {
-    true
-  } else {
-    false
-  }
+  -- Second operand is not Bool, triggering not_boolean
+  true && 0
 };
 
 -- CORRECT: This should still work
