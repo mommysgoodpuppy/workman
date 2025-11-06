@@ -194,6 +194,23 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
         type,
       };
     }
+    case "record_projection": {
+      const target = materializeExpr(ctx, expr.target);
+      const type = getExprTypeOrUnknown(
+        ctx,
+        expr,
+        `expr.record_projection:${expr.field}`,
+      );
+      registerHoleForType(ctx, holeOriginFromExpr(expr), type);
+      return {
+        kind: "record_projection",
+        span: expr.span,
+        id: expr.id,
+        target,
+        field: expr.field,
+        type,
+      };
+    }
     case "call": {
       const callee = materializeExpr(ctx, expr.callee);
       const args = expr.arguments.map((arg) => materializeExpr(ctx, arg));
@@ -377,7 +394,7 @@ export function materializeParameter(
 
 export function materializePattern(ctx: Context, pattern: Pattern): MPattern {
   switch (pattern.kind) {
-    case "wildcard":
+    case "wildcard": {
       const type = unknownFromReason("pattern.wildcard");
       registerHoleForType(ctx, holeOriginFromPattern(pattern), type);
       return {
@@ -386,7 +403,8 @@ export function materializePattern(ctx: Context, pattern: Pattern): MPattern {
         id: pattern.id,
         type,
       };
-    case "variable":
+    }
+    case "variable": {
       const type = unknownFromReason(`pattern.var:${pattern.name}`);
       registerHoleForType(ctx, holeOriginFromPattern(pattern), type);
       return {
@@ -396,6 +414,7 @@ export function materializePattern(ctx: Context, pattern: Pattern): MPattern {
         name: pattern.name,
         type,
       };
+    }
     case "literal": {
       const literal = pattern.literal;
       const type = literalType(literal);

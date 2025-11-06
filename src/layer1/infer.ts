@@ -57,6 +57,7 @@ import {
   recordAnnotationConstraint,
   recordBooleanConstraint,
   recordCallConstraint,
+  recordHasFieldConstraint,
   recordNumericConstraint,
   registerHoleForType,
   unify,
@@ -534,6 +535,18 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         elements: elements.map((t) => applyCurrentSubst(ctx, t)),
       });
       return recordExprType(ctx, expr, tupleType);
+    }
+    case "record_projection": {
+      const targetType = inferExpr(ctx, expr.target);
+      const resultType = freshTypeVar();
+      recordHasFieldConstraint(ctx, expr, expr.target, expr.field, expr);
+      registerHoleForType(
+        ctx,
+        holeOriginFromExpr(expr.target),
+        applyCurrentSubst(ctx, targetType),
+      );
+      registerHoleForType(ctx, holeOriginFromExpr(expr), resultType);
+      return recordExprType(ctx, expr, resultType);
     }
     case "call": {
       let fnType = inferExpr(ctx, expr.callee);

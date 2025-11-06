@@ -7,6 +7,7 @@ export type RuntimeValue =
   | StringValue
   | UnitValue
   | TupleValue
+  | RecordValue
   | DataValue
   | ClosureValue
   | NativeFunctionValue;
@@ -38,6 +39,11 @@ export interface UnitValue {
 export interface TupleValue {
   kind: "tuple";
   elements: RuntimeValue[];
+}
+
+export interface RecordValue {
+  kind: "record";
+  fields: Map<string, RuntimeValue>;
 }
 
 export interface DataValue {

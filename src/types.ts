@@ -17,6 +17,7 @@ export type Type =
   | { kind: "func"; from: Type; to: Type }
   | { kind: "constructor"; name: string; args: Type[] }
   | { kind: "tuple"; elements: Type[] }
+  | { kind: "record"; fields: Map<string, Type> }
   | { kind: "unit" }
   | { kind: "int" }
   | { kind: "bool" }
@@ -91,6 +92,21 @@ export function applySubstitution(type: Type, subst: Substitution): Type {
         kind: "tuple",
         elements: type.elements.map((el) => applySubstitution(el, subst)),
       };
+    case "record": {
+      let changed = false;
+      const updated = new Map<string, Type>();
+      for (const [field, fieldType] of type.fields.entries()) {
+        const applied = applySubstitution(fieldType, subst);
+        if (applied !== fieldType) {
+          changed = true;
+        }
+        updated.set(field, applied);
+      }
+      if (!changed) {
+        return type;
+      }
+      return { kind: "record", fields: updated };
+    }
     case "unknown":
       return type;
     default:
@@ -142,6 +158,13 @@ export function occursInType(id: number, type: Type): boolean {
       return type.args.some((arg) => occursInType(id, arg));
     case "tuple":
       return type.elements.some((el) => occursInType(id, el));
+    case "record":
+      for (const fieldType of type.fields.values()) {
+        if (occursInType(id, fieldType)) {
+          return true;
+        }
+      }
+      return false;
     case "unknown":
       return false;
     default:
@@ -161,6 +184,10 @@ export function freeTypeVars(type: Type): Set<number> {
     }
     case "tuple": {
       const sets = type.elements.map(freeTypeVars);
+      return unionMany(sets);
+    }
+    case "record": {
+      const sets = Array.from(type.fields.values()).map(freeTypeVars);
       return unionMany(sets);
     }
     case "unknown":
@@ -241,6 +268,16 @@ export function cloneType(type: Type): Type {
         kind: "tuple",
         elements: type.elements.map(cloneType),
       };
+    case "record": {
+      const clonedFields = new Map<string, Type>();
+      for (const [field, fieldType] of type.fields.entries()) {
+        clonedFields.set(field, cloneType(fieldType));
+      }
+      return {
+        kind: "record",
+        fields: clonedFields,
+      };
+    }
     case "unknown":
       return {
         kind: "unknown",
@@ -304,6 +341,14 @@ export function typeToString(type: Type): string {
     case "tuple": {
       const elems = type.elements.map(typeToString).join(", ");
       return `(${elems})`;
+    }
+    case "record": {
+      const entries = Array.from(type.fields.entries());
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      const rendered = entries.map(([name, fieldType]) =>
+        `${name}: ${typeToString(fieldType)}`
+      ).join(", ");
+      return `{ ${rendered} }`;
     }
     case "unknown":
       return provenanceToString(type.provenance);

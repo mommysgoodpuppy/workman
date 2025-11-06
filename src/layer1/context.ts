@@ -156,6 +156,13 @@ export type ConstraintStub =
       subject: NodeId | null;
     }
   | {
+      kind: "has_field";
+      origin: NodeId;
+      target: NodeId;
+      field: string;
+      result: NodeId;
+    }
+  | {
       kind: "numeric";
       origin: NodeId;
       operator: string;
@@ -215,6 +222,22 @@ export function recordAnnotationConstraint(
     annotation: annotation.id,
     value: value.id,
     subject: subject?.id ?? null,
+  });
+}
+
+export function recordHasFieldConstraint(
+  ctx: Context,
+  origin: Expr,
+  target: Expr,
+  field: string,
+  result: Expr,
+): void {
+  ctx.constraintStubs.push({
+    kind: "has_field",
+    origin: origin.id,
+    target: target.id,
+    field,
+    result: result.id,
   });
 }
 

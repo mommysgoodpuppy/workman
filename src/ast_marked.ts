@@ -38,6 +38,12 @@ export interface MConstructorExpr extends MTypedNode {
   args: MExpr[];
 }
 
+export interface MRecordProjectionExpr extends MTypedNode {
+  kind: "record_projection";
+  target: MExpr;
+  field: string;
+}
+
 export interface MTupleExpr extends MTypedNode {
   kind: "tuple";
   elements: MExpr[];
@@ -238,6 +244,7 @@ export type MExpr =
   | MConstructorExpr
   | MTupleExpr
   | MCallExpr
+  | MRecordProjectionExpr
   | MBinaryExpr
   | MUnaryExpr
   | MArrowFunctionExpr

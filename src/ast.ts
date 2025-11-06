@@ -113,6 +113,7 @@ export type Expr =
   | ConstructorExpr
   | TupleExpr
   | CallExpr
+  | RecordProjectionExpr
   | BinaryExpr
   | UnaryExpr
   | ArrowFunctionExpr
@@ -147,6 +148,12 @@ export interface CallExpr extends NodeBase {
   kind: "call";
   callee: Expr;
   arguments: Expr[];
+}
+
+export interface RecordProjectionExpr extends NodeBase {
+  kind: "record_projection";
+  target: Expr;
+  field: string;
 }
 
 export interface BinaryExpr extends NodeBase {

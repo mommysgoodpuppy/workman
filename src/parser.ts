@@ -822,31 +822,49 @@ class SurfaceParser {
 
   private parseCallExpression(): Expr {
     let expr = this.parsePrimaryExpression();
-    while (this.matchSymbol("(")) {
-      const _open = this.previous();
-      const args: Expr[] = [];
-      if (!this.checkSymbol(")")) {
-        do {
-          args.push(this.parseExpression());
-        } while (this.matchSymbol(","));
-      }
-      const _close = this.expectSymbol(")");
+    while (true) {
+      if (this.matchSymbol("(")) {
+        const _open = this.previous();
+        const args: Expr[] = [];
+        if (!this.checkSymbol(")")) {
+          do {
+            args.push(this.parseExpression());
+          } while (this.matchSymbol(","));
+        }
+        const _close = this.expectSymbol(")");
 
-      if (expr.kind === "constructor") {
+        if (expr.kind === "constructor") {
+          expr = {
+            ...expr,
+            args,
+            span: this.spanFrom(expr.span.start, _close.end),
+          };
+        } else {
+          expr = {
+            kind: "call",
+            callee: expr,
+            arguments: args,
+            span: this.spanFrom(expr.span.start, _close.end),
+            id: nextNodeId(),
+          };
+        }
+        continue;
+      }
+
+      if (this.matchSymbol(".")) {
+        const fieldToken = this.expectIdentifier();
+        const target = expr;
         expr = {
-          ...expr,
-          args,
-          span: this.spanFrom(expr.span.start, _close.end),
-        };
-      } else {
-        expr = {
-          kind: "call",
-          callee: expr,
-          arguments: args,
-          span: this.spanFrom(expr.span.start, _close.end),
+          kind: "record_projection",
+          target,
+          field: fieldToken.value,
+          span: this.spanFrom(target.span.start, fieldToken.end),
           id: nextNodeId(),
         };
+        continue;
       }
+
+      break;
     }
     return expr;
   }

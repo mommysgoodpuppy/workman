@@ -234,6 +234,8 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
       );
       return { kind: "tuple", elements };
     }
+    case "record_projection":
+      return evaluateRecordProjection(env, expr);
     case "call":
       return evaluateCallExpr(env, expr);
     case "arrow":
@@ -315,6 +317,28 @@ function evaluateConstructorExpr(
   }
   const args = expr.args.map((arg) => evaluateExpr(env, arg));
   return applyValue(callee, args, expr.span);
+}
+
+function evaluateRecordProjection(
+  env: Environment,
+  expr: Expr & { kind: "record_projection" },
+): RuntimeValue {
+  const target = evaluateExpr(env, expr.target);
+  if (target.kind !== "record") {
+    throw new RuntimeError(
+      `Attempted to project '${expr.field}' from a non-record value`,
+      expr.span,
+      currentSource,
+    );
+  }
+  if (!target.fields.has(expr.field)) {
+    throw new RuntimeError(
+      `Record is missing field '${expr.field}'`,
+      expr.span,
+      currentSource,
+    );
+  }
+  return target.fields.get(expr.field)!;
 }
 
 function evaluateCallExpr(
