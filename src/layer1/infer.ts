@@ -16,6 +16,7 @@ import {
   TypeExpr,
 } from "../ast.ts";
 import { lowerTupleParameters } from "../lower_tuple_params.ts";
+import { canonicalizeMatch } from "../passes/canonicalize_match.ts";
 import {
   applySubstitutionScheme,
   ConstructorInfo,
@@ -840,7 +841,8 @@ export function inferProgram(
   program: Program,
   options: InferOptions = {},
 ): InferResult {
-  lowerTupleParameters(program);
+  const canonicalProgram = canonicalizeMatch(program);
+  lowerTupleParameters(canonicalProgram);
   const ctx = createContext({
     initialEnv: options.initialEnv,
     initialAdtEnv: options.initialAdtEnv,
@@ -860,7 +862,7 @@ export function inferProgram(
   }
 
   // Pass 1: Register all type names (allows forward references)
-  for (const decl of program.declarations) {
+  for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "type") {
       const result = registerTypeName(ctx, decl);
       if (!result.success) {
@@ -876,7 +878,7 @@ export function inferProgram(
   }
 
   // Pass 2: Register constructors (now all type names are known)
-  for (const decl of program.declarations) {
+  for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "type" && successfulTypeDecls.has(decl)) {
       const result = registerTypeConstructors(ctx, decl);
       if (!result.success) {
@@ -886,7 +888,7 @@ export function inferProgram(
     }
   }
 
-  for (const decl of program.declarations) {
+  for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "let") {
       const results = inferLetDeclaration(ctx, decl);
       for (const { name, scheme } of results) {
@@ -925,8 +927,8 @@ export function inferProgram(
   }
 
   const markedProgram: MProgram = {
-    imports: program.imports,
-    reexports: program.reexports,
+    imports: canonicalProgram.imports,
+    reexports: canonicalProgram.reexports,
     declarations: markedDeclarations,
   };
 
