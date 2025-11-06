@@ -20,7 +20,6 @@ import { formatScheme } from "@workman/type_printer.ts";
 import {
   loadModuleGraph,
   ModuleLoaderError,
-  runEntryPath,
 } from "@workman/module_loader.ts";
 import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
 import {
@@ -360,19 +359,15 @@ class WorkmanLanguageServer {
         operators.size > 0 ? operators : undefined,
         prefixOperators.size > 0 ? prefixOperators : undefined,
       );
-      // If parsing succeeds, try full module validation
+      // If parsing succeeds, try full module analysis without executing the program
       try {
-        await runEntryPath(entryPath, {
-          stdRoots,
-          preludeModule: this.preludeModule,
-        });
-        this.log(`[LSP] Module graph validated OK (${entryPath})`);
         const context = await this.buildModuleContext(
           entryPath,
           stdRoots,
           this.preludeModule,
         );
         this.moduleContexts.set(uri, context);
+        this.log(`[LSP] Module analysis completed (${entryPath})`);
         this.appendSolverDiagnostics(
           diagnostics,
           context.layer3.diagnostics.solver,

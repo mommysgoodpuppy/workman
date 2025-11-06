@@ -1,5 +1,9 @@
 import type { SourceSpan } from "../ast.ts";
-import type { MProgram } from "../ast_marked.ts";
+import type {
+  MProgram,
+  MMarkInconsistent,
+  MMarkNotFunction,
+} from "../ast_marked.ts";
 import type { InferResult } from "../layer1/infer.ts";
 import {
   type ConstraintDiagnostic,
@@ -7,6 +11,7 @@ import {
 } from "../layer2/mod.ts";
 import type { NodeId } from "../ast.ts";
 import type { Type } from "../types.ts";
+import { typeToString } from "../types.ts";
 
 export interface PartialType {
   kind: "unknown" | "concrete";
@@ -51,11 +56,13 @@ export function presentProgram(input: PresentProgramInput): Layer3Result {
     input.layer2.diagnostics,
     spanIndex,
   );
+  const markDiagnostics = collectMarkDiagnostics(input.layer1.markedProgram);
+  const allDiagnostics = solverDiagnostics.concat(markDiagnostics);
 
   return {
     nodeViews,
     diagnostics: {
-      solver: solverDiagnostics,
+      solver: allDiagnostics,
       flow: [],
     },
     spanIndex,
@@ -86,6 +93,94 @@ function attachSpansToDiagnostics(
     ...diag,
     span: spanIndex.get(diag.origin),
   }));
+}
+
+function collectMarkDiagnostics(program: MProgram): ConstraintDiagnosticWithSpan[] {
+  const diagnostics: ConstraintDiagnosticWithSpan[] = [];
+  const seen = new Set<unknown>();
+
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== "object") {
+      return;
+    }
+    if (seen.has(node)) {
+      return;
+    }
+    seen.add(node);
+
+    const kind = (node as { kind?: string }).kind;
+    switch (kind) {
+      case "mark_not_function": {
+        const mark = node as MMarkNotFunction;
+        diagnostics.push({
+          origin: mark.id,
+          reason: "not_function",
+          details: {
+            calleeType: safeTypeToString(mark.calleeType),
+          },
+          span: mark.span,
+        });
+        break;
+      }
+      case "mark_inconsistent": {
+        const mark = node as MMarkInconsistent;
+        const diag = diagnosticFromInconsistentMark(mark);
+        if (diag) {
+          diagnostics.push(diag);
+        }
+        break;
+      }
+    }
+
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          visit(entry);
+        }
+      } else {
+        visit(value);
+      }
+    }
+  };
+
+  visit(program);
+  return diagnostics;
+}
+
+function diagnosticFromInconsistentMark(
+  mark: MMarkInconsistent,
+): ConstraintDiagnosticWithSpan | null {
+  const expected = mark.expected;
+  const actual = mark.actual;
+
+  let reason: ConstraintDiagnosticWithSpan["reason"];
+  if (expected.kind === "bool") {
+    reason = "not_boolean";
+  } else if (expected.kind === "int") {
+    reason = "not_numeric";
+  } else if (expected.kind === "func" && actual.kind !== "func") {
+    reason = "not_function";
+  } else {
+    reason = "type_mismatch";
+  }
+
+  return {
+    origin: mark.id,
+    reason,
+    details: {
+      expected: safeTypeToString(expected),
+      actual: safeTypeToString(actual),
+    },
+    span: mark.span,
+  };
+}
+
+function safeTypeToString(type: Type): string {
+  try {
+    return typeToString(type);
+  } catch {
+    return "[unprintable type]";
+  }
 }
 
 function typeToPartial(type: Type): PartialType {
