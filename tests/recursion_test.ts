@@ -6,16 +6,28 @@ import {
   assertEquals,
   assertExists,
 } from "https://deno.land/std/assert/mod.ts";
-
-const TEST_PRELUDE_SOURCE = `
-  type List<T> = Nil | Cons<T, List<T>>;
-  type Ordering = LT | EQ | GT;
-`;
+import { freshPreludeTypeEnv } from "./test_prelude.ts";
 
 function inferTypes(source: string) {
-  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
+  const {
+    initialEnv,
+    initialAdtEnv,
+    initialOperators,
+    initialPrefixOperators,
+  } = freshPreludeTypeEnv();
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    initialOperators,
+    initialPrefixOperators,
+  );
+  const result = inferProgram(program, {
+    initialEnv,
+    initialAdtEnv,
+    registerPrelude: false,
+  });
   return result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
 }
 
@@ -84,8 +96,8 @@ Deno.test("recursive with curried function", () => {
     let rec findFirst = (predicate) => {
       (list) => {
         match(list) {
-          Cons(x, rest) => { predicate(x) },
-          Nil => { None }
+          Link(x, rest) => { predicate(x) },
+          Empty => { None }
         }
       }
     };
@@ -99,8 +111,8 @@ Deno.test("recursive map over list", () => {
     let rec map = (f) => {
       (list) => {
         match(list) {
-          Cons(x, rest) => { Cons(f(x), map(f)(rest)) },
-          Nil => { Nil }
+          Link(x, rest) => { Link(f(x), map(f)(rest)) },
+          Empty => { Empty }
         }
       }
     };
@@ -161,9 +173,25 @@ Deno.test("rejects non-recursive function calling itself", () => {
       _ => { bad(0) }
     };
   `;
-  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
+  const {
+    initialEnv,
+    initialAdtEnv,
+    initialOperators,
+    initialPrefixOperators,
+  } = freshPreludeTypeEnv();
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    initialOperators,
+    initialPrefixOperators,
+  );
+  const result = inferProgram(program, {
+    initialEnv,
+    initialAdtEnv,
+    registerPrelude: false,
+  });
   const marks = Array.from(result.marks.values());
   const freeVar = marks.find((mark) =>
     mark.kind === "mark_free_var" && mark.name === "bad"
@@ -181,9 +209,25 @@ Deno.test("rejects type mismatch in recursive call", () => {
     };
     let res = bad(true);
   `;
-  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
+  const {
+    initialEnv,
+    initialAdtEnv,
+    initialOperators,
+    initialPrefixOperators,
+  } = freshPreludeTypeEnv();
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    initialOperators,
+    initialPrefixOperators,
+  );
+  const result = inferProgram(program, {
+    initialEnv,
+    initialAdtEnv,
+    registerPrelude: false,
+  });
   const inconsistent = Array.from(result.marks.values()).find((mark) =>
     mark.kind === "mark_inconsistent"
   );
@@ -204,9 +248,25 @@ Deno.test("rejects mutual recursion without 'and'", () => {
       _ => { isEven(0) }
     };
   `;
-  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
+  const {
+    initialEnv,
+    initialAdtEnv,
+    initialOperators,
+    initialPrefixOperators,
+  } = freshPreludeTypeEnv();
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    initialOperators,
+    initialPrefixOperators,
+  );
+  const result = inferProgram(program, {
+    initialEnv,
+    initialAdtEnv,
+    registerPrelude: false,
+  });
   const marks = Array.from(result.marks.values());
   const freeVar = marks.find((mark) =>
     mark.kind === "mark_free_var" && mark.name === "isOdd"

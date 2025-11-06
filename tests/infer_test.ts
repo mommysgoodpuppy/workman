@@ -1,21 +1,42 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { inferProgram, InferResult } from "../src/layer1/infer.ts";
+import { inferProgram, type InferResult } from "../src/layer1/infer.ts";
 import { lowerTupleParameters } from "../src/lower_tuple_params.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { NodeId, Program } from "../src/ast.ts";
 import { assertEquals, assertFalse, assertObjectMatch, assertExists } from "https://deno.land/std/assert/mod.ts";
+import { freshPreludeTypeEnv } from "./test_prelude.ts";
 
-const TEST_PRELUDE_SOURCE = `
-  type List<T> = Nil | Cons<T, List<T>>;
-  type Ordering = LT | EQ | GT;
-`;
+type PreludeContext = ReturnType<typeof freshPreludeTypeEnv>;
+
+function parseProgramWithPrelude(source: string): {
+  program: Program;
+  context: PreludeContext;
+} {
+  const context = freshPreludeTypeEnv();
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    context.initialOperators,
+    context.initialPrefixOperators,
+  );
+  return { program, context };
+}
+
+function inferProgramWithPrelude(program: Program, context?: PreludeContext): InferResult {
+  const ctx = context ?? freshPreludeTypeEnv();
+  return inferProgram(program, {
+    initialEnv: ctx.initialEnv,
+    initialAdtEnv: ctx.initialAdtEnv,
+    registerPrelude: false,
+  });
+}
 
 function inferTypes(source: string) {
-  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
-  return result;
+  const { program, context } = parseProgramWithPrelude(source);
+  return inferProgramWithPrelude(program, context);
 }
 
 function collectNodeIds(program: any): NodeId[] {
@@ -308,10 +329,10 @@ Deno.test("rejects annotation mismatches", () => {
 Deno.test("supports list prelude constructors", () => {
   const source = `
     let singleton = () => {
-      Cons(1, Nil)
+      Link(1, Empty)
     };
     let two = () => {
-      Cons(true, Nil)
+      Link(true, Empty)
     };
   `;
   const result = inferTypes(source);
@@ -353,11 +374,10 @@ Deno.test("first-class match builds pattern functions", () => {
 
 Deno.test("type constructor name collisions produce invalid member mark", () => {
   const source = `
-type Option = None | None;
+type Dup = First | First;
 `;
-  const tokens = lex(source);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
+  const { program, context } = parseProgramWithPrelude(source);
+  const result = inferProgramWithPrelude(program, context);
 
   const marks = result.markedProgram.declarations.filter((decl) => decl.kind === "mark_type_decl_invalid_member");
   assertEquals(marks.length, 1);
@@ -365,10 +385,10 @@ type Option = None | None;
   if (mark.kind !== "mark_type_decl_invalid_member") {
     throw new Error("expected mark_type_decl_invalid_member");
   }
-  assertEquals(mark.declaration.name, "Option");
+  assertEquals(mark.declaration.name, "Dup");
   assertEquals(mark.member.kind, "constructor");
   if (mark.member.kind === "constructor") {
-    assertEquals(mark.member.name, "None");
+    assertEquals(mark.member.name, "First");
   }
 });
 
@@ -378,9 +398,8 @@ let bad: Int<Int> = () => {
   0
 };
 `;
-  const tokens = lex(source);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
+  const { program, context } = parseProgramWithPrelude(source);
+  const result = inferProgramWithPrelude(program, context);
 
   const letDecl = result.markedProgram.declarations.find((decl) => decl.kind === "let");
   assertExists(letDecl);
@@ -400,9 +419,8 @@ Deno.test("infer handles duplicate type declarations with mark", () => {
 type Option = None;
 type Option = Some;
 `;
-  const tokens = lex(source);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
+  const { program, context } = parseProgramWithPrelude(source);
+  const result = inferProgramWithPrelude(program, context);
 
   assertEquals(result.markedProgram.declarations.length, 2);
   const mark = result.markedProgram.declarations.find((decl) => decl.kind === "mark_type_decl_duplicate");
@@ -420,8 +438,7 @@ Deno.test("lowering preserves and allocates node IDs correctly", () => {
       (b, a)
     };
   `;
-  const tokens = lex(source);
-  const program = parseSurfaceProgram(tokens);
+  const { program, context } = parseProgramWithPrelude(source);
 
   // Collect IDs before lowering
   const idsBefore = collectNodeIds(program);
@@ -448,7 +465,7 @@ Deno.test("lowering preserves and allocates node IDs correctly", () => {
   }
 
   // Verify the function still has the expected type
-  const result = inferProgram(program);
+  const result = inferProgramWithPrelude(program, context);
   const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
   assertEquals(summaries.length, 1);
   assertEquals(summaries[0], { name: "swap", type: "(T, U) -> (U, T)" });
@@ -460,11 +477,10 @@ Deno.test("inference completes successfully with ID-annotated AST", () => {
       x
     };
   `;
-  const tokens = lex(source);
-  const program = parseSurfaceProgram(tokens);
+  const { program, context } = parseProgramWithPrelude(source);
 
   // Run inference
-  const result = inferProgram(program);
+  const result = inferProgramWithPrelude(program, context);
 
   // Verify the function has the expected type
   const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));

@@ -100,6 +100,13 @@ const COMPARISON_OPERATORS = new Set([
   "!=",
 ]);
 
+const ORDERING_COMPARISON_OPERATORS = new Set([
+  "<",
+  "<=",
+  ">",
+  ">=",
+]);
+
 const BOOLEAN_BINARY_OPERATORS = new Set([
   "&&",
   "||",
@@ -721,8 +728,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
       }
       if (COMPARISON_OPERATORS.has(expr.operator)) {
-        recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
-        recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+        if (ORDERING_COMPARISON_OPERATORS.has(expr.operator)) {
+          recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+        }
+        unify(ctx, resultType1, { kind: "bool" });
       }
       if (BOOLEAN_BINARY_OPERATORS.has(expr.operator)) {
         recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
@@ -933,6 +942,7 @@ export function inferProgram(
     constraintStubs: ctx.constraintStubs,
     nodeTypeById,
     marksVersion: 1,
+    layer1Diagnostics: ctx.layer1Diagnostics,
   };
 }
 

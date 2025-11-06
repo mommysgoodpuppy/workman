@@ -1,3 +1,5 @@
+export type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
+
 import {
   type MProgram,
   MBlockExpr,
@@ -10,25 +12,16 @@ import {
   MLetDeclaration,
 } from "../ast_marked.ts";
 import type { ConstraintStub, HoleId, UnknownInfo } from "../layer1/context.ts";
-import { type Type, applySubstitution, cloneType, occursInType, type Substitution, unknownType } from "../types.ts";
+import {
+  type Type,
+  applySubstitution,
+  cloneType,
+  occursInType,
+  type Substitution,
+  unknownType,
+} from "../types.ts";
+import type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
 import type { NodeId } from "../ast.ts";
-
-export type ConstraintDiagnosticReason =
-  | "not_function"
-  | "branch_mismatch"
-  | "missing_field"
-  | "not_record"
-  | "occurs_cycle"
-  | "type_mismatch"
-  | "arity_mismatch"
-  | "not_numeric"
-  | "not_boolean";
-
-export interface ConstraintDiagnostic {
-  origin: NodeId;
-  reason: ConstraintDiagnosticReason;
-  details?: Record<string, unknown>;
-}
 
 export interface HoleSolution {
   state: "solved" | "unsolved";
@@ -41,6 +34,7 @@ export interface SolveInput {
   constraintStubs: ConstraintStub[];
   holes: Map<HoleId, UnknownInfo>;
   nodeTypeById: Map<NodeId, Type>;
+  layer1Diagnostics: ConstraintDiagnostic[];
 }
 
 export interface SolverResult {
@@ -117,9 +111,14 @@ export function solveConstraints(input: SolveInput): SolverResult {
 
   remarkProgram(input.markedProgram, resolvedNodeTypes);
 
+  const combinedDiagnostics = [
+    ...input.layer1Diagnostics,
+    ...state.diagnostics,
+  ];
+
   return {
     solutions,
-    diagnostics: state.diagnostics,
+    diagnostics: combinedDiagnostics,
     substitution: state.substitution,
     resolvedNodeTypes,
     remarkedProgram: input.markedProgram,

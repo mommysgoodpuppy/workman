@@ -7,23 +7,50 @@ import {
   assertEquals,
   assertExists,
 } from "https://deno.land/std/assert/mod.ts";
+import { freshPreludeTypeEnv } from "./test_prelude.ts";
+import type { Program } from "../src/ast.ts";
+import type { InferResult } from "../src/layer1/infer.ts";
 
-const TEST_PRELUDE_SOURCE = `
-  type List<T> = Nil | Cons<T, List<T>>;
-  type Ordering = LT | EQ | GT;
-`;
+function inferProgramWithPrelude(program: Program): InferResult {
+  const { initialEnv, initialAdtEnv } = freshPreludeTypeEnv();
+  return inferProgram(program, {
+    initialEnv,
+    initialAdtEnv,
+    registerPrelude: false,
+  });
+}
 
 function inferTypes(source: string) {
-  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
+  const {
+    initialOperators,
+    initialPrefixOperators,
+  } = freshPreludeTypeEnv();
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    initialOperators,
+    initialPrefixOperators,
+  );
+  const result = inferProgramWithPrelude(program);
   return result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
 }
 
 function inferModule(source: string) {
-  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
-  const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
+  const {
+    initialOperators,
+    initialPrefixOperators,
+  } = freshPreludeTypeEnv();
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    initialOperators,
+    initialPrefixOperators,
+  );
+  const result = inferProgramWithPrelude(program);
   return { program, result };
 }
 
@@ -322,8 +349,8 @@ Deno.test("parameter annotations share scope", () => {
 Deno.test("recursive annotation enforces consistency", () => {
   const source = `
     let rec length = match(list) {
-      Nil => { 0 },
-      Cons(_, rest) => { length(rest) }
+      Empty => { 0 },
+      Link(_, rest) => { length(rest) }
     };
   `;
   const summaries = inferTypes(source);

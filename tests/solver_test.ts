@@ -11,6 +11,7 @@ import { analyzeProgram } from "../src/pipeline.ts";
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { assert, assertStrictEquals } from "https://deno.land/std/assert/mod.ts";
+import { freshPreludeTypeEnv } from "./test_prelude.ts";
 
 const EMPTY_PROGRAM: MProgram = {
   imports: [],
@@ -36,15 +37,26 @@ function collectReasons(reasons: ConstraintDiagnosticReason[], expected: Constra
   );
 }
 
-const TEST_PRELUDE_SOURCE = `
-  type List<T> = Nil | Cons<T, List<T>>;
-  type Ordering = LT | EQ | GT;
-`;
-
 function analyzeSource(source: string) {
-  const tokens = lex(`${TEST_PRELUDE_SOURCE}\n${source}`);
-  const program = parseSurfaceProgram(tokens);
-  return analyzeProgram(program);
+  const {
+    initialEnv,
+    initialAdtEnv,
+    initialOperators,
+    initialPrefixOperators,
+  } = freshPreludeTypeEnv();
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    initialOperators,
+    initialPrefixOperators,
+  );
+  return analyzeProgram(program, {
+    initialEnv,
+    initialAdtEnv,
+    registerPrelude: false,
+  });
 }
 
 function findLetDeclaration(program: MProgram, name: string): MLetDeclaration | undefined {
@@ -71,6 +83,7 @@ Deno.test("solver surfaces not_function diagnostic when call callee is non-funct
     constraintStubs: stubs,
     holes: new Map(),
     nodeTypeById,
+    layer1Diagnostics: [],
   };
 
   const result = solveConstraints(input);
@@ -98,6 +111,7 @@ Deno.test("solver detects branch mismatch diagnostics", () => {
     constraintStubs: stubs,
     holes: new Map(),
     nodeTypeById,
+    layer1Diagnostics: [],
   };
 
   const result = solveConstraints(input);
@@ -127,6 +141,7 @@ Deno.test("solver resolves unknown hole via annotation constraint", () => {
     constraintStubs: stubs,
     holes,
     nodeTypeById,
+    layer1Diagnostics: [],
   };
 
   const result = solveConstraints(input);
@@ -183,5 +198,24 @@ Deno.test("solver remarking resolves call result types", () => {
   assert(
     resolvedType && resolvedType.kind === "int",
     "expected resolved node type to be Int",
+  );
+});
+
+Deno.test("analyzeProgram forwards layer1 diagnostics into solver result", () => {
+  const analysis = analyzeSource(`
+    let usesFreeVar = () => { missingName };
+  `);
+  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "free_variable");
+});
+
+Deno.test("analyzeProgram does not report numeric/boolean errors for equality checks", () => {
+  const analysis = analyzeSource(`
+    let isEqual = 5 == 5;
+  `);
+  assertStrictEquals(
+    analysis.layer2.diagnostics.length,
+    0,
+    `expected no diagnostics, got ${JSON.stringify(analysis.layer2.diagnostics)}`,
   );
 });

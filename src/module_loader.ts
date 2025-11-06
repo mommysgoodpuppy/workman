@@ -81,7 +81,7 @@ interface LoaderContext {
   preludePath?: string;
 }
 
-interface ModuleSummary {
+export interface ModuleSummary {
   exports: {
     values: Map<string, TypeScheme>;
     types: Map<string, TypeInfo>;
@@ -193,6 +193,90 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
   runtimeLogs: string[];
 }> {
   const graph = await loadModuleGraph(entryPath, options);
+  const { moduleSummaries, runtimeLogs } = await summarizeGraph(graph);
+  const entryNode = graph.nodes.get(graph.entry);
+  const entrySummary = moduleSummaries.get(graph.entry);
+  if (!entryNode || !entrySummary) {
+    throw moduleError(`Internal error: failed to load entry module '${graph.entry}'`);
+  }
+  const types = entrySummary.letSchemeOrder.map((name) => {
+    const scheme = entrySummary.letSchemes.get(name);
+    if (!scheme) {
+      throw moduleError(`Missing type information for '${name}' in '${graph.entry}'`);
+    }
+    return { name, type: formatScheme(scheme) };
+  });
+
+  const values = entrySummary.letValueOrder.map((name) => {
+    const value = entrySummary.letRuntime.get(name);
+    if (!value) {
+      throw moduleError(`Missing runtime value for '${name}' in '${graph.entry}'`);
+    }
+    return { name, value: formatRuntimeValue(value) };
+  });
+
+  return { types, values, runtimeLogs };
+}
+
+export async function loadModuleSummaries(entryPath: string, options: ModuleLoaderOptions = {}): Promise<{
+  graph: ModuleGraph;
+  summaries: Map<string, ModuleSummary>;
+}> {
+  const graph = await loadModuleGraph(entryPath, options);
+  const { moduleSummaries } = await summarizeGraph(graph);
+  return { graph, summaries: moduleSummaries };
+}
+
+export async function loadPreludeEnvironment(options: ModuleLoaderOptions = {}): Promise<{
+  env: Map<string, TypeScheme>;
+  adtEnv: Map<string, TypeInfo>;
+  operators: Map<string, OperatorInfo>;
+  prefixOperators: Set<string>;
+}> {
+  const normalizedOptions = normalizeOptions(options);
+  const preludePath = resolveEntryPath(normalizedOptions.preludeModule ?? "std/prelude");
+  const { graph, summaries } = await loadModuleSummaries(preludePath, {
+    ...normalizedOptions,
+    preludeModule: normalizedOptions.preludeModule,
+  });
+  const preludeSummary = summaries.get(preludePath);
+  const preludeNode = graph.nodes.get(preludePath);
+  if (!preludeSummary || !preludeNode) {
+    throw moduleError(`Failed to load std prelude at '${preludePath}'`);
+  }
+  const env = new Map<string, TypeScheme>();
+  for (const [name, scheme] of preludeSummary.exports.values.entries()) {
+    env.set(name, cloneTypeScheme(scheme));
+  }
+  for (const decl of preludeNode.program.declarations) {
+    if (decl.kind === "infix") {
+      const opName = `__op_${decl.operator}`;
+      const impl = preludeSummary.exports.values.get(decl.implementation);
+      if (impl) {
+        env.set(opName, cloneTypeScheme(impl));
+      }
+    }
+    if (decl.kind === "prefix") {
+      const opName = `__prefix_${decl.operator}`;
+      const impl = preludeSummary.exports.values.get(decl.implementation);
+      if (impl) {
+        env.set(opName, cloneTypeScheme(impl));
+      }
+    }
+  }
+  const adtEnv = new Map<string, TypeInfo>();
+  for (const [name, info] of preludeSummary.exports.types.entries()) {
+    adtEnv.set(name, cloneTypeInfo(info));
+  }
+  const operators = new Map(preludeNode.exportedOperators);
+  const prefixOperators = new Set(preludeNode.exportedPrefixOperators);
+  return { env, adtEnv, operators, prefixOperators };
+}
+
+async function summarizeGraph(graph: ModuleGraph): Promise<{
+  moduleSummaries: Map<string, ModuleSummary>;
+  runtimeLogs: string[];
+}> {
   const moduleSummaries = new Map<string, ModuleSummary>();
   const runtimeLogs: string[] = [];
   const preludePath = graph.prelude;
@@ -383,29 +467,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
       preludeSummary = moduleSummaries.get(path);
     }
   }
-
-  const entryNode = graph.nodes.get(graph.entry);
-  const entrySummary = moduleSummaries.get(graph.entry);
-  if (!entryNode || !entrySummary) {
-    throw moduleError(`Internal error: failed to load entry module '${graph.entry}'`);
-  }
-  const types = entrySummary.letSchemeOrder.map((name) => {
-    const scheme = entrySummary.letSchemes.get(name);
-    if (!scheme) {
-      throw moduleError(`Missing type information for '${name}' in '${graph.entry}'`);
-    }
-    return { name, type: formatScheme(scheme) };
-  });
-
-  const values = entrySummary.letValueOrder.map((name) => {
-    const value = entrySummary.letRuntime.get(name);
-    if (!value) {
-      throw moduleError(`Missing runtime value for '${name}' in '${graph.entry}'`);
-    }
-    return { name, value: formatRuntimeValue(value) };
-  });
-
-  return { types, values, runtimeLogs };
+  return { moduleSummaries, runtimeLogs };
 }
 
 function normalizeOptions(options: ModuleLoaderOptions): ModuleLoaderOptions {

@@ -556,6 +556,47 @@ class WorkmanLanguageServer {
       case "not_boolean":
         base = "Boolean operation expected booleans";
         break;
+      case "free_variable": {
+        const name = typeof diag.details?.name === "string"
+          ? diag.details.name
+          : "value";
+        base = `Unbound variable ${name}`;
+        break;
+      }
+      case "unsupported_expr": {
+        const exprKind = typeof diag.details?.exprKind === "string"
+          ? diag.details.exprKind
+          : undefined;
+        base = exprKind
+          ? `This expression form (${exprKind}) is not supported here`
+          : "This expression form is not supported here";
+        break;
+      }
+      case "non_exhaustive_match":
+        base = "Match expression is not exhaustive";
+        break;
+      case "type_expr_unknown": {
+        const reason = typeof diag.details?.reason === "string"
+          ? diag.details.reason
+          : "Unknown type expression";
+        base = reason;
+        break;
+      }
+      case "type_expr_arity":
+        base = "Type expression was given the wrong number of arguments";
+        break;
+      case "type_expr_unsupported":
+        base = "This type expression form is not supported";
+        break;
+      case "type_decl_duplicate":
+        base = "Duplicate type declaration";
+        break;
+      case "type_decl_invalid_member":
+        base = "Invalid member in this type declaration";
+        break;
+      case "internal_error":
+        base = "Internal type inference error";
+        break;
       default:
         base = `Solver diagnostic: ${diag.reason}`;
         break;
@@ -1004,10 +1045,7 @@ class WorkmanLanguageServer {
         `Internal error: missing analysis for entry module '${graph.entry}'`,
       );
     }
-    const layer3 = presentProgram({
-      layer1: entryAnalysis.layer1,
-      layer2: entryAnalysis.layer2,
-    });
+    const layer3 = presentProgram(entryAnalysis.layer2);
     return { env: entry.env, layer3 };
   }
 

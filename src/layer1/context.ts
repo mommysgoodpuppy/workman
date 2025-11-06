@@ -47,6 +47,7 @@ import {
   unknownType,
 } from "../types.ts";
 import { InferError } from "../error.ts";
+import type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
 
 export interface Context {
   env: TypeEnv;
@@ -63,6 +64,7 @@ export interface Context {
   lastUnifyFailure: UnifyFailure | null;
   holes: Map<HoleId, UnknownInfo>;
   constraintStubs: ConstraintStub[];
+  layer1Diagnostics: ConstraintDiagnostic[];
 }
 
 export interface InferOptions {
@@ -85,6 +87,7 @@ export interface InferResult {
   constraintStubs: ConstraintStub[];
   nodeTypeById: Map<NodeId, Type>;
   marksVersion: number;
+  layer1Diagnostics: ConstraintDiagnostic[];
 }
 
 export function createContext(options: InferOptions = {}): Context {
@@ -108,6 +111,7 @@ export function createContext(options: InferOptions = {}): Context {
     lastUnifyFailure: null,
     holes: new Map(),
     constraintStubs: [],
+    layer1Diagnostics: [],
   };
 }
 
@@ -468,6 +472,15 @@ export function inferError(
   return new InferError(message, span, source);
 }
 
+function recordLayer1Diagnostic(
+  ctx: Context,
+  origin: NodeId,
+  reason: ConstraintDiagnosticReason,
+  details?: Record<string, unknown>,
+): void {
+  ctx.layer1Diagnostics.push({ origin, reason, details });
+}
+
 export function markFreeVariable(
   ctx: Context,
   expr: Expr,
@@ -485,6 +498,7 @@ export function markFreeVariable(
     name,
   };
   ctx.marks.set(expr, mark);
+  recordLayer1Diagnostic(ctx, expr.id, "free_variable", { name });
   return mark;
 }
 
@@ -581,6 +595,7 @@ export function markUnsupportedExpr(
     exprKind,
   };
   ctx.marks.set(expr, mark);
+  recordLayer1Diagnostic(ctx, expr.id, "unsupported_expr", { exprKind });
   return mark;
 }
 
@@ -596,6 +611,9 @@ export function markTypeDeclDuplicate(
     duplicate: decl,
   };
   // Note: Top-level marks don't use ctx.marks since they're not expressions
+  recordLayer1Diagnostic(ctx, decl.id, "type_decl_duplicate", {
+    name: decl.name,
+  });
   return mark;
 }
 
@@ -611,6 +629,11 @@ export function markTypeDeclInvalidMember(
     declaration: decl,
     member,
   };
+  const details: Record<string, unknown> = { memberKind: member.kind };
+  if ("name" in member) {
+    details.memberName = (member as { name: string }).name;
+  }
+  recordLayer1Diagnostic(ctx, decl.id, "type_decl_invalid_member", details);
   return mark;
 }
 
@@ -622,6 +645,7 @@ export function markInternal(ctx: Context, reason: string): MMarkInternal {
     reason,
   };
   ctx.topLevelMarks.push(mark);
+  recordLayer1Diagnostic(ctx, mark.id, "internal_error", { reason });
   return mark;
 }
 
@@ -642,6 +666,7 @@ export function markTypeExprUnknown(
     typeExpr,
     reason,
   };
+  recordLayer1Diagnostic(ctx, typeExpr.id, "type_expr_unknown", { reason });
   return mark;
 }
 
@@ -665,6 +690,11 @@ export function markTypeExprArity(
     expected,
     actual,
   };
+  recordLayer1Diagnostic(ctx, typeExpr.id, "type_expr_arity", {
+    expected,
+    actual,
+    typeExprKind: typeExpr.kind,
+  });
   return mark;
 }
 
@@ -686,6 +716,10 @@ export function markNonExhaustive(
     exprKind: "match_non_exhaustive",
   };
   ctx.marks.set(expr, mark);
+  recordLayer1Diagnostic(ctx, expr.id, "non_exhaustive_match", {
+    missingCases,
+    scrutineeSpan,
+  });
   return mark;
 }
 
@@ -703,6 +737,9 @@ export function markTypeExprUnsupported(
     }),
     typeExpr: typeExpr,
   };
+  recordLayer1Diagnostic(ctx, typeExpr.id, "type_expr_unsupported", {
+    typeExprKind: typeExpr.kind,
+  });
   return mark;
 }
 
