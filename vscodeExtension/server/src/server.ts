@@ -14,7 +14,7 @@ import {
   parseSurfaceProgram,
   type OperatorInfo,
 } from "@workman/parser.ts";
-import { InferError, inferProgram } from "@workman/infer.ts";
+import { InferError } from "@workman/layer1/infer.ts";
 import { LexError, WorkmanError } from "@workman/error.ts";
 import { formatScheme } from "@workman/type_printer.ts";
 import {
@@ -28,7 +28,20 @@ import {
   cloneTypeScheme,
   TypeInfo,
   TypeScheme,
+  typeToString,
 } from "@workman/types.ts";
+import {
+  analyzeProgram,
+  type AnalysisResult,
+} from "@workman/pipeline.ts";
+import {
+  findNodeAtOffset,
+  presentProgram,
+  type ConstraintDiagnosticWithSpan,
+  type Layer3Result,
+  type NodeView,
+  type PartialType,
+} from "@workman/layer3/mod.ts";
 
 interface LSPMessage {
   jsonrpc: string;
@@ -51,6 +64,10 @@ class WorkmanLanguageServer {
     operators: Map<string, OperatorInfo>;
     prefixOperators: Set<string>;
   }>();
+  private moduleContexts = new Map<
+    string,
+    { env: Map<string, TypeScheme>; layer3: Layer3Result }
+  >();
 
   private log(message: string) {
     const timestamp = new Date().toISOString();
@@ -325,6 +342,7 @@ class WorkmanLanguageServer {
 
     this.log(`[LSP] Validating document: ${uri}`);
 
+    this.moduleContexts.delete(uri);
     const entryPath = this.uriToFsPath(uri);
     const stdRoots = this.computeStdRoots(entryPath);
 
@@ -349,6 +367,17 @@ class WorkmanLanguageServer {
           preludeModule: this.preludeModule,
         });
         this.log(`[LSP] Module graph validated OK (${entryPath})`);
+        const context = await this.buildModuleContext(
+          entryPath,
+          stdRoots,
+          this.preludeModule,
+        );
+        this.moduleContexts.set(uri, context);
+        this.appendSolverDiagnostics(
+          diagnostics,
+          context.layer3.diagnostics.solver,
+          text,
+        );
       } catch (moduleError) {
         // Module-level errors (imports, type errors, etc.)
         this.log(`[LSP] Module validation error: ${moduleError}`);
@@ -477,6 +506,94 @@ class WorkmanLanguageServer {
     await this.writeMessage(notification);
   }
 
+  private appendSolverDiagnostics(
+    target: any[],
+    diagnostics: ConstraintDiagnosticWithSpan[],
+    text: string,
+  ): void {
+    for (const diag of diagnostics) {
+      const range = diag.span
+        ? {
+          start: this.offsetToPosition(text, diag.span.start),
+          end: this.offsetToPosition(text, Math.max(diag.span.end, diag.span.start + 1)),
+        }
+        : {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        };
+      target.push({
+        range,
+        severity: 1,
+        message: this.formatSolverDiagnostic(diag),
+        source: "workman-layer2",
+        code: diag.reason,
+      });
+    }
+  }
+
+  private formatSolverDiagnostic(diag: ConstraintDiagnosticWithSpan): string {
+    let base: string;
+    switch (diag.reason) {
+      case "not_function":
+        base = "Expected a function but found a non-function value";
+        break;
+      case "branch_mismatch":
+        base = "Branches in this expression do not agree on a type";
+        break;
+      case "missing_field":
+        base = "Record is missing a required field";
+        break;
+      case "not_record":
+        base = "Expected a record value here";
+        break;
+      case "occurs_cycle":
+        base = "Occurs check failed while solving types";
+        break;
+      case "type_mismatch":
+        base = "Conflicting type requirements";
+        break;
+      case "arity_mismatch":
+        base = "Function arity does not match the call";
+        break;
+      case "not_numeric":
+        base = "Numeric operation expected numbers";
+        break;
+      case "not_boolean":
+        base = "Boolean operation expected booleans";
+        break;
+      default:
+        base = `Solver diagnostic: ${diag.reason}`;
+        break;
+    }
+    if (diag.details && Object.keys(diag.details).length > 0) {
+      try {
+        base = `${base}. Details: ${JSON.stringify(diag.details)}`;
+      } catch {
+        // Ignore stringify errors
+      }
+    }
+    return base;
+  }
+
+  private renderNodeView(view: NodeView): string | null {
+    const typeStr = this.partialTypeToString(view.finalType);
+    if (!typeStr) {
+      return null;
+    }
+    return "```workman\n" + typeStr + "\n```";
+  }
+
+  private partialTypeToString(partial: PartialType): string | null {
+    switch (partial.kind) {
+      case "unknown":
+        return "unknown";
+      case "concrete":
+        return partial.type ? typeToString(partial.type) : null;
+      default:
+        return null;
+    }
+  }
+
   private async handleHover(message: LSPMessage): Promise<LSPMessage> {
     const { textDocument, position } = message.params;
     const uri = textDocument.uri;
@@ -493,12 +610,36 @@ class WorkmanLanguageServer {
     try {
       const entryPath = this.uriToFsPath(uri);
       const stdRoots = this.computeStdRoots(entryPath);
-      const env = await this.buildModuleEnv(
-        entryPath,
-        stdRoots,
-        this.preludeModule,
-      );
+      let context = this.moduleContexts.get(uri);
+      if (!context) {
+        context = await this.buildModuleContext(
+          entryPath,
+          stdRoots,
+          this.preludeModule,
+        );
+        this.moduleContexts.set(uri, context);
+      }
+      const { layer3, env } = context;
       const offset = this.positionToOffset(text, position);
+      const nodeId = findNodeAtOffset(layer3.spanIndex, offset);
+      if (nodeId) {
+        const view = layer3.nodeViews.get(nodeId);
+        if (view) {
+          const rendered = this.renderNodeView(view);
+          if (rendered) {
+            return {
+              jsonrpc: "2.0",
+              id: message.id,
+              result: {
+                contents: {
+                  kind: "markdown",
+                  value: rendered,
+                },
+              },
+            };
+          }
+        }
+      }
       const word = this.getWordAtOffset(text, offset);
       this.log(`[LSP] Word at cursor: '${word}'`);
       const scheme = env.get(word);
@@ -538,11 +679,16 @@ class WorkmanLanguageServer {
     try {
       const entryPath = this.uriToFsPath(uri);
       const stdRoots = this.computeStdRoots(entryPath);
-      const env = await this.buildModuleEnv(
-        entryPath,
-        stdRoots,
-        this.preludeModule,
-      );
+      let context = this.moduleContexts.get(uri);
+      if (!context) {
+        context = await this.buildModuleContext(
+          entryPath,
+          stdRoots,
+          this.preludeModule,
+        );
+        this.moduleContexts.set(uri, context);
+      }
+      const { env } = context;
       for (const [name, scheme] of env.entries()) {
         if (name.startsWith("__op_") || name.startsWith("__prefix_")) {
           continue;
@@ -639,11 +785,11 @@ class WorkmanLanguageServer {
       normalized.endsWith("/std/result/core.wm");
   }
 
-  private async buildModuleEnv(
+  private async buildModuleContext(
     entryPath: string,
     stdRoots: string[],
     preludeModule?: string,
-  ): Promise<Map<string, TypeScheme>> {
+  ): Promise<{ env: Map<string, TypeScheme>; layer3: Layer3Result }> {
     const graph = await loadModuleGraph(entryPath, { stdRoots, preludeModule });
     const summaries = new Map<string, {
       exportsValues: Map<string, TypeScheme>;
@@ -657,6 +803,7 @@ class WorkmanLanguageServer {
       exportsTypes: Map<string, TypeInfo>;
     } | undefined = undefined;
     let preludeEnv: Map<string, TypeScheme> | undefined = undefined;
+    let entryAnalysis: AnalysisResult | null = null;
 
     for (const path of graph.order) {
       const node = graph.nodes.get(path)!;
@@ -732,10 +879,11 @@ class WorkmanLanguageServer {
         }
       }
 
-      const inference = inferProgram(node.program, {
+      const analysis = analyzeProgram(node.program, {
         initialEnv,
         initialAdtEnv,
         resetCounter: true,
+        source: node.source,
       });
 
       const exportedValues = new Map<string, TypeScheme>();
@@ -782,10 +930,13 @@ class WorkmanLanguageServer {
       }
 
       const letSchemeMap = new Map(
-        inference.summaries.map(({ name, scheme }) => [name, scheme] as const),
+        analysis.layer1.summaries.map((
+          { name, scheme },
+        ) => [name, scheme] as const),
       );
       for (const name of node.exportedValueNames) {
-        const scheme = letSchemeMap.get(name) ?? inference.env.get(name);
+        const scheme = letSchemeMap.get(name) ??
+          analysis.layer1.env.get(name);
         if (!scheme) {
           throw new ModuleLoaderError(
             `Exported let '${name}' was not inferred in '${path}'`,
@@ -800,7 +951,7 @@ class WorkmanLanguageServer {
       }
 
       for (const typeName of node.exportedTypeNames) {
-        const info = inference.adtEnv.get(typeName);
+        const info = analysis.layer1.adtEnv.get(typeName);
         if (!info) {
           throw new ModuleLoaderError(
             `Exported type '${typeName}' was not defined in '${path}'`,
@@ -814,7 +965,7 @@ class WorkmanLanguageServer {
         const clonedInfo = cloneTypeInfo(info);
         exportedTypes.set(typeName, clonedInfo);
         for (const ctor of clonedInfo.constructors) {
-          const scheme = inference.env.get(ctor.name);
+          const scheme = analysis.layer1.env.get(ctor.name);
           if (!scheme) {
             throw new ModuleLoaderError(
               `Constructor '${ctor.name}' for type '${typeName}' missing in '${path}'`,
@@ -832,15 +983,18 @@ class WorkmanLanguageServer {
       summaries.set(path, {
         exportsValues: exportedValues,
         exportsTypes: exportedTypes,
-        env: inference.env,
-        adtEnv: inference.adtEnv,
+        env: analysis.layer1.env,
+        adtEnv: analysis.layer1.adtEnv,
       });
       if (path === preludePath) {
         preludeSummary = {
           exportsValues: exportedValues,
           exportsTypes: exportedTypes,
         };
-        preludeEnv = inference.env;
+        preludeEnv = analysis.layer1.env;
+      }
+      if (path === graph.entry) {
+        entryAnalysis = analysis;
       }
     }
 
@@ -850,7 +1004,16 @@ class WorkmanLanguageServer {
         `Internal error: failed to load entry module '${graph.entry}'`,
       );
     }
-    return entry.env;
+    if (!entryAnalysis) {
+      throw new ModuleLoaderError(
+        `Internal error: missing analysis for entry module '${graph.entry}'`,
+      );
+    }
+    const layer3 = presentProgram({
+      layer1: entryAnalysis.layer1,
+      layer2: entryAnalysis.layer2,
+    });
+    return { env: entry.env, layer3 };
   }
 
   private uriToFsPath(uri: string): string {

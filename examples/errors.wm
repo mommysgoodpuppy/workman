@@ -1,17 +1,29 @@
--- Test file for error diagnostics
--- NOTE: Only the FIRST error will be shown due to current limitations
--- The parser and type checker stop on first error
+-- Demonstrates multiple diagnostics surfaced by the new solver layer.
 
--- ERROR: Parse error - missing arrow
-let badSyntax = (x) { 42 };
+type Option<T> = None | Some<T>;
 
--- To see more errors, fix the above and uncomment below:
+-- Layer 2: not_function diagnostic
+let notFunction = 42;
+let callNonFunction = () => {
+  notFunction(true)
+};
 
--- -- ERROR: Type checker - duplicate type definition
--- type Option<T> = None | Some<T>;
+-- Layer 2: branch_mismatch diagnostic
+let branchMismatch = (flag) => {
+  match (flag) {
+    true => { 1 },
+    false => { false }
+  }
+};
 
--- -- ERROR: Type checker - undefined variable
--- let undefined = (x) => { y };
+-- Layer 2: not_boolean diagnostic
+let booleanMismatch = () => {
+  if (1) {
+    true
+  } else {
+    false
+  }
+};
 
--- CORRECT: This should work
+-- CORRECT: This should still work
 let correct = (x) => { x };

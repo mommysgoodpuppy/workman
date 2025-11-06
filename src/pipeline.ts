@@ -5,6 +5,10 @@ import {
   type SolveInput,
   type SolverResult,
 } from "./layer2/mod.ts";
+import {
+  presentProgram,
+  type Layer3Result,
+} from "./layer3/mod.ts";
 
 export interface AnalysisResult {
   layer1: InferResult;
@@ -25,4 +29,20 @@ export function analyzeProgram(program: Program, options: AnalysisOptions = {}):
 
   const layer2 = solveConstraints(solveInput);
   return { layer1, layer2 };
+}
+
+export interface PresentationResult extends AnalysisResult {
+  layer3: Layer3Result;
+}
+
+export function analyzeAndPresent(
+  program: Program,
+  options: AnalysisOptions = {},
+): PresentationResult {
+  const analysis = analyzeProgram(program, options);
+  const layer3 = presentProgram({
+    layer1: analysis.layer1,
+    layer2: analysis.layer2,
+  });
+  return { ...analysis, layer3 };
 }
