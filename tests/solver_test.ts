@@ -190,6 +190,213 @@ Deno.test("analyzeProgram surfaces not_boolean diagnostic for boolean operators"
   collectReasons(reasons, "not_boolean");
 });
 
+Deno.test("solver surfaces missing_field diagnostic when record lacks requested field", () => {
+  const targetId: NodeId = 210;
+  const resultId: NodeId = 211;
+  const stubs: ConstraintStub[] = [
+    {
+      kind: "has_field",
+      origin: 212,
+      target: targetId,
+      field: "bar",
+      result: resultId,
+    },
+  ];
+  const nodeTypeById = new Map<NodeId, Type>([
+    [
+      targetId,
+      { kind: "record", fields: new Map<string, Type>([["foo", { kind: "int" }]]) },
+    ],
+    [resultId, { kind: "int" }],
+  ]);
+
+  const input: SolveInput = {
+    markedProgram: EMPTY_PROGRAM,
+    constraintStubs: stubs,
+    holes: new Map(),
+    nodeTypeById,
+    layer1Diagnostics: [],
+  };
+
+  const result = solveConstraints(input);
+  const reasons = result.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "missing_field");
+});
+
+Deno.test("solver surfaces not_record diagnostic when projecting field from non-record", () => {
+  const targetId: NodeId = 220;
+  const resultId: NodeId = 221;
+  const stubs: ConstraintStub[] = [
+    {
+      kind: "has_field",
+      origin: 222,
+      target: targetId,
+      field: "foo",
+      result: resultId,
+    },
+  ];
+  const nodeTypeById = new Map<NodeId, Type>([
+    [targetId, { kind: "int" }],
+    [resultId, { kind: "int" }],
+  ]);
+
+  const input: SolveInput = {
+    markedProgram: EMPTY_PROGRAM,
+    constraintStubs: stubs,
+    holes: new Map(),
+    nodeTypeById,
+    layer1Diagnostics: [],
+  };
+
+  const result = solveConstraints(input);
+  const reasons = result.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "not_record");
+});
+
+Deno.test("solver surfaces occurs_cycle diagnostic for recursive annotation", () => {
+  const annotationId: NodeId = 230;
+  const valueId: NodeId = 231;
+  const stubs: ConstraintStub[] = [
+    {
+      kind: "annotation",
+      origin: 232,
+      annotation: annotationId,
+      value: valueId,
+      subject: null,
+    },
+  ];
+  const cycleVar: Type = { kind: "var", id: 42 };
+  const nodeTypeById = new Map<NodeId, Type>([
+    [annotationId, cycleVar],
+    [
+      valueId,
+      {
+        kind: "func",
+        from: { kind: "var", id: 42 },
+        to: { kind: "int" },
+      },
+    ],
+  ]);
+
+  const input: SolveInput = {
+    markedProgram: EMPTY_PROGRAM,
+    constraintStubs: stubs,
+    holes: new Map(),
+    nodeTypeById,
+    layer1Diagnostics: [],
+  };
+
+  const result = solveConstraints(input);
+  const reasons = result.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "occurs_cycle");
+});
+
+Deno.test("solver surfaces type_mismatch diagnostic when annotation disagrees with value type", () => {
+  const annotationId: NodeId = 240;
+  const valueId: NodeId = 241;
+  const stubs: ConstraintStub[] = [
+    {
+      kind: "annotation",
+      origin: 242,
+      annotation: annotationId,
+      value: valueId,
+      subject: null,
+    },
+  ];
+  const nodeTypeById = new Map<NodeId, Type>([
+    [annotationId, { kind: "int" }],
+    [valueId, { kind: "bool" }],
+  ]);
+
+  const input: SolveInput = {
+    markedProgram: EMPTY_PROGRAM,
+    constraintStubs: stubs,
+    holes: new Map(),
+    nodeTypeById,
+    layer1Diagnostics: [],
+  };
+
+  const result = solveConstraints(input);
+  const reasons = result.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "type_mismatch");
+});
+
+Deno.test("solver surfaces arity_mismatch diagnostic when constructor arity conflicts", () => {
+  const annotationId: NodeId = 250;
+  const valueId: NodeId = 251;
+  const stubs: ConstraintStub[] = [
+    {
+      kind: "annotation",
+      origin: 252,
+      annotation: annotationId,
+      value: valueId,
+      subject: null,
+    },
+  ];
+  const nodeTypeById = new Map<NodeId, Type>([
+    [
+      annotationId,
+      {
+        kind: "constructor",
+        name: "Option",
+        args: [{ kind: "int" }],
+      },
+    ],
+    [
+      valueId,
+      {
+        kind: "constructor",
+        name: "Option",
+        args: [{ kind: "int" }, { kind: "bool" }],
+      },
+    ],
+  ]);
+
+  const input: SolveInput = {
+    markedProgram: EMPTY_PROGRAM,
+    constraintStubs: stubs,
+    holes: new Map(),
+    nodeTypeById,
+    layer1Diagnostics: [],
+  };
+
+  const result = solveConstraints(input);
+  const reasons = result.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "arity_mismatch");
+});
+
+Deno.test("solver surfaces not_numeric diagnostic when numeric operands are non-numeric", () => {
+  const leftId: NodeId = 260;
+  const rightId: NodeId = 261;
+  const resultId: NodeId = 262;
+  const stubs: ConstraintStub[] = [
+    {
+      kind: "numeric",
+      origin: 263,
+      operator: "+",
+      operands: [leftId, rightId],
+      result: resultId,
+    },
+  ];
+  const nodeTypeById = new Map<NodeId, Type>([
+    [leftId, { kind: "bool" }],
+    [rightId, { kind: "int" }],
+    [resultId, { kind: "int" }],
+  ]);
+
+  const input: SolveInput = {
+    markedProgram: EMPTY_PROGRAM,
+    constraintStubs: stubs,
+    holes: new Map(),
+    nodeTypeById,
+    layer1Diagnostics: [],
+  };
+
+  const result = solveConstraints(input);
+  const reasons = result.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "not_numeric");
+});
+
 Deno.test("solver remarking resolves call result types", () => {
   const analysis = analyzeSource(`
     let id = (x) => { x };
