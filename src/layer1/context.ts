@@ -82,6 +82,7 @@ export interface InferResult {
   marks: Map<Expr, MExpr>;
   holes: Map<HoleId, UnknownInfo>;
   constraintStubs: ConstraintStub[];
+  nodeTypeById: Map<NodeId, Type>;
   marksVersion: number;
 }
 

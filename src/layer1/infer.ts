@@ -3,6 +3,7 @@ import {
   BlockStatement,
   ConstructorAlias,
   Expr,
+  NodeId,
   InfixDeclaration,
   LetDeclaration,
   MatchArm,
@@ -903,6 +904,11 @@ export function inferProgram(
     scheme: applySubstitutionScheme(scheme, ctx.subst),
   }));
 
+  const nodeTypeById: Map<NodeId, Type> = new Map();
+  for (const [expr, type] of ctx.nodeTypes.entries()) {
+    nodeTypeById.set(expr.id, applyCurrentSubst(ctx, type));
+  }
+
   const markedProgram: MProgram = {
     imports: program.imports,
     reexports: program.reexports,
@@ -921,6 +927,7 @@ export function inferProgram(
     marks: ctx.marks,
     holes: ctx.holes,
     constraintStubs: ctx.constraintStubs,
+    nodeTypeById,
     marksVersion: 1,
   };
 }
