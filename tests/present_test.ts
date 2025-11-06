@@ -25,7 +25,7 @@ Deno.test("presentProgram surfaces final type views for solved nodes", () => {
     let two = id(2);
   `);
 
-  const twoDecl = findLet(analysis.layer1.markedProgram, "two");
+  const twoDecl = findLet(analysis.layer2.remarkedProgram, "two");
   const resultExpr = twoDecl.body.result;
   assertExists(resultExpr, "expected block result expression");
 

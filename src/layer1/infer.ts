@@ -598,6 +598,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             argType: typeToString(applyCurrentSubst(ctx, argType)),
           }); */
         }
+        recordCallConstraint(ctx, expr, expr.callee, argExpr, expr, index);
         const unifySucceeded = unify(ctx, fnType, {
           kind: "func",
           from: argType,
@@ -651,8 +652,6 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             fnType: typeToString(applyCurrentSubst(ctx, fnType)),
           }); */
         }
-
-        recordCallConstraint(ctx, expr, expr.callee, argExpr, expr, index);
 
         fnType = applyCurrentSubst(ctx, resultType);
       }
@@ -718,6 +717,16 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // Apply the function to both arguments
       const resultType1 = freshTypeVar();
+      if (NUMERIC_BINARY_OPERATORS.has(expr.operator)) {
+        recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+      }
+      if (COMPARISON_OPERATORS.has(expr.operator)) {
+        recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+        recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+      }
+      if (BOOLEAN_BINARY_OPERATORS.has(expr.operator)) {
+        recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+      }
       if (
         !unify(ctx, opType, {
           kind: "func",
@@ -747,17 +756,6 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         return recordExprType(ctx, expr, mark.type);
       }
 
-      if (NUMERIC_BINARY_OPERATORS.has(expr.operator)) {
-        recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
-      }
-      if (COMPARISON_OPERATORS.has(expr.operator)) {
-        recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
-        recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
-      }
-      if (BOOLEAN_BINARY_OPERATORS.has(expr.operator)) {
-        recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
-      }
-
       return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType1));
     }
     case "unary": {
@@ -776,6 +774,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // Apply the function to the operand
       const resultType = freshTypeVar();
+      if (NUMERIC_UNARY_OPERATORS.has(expr.operator)) {
+        recordNumericConstraint(ctx, expr, [expr.operand], expr.operator);
+      }
+      if (BOOLEAN_UNARY_OPERATORS.has(expr.operator)) {
+        recordBooleanConstraint(ctx, expr, [expr.operand], expr.operator);
+      }
       if (
         !unify(ctx, opType, { kind: "func", from: operandType, to: resultType })
       ) {
@@ -799,13 +803,6 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           applyCurrentSubst(ctx, operandType),
         );
         return recordExprType(ctx, expr, mark.type);
-      }
-
-      if (NUMERIC_UNARY_OPERATORS.has(expr.operator)) {
-        recordNumericConstraint(ctx, expr, [expr.operand], expr.operator);
-      }
-      if (BOOLEAN_UNARY_OPERATORS.has(expr.operator)) {
-        recordBooleanConstraint(ctx, expr, [expr.operand], expr.operator);
       }
 
       return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType));

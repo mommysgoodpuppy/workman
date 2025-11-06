@@ -40,9 +40,6 @@ export function analyzeAndPresent(
   options: AnalysisOptions = {},
 ): PresentationResult {
   const analysis = analyzeProgram(program, options);
-  const layer3 = presentProgram({
-    layer1: analysis.layer1,
-    layer2: analysis.layer2,
-  });
+  const layer3 = presentProgram(analysis.layer2);
   return { ...analysis, layer3 };
 }

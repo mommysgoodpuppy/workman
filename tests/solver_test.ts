@@ -148,6 +148,25 @@ Deno.test("analyzeProgram surfaces branch mismatch diagnostic", () => {
   collectReasons(reasons, "branch_mismatch");
 });
 
+Deno.test("analyzeProgram surfaces not_function diagnostic for non-callable callee", () => {
+  const analysis = analyzeSource(`
+    let notFunction = 42;
+    let callNonFunction = notFunction(true);
+  `);
+  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "not_function");
+});
+
+Deno.test("analyzeProgram surfaces not_boolean diagnostic for boolean operators", () => {
+  const analysis = analyzeSource(`
+    let boolAnd = (lhs, rhs) => { rhs };
+    infixl 3 && = boolAnd;
+    let booleanMismatch = true && 0;
+  `);
+  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "not_boolean");
+});
+
 Deno.test("solver remarking resolves call result types", () => {
   const analysis = analyzeSource(`
     let id = (x) => { x };
