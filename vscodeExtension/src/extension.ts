@@ -15,15 +15,38 @@ export async function activate(context: ExtensionContext) {
   outputChannel.appendLine("Workman extension activating...");
 
   try {
-    const serverDir = context.asAbsolutePath(
-      path.join("server"),
+    const bundledServerDir = context.asAbsolutePath("server");
+    const compiledWin = path.join(bundledServerDir, "workman-lsp.exe");
+    const compiledNix = path.join(bundledServerDir, "workman-lsp");
+    const hasCompiled = fs.existsSync(compiledWin) || fs.existsSync(compiledNix);
+
+    const workspaceServerDir = path.resolve(
+      context.extensionPath,
+      "..",
+      "lsp",
+      "server",
+    );
+    const workspaceServerEntry = path.join(
+      workspaceServerDir,
+      "src",
+      "server.ts",
+    );
+    const hasWorkspaceSource = fs.existsSync(workspaceServerEntry);
+
+    outputChannel.appendLine(
+      `Bundled server dir: ${bundledServerDir}`,
+    );
+    outputChannel.appendLine(
+      `Workspace server dir: ${workspaceServerDir}`,
     );
 
-    outputChannel.appendLine(`Server directory: ${serverDir}`);
-
-    const compiledWin = path.join(serverDir, "workman-lsp.exe");
-    const compiledNix = path.join(serverDir, "workman-lsp");
-    const hasCompiled = fs.existsSync(compiledWin) || fs.existsSync(compiledNix);
+    if (!hasCompiled && !hasWorkspaceSource) {
+      const message =
+        "Workman language server binary not found and workspace source missing. Run `npm run build-server` or ensure lsp/server/src/server.ts exists.";
+      outputChannel.appendLine(message);
+      window.showErrorMessage(message);
+      return;
+    }
 
     const serverOptions: ServerOptions = hasCompiled
       ? {
@@ -38,18 +61,33 @@ export async function activate(context: ExtensionContext) {
             transport: TransportKind.stdio,
           },
         }
+      : hasWorkspaceSource
+      ? {
+        run: {
+          command: "deno",
+          args: ["run", "--allow-all", workspaceServerEntry],
+          transport: TransportKind.stdio,
+          options: { cwd: workspaceServerDir },
+        },
+        debug: {
+          command: "deno",
+          args: ["run", "--allow-all", workspaceServerEntry],
+          transport: TransportKind.stdio,
+          options: { cwd: workspaceServerDir },
+        },
+      }
       : {
           run: {
             command: "deno",
             args: ["run", "--allow-all", "src/server.ts"],
             transport: TransportKind.stdio,
-            options: { cwd: serverDir },
+            options: { cwd: bundledServerDir },
           },
           debug: {
             command: "deno",
             args: ["run", "--allow-all", "src/server.ts"],
             transport: TransportKind.stdio,
-            options: { cwd: serverDir },
+            options: { cwd: bundledServerDir },
           },
         };
 

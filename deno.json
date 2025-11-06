@@ -3,10 +3,11 @@
     "strict": true
   },
   "imports": {
+    "@mommysgoodpuppy/logchannel": "jsr:@mommysgoodpuppy/logchannel@^0.1.0",
     "std/": "https://deno.land/std@0.224.0/"
   },
   "tasks": {
     "run": "deno run --allow-read src/main.ts",
-    "test": "deno test"
+    "test": "deno test -A --no-check tests"
   }
 }

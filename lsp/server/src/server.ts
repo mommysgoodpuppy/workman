@@ -41,6 +41,10 @@ import {
   type NodeView,
   type PartialType,
 } from "@workman/layer3/mod.ts";
+import type {
+  MLetDeclaration,
+  MProgram,
+} from "@workman/ast_marked.ts";
 
 interface LSPMessage {
   jsonrpc: string;
@@ -65,7 +69,12 @@ class WorkmanLanguageServer {
   }>();
   private moduleContexts = new Map<
     string,
-    { env: Map<string, TypeScheme>; layer3: Layer3Result }
+    {
+      env: Map<string, TypeScheme>;
+      layer3: Layer3Result;
+      program: MProgram;
+      entryPath: string;
+    }
   >();
 
   private log(message: string) {
@@ -241,6 +250,9 @@ class WorkmanLanguageServer {
       case "textDocument/hover":
         return await this.handleHover(message);
 
+      case "textDocument/definition":
+        return await this.handleDefinition(message);
+
       case "textDocument/inlayHint":
         return await this.handleInlayHint(message);
 
@@ -300,6 +312,7 @@ class WorkmanLanguageServer {
             change: 1, // Full sync
           },
           hoverProvider: true,
+          definitionProvider: true,
           inlayHintProvider: true,
         },
         serverInfo: {
@@ -676,7 +689,7 @@ class WorkmanLanguageServer {
           }
         }
       }
-      const word = this.getWordAtOffset(text, offset);
+      const { word } = this.getWordAtOffset(text, offset);
       this.log(`[LSP] Word at cursor: '${word}'`);
       const scheme = env.get(word);
       if (scheme) {
@@ -699,6 +712,72 @@ class WorkmanLanguageServer {
       return { jsonrpc: "2.0", id: message.id, result: null };
     }
     return { jsonrpc: "2.0", id: message.id, result: null };
+  }
+
+  private async handleDefinition(
+    message: LSPMessage,
+  ): Promise<LSPMessage> {
+    const { textDocument, position } = message.params;
+    const uri = textDocument.uri;
+    const text = this.documents.get(uri);
+
+    if (!text) {
+      return { jsonrpc: "2.0", id: message.id, result: null };
+    }
+
+    try {
+      const entryPath = this.uriToFsPath(uri);
+      const stdRoots = this.computeStdRoots(entryPath);
+      let context = this.moduleContexts.get(uri);
+      if (!context) {
+        context = await this.buildModuleContext(
+          entryPath,
+          stdRoots,
+          this.preludeModule,
+        );
+        this.moduleContexts.set(uri, context);
+      }
+      const offset = this.positionToOffset(text, position);
+      const { word, start } = this.getWordAtOffset(text, offset);
+      if (!word) {
+        return { jsonrpc: "2.0", id: message.id, result: null };
+      }
+      if (start > 0) {
+        const prevChar = text[start - 1];
+        if (prevChar === `"` || prevChar === `'`) {
+          return { jsonrpc: "2.0", id: message.id, result: null };
+        }
+      }
+
+      const decl = this.findTopLevelLet(context.program, word);
+      if (!decl) {
+        return { jsonrpc: "2.0", id: message.id, result: null };
+      }
+
+      const span = context.layer3.spanIndex.get(decl.id);
+      if (!span) {
+        return { jsonrpc: "2.0", id: message.id, result: null };
+      }
+
+      const range = {
+        start: this.offsetToPosition(text, span.start),
+        end: this.offsetToPosition(text, span.end),
+      };
+
+      return {
+        jsonrpc: "2.0",
+        id: message.id,
+        result: [
+          {
+            uri,
+            range,
+          },
+        ],
+      };
+    } catch (error) {
+      this.log(`[LSP] Definition error: ${error}`);
+      return { jsonrpc: "2.0", id: message.id, result: null };
+    }
   }
 
   private async handleInlayHint(message: LSPMessage): Promise<LSPMessage> {
@@ -796,7 +875,10 @@ class WorkmanLanguageServer {
     return offset;
   }
 
-  private getWordAtOffset(text: string, offset: number): string {
+  private getWordAtOffset(
+    text: string,
+    offset: number,
+  ): { word: string; start: number; end: number } {
     let start = offset;
     let end = offset;
 
@@ -810,7 +892,7 @@ class WorkmanLanguageServer {
       end++;
     }
 
-    return text.substring(start, end);
+    return { word: text.substring(start, end), start, end };
   }
 
   private isStdCoreModule(path: string): boolean {
@@ -825,7 +907,12 @@ class WorkmanLanguageServer {
     entryPath: string,
     stdRoots: string[],
     preludeModule?: string,
-  ): Promise<{ env: Map<string, TypeScheme>; layer3: Layer3Result }> {
+  ): Promise<{
+    env: Map<string, TypeScheme>;
+    layer3: Layer3Result;
+    program: MProgram;
+    entryPath: string;
+  }> {
     const graph = await loadModuleGraph(entryPath, { stdRoots, preludeModule });
     const summaries = new Map<string, {
       exportsValues: Map<string, TypeScheme>;
@@ -1046,7 +1133,12 @@ class WorkmanLanguageServer {
       );
     }
     const layer3 = presentProgram(entryAnalysis.layer2);
-    return { env: entry.env, layer3 };
+    return {
+      env: entry.env,
+      layer3,
+      program: entryAnalysis.layer1.markedProgram,
+      entryPath: graph.entry,
+    };
   }
 
   private uriToFsPath(uri: string): string {
@@ -1092,6 +1184,23 @@ class WorkmanLanguageServer {
     const arr = Array.from(roots);
     this.log(`[LSP] stdRoots => ${arr.join(", ")}`);
     return arr.length > 0 ? arr : [join(dirname(entryPath), "std")];
+  }
+
+  private findTopLevelLet(program: MProgram, name: string): MLetDeclaration | undefined {
+    for (const decl of program.declarations ?? []) {
+      if (decl.kind !== "let") continue;
+      if (decl.name === name) {
+        return decl;
+      }
+      if (decl.mutualBindings) {
+        for (const binding of decl.mutualBindings) {
+          if (binding.name === name) {
+            return binding;
+          }
+        }
+      }
+    }
+    return undefined;
   }
 
   private async getPreludeOperatorSets(
