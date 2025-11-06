@@ -46,7 +46,7 @@ Deno.test({
   permissions: { read: true },
 }, async () => {
   const entry = failingFixture("std_option_self_apply.wm");
-  await assertRejects(() => runEntryPath(entry), Error, "Type mismatch");
+  await assertRejects(() => runEntryPath(entry), Error, "Non-exhaustive patterns at runtime");
 });
 
 Deno.test({
@@ -54,7 +54,7 @@ Deno.test({
   permissions: { read: true },
 }, async () => {
   const entry = failingFixture("std_result_self_apply.wm");
-  await assertRejects(() => runEntryPath(entry), Error, "Type mismatch");
+  await assertRejects(() => runEntryPath(entry), Error, "Non-exhaustive patterns at runtime");
 });
 
 
