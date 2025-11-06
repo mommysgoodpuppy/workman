@@ -74,3 +74,23 @@ Deno.test("rejects non-exhaustive boolean match", () => {
   );
   assertExists(nonExhaustive, "expected non-exhaustive match mark");
 });
+
+Deno.test({
+  name: "TODO: mark missing for undefined constructor in pattern",
+  ignore: false, // Fails currently: mark lands on bound variable instead of constructor name.
+}, () => {
+  const source = `
+    type Option<T> = None | Some<T>;
+    let bad = match(x) {
+      Maybe(v) => { v }
+    };
+  `;
+  const { program, result } = inferWithProgram(source);
+  const typeDecl = program.declarations[0] as TypeDeclaration;
+  void typeDecl; // Preserve reference for future debugging.
+  const constructorMark = Array.from(result.marks.values()).find((mark) =>
+    mark.kind === "mark_free_var" && (mark as { name?: string }).name === "Maybe"
+  );
+  // Expected once fixed: constructorMark should exist.
+  assertExists(constructorMark);
+});
