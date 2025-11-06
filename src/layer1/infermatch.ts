@@ -215,7 +215,7 @@ export function inferMatchBranches(
     resultType = freshTypeVar();
   }
 
-  if (branchBodies.length > 0) {
+  if (branchBodies.length > 0 && scrutineeExpr) {
     recordBranchJoinConstraint(ctx, expr, branchBodies, scrutineeExpr);
   }
 
