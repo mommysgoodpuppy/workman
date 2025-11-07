@@ -777,13 +777,40 @@ class WorkmanLanguageServer {
       if (scheme) {
         const typeStr = formatScheme(scheme);
         this.log(`[LSP] Found type for ${word}: ${typeStr}`);
+        
+        let hoverText = `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``;
+        
+        // Check if this is an unknown type and add provenance/partial info
+        if (typeStr.includes("?(") || typeStr.startsWith("?")) {
+          // Try to find the node for this identifier to get hole solution
+          if (nodeId) {
+            const solution = layer3.holeSolutions.get(nodeId);
+            if (solution) {
+              // Add provenance
+              if (solution.provenance && solution.provenance.provenance) {
+                const prov = solution.provenance.provenance;
+                if (prov.kind === "incomplete" && prov.reason) {
+                  hoverText += `\n\n_${prov.reason}_`;
+                }
+              }
+              
+              // Add partial type info
+              if (solution.state === "partial" && solution.partial && solution.partial.known) {
+                hoverText += "\n\n**Partial Type Information:**\n";
+                hoverText += `- Known: \`${typeToString(solution.partial.known)}\`\n`;
+                hoverText += "\n_Some type information is inferred from usage._";
+              }
+            }
+          }
+        }
+        
         return {
           jsonrpc: "2.0",
           id: message.id,
           result: {
             contents: {
               kind: "markdown",
-              value: `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``,
+              value: hoverText,
             },
           },
         };
