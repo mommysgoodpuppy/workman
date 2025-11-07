@@ -11,7 +11,7 @@ import type {
   LetDeclaration,
 } from "./ast.ts";
 import type { TypeInfo, TypeScheme } from "./types.ts";
-import { cloneTypeInfo, cloneTypeScheme } from "./types.ts";
+import { cloneTypeInfo, cloneTypeScheme, unknownType } from "./types.ts";
 import { inferProgram, InferError } from "./layer1/infer.ts";
 import { evaluateProgram } from "./eval.ts";
 import type { RuntimeValue } from "./value.ts";
@@ -22,6 +22,7 @@ import { formatRuntimeValue } from "./value_printer.ts";
 export interface ModuleLoaderOptions {
   stdRoots?: string[];
   preludeModule?: string;
+  skipEvaluation?: boolean;
 }
 
 export interface ModuleGraph {
@@ -43,8 +44,11 @@ export interface ModuleNode {
   exportedPrefixOperators: Set<string>;
 }
 
+type ModuleSourceKind = "workman" | "js";
+
 export interface ModuleImportRecord {
   sourcePath: string;
+  kind: ModuleSourceKind;
   specifiers: NamedImportRecord[];
   span: SourceSpan;
   rawSource: string;
@@ -158,7 +162,7 @@ function applyReexports(
   provider: ModuleSummary,
   exportedValues: Map<string, TypeScheme>,
   exportedTypes: Map<string, TypeInfo>,
-  exportedRuntime: Map<string, RuntimeValue>,
+  exportedRuntime?: Map<string, RuntimeValue>,
 ): void {
   for (const typeExport of record.typeExports) {
     const providedType = provider.exports.types.get(typeExport.name);
@@ -184,13 +188,15 @@ function applyReexports(
           throw moduleError(`Duplicate export '${ctor.name}' in '${record.importerPath}'`);
         }
         exportedValues.set(ctor.name, cloneTypeScheme(providedScheme));
-        const runtimeValue = provider.runtime.get(ctor.name);
-        if (!runtimeValue) {
-          throw moduleError(
-            `Module '${record.importerPath}' re-exports constructor '${ctor.name}' from '${record.rawSource}' but runtime value is missing in provider`,
-          );
+        if (exportedRuntime) {
+          const runtimeValue = provider.runtime.get(ctor.name);
+          if (!runtimeValue) {
+            throw moduleError(
+              `Module '${record.importerPath}' re-exports constructor '${ctor.name}' from '${record.rawSource}' but runtime value is missing in provider`,
+            );
+          }
+          exportedRuntime.set(ctor.name, runtimeValue);
         }
-        exportedRuntime.set(ctor.name, runtimeValue);
       }
     }
   }
@@ -202,7 +208,7 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
   runtimeLogs: string[];
 }> {
   const graph = await loadModuleGraph(entryPath, options);
-  const { moduleSummaries, runtimeLogs } = await summarizeGraph(graph);
+  const { moduleSummaries, runtimeLogs } = await summarizeGraph(graph, options);
   const entryNode = graph.nodes.get(graph.entry);
   const entrySummary = moduleSummaries.get(graph.entry);
   if (!entryNode || !entrySummary) {
@@ -232,7 +238,7 @@ export async function loadModuleSummaries(entryPath: string, options: ModuleLoad
   summaries: Map<string, ModuleSummary>;
 }> {
   const graph = await loadModuleGraph(entryPath, options);
-  const { moduleSummaries } = await summarizeGraph(graph);
+  const { moduleSummaries } = await summarizeGraph(graph, options);
   return { graph, summaries: moduleSummaries };
 }
 
@@ -282,10 +288,15 @@ export async function loadPreludeEnvironment(options: ModuleLoaderOptions = {}):
   return { env, adtEnv, operators, prefixOperators };
 }
 
-async function summarizeGraph(graph: ModuleGraph): Promise<{
+async function summarizeGraph(
+  graph: ModuleGraph,
+  options: ModuleLoaderOptions = {},
+): Promise<{
   moduleSummaries: Map<string, ModuleSummary>;
   runtimeLogs: string[];
 }> {
+  const normalizedOptions = normalizeOptions(options);
+  const skipEvaluation = normalizedOptions.skipEvaluation ?? false;
   const moduleSummaries = new Map<string, ModuleSummary>();
   const runtimeLogs: string[] = [];
   const preludePath = graph.prelude;
@@ -297,12 +308,25 @@ async function summarizeGraph(graph: ModuleGraph): Promise<{
       throw moduleError(`Internal error: missing node for '${path}'`);
     }
 
+     const hasJsImports = node.imports.some((record) => record.kind === "js");
+     if (hasJsImports && !skipEvaluation) {
+       throw moduleError(
+         `Module '${path}' imports a JavaScript module ('${node.imports.find((record) => record.kind === "js")?.rawSource ?? "unknown"}'). ` +
+           "Run through the compiler pipeline (e.g., 'wm compile') to enable JS interop.",
+         path,
+       );
+     }
+
     const initialEnv = new Map<string, TypeScheme>();
     const initialAdtEnv = new Map<string, TypeInfo>();
-    const initialBindings = new Map<string, RuntimeValue>();
+    const initialBindings = skipEvaluation ? undefined : new Map<string, RuntimeValue>();
     const skipPrelude = isStdCoreModule(path);
 
     for (const record of node.imports) {
+      if (record.kind === "js") {
+        seedJsImports(record, initialEnv);
+        continue;
+      }
       const provider = moduleSummaries.get(record.sourcePath);
       if (!provider) {
         throw moduleError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
@@ -321,9 +345,11 @@ async function summarizeGraph(graph: ModuleGraph): Promise<{
           initialAdtEnv.set(name, cloneTypeInfo(info));
         }
       }
-      for (const [name, value] of preludeSummary.runtime.entries()) {
-        if (!initialBindings.has(name)) {
-          initialBindings.set(name, value);
+      if (!skipEvaluation && initialBindings) {
+        for (const [name, value] of preludeSummary.runtime.entries()) {
+          if (!initialBindings.has(name)) {
+            initialBindings.set(name, value);
+          }
         }
       }
       
@@ -337,9 +363,11 @@ async function summarizeGraph(graph: ModuleGraph): Promise<{
             if (implScheme && !initialEnv.has(opFuncName)) {
               initialEnv.set(opFuncName, cloneTypeScheme(implScheme));
             }
-            const implValue = preludeSummary.runtime.get(decl.implementation);
-            if (implValue && !initialBindings.has(opFuncName)) {
-              initialBindings.set(opFuncName, implValue);
+            if (!skipEvaluation && initialBindings) {
+              const implValue = preludeSummary.runtime.get(decl.implementation);
+              if (implValue && !initialBindings.has(opFuncName)) {
+                initialBindings.set(opFuncName, implValue);
+              }
             }
           }
           if (decl.kind === "prefix") {
@@ -348,9 +376,11 @@ async function summarizeGraph(graph: ModuleGraph): Promise<{
             if (implScheme && !initialEnv.has(opFuncName)) {
               initialEnv.set(opFuncName, cloneTypeScheme(implScheme));
             }
-            const implValue = preludeSummary.runtime.get(decl.implementation);
-            if (implValue && !initialBindings.has(opFuncName)) {
-              initialBindings.set(opFuncName, implValue);
+            if (!skipEvaluation && initialBindings) {
+              const implValue = preludeSummary.runtime.get(decl.implementation);
+              if (implValue && !initialBindings.has(opFuncName)) {
+                initialBindings.set(opFuncName, implValue);
+              }
             }
           }
         }
@@ -386,7 +416,7 @@ async function summarizeGraph(graph: ModuleGraph): Promise<{
 
     const exportedValues = new Map<string, TypeScheme>();
     const exportedTypes = new Map<string, TypeInfo>();
-    const reexportedRuntime = new Map<string, RuntimeValue>();
+    const reexportedRuntime = skipEvaluation ? undefined : new Map<string, RuntimeValue>();
 
     for (const record of node.reexports) {
       const provider = moduleSummaries.get(record.sourcePath);
@@ -429,34 +459,39 @@ async function summarizeGraph(graph: ModuleGraph): Promise<{
       }
     }
 
-    const evaluation = evaluateProgram(node.program, {
-      sourceName: path,
-      source: node.source,
-      initialBindings: skipPrelude ? initialBindings : (() => {
-        if (!skipPrelude) {
-          return initialBindings;
-        }
-        return initialBindings;
-      })(),
-      onPrint: (text) => {
-        runtimeLogs.push(text);
-      },
-    });
+    let letRuntime = new Map<string, RuntimeValue>();
+    let letValueOrder: string[] = [];
+    let runtimeExports: Map<string, RuntimeValue>;
 
-    const letRuntime = new Map<string, RuntimeValue>();
-    const letValueOrder: string[] = [];
-    for (const summary of evaluation.summaries) {
-      letRuntime.set(summary.name, summary.value);
-      letValueOrder.push(summary.name);
-    }
+    if (!skipEvaluation) {
+      const evaluation = evaluateProgram(node.program, {
+        sourceName: path,
+        source: node.source,
+        initialBindings: initialBindings ?? new Map<string, RuntimeValue>(),
+        onPrint: (text) => {
+          runtimeLogs.push(text);
+        },
+      });
 
-    const runtimeExports = new Map<string, RuntimeValue>(reexportedRuntime);
-    for (const name of exportedValues.keys()) {
-      if (runtimeExports.has(name)) {
-        continue;
+      letRuntime = new Map<string, RuntimeValue>();
+      letValueOrder = [];
+      for (const summary of evaluation.summaries) {
+        letRuntime.set(summary.name, summary.value);
+        letValueOrder.push(summary.name);
       }
-      const value = letRuntime.get(name) ?? lookupValue(evaluation.env, name);
-      runtimeExports.set(name, value);
+
+      runtimeExports = new Map<string, RuntimeValue>(reexportedRuntime);
+      for (const name of exportedValues.keys()) {
+        if (runtimeExports.has(name)) {
+          continue;
+        }
+        const value = letRuntime.get(name) ?? lookupValue(evaluation.env, name);
+        runtimeExports.set(name, value);
+      }
+    } else {
+      runtimeExports = new Map<string, RuntimeValue>();
+      letRuntime = new Map<string, RuntimeValue>();
+      letValueOrder = [];
     }
 
     moduleSummaries.set(path, {
@@ -484,7 +519,8 @@ function normalizeOptions(options: ModuleLoaderOptions): ModuleLoaderOptions {
     ? options.stdRoots.map((root) => resolve(root))
     : [resolve("std")];
   const preludeModule = options.preludeModule ?? "std/prelude";
-  return { stdRoots, preludeModule };
+  const skipEvaluation = options.skipEvaluation ?? false;
+  return { stdRoots, preludeModule, skipEvaluation };
 }
 
 function resolveEntryPath(path: string): string {
@@ -538,7 +574,9 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     } else {
       // Visit dependencies discovered from first parse
       for (const record of imports) {
-        await visitModule(record.sourcePath, ctx);
+        if (record.kind === "workman") {
+          await visitModule(record.sourcePath, ctx);
+        }
       }
 
       for (const record of reexports) {
@@ -593,7 +631,10 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
 
     // Ensure dependencies are visited even if the initial parse failed
     for (const record of imports) {
-      if (ctx.visitState.get(record.sourcePath) !== "visited") {
+      if (
+        record.kind === "workman" &&
+        ctx.visitState.get(record.sourcePath) !== "visited"
+      ) {
         await visitModule(record.sourcePath, ctx);
       }
     }
@@ -661,15 +702,23 @@ function resolveImports(path: string, imports: ModuleImport[], ctx: LoaderContex
   const records: ModuleImportRecord[] = [];
   for (const entry of imports) {
     const resolvedPath = resolveModuleSpecifier(path, entry.source, ctx.options);
-    if (sameModulePath(resolvedPath, ctx.preludePath)) {
+    const kind = detectModuleKind(resolvedPath);
+    if (kind === "workman" && sameModulePath(resolvedPath, ctx.preludePath)) {
       throw moduleError(
         `Module '${path}' cannot import '${entry.source}' because the std prelude is loaded automatically.`,
+        path,
+      );
+    }
+    if (kind === "js" && !existsSync(resolvedPath)) {
+      throw moduleError(
+        `JavaScript module '${entry.source}' imported by '${path}' was not found at '${resolvedPath}'`,
         path,
       );
     }
     const specifiers = entry.specifiers.map((specifier) => parseImportSpecifier(specifier, path));
     records.push({
       sourcePath: resolvedPath,
+      kind,
       specifiers,
       span: entry.span,
       rawSource: entry.source,
@@ -740,6 +789,13 @@ function collectReexports(
   const records: ModuleReexportRecord[] = [];
   for (const entry of reexports) {
     const resolvedPath = resolveModuleSpecifier(path, entry.source, options);
+    const kind = detectModuleKind(resolvedPath);
+    if (kind === "js") {
+      throw moduleError(
+        `Module '${path}' cannot re-export from JavaScript module '${entry.source}'`,
+        path,
+      );
+    }
     if (sameModulePath(resolvedPath, preludePath)) {
       throw moduleError(
         `Module '${path}' cannot re-export from '${entry.source}' because the std prelude is loaded automatically.`,
@@ -800,6 +856,14 @@ function ensureWmExtension(path: string): string {
   return path;
 }
 
+function detectModuleKind(path: string): ModuleSourceKind {
+  const extension = extname(path).toLowerCase();
+  if (extension === ".js" || extension === ".mjs") {
+    return "js";
+  }
+  return "workman";
+}
+
 function existsSync(path: string): boolean {
   try {
     Deno.statSync(path);
@@ -817,7 +881,7 @@ function applyImports(
   provider: ModuleSummary,
   targetEnv: Map<string, TypeScheme>,
   targetAdtEnv: Map<string, TypeInfo>,
-  targetRuntime: Map<string, RuntimeValue>,
+  targetRuntime?: Map<string, RuntimeValue>,
 ): void {
   for (const spec of record.specifiers) {
     const valueExport = provider.exports.values.get(spec.imported);
@@ -835,13 +899,15 @@ function applyImports(
         );
       }
       targetEnv.set(spec.local, cloneTypeScheme(valueExport));
-      const runtimeValue = provider.runtime.get(spec.imported);
-      if (!runtimeValue) {
-        throw moduleError(
-          `Missing runtime value for export '${spec.imported}' from '${record.sourcePath}'`,
-        );
+      if (targetRuntime) {
+        const runtimeValue = provider.runtime.get(spec.imported);
+        if (!runtimeValue) {
+          throw moduleError(
+            `Missing runtime value for export '${spec.imported}' from '${record.sourcePath}'`,
+          );
+        }
+        targetRuntime.set(spec.local, runtimeValue);
       }
-      targetRuntime.set(spec.local, runtimeValue);
     }
 
     if (typeExport) {
@@ -858,4 +924,31 @@ function applyImports(
       targetAdtEnv.set(spec.imported, cloneTypeInfo(typeExport));
     }
   }
+}
+
+function seedJsImports(
+  record: ModuleImportRecord,
+  targetEnv: Map<string, TypeScheme>,
+): void {
+  for (const spec of record.specifiers) {
+    if (targetEnv.has(spec.local)) {
+      throw moduleError(
+        `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
+      );
+    }
+    targetEnv.set(spec.local, createJsImportScheme(spec, record));
+  }
+}
+
+function createJsImportScheme(
+  spec: NamedImportRecord,
+  record: ModuleImportRecord,
+): TypeScheme {
+  return {
+    quantifiers: [],
+    type: unknownType({
+      kind: "incomplete",
+      reason: `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
+    }),
+  };
 }

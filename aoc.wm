@@ -3,6 +3,8 @@ from "std/list" import { listSlice, listAt };
 from "std/string" import { charToDigit };
 from "std/option" import { flatMap };
 
+record ParseStep { value: Int, next: Int };
+
 -- helpers --------------------------------------------------------------
 
 let toCharCode = match(literal) {
@@ -13,10 +15,6 @@ let toCharCode = match(literal) {
 let charComma      = toCharCode(fromLiteral(","));
 let charCloseParen = toCharCode(fromLiteral(")"));
 let mulLiteral     = fromLiteral("mul(");
-
--- ParseStep now uses real records:
--- ParseStep = Some({ value, next }) | None
--- Advance   = Some(nextIndex) | None
 
 let makeStep = (value, next) => {
   ({ value: value, next: next })

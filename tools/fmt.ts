@@ -281,9 +281,22 @@ class Formatter {
     const typeParams = decl.typeParams.length > 0
       ? `<${decl.typeParams.map((p) => p.name).join(", ")}>`
       : "";
+    const aliasMember = decl.members.length === 1 && decl.members[0].kind === "alias"
+      ? decl.members[0]
+      : undefined;
+    if (
+      decl.declarationKind === "record" &&
+      aliasMember &&
+      aliasMember.type.kind === "type_record"
+    ) {
+      const fields = aliasMember.type.fields.map((field) =>
+        `${field.name}: ${this.formatTypeExpr(field.type)}`
+      ).join(", ");
+      return `${exportPrefix}record ${decl.name}${typeParams} { ${fields} }`;
+    }
     const members = decl.members.map((m) => {
       if (m.kind === "alias") {
-        return m.name;
+        return this.formatTypeExpr(m.type);
       } else {
         const args = m.typeArgs.length > 0
           ? `<${m.typeArgs.map((a) => this.formatTypeExpr(a)).join(", ")}>`

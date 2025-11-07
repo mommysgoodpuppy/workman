@@ -20,6 +20,7 @@ import {
   cloneTypeScheme,
   type TypeInfo,
   type TypeScheme,
+  unknownType,
 } from "../../../src/types.ts";
 
 export interface WorkmanCompilerOptions {
@@ -44,7 +45,10 @@ export async function compileWorkmanGraph(
   entryPath: string,
   options: WorkmanCompilerOptions = {},
 ): Promise<WorkmanCompileResult> {
-  const loaderOptions = options.loader ?? {};
+  const loaderOptions: ModuleLoaderOptions = {
+    ...options.loader,
+    skipEvaluation: options.loader?.skipEvaluation ?? true,
+  };
   const analysisOptions = options.analysis ?? {};
   const loweringOptions = options.lowering ?? {};
 
@@ -126,6 +130,12 @@ function seedImports(
   adtEnv: Map<string, TypeInfo>,
 ): void {
   for (const record of node.imports) {
+    if (record.kind === "js") {
+      for (const spec of record.specifiers) {
+        env.set(spec.local, createJsImportScheme(spec, record));
+      }
+      continue;
+    }
     const provider = summaries.get(record.sourcePath);
     if (!provider) {
       throw new Error(
@@ -155,6 +165,19 @@ function seedImports(
       );
     }
   }
+}
+
+function createJsImportScheme(
+  spec: { imported: string; local: string },
+  record: { rawSource: string; importerPath: string },
+): TypeScheme {
+  return {
+    quantifiers: [],
+    type: unknownType({
+      kind: "incomplete",
+      reason: `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
+    }),
+  };
 }
 
 function seedPrelude(

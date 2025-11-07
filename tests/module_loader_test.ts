@@ -43,3 +43,15 @@ Deno.test({
     "Circular import",
   );
 });
+
+Deno.test({
+  name: "module loader rejects JS imports when evaluation is required",
+  permissions: { read: true },
+}, async () => {
+  const entry = fixturePath("js_import/main.wm");
+  await assertRejects(
+    () => runEntryPath(entry),
+    ModuleLoaderError,
+    "imports a JavaScript module",
+  );
+});

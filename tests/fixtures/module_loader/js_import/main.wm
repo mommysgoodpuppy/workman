@@ -1,0 +1,5 @@
+from "./native.js" import { greet };
+
+export let main = () => {
+  greet();
+};

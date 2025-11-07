@@ -109,3 +109,15 @@ Deno.test({
   }
   assertEquals(negateBody.op, "bool_not");
 });
+
+Deno.test({
+  name: "compileWorkmanGraph allows JS imports when evaluation is skipped",
+  permissions: { read: true },
+}, async () => {
+  const entry = fixturePath("module_loader/js_import/main.wm");
+  const result = await compileWorkmanGraph(entry);
+  const module = result.coreGraph.modules.get(entry);
+  assert(module);
+  assertEquals(module.imports.length, 1);
+  assert(module.imports[0].source.endsWith("native.js"));
+});

@@ -1,0 +1,23 @@
+record Player { name: String, score: Int };
+
+export let makePlayer = (name, score) => {
+  { name: name, score: score }
+};
+
+export let awardPoints = (player: Player, bonus) => {
+  { name: player.name, score: add(player.score, bonus) }
+};
+
+export let summarizePlayer = (player: Player) => {
+  player.name
+};
+
+export let recordsDemo = () => {
+  let base = makePlayer("Nyx", 10);
+  let leveledUp = awardPoints(base, 5);
+  (base.score, leveledUp.score, summarizePlayer(leveledUp))
+};
+
+let main = () => {
+  print(recordsDemo())
+}
