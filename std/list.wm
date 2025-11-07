@@ -1,5 +1,6 @@
 from "std/list/core" import { Empty, Link };
-from "std/core/int" import { intAdd, intCompare };
+from "std/core/int" import { intAdd, intSub, intCompare };
+from "std/option/core" import { Some, None };
 from "std/core/ordering" import { LT, EQ, GT };
 
 export let rec listLength = match(list) {
@@ -27,6 +28,30 @@ export let rec listFilter = match(tuple) {
   }
 };
 
+export let rec listTake = match(list, count) {
+  (Empty, _) => { Empty },
+  (_, 0) => { Empty },
+  (Link(x, rest), count) => { Link(x, listTake(rest, intSub(count, 1))) }
+};
+
+export let rec listDrop = match(list, count) {
+  (list, 0) => { list },
+  (Empty, _) => { Empty },
+  (Link(_, rest), count) => { listDrop(rest, intSub(count, 1)) }
+};
+
+export let listSlice = (list, start, end) => {
+  let dropped = listDrop(list, start);
+  listTake(dropped, intSub(end, start))
+};
+
+export let rec listAt = match(list, index) {
+  (Empty, _) => { None },
+  (Link(x, _), 0) => { Some(x) },
+  (Link(_, rest), index) => { listAt(rest, intSub(index, 1)) }
+};
+
+
 export let rec listFoldl = match(tuple) {
   (f, acc, Empty) => { acc },
   (f, acc, Link(x, rest)) => { listFoldl((f, f((acc, x)), rest)) }
@@ -37,14 +62,13 @@ export let rec listFoldr = match(tuple) {
   (f, acc, Link(x, rest)) => { f((x, listFoldr((f, acc, rest)))) }
 };
 
--- Helper for listReverse
-let rec reverseAcc = match(tuple) {
+let rec reverseAcc = match(list, acc) {
   (Empty, acc) => { acc },
-  (Link(x, rest), acc) => { reverseAcc((rest, Link(x, acc))) }
+  (Link(x, rest), acc) => { reverseAcc(rest, Link(x, acc)) }
 };
 
 export let listReverse = (list) => {
-  reverseAcc((list, Empty))
+  reverseAcc(list, Empty)
 };
 
 export let rec listRange = match(tuple) {

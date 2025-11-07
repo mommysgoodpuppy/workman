@@ -1,0 +1,7 @@
+export let compute = (x, y) => {
+  x + y * 2
+};
+
+export let negate = (flag) => {
+  !flag
+};

@@ -9,3 +9,5 @@ tools/deno/
 *.js
 *.js.map
 src_bootstrapped/
+dist/
+vscodeExtension/out/

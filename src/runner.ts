@@ -1,9 +1,10 @@
 import { lex } from "./lexer.ts";
 import { parseSurfaceProgram, ParseError } from "./parser.ts";
-import { inferProgram, InferError } from "./layer1/infer.ts";
+import { InferError } from "./layer1/infer.ts";
 import { formatScheme } from "./type_printer.ts";
 import { evaluateProgram } from "./eval.ts";
 import { formatRuntimeValue } from "./value_printer.ts";
+import { analyzeProgram } from "./pipeline.ts";
 
 export interface RunOptions {
   sourceName?: string;
@@ -30,8 +31,11 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
   try {
     const tokens = lex(source);
     const program = parseSurfaceProgram(tokens);
-    const inference = inferProgram(program);
-    const types = inference.summaries.map((entry) => ({
+    const analysis = analyzeProgram(program, {
+      source,
+      sourceName: options.sourceName,
+    });
+    const types = analysis.layer1.summaries.map((entry) => ({
       name: entry.name,
       type: formatScheme(entry.scheme),
     }));

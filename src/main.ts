@@ -1,4 +1,8 @@
-import { runEntryPath } from "./module_loader.ts";
+import { toFileUrl } from "std/path/mod.ts";
+import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
+import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
+import { formatScheme } from "./type_printer.ts";
+import { collectCompiledValues, invokeMainIfPresent } from "./runtime_display.ts";
 import { ParseError } from "./parser.ts";
 import { InferError } from "./layer1/infer.ts";
 
@@ -29,36 +33,58 @@ if (import.meta.main) {
     console.log(`\n# ${path}`);
 
     try {
-      const result = await runEntryPath(path);
+      const compileResult = await compileWorkmanGraph(path);
+      const entryKey = compileResult.coreGraph.entry;
+      const artifact = compileResult.modules.get(entryKey);
+      const coreModule = compileResult.coreGraph.modules.get(entryKey);
+      if (!artifact || !coreModule) {
+        throw new Error(`Failed to locate entry module artifacts for '${entryKey}'`);
+      }
+
+      const typeSummaries = artifact.analysis.layer1.summaries.map(({ name, scheme }) => ({
+        name,
+        type: formatScheme(scheme),
+      }));
+
       console.log("\n## Types");
-      if (result.types.length === 0) {
+      if (typeSummaries.length === 0) {
         console.log("(no top-level let bindings)");
       } else {
-        for (const { name, type } of result.types) {
+        for (const { name, type } of typeSummaries) {
           console.log(`${name} : ${type}`);
         }
       }
 
       console.log("\n## Runtime");
-      const hasStdout = result.runtimeLogs.length > 0;
-      const hasValues = result.values.length > 0;
-      if (hasStdout) {
-        console.log("stdout:");
-        for (const entry of result.runtimeLogs) {
-          console.log(entry);
+
+      const tempDir = await Deno.makeTempDir({ prefix: "workman-cli-" });
+      let runtimeValues: { name: string; value: string }[] = [];
+      try {
+        const emitResult = await emitModuleGraph(compileResult.coreGraph, {
+          outDir: tempDir,
+        });
+        const moduleUrl = toFileUrl(emitResult.entryPath).href;
+        const moduleExports = await import(moduleUrl) as Record<string, unknown>;
+        const forcedValueNames = coreModule.values.map((binding) => binding.name);
+        await invokeMainIfPresent(moduleExports);
+        runtimeValues = collectCompiledValues(moduleExports, coreModule, {
+          forcedValueNames,
+        });
+      } finally {
+        try {
+          await Deno.remove(tempDir, { recursive: true });
+        } catch {
+          // Ignore cleanup errors; directory may have already been removed.
         }
       }
-      if (hasValues) {
-        if (hasStdout) {
-          console.log("");
-        }
+
+      if (runtimeValues.length === 0) {
+        console.log("(no exported runtime values)");
+      } else {
         console.log("values:");
-        for (const { name, value } of result.values) {
+        for (const { name, value } of runtimeValues) {
           console.log(`${name} = ${value}`);
         }
-      }
-      if (!hasStdout && !hasValues) {
-        console.log("(no runtime activity)");
       }
     } catch (error) {
       hadError = true;

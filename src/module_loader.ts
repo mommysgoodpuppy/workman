@@ -102,6 +102,15 @@ function moduleError(message: string, modulePath?: string): ModuleError {
   return new ModuleError(message, modulePath);
 }
 
+function normalizeModulePath(path: string): string {
+  return path.replaceAll("\\", "/").toLowerCase();
+}
+
+function sameModulePath(a?: string, b?: string): boolean {
+  if (!a || !b) return false;
+  return normalizeModulePath(a) === normalizeModulePath(b);
+}
+
 function isStdCoreModule(path: string): boolean {
   const normalized = path.replaceAll("\\", "/");
   if (normalized.includes("/std/core/")) {
@@ -505,7 +514,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     try {
       program = await loadProgram(path, ctx);
       imports = resolveImports(path, program.imports, ctx);
-      reexports = collectReexports(program.reexports, path, ctx.options);
+      reexports = collectReexports(program.reexports, path, ctx.options, ctx.preludePath);
     } catch (error) {
       // If parse failed, we'll need to parse with operators later
       // For now, just continue - we can't discover imports without parsing
@@ -577,7 +586,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
       finalProgram = await loadProgram(path, ctx, availableOperators, availablePrefixOperators);
       // Update imports/reexports from the successful parse
       imports = resolveImports(path, finalProgram.imports, ctx);
-      reexports = collectReexports(finalProgram.reexports, path, ctx.options);
+      reexports = collectReexports(finalProgram.reexports, path, ctx.options, ctx.preludePath);
     } else {
       finalProgram = program;
     }
@@ -652,6 +661,12 @@ function resolveImports(path: string, imports: ModuleImport[], ctx: LoaderContex
   const records: ModuleImportRecord[] = [];
   for (const entry of imports) {
     const resolvedPath = resolveModuleSpecifier(path, entry.source, ctx.options);
+    if (sameModulePath(resolvedPath, ctx.preludePath)) {
+      throw moduleError(
+        `Module '${path}' cannot import '${entry.source}' because the std prelude is loaded automatically.`,
+        path,
+      );
+    }
     const specifiers = entry.specifiers.map((specifier) => parseImportSpecifier(specifier, path));
     records.push({
       sourcePath: resolvedPath,
@@ -716,10 +731,21 @@ function collectExports(program: Program, path: string): { values: string[]; typ
   return { values: valueNames, types: typeNames, operators, prefixOperators };
 }
 
-function collectReexports(reexports: ModuleReexport[], path: string, options: ModuleLoaderOptions): ModuleReexportRecord[] {
+function collectReexports(
+  reexports: ModuleReexport[],
+  path: string,
+  options: ModuleLoaderOptions,
+  preludePath?: string,
+): ModuleReexportRecord[] {
   const records: ModuleReexportRecord[] = [];
   for (const entry of reexports) {
     const resolvedPath = resolveModuleSpecifier(path, entry.source, options);
+    if (sameModulePath(resolvedPath, preludePath)) {
+      throw moduleError(
+        `Module '${path}' cannot re-export from '${entry.source}' because the std prelude is loaded automatically.`,
+        path,
+      );
+    }
     records.push({
       sourcePath: resolvedPath,
       typeExports: entry.typeExports.map((typeExport) => ({

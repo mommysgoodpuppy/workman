@@ -133,21 +133,22 @@ interface SolverState {
 
 function solveCallConstraint(state: SolverState, stub: ConstraintStub & { kind: "call" }): void {
   const callee = getTypeForNode(state, stub.callee);
+  const stageCallee = peelFunctionType(callee, stub.index);
   const argument = getTypeForNode(state, stub.argument);
   const result = applySubstitution(stub.resultType, state.substitution);
   const target: Type = { kind: "func", from: argument, to: result };
-  const unified = unifyTypes(callee, target, state.substitution);
+  const unified = unifyTypes(stageCallee, target, state.substitution);
   if (unified.success) {
     state.substitution = unified.subst;
     return;
   }
 
-  const resolvedCallee = applySubstitution(callee, state.substitution);
-  if (resolvedCallee.kind !== "func") {
+  const resolvedStage = applySubstitution(stageCallee, state.substitution);
+  if (resolvedStage.kind !== "func") {
     state.diagnostics.push({
       origin: stub.origin,
       reason: "not_function",
-      details: { calleeKind: resolvedCallee.kind },
+      details: { calleeKind: resolvedStage.kind },
     });
     return;
   }
@@ -331,6 +332,17 @@ function registerUnifyFailure(state: SolverState, origin: NodeId, failure: Unify
       right: failure.right,
     },
   });
+}
+
+function peelFunctionType(type: Type, depth: number): Type {
+  let current: Type = type;
+  for (let index = 0; index < depth; index += 1) {
+    if (current.kind !== "func") {
+      return cloneType(current);
+    }
+    current = current.to;
+  }
+  return cloneType(current);
 }
 
 function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {

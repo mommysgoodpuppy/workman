@@ -1,0 +1,11 @@
+let rec sumList = (list) => {
+  match(list) {
+    Empty => { 0 },
+    Link(head, tail) => { head + sumList(tail) }
+  }
+};
+
+export let main = () => {
+  let numbers = Link(1, Link(2, Link(3, Empty)));
+  sumList(numbers)
+};

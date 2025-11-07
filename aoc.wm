@@ -1,0 +1,133 @@
+-- Advent of Code 2024 - Day 3 (Mull It Over)
+-- Walk the corrupted tape one character at a time looking for mul(X,Y)
+-- instructions. When the pattern matches, accumulate X * Y and jump to the
+-- character after the closing parenthesis. Otherwise, advance by one.
+
+from "std/string" import { charToDigit, fromLiteral, strEq };
+from "std/list/core" import { Empty, Link };
+from "std/list" import { listSlice, listAt };
+
+let toCharCode = match(literal) {
+  Link(code, _) => { code },
+  Empty => { 0 }
+};
+
+let charComma = toCharCode(fromLiteral(","));
+let charCloseParen = toCharCode(fromLiteral(")"));
+let mulLiteral = fromLiteral("mul(");
+
+let rec consumeDigits = match(tuple) {
+  (chars, index, count, value) => {
+    match(eq(count, 3)) {
+      true => { (value, index) },
+      false => {
+        match(listAt(chars, index)) {
+          None => { (value, index) },
+          Some(code) => {
+            match(charToDigit(code)) {
+              None => { (value, index) },
+              Some(digit) => {
+                let nextValue = add(mul(value, 10), digit);
+                consumeDigits((chars, add(index, 1), add(count, 1), nextValue))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+let readNumber = (chars, startIndex) => {
+  match(listAt(chars, startIndex)) {
+    None => { None },
+    Some(code) => {
+      match(charToDigit(code)) {
+        None => { None },
+        Some(digit) => {
+          let parsed = consumeDigits((chars, add(startIndex, 1), 1, digit));
+          match(parsed) {
+            (value, nextIndex) => { Some((value, nextIndex)) }
+          }
+        }
+      }
+    }
+  }
+};
+
+let expectCharAt = (chars, index, expected) => {
+  match(listAt(chars, index)) {
+    None => { None },
+    Some(code) => {
+      match(eq(code, expected)) {
+        true => { Some(add(index, 1)) },
+        false => { None }
+      }
+    }
+  }
+};
+
+let parseMulAt = (chars, index) => {
+  match(strEq(listSlice(chars, index, add(index, 4)), mulLiteral)) {
+    false => { None },
+    true => {
+      match(readNumber(chars, add(index, 4))) {
+        None => { None },
+        Some(leftParsed) => {
+          match(leftParsed) {
+            (leftValue, afterLeft) => {
+              match(expectCharAt(chars, afterLeft, charComma)) {
+                None => { None },
+                Some(afterComma) => {
+                  match(readNumber(chars, afterComma)) {
+                    None => { None },
+                    Some(rightParsed) => {
+                      match(rightParsed) {
+                        (rightValue, afterRight) => {
+                          match(expectCharAt(chars, afterRight, charCloseParen)) {
+                            None => { None },
+                            Some(afterClose) => {
+                              Some((mul(leftValue, rightValue), afterClose))
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+let rec scanTape = match(tuple) {
+  (chars, index, acc) => {
+    match(listAt(chars, index)) {
+      None => { acc },
+      Some(_) => {
+        match(parseMulAt(chars, index)) {
+          None => { scanTape((chars, add(index, 1), acc)) },
+          Some(parsed) => {
+            match(parsed) {
+              (value, nextIndex) => { scanTape((chars, nextIndex, add(acc, value))) }
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+let corruptedMemory = fromLiteral("xmul(2,4)%&mul[3,7]!@^do_not_mul(5,5)+mul(32,64]then(mul(11,8)mul(8,5))");
+
+let part1 = () => {
+  scanTape((corruptedMemory, 0, 0))
+};
+
+let main = () => {
+  print(part1())
+};

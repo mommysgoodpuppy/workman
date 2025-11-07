@@ -1,0 +1,7 @@
+export let addTwo = (x) => {
+  x + 2
+};
+
+export let main = () => {
+  addTwo(40)
+};

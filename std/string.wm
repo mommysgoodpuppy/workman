@@ -61,42 +61,41 @@ export let strIsEmpty = (s) => {
   }
 };
 
--- Get character at index (returns Option<Int>)
-export let rec strCharAt = match(tuple) {
+export let rec strCharAt = match((s, n)) {
   (Empty, _) => { None },
   (Link(c, _), 0) => { Some(c) },
-  (Link(_, rest), n) => { strCharAt((rest, sub(n, 1))) }
+  (Link(_, rest), idx) => { strCharAt(rest, sub(idx, 1)) }
 };
 
 -- Take first n characters
-export let rec strTake = match(tuple) {
+export let rec strTake = match((s, n)) {
   (_, 0) => { Empty },
   (Empty, _) => { Empty },
-  (Link(c, rest), n) => { Link(c, strTake((rest, sub(n, 1)))) }
+  (Link(c, rest), count) => { Link(c, strTake(rest, sub(count, 1))) }
 };
 
 -- Drop first n characters
-export let rec strDrop = match(tuple) {
-  (s, 0) => { s },
+export let rec strDrop = match((s, n)) {
+  (value, 0) => { value },
   (Empty, _) => { Empty },
-  (Link(_, rest), n) => { strDrop((rest, sub(n, 1))) }
+  (Link(_, rest), count) => { strDrop(rest, sub(count, 1)) }
 };
 
 -- Substring from start (inclusive) to end (exclusive)
 export let strSlice = (s, start, end) => {
   let dropped = () => {
-    strDrop((s, start))
+    strDrop(s, start)
   };
   let len = () => {
     sub(end, start)
   };
-  strTake((dropped(), len()))
+  strTake(dropped(), len())
 };
 
 -- Concatenate two strings
-export let rec strConcat = match(tuple) {
-  (Empty, s2) => { s2 },
-  (Link(c, rest), s2) => { Link(c, strConcat((rest, s2))) }
+export let rec strConcat = match((s1, s2)) {
+  (Empty, tail) => { tail },
+  (Link(c, rest), tail) => { Link(c, strConcat(rest, tail)) }
 };
 
 -- Check if character is a digit (0-9)
@@ -194,14 +193,14 @@ export let isWhitespace = (c) => {
 };
 
 -- String equality
-export let rec strEq = match(tuple) {
+export let rec strEq = match((s1, s2)) {
   (Empty, Empty) => { true },
   (Empty, _) => { false },
   (_, Empty) => { false },
   (Link(c1, rest1), Link(c2, rest2)) => {
     match(eq(c1, c2)) {
       false => { false },
-      true => { strEq((rest1, rest2)) }
+      true => { strEq(rest1, rest2) }
     }
   }
 };
@@ -226,7 +225,7 @@ let rec intToStringPositive = (n) => {
     false => {
       let digit = digitToChar(sub(n, mul(div(n, 10), 10)));
       let rest = intToStringPositive(div(n, 10));
-      strConcat((rest, Link(digit, Empty)))
+      strConcat(rest, Link(digit, Empty))
     }
   }
 };
@@ -249,5 +248,3 @@ export let intToString = (n) => {
     }
   }
 };
-
-

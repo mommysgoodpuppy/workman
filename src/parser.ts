@@ -44,6 +44,11 @@ export function parseSurfaceProgram(
   return parser.parseProgram();
 }
 
+interface MatchParameterSpec {
+  name: string;
+  span?: SourceSpan;
+}
+
 class SurfaceParser {
   private index = 0;
   private operators: Map<string, OperatorInfo>;
@@ -322,26 +327,10 @@ class SurfaceParser {
     
     // Handle first-class match: match(x) { ... } desugars to (x) => { match(x) { ... } }
     if (initializer.kind === "match") {
-      const scrutinee = initializer.scrutinee;
-      // Extract parameter name from scrutinee (must be a simple identifier)
-      if (scrutinee.kind !== "identifier") {
-        throw this.error("First-class match scrutinee must be a simple parameter name", this.previous());
-      }
-        const paramName = scrutinee.name;
-        const parameterPattern: Pattern = {
-          kind: "variable",
-          name: paramName,
-          span: scrutinee.span,
-          id: nextNodeId(),
-        };
-        const parameters: Parameter[] = [{
-          kind: "parameter",
-          pattern: parameterPattern,
-          name: paramName,
-          annotation: undefined,
-          span: scrutinee.span,
-          id: nextNodeId(),
-        }];
+      const parameterSpecs = this.extractMatchParameters(initializer.scrutinee);
+      const parameters = parameterSpecs.map((spec) =>
+        this.createMatchParameter(spec)
+      );
       
       // Detect if the match expression is multi-line
       let isMultiLine = false;
@@ -422,6 +411,50 @@ class SurfaceParser {
       body,
       isRecursive,
       span: this.spanFrom(startPos, body.span.end),
+      id: nextNodeId(),
+    };
+  }
+
+  private extractMatchParameters(scrutinee: Expr): MatchParameterSpec[] {
+    if (scrutinee.kind === "identifier") {
+      return [{ name: scrutinee.name, span: scrutinee.span }];
+    }
+    if (scrutinee.kind === "tuple") {
+      if (scrutinee.elements.length === 0) {
+        throw this.error(
+          "First-class match tuple scrutinee must include at least one identifier",
+          this.previous(),
+        );
+      }
+      return scrutinee.elements.map((element) => {
+        if (element.kind !== "identifier") {
+          throw this.error(
+            "First-class match tuple scrutinee may only contain identifiers",
+            this.previous(),
+          );
+        }
+        return { name: element.name, span: element.span };
+      });
+    }
+    throw this.error(
+      "First-class match scrutinee must be an identifier or tuple of identifiers",
+      this.previous(),
+    );
+  }
+
+  private createMatchParameter(spec: MatchParameterSpec): Parameter {
+    const pattern: Pattern = {
+      kind: "variable",
+      name: spec.name,
+      span: spec.span,
+      id: nextNodeId(),
+    };
+    return {
+      kind: "parameter",
+      pattern,
+      name: spec.name,
+      annotation: undefined,
+      span: spec.span,
       id: nextNodeId(),
     };
   }
@@ -692,6 +725,22 @@ class SurfaceParser {
     return this.parseMatchExpression();
   }
 
+  private buildMatchScrutinee(args: Expr[]): Expr {
+    if (args.length === 1) {
+      return args[0];
+    }
+    const span: SourceSpan = {
+      start: args[0].span.start,
+      end: args[args.length - 1].span.end,
+    };
+    return {
+      kind: "tuple",
+      elements: args,
+      span,
+      id: nextNodeId(),
+    };
+  }
+
   private parseMatchExpression(): Expr {
     const token = this.peek();
     if (token.kind === "keyword" && token.value === "match") {
@@ -710,10 +759,9 @@ class SurfaceParser {
 
       const args: Expr[] = [];
       if (!this.checkSymbol(")")) {
-        args.push(this.parseExpression());
-        if (this.matchSymbol(",")) {
-          throw this.error("Only a single match argument is supported in this version");
-        }
+        do {
+          args.push(this.parseExpression());
+        } while (this.matchSymbol(","));
       }
       this.expectSymbol(")");
 
@@ -721,11 +769,13 @@ class SurfaceParser {
         throw this.error("Match requires a scrutinee expression");
       }
 
+      const scrutineeExpr = this.buildMatchScrutinee(args);
+
       if (this.matchSymbol("=>")) {
         const { bundle, span } = this.parseMatchBlock();
         return {
           kind: "match_fn",
-          parameters: args,
+          parameters: [scrutineeExpr],
           bundle,
           span: this.spanFrom(matchToken.start, span.end),
           id: nextNodeId(),
@@ -735,7 +785,7 @@ class SurfaceParser {
       const { bundle, span } = this.parseMatchBlock();
       return {
         kind: "match",
-        scrutinee: args[0],
+        scrutinee: scrutineeExpr,
         bundle,
         span: this.spanFrom(matchToken.start, span.end),
         id: nextNodeId(),
