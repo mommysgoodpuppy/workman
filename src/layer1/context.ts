@@ -536,7 +536,13 @@ export function markNotFunction(
     calleeType,
   };
   ctx.marks.set(expr, mark);
-  recordLayer1Diagnostic(ctx, expr.id, "not_function", { calleeType });
+  
+  // Only record a diagnostic if it's actually an error (not just incomplete type info)
+  // For incomplete unknowns (like JS imports), this is expected gradual typing behavior
+  if (!(calleeType.kind === "unknown" && calleeType.provenance.kind === "incomplete")) {
+    recordLayer1Diagnostic(ctx, expr.id, "not_function", { calleeType });
+  }
+  
   return mark;
 }
 
