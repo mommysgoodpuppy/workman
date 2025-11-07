@@ -57,11 +57,12 @@ export const symbols = [
 ];
 
 // Operator symbols that can be used in custom infix operators
-// Note: <, >, | are excluded because they're used as symbols in type syntax
+// Note: <, > are now included for comparison operators
 // Note: = is included for operators like == and !=, but single = is a symbol
 export const operatorChars = new Set([
   "+", "-", "*", "/", "%",
   "=", "!",
+  "<", ">",
   "&", "^", "~",
   "@", "#", "$",
   "?",
@@ -69,6 +70,7 @@ export const operatorChars = new Set([
 
 // Multi-character operators need to be checked in order of length
 export const multiCharOperators = [
+  "<=", ">=",  // Check these before < and >
   "==", "!=",
   "&&", "||",
   "++", "--",

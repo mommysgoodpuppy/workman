@@ -63,7 +63,15 @@ class SurfaceParser {
     initialOperators?: Map<string, OperatorInfo>,
     initialPrefixOperators?: Set<string>
   ) {
-    this.operators = initialOperators ? new Map(initialOperators) : new Map();
+    // Start with default comparison operators (these are defined in std/core/int but need to be known at parse time)
+    const defaultOperators = new Map<string, OperatorInfo>([
+      ["<", { precedence: 4, associativity: "none" }],
+      [">", { precedence: 4, associativity: "none" }],
+      ["<=", { precedence: 4, associativity: "none" }],
+      [">=", { precedence: 4, associativity: "none" }],
+    ]);
+    
+    this.operators = initialOperators ? new Map([...defaultOperators, ...initialOperators]) : defaultOperators;
     this.prefixOperators = initialPrefixOperators ? new Set(initialPrefixOperators) : new Set();
   }
 
@@ -656,9 +664,9 @@ class SurfaceParser {
     }
     const precedence = Number(precedenceToken.value);
     
-    // Parse operator
+    // Parse operator (can be operator or symbol like < >)
     const operatorToken = this.consume();
-    if (operatorToken.kind !== "operator") {
+    if (operatorToken.kind !== "operator" && operatorToken.kind !== "symbol") {
       throw this.error("Expected operator", operatorToken);
     }
     const operator = operatorToken.value;
@@ -696,9 +704,9 @@ class SurfaceParser {
   private parsePrefixDeclaration(exportToken?: Token): import("./ast.ts").PrefixDeclaration {
     const prefixToken = this.expectKeyword("prefix");
     
-    // Parse operator
+    // Parse operator (can be operator or symbol like < >)
     const operatorToken = this.consume();
-    if (operatorToken.kind !== "operator") {
+    if (operatorToken.kind !== "operator" && operatorToken.kind !== "symbol") {
       throw this.error("Expected operator", operatorToken);
     }
     const operator = operatorToken.value;
@@ -902,7 +910,8 @@ class SurfaceParser {
     
     while (true) {
       const token = this.peek();
-      if (token.kind !== "operator") {
+      // Check if it's an operator, or a symbol that's registered as an operator (like < >)
+      if (token.kind !== "operator" && token.kind !== "symbol") {
         break;
       }
       
