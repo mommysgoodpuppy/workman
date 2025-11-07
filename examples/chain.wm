@@ -1,5 +1,10 @@
 type Chain<A> = Done<A> | Step<Option<A>, ((A) => Chain<A>)>;
 
+let printOption = match(opt) {
+  Some(v) => { print(v) },
+  None => { print("None") }
+};
+
 let rec runChain = match(chain) {
   Done(v) => { Some(v) },
   Step(opt, k) => {
@@ -18,6 +23,21 @@ let done = (v) => {
   Done(v)
 };
 
+let lift = (opt) => {
+  Step(opt, done)
+};
+
+let rec bind = (prog, f) => {
+  match(prog) {
+    Done(v) => { f(v) },
+    Step(opt, k) => { Step(opt, (x) => { bind(k(x), f) }) }
+  }
+};
+
+let map = (prog, f) => {
+  bind(prog, (x) => { done(f(x)) })
+};
+
 let step1 = () => { Some(2) };
 
 let step2 = (value) => {
@@ -34,11 +54,6 @@ let step3 = (value) => {
   }
 };
 
-let printOption = match(opt) {
-  Some(v) => { print(v) },
-  None => { print("None") }
-};
-
 let chainExample = () => {
   chain(step1(), (x) => {
     chain(step2(x), (y) => {
@@ -49,8 +64,17 @@ let chainExample = () => {
   })
 };
 
-let result = runChain(chainExample());
+let chainExample2 = () => {
+  bind(lift(step1()), (x) => {
+    bind(lift(step2(x)), (y) => {
+      bind(lift(step3(y)), (z) => {
+        done(z)
+      })
+    })
+  })
+};
 
 let main = () => {
-  printOption(result)
+  printOption(runChain(chainExample()));
+  printOption(runChain(chainExample2()))
 };

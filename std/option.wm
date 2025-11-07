@@ -1,4 +1,4 @@
-from "std/option/core" import { Option, Some, None };
+from "std/option/core" import { Some, None };
 from "std/list/core" import { Empty, Link };
 export from "std/option/core" type Option(..);
 

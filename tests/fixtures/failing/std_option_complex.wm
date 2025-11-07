@@ -1,4 +1,3 @@
-from "std/option/core" import { Option };
 from "std/option" import { Some, None, map, flatMap, orElse, withDefault };
 
 let inc = (n) => {

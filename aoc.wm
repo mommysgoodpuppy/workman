@@ -1,6 +1,7 @@
 from "std/string" import { fromLiteral, strEq };
 from "std/list" import { listSlice, listAt };
 from "std/string" import { charToDigit };
+from "std/option" import { flatMap };
 
 -- helpers --------------------------------------------------------------
 
@@ -90,26 +91,6 @@ let expectMulLiteral = match(chars, i) {
   }
 };
 
--- tiny combinators as bundles -----------------------------------------
-
--- andThenIndex : Option(i) × (i -> Option X) → Option X
-let andThenIndex = match(optI, k) {
-  (Some(i1), k) => { k(i1) },
-  (None,    _)  => { None }
-};
-
--- andThenStep : Option({ value, next }) × ({ value, next } -> Option X) → Option X
-let andThenStep = match(optStep, k) {
-  (Some(step), k) => { k(step) },
-  (None,      _)  => { None }
-};
-
--- mapStep : Option({ value, next }) × ({ value, next } -> b) → Option(b)
-let mapStep = match(optStep, f) {
-  (Some(step), f) => { Some(f(step)) },
-  (None,      _)  => { None }
-};
-
 -- parsing bricks as bundles -------------------------------------------
 
 -- parseLeft : (chars, i) → Option((leftValue, next))
@@ -134,21 +115,34 @@ let parseCloseParen = match(chars, i) {
 
 -- compose the bricks into parseMulAt ----------------------------------
 
--- parseMulAt : (chars, i) → Option((value, next))
 let parseMulAt = match(chars, i) {
-  -- we insert bundles as arms to make the control read top-to-bottom
   (chars, i) => {
-    andThenIndex(expectMulLiteral(chars, i), (afterMul) => {
-      andThenStep(parseLeft(chars, afterMul), (leftStep) => {
-        andThenIndex(parseComma(chars, leftStep.next), (afterComma) => {
-          andThenStep(parseRight(chars, afterComma), (rightStep) => {
-            andThenIndex(parseCloseParen(chars, rightStep.next), (afterClose) => {
-              Some(makeStep(mul(leftStep.value, rightStep.value), afterClose))
-            })
-          })
-        })
-      })
-    })
+    flatMap(
+      (afterMul) => {
+        flatMap(
+          (leftStep) => {
+            flatMap(
+              (afterComma) => {
+                flatMap(
+                  (rightStep) => {
+                    flatMap(
+                      (afterClose) => {
+                        Some(makeStep(mul(leftStep.value, rightStep.value), afterClose))
+                      },
+                      parseCloseParen(chars, rightStep.next)
+                    )
+                  },
+                  parseRight(chars, afterComma)
+                )
+              },
+              parseComma(chars, leftStep.next)
+            )
+          },
+          parseLeft(chars, afterMul)
+        )
+      },
+      expectMulLiteral(chars, i)
+    )
   }
 };
 
