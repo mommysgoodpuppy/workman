@@ -6,7 +6,6 @@ bootstrap/
 ignore/
 vscodeExtension/out/
 tools/deno/
-*.js
 *.js.map
 src_bootstrapped/
 dist/

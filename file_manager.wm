@@ -1,0 +1,104 @@
+-- File Manager: A practical IO program in Workman
+-- Demonstrates file operations, string manipulation, and control flow
+
+from "./denoshim.js" import { 
+  readTextFile, 
+  writeTextFile, 
+  fileExists,
+  readDir,
+  log,
+  cwd
+};
+
+from "std/string" import { fromLiteral, intToString, strConcat };
+from "std/list" import { listMap, listLength };
+
+-- Create a simple text file
+export let createFile = (path, content) => {
+  writeTextFile(path, content)
+};
+
+-- Read a file and return its contents
+export let readFile = (path) => {
+  readTextFile(path)
+};
+
+-- Check if a file exists
+export let checkFile = (path) => {
+  fileExists(path)
+};
+
+-- List files in a directory
+export let listFiles = (path) => {
+  readDir(path)
+};
+
+-- Append to a file
+export let appendLine = (path, line) => {
+  let existing = readTextFile(path);
+  let newContent = strConcat(existing, strConcat(fromLiteral("\n"), line));
+  writeTextFile(path, newContent)
+};
+
+-- Demo: Create a todo list manager
+export let createTodoList = (filename) => {
+  let header = fromLiteral("# My Todo List\n\n");
+  writeTextFile(filename, header)
+};
+
+export let addTodo = (filename, task) => {
+  let existing = readTextFile(filename);
+  let bullet = fromLiteral("- [ ] ");
+  let newLine = fromLiteral("\n");
+  let todoLine = strConcat(bullet, strConcat(task, newLine));
+  let updated = strConcat(existing, todoLine);
+  writeTextFile(filename, updated)
+};
+
+export let showTodos = (filename) => {
+  let content = readTextFile(filename);
+  log(content)
+};
+
+-- Main demo program
+export let main = () => {
+  log(fromLiteral("=== Workman File Manager Demo ==="));
+  log(fromLiteral(""));
+  
+  -- Get current directory
+  let currentDir = cwd();
+  log(strConcat(fromLiteral("Current directory: "), currentDir));
+  log(fromLiteral(""));
+  
+  -- Create a todo list
+  let todoFile = fromLiteral("./my_todos.txt");
+  log(fromLiteral("Creating todo list..."));
+  createTodoList(todoFile);
+  
+  -- Add some tasks
+  log(fromLiteral("Adding tasks..."));
+  addTodo(todoFile, fromLiteral("Fix operator bug"));
+  addTodo(todoFile, fromLiteral("Add comparison operators"));
+  addTodo(todoFile, fromLiteral("Build IO library"));
+  addTodo(todoFile, fromLiteral("Create demo program"));
+  
+  -- Show the todo list
+  log(fromLiteral(""));
+  log(fromLiteral("Your todo list:"));
+  log(fromLiteral("---"));
+  showTodos(todoFile);
+  log(fromLiteral("---"));
+  
+  -- Check if file exists
+  let exists = checkFile(todoFile);
+  log(fromLiteral(""));
+  log(strConcat(fromLiteral("File exists: "), 
+    match(exists) {
+      true => { fromLiteral("yes") },
+      false => { fromLiteral("no") }
+    }
+  ));
+  
+  log(fromLiteral(""));
+  log(fromLiteral("Demo complete!"))
+};

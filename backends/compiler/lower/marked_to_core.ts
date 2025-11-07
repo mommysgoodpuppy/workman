@@ -285,16 +285,37 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
         `Lowering for '${expr.kind}' expressions is not implemented`,
         expr.id,
       );
+    // Hazel-style: Lower marked expressions as best-effort
+    // These have type errors but we compile anyway and let them fail at runtime
     case "mark_free_var":
+      // Reference to undefined variable - will be a runtime error
+      return {
+        kind: "var",
+        name: expr.name,
+        type: resolveNodeType(state, expr.id, expr.type),
+      };
     case "mark_not_function":
+      // Calling non-function - lower as a call anyway, will fail at runtime
+      return {
+        kind: "call",
+        callee: lowerExpr(expr.callee, state),
+        args: expr.args.map((arg) => lowerExpr(arg, state)),
+        type: resolveNodeType(state, expr.id, expr.type),
+      };
     case "mark_occurs_check":
     case "mark_inconsistent":
+      // Type mismatch - lower the subject expression
+      return lowerExpr(expr.subject, state);
     case "mark_unsupported_expr":
+      throw new CoreLoweringError(
+        `Unsupported expression kind: ${expr.exprKind}`,
+        expr.id,
+      );
     case "mark_type_expr_unknown":
     case "mark_type_expr_arity":
     case "mark_type_expr_unsupported":
       throw new CoreLoweringError(
-        `Cannot lower expression with diagnostics (kind: '${expr.kind}')`,
+        `Cannot lower type expression with errors (kind: '${expr.kind}')`,
         expr.id,
       );
     default:
@@ -386,10 +407,12 @@ function lowerPattern(pattern: MPattern, state: LoweringState): CorePattern {
       };
     }
     case "mark_pattern":
-      throw new CoreLoweringError(
-        `Cannot lower match pattern diagnostic '${pattern.reason}'`,
-        pattern.id,
-      );
+      // Hazel-style: Pattern has an error but we compile anyway
+      // Lower as a wildcard pattern - will match anything at runtime
+      return {
+        kind: "wildcard",
+        type: resolveNodeType(state, pattern.id, pattern.type),
+      };
     default:
       const _exhaustive: never = pattern;
       void _exhaustive;

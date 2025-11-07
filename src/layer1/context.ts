@@ -513,19 +513,30 @@ export function markNotFunction(
   calleeType: Type,
 ): MMarkNotFunction {
   const origin = holeOriginFromExpr(expr);
+  
+  // If the callee is already an incomplete unknown (e.g., JS import),
+  // preserve that provenance instead of wrapping it in error_not_function
+  let resultType: Type;
+  if (calleeType.kind === "unknown" && calleeType.provenance.kind === "incomplete") {
+    resultType = calleeType; // Keep the original incomplete provenance
+  } else {
+    resultType = createUnknownAndRegister(ctx, origin, {
+      kind: "error_not_function",
+      calleeType,
+    });
+  }
+  
   const mark: MMarkNotFunction = {
     kind: "mark_not_function",
     span: expr.span,
     id: expr.id,
-    type: createUnknownAndRegister(ctx, origin, {
-      kind: "error_not_function",
-      calleeType,
-    }),
+    type: resultType,
     callee,
     args,
     calleeType,
   };
   ctx.marks.set(expr, mark);
+  recordLayer1Diagnostic(ctx, expr.id, "not_function", { calleeType });
   return mark;
 }
 
@@ -553,6 +564,7 @@ export function markOccursCheck(
     right: resolvedRight,
   };
   ctx.marks.set(expr, mark);
+  recordLayer1Diagnostic(ctx, expr.id, "occurs_cycle", { left: resolvedLeft, right: resolvedRight });
   return mark;
 }
 
@@ -578,6 +590,7 @@ export function markInconsistent(
     actual,
   };
   ctx.marks.set(expr, mark);
+  recordLayer1Diagnostic(ctx, expr.id, "type_mismatch", { expected, actual });
   return mark;
 }
 

@@ -1,7 +1,7 @@
 from "./native.js" import { greet };
 
 let natGreet = () => {
-  greet
+  greet()
 };
 
 let main = () => { print(natGreet()) };

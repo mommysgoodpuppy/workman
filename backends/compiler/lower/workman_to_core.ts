@@ -8,6 +8,11 @@ import type {
   CoreTypeDeclaration,
 } from "../ir/core.ts";
 import { lowerProgramToValues } from "./marked_to_core.ts";
+import { InferError } from "../../../src/error.ts";
+import type { ConstraintDiagnostic } from "../../../src/diagnostics.ts";
+import type { Type } from "../../../src/types.ts";
+import type { SourceSpan, NodeId } from "../../../src/ast.ts";
+import type { MProgram } from "../../../src/ast_marked.ts";
 
 export interface WorkmanLoweringInput {
   readonly node: ModuleNode;
@@ -15,7 +20,8 @@ export interface WorkmanLoweringInput {
 }
 
 export interface WorkmanLoweringOptions {
-  // Placeholder for future lowering configuration (e.g., ABI tweaks, diagnostics).
+  // Show all type errors (for type-check mode)
+  showAllErrors?: boolean;
 }
 
 /**
@@ -28,6 +34,22 @@ export function lowerAnalyzedModule(
   _options: WorkmanLoweringOptions = {},
 ): CoreModule {
   const { node, analysis } = input;
+  
+  // Report type errors but don't block compilation (Hazel-style)
+  const diagnostics = analysis.layer2.diagnostics;
+  if (diagnostics.length > 0 && _options.showAllErrors) {
+    const spanIndex = collectSpans(analysis.layer2.remarkedProgram);
+    console.error(`\n⚠️  Type errors in ${node.path}:\n`);
+    for (const diagnostic of diagnostics) {
+      const span = spanIndex.get(diagnostic.origin);
+      const error = createDiagnosticError(diagnostic, span, node.source);
+      console.error(error.format(node.source));
+      console.error(); // blank line between errors
+    }
+  } else if (diagnostics.length > 0) {
+    console.error(`\n⚠️  Type errors in ${node.path}:\n`);
+  }
+  
   const program = analysis.layer2.remarkedProgram;
   return {
     path: node.path,
@@ -95,4 +117,131 @@ function convertExports(node: ModuleNode): CoreExport[] {
     });
   }
   return exports;
+}
+
+function collectSpans(program: MProgram): Map<NodeId, SourceSpan> {
+  const spans = new Map<NodeId, SourceSpan>();
+  // Traverse the program and collect all spans
+  function visit(node: any) {
+    if (!node || typeof node !== "object") return;
+    if ("id" in node && "span" in node && typeof node.id === "number") {
+      spans.set(node.id, node.span);
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+      } else if (value && typeof value === "object") {
+        visit(value);
+      }
+    }
+  }
+  visit(program);
+  return spans;
+}
+
+function createDiagnosticError(diagnostic: ConstraintDiagnostic, span: SourceSpan | undefined, source?: string): InferError {
+  const message = formatDiagnosticMessage(diagnostic);
+  return new InferError(message, span, source);
+}
+
+function simpleFormatType(type: Type): string {
+  switch (type.kind) {
+    case "var":
+      return `T${type.id}`;
+    case "func":
+      return `${simpleFormatType(type.from)} -> ${simpleFormatType(type.to)}`;
+    case "constructor":
+      if (type.args.length === 0) return type.name;
+      return `${type.name}<${type.args.map(simpleFormatType).join(", ")}>`;
+    case "tuple":
+      return `(${type.elements.map(simpleFormatType).join(", ")})`;
+    case "unit":
+      return "Unit";
+    case "int":
+      return "Int";
+    case "bool":
+      return "Bool";
+    case "char":
+      return "Char";
+    case "string":
+      return "String";
+    case "unknown":
+      return "?";
+    case "record":
+      return `{ ${Object.entries(type.fields).map(([k, v]) => `${k}: ${simpleFormatType(v)}`).join(", ")} }`;
+    default:
+      return "?";
+  }
+}
+
+function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
+  switch (diagnostic.reason) {
+    case "not_function": {
+      const calleeType = diagnostic.details?.calleeType as Type | undefined;
+      if (calleeType) {
+        // For unknown types (especially incomplete JS imports), we don't know if it's a function
+        if (calleeType.kind === "unknown") {
+          return `Calling value of unknown type ${simpleFormatType(calleeType)}`;
+        }
+        return `Cannot call non-function value of type ${simpleFormatType(calleeType)}`;
+      }
+      return "Cannot call a non-function value";
+    }
+    case "type_mismatch": {
+      const expected = diagnostic.details?.expected;
+      const actual = diagnostic.details?.actual;
+      if (expected && actual) {
+        return `Type mismatch: expected ${simpleFormatType(expected as Type)}, but got ${simpleFormatType(actual as Type)}`;
+      }
+      return "Type mismatch between incompatible types";
+    }
+    case "branch_mismatch":
+      return "Match arms have incompatible types";
+    case "missing_field": {
+      const field = diagnostic.details?.field;
+      return field ? `Record is missing field '${field}'` : "Record is missing a required field";
+    }
+    case "not_record":
+      return "Cannot project field from non-record type";
+    case "occurs_cycle":
+      return "Infinite type detected (occurs check failed)";
+    case "arity_mismatch": {
+      const expected = diagnostic.details?.expected;
+      const actual = diagnostic.details?.actual;
+      if (expected !== undefined && actual !== undefined) {
+        return `Arity mismatch: expected ${expected} argument(s), but got ${actual}`;
+      }
+      return "Function called with wrong number of arguments";
+    }
+    case "not_numeric":
+      return "Numeric operation requires numeric type";
+    case "not_boolean":
+      return "Boolean operation requires boolean type";
+    case "free_variable": {
+      const name = diagnostic.details?.name;
+      return name ? `Unknown identifier '${name}'` : "Reference to undefined variable";
+    }
+    case "unsupported_expr":
+      return "Unsupported expression type";
+    case "duplicate_record_field": {
+      const field = diagnostic.details?.field;
+      return field ? `Duplicate record field '${field}'` : "Duplicate field in record";
+    }
+    case "non_exhaustive_match":
+      return "Match expression is not exhaustive - some cases are not handled";
+    case "type_expr_unknown":
+      return "Unknown type in type expression";
+    case "type_expr_arity":
+      return "Type constructor applied with wrong number of arguments";
+    case "type_expr_unsupported":
+      return "Unsupported type expression";
+    case "type_decl_duplicate":
+      return "Duplicate type declaration";
+    case "type_decl_invalid_member":
+      return "Invalid type declaration member";
+    case "internal_error":
+      return "Internal compiler error during type checking";
+    default:
+      return `Type error: ${diagnostic.reason}`;
+  }
 }

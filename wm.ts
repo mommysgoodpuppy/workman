@@ -249,6 +249,10 @@ REPL Commands:
       loader: {
         stdRoots: [resolve("std")],
         preludeModule: "std/prelude",
+        skipEvaluation: true, // Always compile (needed for JS interop)
+      },
+      lowering: {
+        showAllErrors: skipEvaluation, // Only show all errors in type-check mode
       },
     });
     const entryKey = compileResult.coreGraph.entry;
