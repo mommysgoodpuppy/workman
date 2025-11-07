@@ -71,3 +71,7 @@ export infixl 7 / = intDiv;
 -- Comparison operators
 export infix 4 == = intEq;
 export infix 4 != = intNeq;
+export infix 4 < = intLt;
+export infix 4 > = intGt;
+export infix 4 <= = intLte;
+export infix 4 >= = intGte;
