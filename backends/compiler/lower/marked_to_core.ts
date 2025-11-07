@@ -50,8 +50,41 @@ export function lowerProgramToValues(
   const state: LoweringState = { tempIndex: 0, resolvedTypes };
   const values: CoreValueBinding[] = [];
   for (const declaration of program.declarations) {
-    if (declaration.kind !== "let") continue;
-    values.push(lowerTopLevelLet(declaration, state));
+    if (declaration.kind === "let") {
+      values.push(lowerTopLevelLet(declaration, state));
+    } else if (declaration.kind === "infix") {
+      // Lower infix declaration to a value binding that aliases the implementation
+      const opName = `__op_${declaration.node.operator}`;
+      const implName = declaration.node.implementation;
+      const type = resolveNodeType(state, declaration.node.id);
+      values.push({
+        name: opName,
+        value: {
+          kind: "var",
+          name: implName,
+          type,
+          origin: declaration.node.id,
+        },
+        exported: Boolean(declaration.node.export),
+        origin: declaration.node.id,
+      });
+    } else if (declaration.kind === "prefix") {
+      // Lower prefix declaration to a value binding that aliases the implementation
+      const opName = `__prefix_${declaration.node.operator}`;
+      const implName = declaration.node.implementation;
+      const type = resolveNodeType(state, declaration.node.id);
+      values.push({
+        name: opName,
+        value: {
+          kind: "var",
+          name: implName,
+          type,
+          origin: declaration.node.id,
+        },
+        exported: Boolean(declaration.node.export),
+        origin: declaration.node.id,
+      });
+    }
   }
   return values;
 }

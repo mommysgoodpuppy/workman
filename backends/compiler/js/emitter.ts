@@ -261,11 +261,9 @@ function emitExports(module: CoreModule, ctx: EmitContext): string | undefined {
       ctx.state,
     );
     const exported = exp.kind === "value" ? exp.exported : exp.exported;
-    if (local === exported) {
-      specifiers.push(local);
-    } else {
-      specifiers.push(`${local} as ${exported}`);
-    }
+    // For operators, the local name is already sanitized, so just export that
+    // This avoids trying to export invalid JS identifiers like __op_++
+    specifiers.push(local);
     exportedNames.add(exported);
   }
   for (const extra of ctx.extraExports) {
@@ -280,11 +278,8 @@ function emitExports(module: CoreModule, ctx: EmitContext): string | undefined {
   for (const forced of ctx.forcedValueExports) {
     if (exportedNames.has(forced)) continue;
     const local = resolveName(ctx.scope, forced, ctx.state);
-    if (local === forced) {
-      specifiers.push(local);
-    } else {
-      specifiers.push(`${local} as ${forced}`);
-    }
+    // Just export the sanitized local name, don't try to use unsanitized names
+    specifiers.push(local);
     exportedNames.add(forced);
   }
   if (specifiers.length === 0) return undefined;

@@ -1,4 +1,4 @@
-from "std/core/int" import { intAdd, intSub, intMul, intDiv, intCompare, intEq, intNeq };
+from "std/core/int" import { intAdd, intSub, intMul, intDiv, intCompare, intEq, intNeq, intLt, intGt, intLte, intGte };
 from "std/core/bool" import { boolNot, boolAnd as boolAndImpl, boolOr as boolOrImpl };
 export from "std/option/core" type Option(..);
 export from "std/result/core" type Result(..);
@@ -40,6 +40,22 @@ export let neq = (left, right) => {
   intNeq(left, right)
 };
 
+export let lt = (left, right) => {
+  intLt(left, right)
+};
+
+export let gt = (left, right) => {
+  intGt(left, right)
+};
+
+export let lte = (left, right) => {
+  intLte(left, right)
+};
+
+export let gte = (left, right) => {
+  intGte(left, right)
+};
+
 -- Arithmetic operators
 export infixl 6 + = add;
 export infixl 6 - = sub;
@@ -49,6 +65,10 @@ export infixl 7 / = div;
 -- Comparison operators
 export infix 4 == = eq;
 export infix 4 != = neq;
+export infix 4 < = lt;
+export infix 4 > = gt;
+export infix 4 <= = lte;
+export infix 4 >= = gte;
 
 -- Re-export bool functions for operators
 export let boolAnd = (left, right) => {
