@@ -668,6 +668,18 @@ class WorkmanLanguageServer {
     if (holeSolutions && view.nodeId !== undefined) {
       const solution = holeSolutions.get(view.nodeId);
       if (solution) {
+        // Show provenance for unknown types
+        if (solution.provenance && solution.provenance.provenance) {
+          const prov = solution.provenance.provenance;
+          if (prov.kind === "incomplete" && prov.reason) {
+            result += `\n\n_${prov.reason}_`;
+          } else if (prov.kind === "expr_hole") {
+            result += "\n\n_Explicit type hole_";
+          } else if (prov.kind === "user_hole") {
+            result += "\n\n_User-specified type hole_";
+          }
+        }
+        
         if (solution.state === "partial" && solution.partial) {
           result += "\n\n**Partial Type Information:**\n";
           if (solution.partial.known) {
@@ -675,6 +687,14 @@ class WorkmanLanguageServer {
           }
           if (solution.partial.possibilities && solution.partial.possibilities.length > 0) {
             result += `- Possibilities: ${solution.partial.possibilities.length}\n`;
+            // Show first few possibilities
+            const maxShow = 3;
+            for (let i = 0; i < Math.min(maxShow, solution.partial.possibilities.length); i++) {
+              result += `  - \`${typeToString(solution.partial.possibilities[i])}\`\n`;
+            }
+            if (solution.partial.possibilities.length > maxShow) {
+              result += `  - ... and ${solution.partial.possibilities.length - maxShow} more\n`;
+            }
           }
           result += "\n_Some type information is inferred, but not everything is known yet._";
         } else if (solution.state === "conflicted" && solution.conflicts) {
@@ -697,7 +717,7 @@ class WorkmanLanguageServer {
   private partialTypeToString(partial: PartialType): string | null {
     switch (partial.kind) {
       case "unknown":
-        return "unknown";
+        return "?";
       case "concrete":
         return partial.type ? typeToString(partial.type) : null;
       default:
