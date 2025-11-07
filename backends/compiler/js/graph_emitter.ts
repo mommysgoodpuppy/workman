@@ -81,6 +81,7 @@ export async function emitModuleGraph(
     const code = emitModule(module, graph, {
       extension,
       runtimeModule: runtimeSpecifier,
+      baseDir: dirname(outputPath),
       forcedValueExports: module.path === entryModule.path ? forcedEntryExports : undefined,
       preludeModule: preludeImport,
     });

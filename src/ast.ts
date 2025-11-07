@@ -279,6 +279,7 @@ export interface TypeDeclaration extends NodeBase {
   name: string;
   typeParams: TypeParameter[];
   members: TypeAliasMember[];
+  declarationKind?: "record";
   export?: ExportModifier;
   leadingComments?: CommentBlock[];
   trailingComment?: string;

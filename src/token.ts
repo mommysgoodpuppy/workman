@@ -23,6 +23,7 @@ export const keywords = new Set([
   "rec",
   "and",
   "type",
+  "record",
   "match",
   "import",
   "export",

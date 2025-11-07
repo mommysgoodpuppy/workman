@@ -1,10 +1,12 @@
-import type { ConstructorAlias, TypeDeclaration, TypeExpr } from "../ast.ts";
+import type { ConstructorAlias, TypeAliasExprMember, TypeDeclaration, TypeExpr } from "../ast.ts";
 import type { Context } from "./context.ts";
 import { MMarkTypeDeclDuplicate, MMarkTypeDeclInvalidMember } from "../ast_marked.ts";
 import {
   ConstructorInfo,
   Type,
   TypeScheme,
+  applySubstitution,
+  cloneType,
   freshTypeVar,
   unknownType,
 } from "../types.ts";
@@ -21,6 +23,12 @@ import {
 } from "./context.ts";
 
 type TypeScope = Map<string, Type>;
+
+function isAliasTypeDeclaration(
+  decl: TypeDeclaration,
+): decl is TypeDeclaration & { members: [TypeAliasExprMember] } {
+  return decl.members.length === 1 && decl.members[0]?.kind === "alias";
+}
 
 const typeParamsCache = new Map<string, Type[]>();
 
@@ -54,6 +62,9 @@ export function registerTypeName(ctx: Context, decl: TypeDeclaration): RegisterT
 export type RegisterConstructorsResult = { success: true } | { success: false; mark: MMarkTypeDeclInvalidMember };
 
 export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): RegisterConstructorsResult {
+  if (isAliasTypeDeclaration(decl)) {
+    return registerTypeAlias(ctx, decl);
+  }
   const adtInfo = ctx.adtEnv.get(decl.name);
   if (!adtInfo) {
     // This should not happen if registerTypeName was called first, but handle gracefully
@@ -147,6 +158,27 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
   return { success: true };
 }
 
+function registerTypeAlias(
+  ctx: Context,
+  decl: TypeDeclaration & { members: [TypeAliasExprMember] },
+): RegisterConstructorsResult {
+  const adtInfo = ctx.adtEnv.get(decl.name);
+  const parameterTypes = typeParamsCache.get(decl.name);
+  if (!adtInfo || !parameterTypes) {
+    return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0]) };
+  }
+
+  const typeScope: TypeScope = new Map();
+  decl.typeParams.forEach((param, index) => {
+    typeScope.set(param.name, parameterTypes[index]);
+  });
+
+  const aliasType = convertTypeExpr(ctx, decl.members[0].type, typeScope, { allowNewVariables: false });
+  adtInfo.alias = cloneType(aliasType);
+  adtInfo.constructors = [];
+  return { success: true };
+}
+
 export interface ConvertTypeOptions {
   allowNewVariables: boolean;
 }
@@ -232,6 +264,27 @@ export function convertTypeExpr(
       }
 
       const typeInfo = ctx.adtEnv.get(typeExpr.name);
+
+      if (typeInfo?.alias) {
+        if (typeInfo.parameters.length !== typeExpr.typeArgs.length) {
+          const mark = markTypeExprArity(ctx, typeExpr, typeInfo.parameters.length, typeExpr.typeArgs.length);
+          ctx.typeExprMarks.set(typeExpr, mark);
+          return unknownType({
+            kind: "error_type_expr_arity",
+            expected: typeInfo.parameters.length,
+            actual: typeExpr.typeArgs.length,
+          });
+        }
+        const aliasArgs = typeExpr.typeArgs.map((arg) => convertTypeExpr(ctx, arg, scope, options));
+        if (aliasArgs.length === 0) {
+          return cloneType(typeInfo.alias);
+        }
+        const substitution = new Map<number, Type>();
+        typeInfo.parameters.forEach((paramId, index) => {
+          substitution.set(paramId, aliasArgs[index]);
+        });
+        return applySubstitution(cloneType(typeInfo.alias), substitution);
+      }
 
       if (typeExpr.typeArgs.length === 0) {
         if (typeInfo) {

@@ -1,9 +1,15 @@
+record Person { name: String, age: Int };
+
 export let makeUser = (name, age) => {
   { name: name, age: age }
 };
 
 export let renameUser = (user, nextName) => {
   { name: nextName, age: user.age }
+};
+
+export let describePerson = (person: Person) => {
+  person.name
 };
 
 export let describeUser = () => {
@@ -15,4 +21,9 @@ export let describeUser = () => {
 export let ageAfterBirthday = () => {
   let birthday = makeUser("Lina", 20);
   birthday.age + 1
+};
+
+export let typedBirthday = () => {
+  let celebrant: Person = makeUser("Em", 8);
+  celebrant.age + 1
 };

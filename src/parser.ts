@@ -281,6 +281,8 @@ class SurfaceParser {
           return this.parseLetDeclaration(exportToken);
         case "type":
           return this.parseTypeDeclaration(exportToken);
+        case "record":
+          return this.parseRecordDeclaration(exportToken);
         case "infix":
         case "infixl":
         case "infixr":
@@ -640,6 +642,35 @@ class SurfaceParser {
       typeParams,
       members,
       span: this.spanFrom(typeToken.start, endToken.end),
+      id: nextNodeId(),
+    };
+    if (exportToken) {
+      declaration.export = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+    }
+    return declaration;
+  }
+
+  private parseRecordDeclaration(exportToken?: Token): TypeDeclaration {
+    const recordToken = this.expectKeyword("record");
+    const nameToken = this.expectTypeName();
+    const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
+    const recordType = this.parseRecordTypeExpr();
+    const aliasMember = {
+      kind: "alias" as const,
+      type: recordType,
+      span: recordType.span,
+      id: nextNodeId(),
+    };
+    const declaration: TypeDeclaration = {
+      kind: "type",
+      name: nameToken.value,
+      typeParams,
+      members: [aliasMember],
+      declarationKind: "record",
+      span: this.spanFrom(recordToken.start, recordType.span.end),
       id: nextNodeId(),
     };
     if (exportToken) {

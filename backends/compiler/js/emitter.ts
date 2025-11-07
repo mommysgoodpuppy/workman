@@ -1,4 +1,4 @@
-import { dirname, extname, relative } from "std/path/mod.ts";
+import { dirname, extname, relative, isAbsolute, toFileUrl } from "std/path/mod.ts";
 import type {
   CoreExpr,
   CoreMatchCase,
@@ -27,6 +27,7 @@ interface EmitContext {
 export interface EmitModuleOptions {
   readonly extension?: string;
   readonly runtimeModule?: string;
+  readonly baseDir?: string; // directory of the emitted module file
   readonly forcedValueExports?: readonly string[];
   readonly preludeModule?: {
     specifier: string;
@@ -133,7 +134,7 @@ function emitImports(
 ): string[] {
   if (module.imports.length === 0) return [];
 
-  const currentDir = dirname(module.path);
+  const currentDir = ctx.options.baseDir ?? dirname(module.path);
   const lines: string[] = [];
   for (const entry of module.imports) {
     const specifiers: string[] = [];
@@ -147,11 +148,18 @@ function emitImports(
         specifiers.push(`${spec.imported} as ${internal}`);
       }
     }
-    const importPath = makeImportPath(
-      currentDir,
-      entry.source,
-      ctx.options.extension ?? ".js",
-    );
+    let importPath: string;
+    const ext = extname(entry.source).toLowerCase();
+    if ((ext === ".js" || ext === ".mjs") && isAbsolute(entry.source)) {
+      // Use absolute file URL for external JS so it resolves from emitted temp dir
+      importPath = toFileUrl(entry.source).href;
+    } else {
+      importPath = makeImportPath(
+        currentDir,
+        entry.source,
+        ctx.options.extension ?? ".js",
+      );
+    }
     lines.push(`import { ${specifiers.join(", ")} } from "${importPath}";`);
   }
 
