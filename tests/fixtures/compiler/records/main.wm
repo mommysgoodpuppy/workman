@@ -1,0 +1,18 @@
+export let makeUser = (name, age) => {
+  { name: name, age: age }
+};
+
+export let renameUser = (user, nextName) => {
+  { name: nextName, age: user.age }
+};
+
+export let describeUser = () => {
+  let user = makeUser("Klaus", 42);
+  let renamed = renameUser(user, "Renamed");
+  renamed.name
+};
+
+export let ageAfterBirthday = () => {
+  let birthday = makeUser("Lina", 20);
+  birthday.age + 1
+};

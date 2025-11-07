@@ -546,6 +546,23 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       });
       return recordExprType(ctx, expr, tupleType);
     }
+    case "record_literal": {
+      const fields = new Map<string, Type>();
+      for (const field of expr.fields) {
+        const fieldType = inferExpr(ctx, field.value);
+        const resolvedFieldType = applyCurrentSubst(ctx, fieldType);
+        if (fields.has(field.name)) {
+          ctx.layer1Diagnostics.push({
+            origin: field.id,
+            reason: "duplicate_record_field",
+            details: { field: field.name },
+          });
+          continue;
+        }
+        fields.set(field.name, resolvedFieldType);
+      }
+      return recordExprType(ctx, expr, { kind: "record", fields });
+    }
     case "record_projection": {
       const targetType = inferExpr(ctx, expr.target);
       const resultType = freshTypeVar();

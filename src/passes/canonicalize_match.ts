@@ -105,6 +105,11 @@ function canonicalizeExpr(expr: Expr): Expr {
         expr.arguments[index] = canonicalizeExpr(expr.arguments[index]);
       }
       return expr;
+    case "record_literal":
+      for (const field of expr.fields) {
+        field.value = canonicalizeExpr(field.value);
+      }
+      return expr;
     case "record_projection":
       expr.target = canonicalizeExpr(expr.target);
       return expr;

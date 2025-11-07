@@ -11,6 +11,7 @@ import type {
   MParameter,
   MPattern,
   MProgram,
+  MRecordLiteralExpr,
   MRecordProjectionExpr,
   MUnaryExpr,
 } from "../../../src/ast_marked.ts";
@@ -217,6 +218,8 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
         elements: expr.elements.map((element) => lowerExpr(element, state)),
         type: resolveNodeType(state, expr.id, expr.type),
       };
+    case "record_literal":
+      return lowerRecordLiteral(expr, state);
     case "constructor":
       return lowerConstructorExpr(expr, state);
     case "call":
@@ -373,6 +376,20 @@ function lowerRecordProjection(
       target,
       createStringLiteralExpr(expr.field),
     ],
+    type: resolveNodeType(state, expr.id, expr.type),
+  };
+}
+
+function lowerRecordLiteral(
+  expr: MRecordLiteralExpr,
+  state: LoweringState,
+): CoreExpr {
+  return {
+    kind: "record",
+    fields: expr.fields.map((field) => ({
+      name: field.name,
+      value: lowerExpr(field.value, state),
+    })),
     type: resolveNodeType(state, expr.id, expr.type),
   };
 }

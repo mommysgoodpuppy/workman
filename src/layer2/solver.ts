@@ -571,6 +571,9 @@ function remarkExpr(expr: MExpr, resolved: Map<NodeId, Type>): void {
     case "tuple":
       expr.elements.forEach((el) => remarkExpr(el, resolved));
       return;
+    case "record_literal":
+      expr.fields.forEach((field) => remarkExpr(field.value, resolved));
+      return;
     case "call":
       remarkExpr(expr.callee, resolved);
       expr.arguments.forEach((arg) => remarkExpr(arg, resolved));

@@ -72,6 +72,14 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
         lowerExpr(element, ctx);
       }
       return;
+    case "record_literal":
+      for (const field of expr.fields) {
+        lowerExpr(field.value, ctx);
+      }
+      return;
+    case "record_projection":
+      lowerExpr(expr.target, ctx);
+      return;
     case "call":
       lowerExpr(expr.callee, ctx);
       for (const argument of expr.arguments) {

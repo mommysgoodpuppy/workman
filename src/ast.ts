@@ -112,6 +112,7 @@ export type Expr =
   | LiteralExpr
   | ConstructorExpr
   | TupleExpr
+  | RecordLiteralExpr
   | CallExpr
   | RecordProjectionExpr
   | BinaryExpr
@@ -142,6 +143,19 @@ export interface TupleExpr extends NodeBase {
   kind: "tuple";
   elements: Expr[];
   isMultiLine?: boolean; // True if tuple was originally formatted across multiple lines
+}
+
+export interface RecordField extends NodeBase {
+  kind: "record_field";
+  name: string;
+  value: Expr;
+  hasTrailingComma: boolean;
+}
+
+export interface RecordLiteralExpr extends NodeBase {
+  kind: "record_literal";
+  fields: RecordField[];
+  isMultiLine?: boolean;
 }
 
 export interface CallExpr extends NodeBase {
@@ -192,11 +206,19 @@ export interface MatchBundleLiteralExpr extends NodeBase {
   bundle: MatchBundle;
 }
 
+export interface TypeRecordField extends NodeBase {
+  kind: "type_record_field";
+  name: string;
+  type: TypeExpr;
+  hasTrailingComma: boolean;
+}
+
 export type TypeExpr =
   | TypeVariable
   | TypeFunction
   | TypeReference
   | TypeTuple
+  | TypeRecordExpr
   | TypeUnit;
 
 export interface TypeVariable extends NodeBase {
@@ -219,6 +241,11 @@ export interface TypeReference extends NodeBase {
 export interface TypeTuple extends NodeBase {
   kind: "type_tuple";
   elements: TypeExpr[];
+}
+
+export interface TypeRecordExpr extends NodeBase {
+  kind: "type_record";
+  fields: TypeRecordField[];
 }
 
 export interface TypeUnit extends NodeBase {

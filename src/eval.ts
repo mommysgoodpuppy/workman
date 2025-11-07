@@ -234,6 +234,8 @@ function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {
       );
       return { kind: "tuple", elements };
     }
+    case "record_literal":
+      return evaluateRecordLiteral(env, expr);
     case "record_projection":
       return evaluateRecordProjection(env, expr);
     case "call":
@@ -317,6 +319,25 @@ function evaluateConstructorExpr(
   }
   const args = expr.args.map((arg) => evaluateExpr(env, arg));
   return applyValue(callee, args, expr.span);
+}
+
+function evaluateRecordLiteral(
+  env: Environment,
+  expr: Expr & { kind: "record_literal" },
+): RuntimeValue {
+  const fields = new Map<string, RuntimeValue>();
+  for (const field of expr.fields) {
+    if (fields.has(field.name)) {
+      throw new RuntimeError(
+        `Duplicate field '${field.name}' in record literal`,
+        field.span,
+        currentSource,
+      );
+    }
+    const value = evaluateExpr(env, field.value);
+    fields.set(field.name, value);
+  }
+  return { kind: "record", fields };
 }
 
 function evaluateRecordProjection(

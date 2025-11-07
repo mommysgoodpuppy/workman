@@ -293,6 +293,8 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
       return `[${
         expr.elements.map((element) => emitExpr(element, ctx)).join(", ")
       }]`;
+    case "record":
+      return emitRecord(expr, ctx);
     case "tuple_get":
       return `(${emitExpr(expr.target, ctx)})[${expr.index}]`;
     case "data":
@@ -337,6 +339,17 @@ function emitLiteral(
     default:
       throw new Error(`Unsupported literal kind '${expr.literal.kind}'`);
   }
+}
+
+function emitRecord(expr: CoreExpr & { kind: "record" }, ctx: EmitContext): string {
+  if (expr.fields.length === 0) {
+    return "({})";
+  }
+  const pieces = expr.fields.map((field) => {
+    const value = emitExpr(field.value, ctx);
+    return `${JSON.stringify(field.name)}: ${value}`;
+  }).join(", ");
+  return `({ ${pieces} })`;
 }
 
 function emitData(expr: CoreExpr & { kind: "data" }, ctx: EmitContext): string {

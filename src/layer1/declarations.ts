@@ -281,6 +281,16 @@ export function convertTypeExpr(
         elements: typeExpr.elements.map((el) => convertTypeExpr(ctx, el, scope, options)),
       };
     }
+    case "type_record": {
+      const fields = new Map<string, Type>();
+      for (const field of typeExpr.fields) {
+        const fieldType = convertTypeExpr(ctx, field.type, scope, options);
+        if (!fields.has(field.name)) {
+          fields.set(field.name, fieldType);
+        }
+      }
+      return { kind: "record", fields };
+    }
     case "type_unit":
       return { kind: "unit" };
     default:

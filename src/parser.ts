@@ -17,11 +17,13 @@ import type {
   NamedImport,
   NamespaceImport,
   Parameter,
+  RecordField,
   Program,
   TopLevel,
   TypeAliasMember,
   TypeDeclaration,
   TypeExpr,
+  TypeRecordField,
   TypeParameter,
   TypeReexport,
 } from "./ast.ts";
@@ -558,6 +560,65 @@ class SurfaceParser {
     return { kind: "block", statements, result, span, isMultiLine, id: nextNodeId() };
   }
 
+  private looksLikeRecordLiteral(): boolean {
+    let offset = 1;
+    while (true) {
+      const token = this.peek(offset);
+      if (token.kind === "comment") {
+        offset += 1;
+        continue;
+      }
+      if (token.kind === "symbol" && token.value === "}") {
+        return true;
+      }
+      if (token.kind === "identifier") {
+        let nextOffset = offset + 1;
+        while (this.peek(nextOffset).kind === "comment") {
+          nextOffset += 1;
+        }
+        const nextToken = this.peek(nextOffset);
+        return nextToken.kind === "symbol" && nextToken.value === ":";
+      }
+      return false;
+    }
+  }
+
+  private parseRecordLiteralExpr(): Expr {
+    const open = this.expectSymbol("{");
+    const fields: RecordField[] = [];
+    while (!this.checkSymbol("}")) {
+      const nameToken = this.expectIdentifier();
+      this.expectSymbol(":");
+      const valueExpr = this.parseExpression();
+      let hasTrailingComma = false;
+      if (this.matchSymbol(",")) {
+        hasTrailingComma = true;
+      }
+      fields.push({
+        kind: "record_field",
+        name: nameToken.value,
+        value: valueExpr,
+        hasTrailingComma,
+        span: this.spanFrom(nameToken.start, valueExpr.span.end),
+        id: nextNodeId(),
+      });
+    }
+    const close = this.expectSymbol("}");
+    const span = this.spanFrom(open.start, close.end);
+    let isMultiLine = false;
+    if (this.source) {
+      const literalText = this.source.slice(open.start, close.end);
+      isMultiLine = literalText.includes("\n");
+    }
+    return {
+      kind: "record_literal",
+      fields,
+      span,
+      isMultiLine,
+      id: nextNodeId(),
+    };
+  }
+
   private parseTypeDeclaration(exportToken?: Token): TypeDeclaration {
     const typeToken = this.expectKeyword("type");
     const nameToken = this.expectTypeName();
@@ -971,6 +1032,9 @@ class SurfaceParser {
           return this.parseParenExpression();
         }
         if (token.value === "{") {
+          if (this.looksLikeRecordLiteral()) {
+            return this.parseRecordLiteralExpr();
+          }
           return this.parseBlockExpr();
         }
       }
@@ -1093,7 +1157,40 @@ class SurfaceParser {
       };
     }
 
+    if (token.kind === "symbol" && token.value === "{") {
+      return this.parseRecordTypeExpr();
+    }
+
     throw this.error("Expected type expression", token);
+  }
+
+  private parseRecordTypeExpr(): TypeExpr {
+    const open = this.expectSymbol("{");
+    const fields: TypeRecordField[] = [];
+    while (!this.checkSymbol("}")) {
+      const nameToken = this.expectIdentifier();
+      this.expectSymbol(":");
+      const typeExpr = this.parseTypeExpr();
+      let hasTrailingComma = false;
+      if (this.matchSymbol(",")) {
+        hasTrailingComma = true;
+      }
+      fields.push({
+        kind: "type_record_field",
+        name: nameToken.value,
+        type: typeExpr,
+        hasTrailingComma,
+        span: this.spanFrom(nameToken.start, typeExpr.span.end),
+        id: nextNodeId(),
+      });
+    }
+    const close = this.expectSymbol("}");
+    return {
+      kind: "type_record",
+      fields,
+      span: this.spanFrom(open.start, close.end),
+      id: nextNodeId(),
+    };
   }
 
   private parseTypeTupleOrGrouping(): TypeExpr {

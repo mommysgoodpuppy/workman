@@ -194,6 +194,25 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
         type,
       };
     }
+    case "record_literal": {
+      const fields = expr.fields.map((field) => ({
+        kind: "record_field" as const,
+        span: field.span,
+        id: field.id,
+        name: field.name,
+        value: materializeExpr(ctx, field.value),
+        hasTrailingComma: field.hasTrailingComma,
+      }));
+      const type = getExprTypeOrUnknown(ctx, expr, "expr.record_literal");
+      return {
+        kind: "record_literal",
+        span: expr.span,
+        id: expr.id,
+        fields,
+        isMultiLine: expr.isMultiLine,
+        type,
+      };
+    }
     case "record_projection": {
       const target = materializeExpr(ctx, expr.target);
       const type = getExprTypeOrUnknown(
@@ -516,6 +535,20 @@ export function materializeTypeExpr(
         span: typeExpr.span,
         id: typeExpr.id,
         elements: typeExpr.elements.map((el) => materializeTypeExpr(ctx, el)),
+      };
+    case "type_record":
+      return {
+        kind: "type_record",
+        span: typeExpr.span,
+        id: typeExpr.id,
+        fields: typeExpr.fields.map((field) => ({
+          kind: "type_record_field" as const,
+          span: field.span,
+          id: field.id,
+          name: field.name,
+          type: materializeTypeExpr(ctx, field.type),
+          hasTrailingComma: field.hasTrailingComma,
+        })),
       };
     case "type_unit":
       return {

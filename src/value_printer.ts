@@ -14,6 +14,8 @@ export function formatRuntimeValue(value: RuntimeValue): string {
       return value.value;
     case "tuple":
       return formatTuple(value);
+    case "record":
+      return formatRecord(value);
     case "data":
       return formatData(value);
     case "closure":
@@ -31,6 +33,16 @@ function formatTuple(tuple: Extract<RuntimeValue, { kind: "tuple" }>): string {
   }
   const items = tuple.elements.map(formatRuntimeValue).join(", ");
   return `(${items})`;
+}
+
+function formatRecord(record: Extract<RuntimeValue, { kind: "record" }>): string {
+  if (record.fields.size === 0) {
+    return "{ }";
+  }
+  const pieces = Array.from(record.fields.entries()).map(([name, value]) =>
+    `${name}: ${formatRuntimeValue(value)}`
+  );
+  return `{ ${pieces.join(", ")} }`;
 }
 
 function formatData(data: Extract<RuntimeValue, { kind: "data" }>): string {

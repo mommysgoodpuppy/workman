@@ -1,0 +1,56 @@
+type Chain<A> = Done<A> | Step<Option<A>, ((A) => Chain<A>)>;
+
+let rec runChain = match(chain) {
+  Done(v) => { Some(v) },
+  Step(opt, k) => {
+    match(opt) {
+      None => { None },
+      Some(x) => { runChain(k(x)) }
+    }
+  }
+};
+
+let chain = (opt, k) => {
+  Step(opt, k)
+};
+
+let done = (v) => {
+  Done(v)
+};
+
+let step1 = () => { Some(2) };
+
+let step2 = (value) => {
+  match(eq(value, 2)) {
+    true => { Some(add(value, 3)) },
+    false => { None }
+  }
+};
+
+let step3 = (value) => {
+  match(eq(value, 5)) {
+    true => { Some(add(value, value)) },
+    false => { None }
+  }
+};
+
+let printOption = match(opt) {
+  Some(v) => { print(v) },
+  None => { print("None") }
+};
+
+let chainExample = () => {
+  chain(step1(), (x) => {
+    chain(step2(x), (y) => {
+      chain(step3(y), (z) => {
+        done(z)
+      })
+    })
+  })
+};
+
+let result = runChain(chainExample());
+
+let main = () => {
+  printOption(result)
+};

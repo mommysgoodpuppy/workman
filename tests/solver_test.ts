@@ -190,6 +190,17 @@ Deno.test("analyzeProgram surfaces not_boolean diagnostic for boolean operators"
   collectReasons(reasons, "not_boolean");
 });
 
+Deno.test("analyzeProgram surfaces duplicate_record_field diagnostic", () => {
+  const analysis = analyzeSource(`
+    let dup = {
+      foo: 1,
+      foo: 2,
+    };
+  `);
+  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
+  collectReasons(reasons, "duplicate_record_field");
+});
+
 Deno.test("solver surfaces missing_field diagnostic when record lacks requested field", () => {
   const targetId: NodeId = 210;
   const resultId: NodeId = 211;

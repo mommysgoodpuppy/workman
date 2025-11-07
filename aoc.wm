@@ -13,9 +13,13 @@ let charComma      = toCharCode(fromLiteral(","));
 let charCloseParen = toCharCode(fromLiteral(")"));
 let mulLiteral     = fromLiteral("mul(");
 
--- A tiny result “record” via tuple aliases:
--- ParseStep = Some((value, nextIndex)) | None
+-- ParseStep now uses real records:
+-- ParseStep = Some({ value, next }) | None
 -- Advance   = Some(nextIndex) | None
+
+let makeStep = (value, next) => {
+  ({ value: value, next: next })
+};
 
 -- read a single digit at i: Option((digit, i+1))
 let oneDigit = match(chars, i) {
@@ -25,7 +29,7 @@ let oneDigit = match(chars, i) {
       Some(code) => {
         match(charToDigit(code)) {
           None => { None },
-          Some(d) => { Some((d, add(i, 1))) }
+          Some(d) => { Some(makeStep(d, add(i, 1))) }
         }
       }
     }
@@ -37,17 +41,13 @@ let oneDigit = match(chars, i) {
 let rec moreDigits3 = match(chars, i, count, acc) {
   (chars, i, count, acc) => {
     match(eq(count, 3)) {
-      true => { Some((acc, i)) },
+      true => { Some(makeStep(acc, i)) },
       false => {
         match(oneDigit(chars, i)) {
-          None => { Some((acc, i)) },
-          Some(pair) => {
-            match(pair) {
-              (d, i1) => {
-                let acc1 = add(mul(acc, 10), d);
-                moreDigits3(chars, i1, add(count, 1), acc1)
-              }
-            }
+          None => { Some(makeStep(acc, i)) },
+          Some(step) => {
+            let acc1 = add(mul(acc, 10), step.value);
+            moreDigits3(chars, step.next, add(count, 1), acc1)
           }
         }
       }
@@ -60,11 +60,7 @@ let readNumber = match(chars, i) {
   (chars, i) => {
     match(oneDigit(chars, i)) {
       None => { None },
-      Some(pair) => {
-        match(pair) {
-          (d0, i1) => { moreDigits3(chars, i1, 1, d0) }
-        }
-      }
+      Some(step) => { moreDigits3(chars, step.next, 1, step.value) }
     }
   }
 };
@@ -102,16 +98,16 @@ let andThenIndex = match(optI, k) {
   (None,    _)  => { None }
 };
 
--- andThenPair : Option((a, i)) × ((a, i) -> Option X) → Option X
-let andThenPair = match(optPair, k) {
-  (Some(pair), k) => { k(pair) },
-  (None,       _) => { None }
+-- andThenStep : Option({ value, next }) × ({ value, next } -> Option X) → Option X
+let andThenStep = match(optStep, k) {
+  (Some(step), k) => { k(step) },
+  (None,      _)  => { None }
 };
 
--- mapPair : Option((a, i)) × ((a, i) -> b) → Option(b)
-let mapPair = match(optPair, f) {
-  (Some(pair), f) => { Some(f(pair)) },
-  (None,       _) => { None }
+-- mapStep : Option({ value, next }) × ({ value, next } -> b) → Option(b)
+let mapStep = match(optStep, f) {
+  (Some(step), f) => { Some(f(step)) },
+  (None,      _)  => { None }
 };
 
 -- parsing bricks as bundles -------------------------------------------
@@ -143,22 +139,14 @@ let parseMulAt = match(chars, i) {
   -- we insert bundles as arms to make the control read top-to-bottom
   (chars, i) => {
     andThenIndex(expectMulLiteral(chars, i), (afterMul) => {
-      andThenPair(parseLeft(chars, afterMul), (leftPair) => {
-        match(leftPair) {
-          (leftVal, afterLeft) => {
-            andThenIndex(parseComma(chars, afterLeft), (afterComma) => {
-              andThenPair(parseRight(chars, afterComma), (rightPair) => {
-                match(rightPair) {
-                  (rightVal, afterRight) => {
-                    andThenIndex(parseCloseParen(chars, afterRight), (afterClose) => {
-                      Some((mul(leftVal, rightVal), afterClose))
-                    })
-                  }
-                }
-              })
+      andThenStep(parseLeft(chars, afterMul), (leftStep) => {
+        andThenIndex(parseComma(chars, leftStep.next), (afterComma) => {
+          andThenStep(parseRight(chars, afterComma), (rightStep) => {
+            andThenIndex(parseCloseParen(chars, rightStep.next), (afterClose) => {
+              Some(makeStep(mul(leftStep.value, rightStep.value), afterClose))
             })
-          }
-        }
+          })
+        })
       })
     })
   }
@@ -172,11 +160,7 @@ let rec scan = match(chars, i, acc) {
       None => { acc },
       Some(_) => {
         match(parseMulAt(chars, i)) {
-          Some(pair) => {
-            match(pair) {
-              (value, nextI) => { scan(chars, nextI, add(acc, value)) }
-            }
-          },
+          Some(step) => { scan(chars, step.next, add(acc, step.value)) },
           None => { scan(chars, add(i, 1), acc) }
         }
       }

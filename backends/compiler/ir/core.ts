@@ -36,6 +36,16 @@ export interface CoreTupleExpr extends CoreNodeMeta {
   readonly elements: readonly CoreExpr[];
 }
 
+export interface CoreRecordField {
+  readonly name: string;
+  readonly value: CoreExpr;
+}
+
+export interface CoreRecordExpr extends CoreNodeMeta {
+  readonly kind: "record";
+  readonly fields: readonly CoreRecordField[];
+}
+
 export interface CoreTupleGetExpr extends CoreNodeMeta {
   readonly kind: "tuple_get";
   readonly target: CoreExpr;
@@ -104,6 +114,7 @@ export type CoreExpr =
   | CoreLiteralExpr
   | CoreVarExpr
   | CoreTupleExpr
+  | CoreRecordExpr
   | CoreTupleGetExpr
   | CoreDataExpr
   | CoreLambdaExpr
@@ -395,6 +406,19 @@ function formatExprLines(
         );
       }
       lines.push(`${indent}]`);
+      return lines;
+    }
+    case "record": {
+      if (expr.fields.length === 0) {
+        return [`${indent}{ }${typeSuffix}`];
+      }
+      const lines = [`${indent}record${typeSuffix}`];
+      for (const field of expr.fields) {
+        lines.push(`${indent}${options.indent}${field.name}:`);
+        lines.push(
+          ...formatExprLines(field.value, options, depth + 2),
+        );
+      }
       return lines;
     }
     case "tuple_get": {

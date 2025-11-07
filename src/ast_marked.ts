@@ -32,6 +32,13 @@ export interface MLiteralExpr extends MTypedNode {
   literal: Literal;
 }
 
+export interface MRecordField extends MNodeBase {
+  kind: "record_field";
+  name: string;
+  value: MExpr;
+  hasTrailingComma: boolean;
+}
+
 export interface MConstructorExpr extends MTypedNode {
   kind: "constructor";
   name: string;
@@ -47,6 +54,12 @@ export interface MRecordProjectionExpr extends MTypedNode {
 export interface MTupleExpr extends MTypedNode {
   kind: "tuple";
   elements: MExpr[];
+  isMultiLine?: boolean;
+}
+
+export interface MRecordLiteralExpr extends MTypedNode {
+  kind: "record_literal";
+  fields: MRecordField[];
   isMultiLine?: boolean;
 }
 
@@ -219,6 +232,18 @@ export interface MTypeTuple extends MNodeBase {
   elements: MTypeExpr[];
 }
 
+export interface MTypeRecordField extends MNodeBase {
+  kind: "type_record_field";
+  name: string;
+  type: MTypeExpr;
+  hasTrailingComma: boolean;
+}
+
+export interface MTypeRecordExpr extends MNodeBase {
+  kind: "type_record";
+  fields: MTypeRecordField[];
+}
+
 export interface MTypeUnit extends MNodeBase {
   kind: "type_unit";
 }
@@ -228,6 +253,7 @@ export type MTypeExpr =
   | MTypeFunction
   | MTypeReference
   | MTypeTuple
+  | MTypeRecordExpr
   | MTypeUnit
   | MTypeExprMark;
 
@@ -243,6 +269,7 @@ export type MExpr =
   | MLiteralExpr
   | MConstructorExpr
   | MTupleExpr
+  | MRecordLiteralExpr
   | MCallExpr
   | MRecordProjectionExpr
   | MBinaryExpr
