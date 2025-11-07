@@ -17,20 +17,20 @@ let strErr = (e) => {
 
 export let pipeline = () => {
   let start = Ok(10);
-  let mapped = map((inc, start));
-  let chained = andThen((doubleIfOdd, mapped));
-  withDefault((0, chained))
+  let mapped = map(inc, start);
+  let chained = andThen(doubleIfOdd, mapped);
+  withDefault(0, chained)
 };
 
 export let foldBoth = () => {
   let start = Err("boom");
-  fold((
+  fold(
     (e) => {
-    0
-  },
+      0
+    },
     (v) => {
-    add(v, 1)
-  },
+      add(v, 1)
+    },
     start
-  ))
+  )
 };

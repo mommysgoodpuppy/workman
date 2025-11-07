@@ -1,7 +1,7 @@
 -- Generic data helpers for an analytics pipeline.
 
 -- Wrap any reading in a diagnostic structure using a first-class match.
-let wrapAsDiagnostic = match(tuple) {
+let wrapAsDiagnostic = match(buildMessage, reading) {
   (buildMessage, reading) => { buildMessage(reading) }
 };
 

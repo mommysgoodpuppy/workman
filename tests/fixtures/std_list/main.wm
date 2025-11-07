@@ -4,18 +4,18 @@ let square = (n) => {
   mul(n, n)
 };
 
-let foldAdd = match(tuple) {
+let foldAdd = match(acc, value) {
   (acc, value) => { add(acc, value) }
 };
 
 export let sumSquares = () => {
-  let numbers = listRange((1, 5));
-  let squares = listMap((square, numbers));
-  listFoldl((foldAdd, 0, squares))
+  let numbers = listRange(1, 5);
+  let squares = listMap(square, numbers);
+  listFoldl(foldAdd, 0, squares)
 };
 
 export let reversedRange = () => {
-  listReverse(listRange((1, 4)))
+  listReverse(listRange(1, 4))
 };
 
 export let sortedDemo = () => {

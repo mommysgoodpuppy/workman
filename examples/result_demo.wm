@@ -14,7 +14,7 @@ let connect = match(status) {
 };
 
 -- First-class binder for Result values.
-let bindResult = match(tuple) {
+let bindResult = match(result, onOk) {
   (Ok(value), onOk) => { onOk(value) },
   (Err(error), _) => { Err(error) }
 };
@@ -22,17 +22,17 @@ let bindResult = match(tuple) {
 -- Combine connectivity and readings into a single Result value.
 let loadSnapshot = (status) => {
   (readings) => {
-    bindResult((
+    bindResult(
       connect(status),
       (seed) => {
-      bindResult((
-        ensureRecent(readings),
-        (latest) => {
-        Ok(Link(0, latest))
+        bindResult(
+          ensureRecent(readings),
+          (latest) => {
+            Ok(Link(0, latest))
+          }
+        )
       }
-      ))
-    }
-    ))
+    )
   }
 };
 

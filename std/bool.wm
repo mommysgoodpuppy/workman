@@ -3,23 +3,23 @@ export let not = match(value) {
   false => { true }
 };
 
-export let boolAnd = match(tuple) {
+export let boolAnd = match(lhs, rhs) {
   (true, true) => { true },
   _ => { false }
 };
 
-export let boolOr = match(tuple) {
+export let boolOr = match(lhs, rhs) {
   (false, false) => { false },
   _ => { true }
 };
 
-export let boolXor = match(tuple) {
+export let boolXor = match(lhs, rhs) {
   (true, true) => { false },
   (false, false) => { false },
   _ => { true }
 };
 
-export let ifThenElse = match(tuple) {
+export let ifThenElse = match(condition, thenBranch, elseBranch) {
   (true, thenBranch, _) => { thenBranch() },
   (false, _, elseBranch) => { elseBranch() }
 };

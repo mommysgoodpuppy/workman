@@ -3,40 +3,40 @@ let rec length = match(list) {
   Link(_, rest) => { add(1, length(rest)) }
 };
 
-let rec map = match(tuple) {
+let rec map = match(f, list) {
   (f, Empty) => { Empty },
-  (f, Link(x, rest)) => { Link(f(x), map((f, rest))) }
+  (f, Link(x, rest)) => { Link(f(x), map(f, rest)) }
 };
 
-let rec fold = match(tuple) {
+let rec fold = match(f, acc, list) {
   (f, acc, Empty) => { acc },
-  (f, acc, Link(x, rest)) => { fold((f, f((acc, x)), rest)) }
+  (f, acc, Link(x, rest)) => { fold(f, f(acc, x), rest) }
 };
 
-let rec insertBy = match(tuple) {
+let rec insertBy = match(cmp, value, list) {
   (cmp, value, Empty) => { Link(value, Empty) },
   (cmp, value, Link(x, rest)) => {
     match(cmp(value, x)) {
-      GT => { Link(x, insertBy((cmp, value, rest))) },
+      GT => { Link(x, insertBy(cmp, value, rest)) },
       _ => { Link(value, Link(x, rest)) }
     }
   }
 };
 
-let rec insertionSortBy = match(tuple) {
+let rec insertionSortBy = match(cmp, list) {
   (cmp, Empty) => { Empty },
-  (cmp, Link(x, rest)) => { insertBy((cmp, x, insertionSortBy((cmp, rest)))) }
+  (cmp, Link(x, rest)) => { insertBy(cmp, x, insertionSortBy(cmp, rest)) }
 };
 
 let sortInt = (list) => {
-  insertionSortBy((cmpInt, list))
+  insertionSortBy(cmpInt, list)
 };
 
-let rec range = match(tuple) {
+let rec range = match(start, finish) {
   (start, finish) => {
     match(cmpInt(start, finish)) {
       GT => { Empty },
-      _ => { Link(start, range((add(start, 1), finish))) }
+      _ => { Link(start, range(add(start, 1), finish)) }
     }
   }
 };

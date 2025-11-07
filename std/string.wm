@@ -61,21 +61,21 @@ export let strIsEmpty = (s) => {
   }
 };
 
-export let rec strCharAt = match((s, n)) {
+export let rec strCharAt = match(s, n) {
   (Empty, _) => { None },
   (Link(c, _), 0) => { Some(c) },
   (Link(_, rest), idx) => { strCharAt(rest, sub(idx, 1)) }
 };
 
 -- Take first n characters
-export let rec strTake = match((s, n)) {
+export let rec strTake = match(s, n) {
   (_, 0) => { Empty },
   (Empty, _) => { Empty },
   (Link(c, rest), count) => { Link(c, strTake(rest, sub(count, 1))) }
 };
 
 -- Drop first n characters
-export let rec strDrop = match((s, n)) {
+export let rec strDrop = match(s, n) {
   (value, 0) => { value },
   (Empty, _) => { Empty },
   (Link(_, rest), count) => { strDrop(rest, sub(count, 1)) }
@@ -93,7 +93,7 @@ export let strSlice = (s, start, end) => {
 };
 
 -- Concatenate two strings
-export let rec strConcat = match((s1, s2)) {
+export let rec strConcat = match(s1, s2) {
   (Empty, tail) => { tail },
   (Link(c, rest), tail) => { Link(c, strConcat(rest, tail)) }
 };
@@ -193,7 +193,7 @@ export let isWhitespace = (c) => {
 };
 
 -- String equality
-export let rec strEq = match((s1, s2)) {
+export let rec strEq = match(s1, s2) {
   (Empty, Empty) => { true },
   (Empty, _) => { false },
   (_, Empty) => { false },

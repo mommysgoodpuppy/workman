@@ -3,13 +3,13 @@ from "std/list" import { listRange, listMap, listFoldl, listSortInt };
 let square = (n) => {
   mul(n, n)
 };
-let addPair = match(tuple) {
+let addPair = match(acc, value) {
   (acc, value) => { add(acc, value) }
 };
 export let sumSquares = () => {
-  let numbers = listRange((1, 5));
-  let squares = listMap((square, numbers));
-  listFoldl((addPair, 0, squares))
+  let numbers = listRange(1, 5);
+  let squares = listMap(square, numbers);
+  listFoldl(addPair, 0, squares)
 };
 export let sortedDemo = () => {
   listSortInt(Link(3, Link(1, Link(2, Empty))))

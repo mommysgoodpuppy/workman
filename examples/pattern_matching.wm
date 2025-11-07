@@ -16,8 +16,8 @@ let orderQuantity = match(order) {
 type Alert = Restock<Int> | Monitor;
 
 let planNextStep = (target) => {
-  (tuple) => {
-    match(tuple) {
+  (stockStatus, history) => {
+    match(stockStatus, history) {
       (Some(stock), _) => { Monitor },
       (None, _) => { Restock(target) }
     }
@@ -29,6 +29,6 @@ let evaluateInventory = (target) => {
     let status = () => {
       latestStockLevel(stockHistory)
     };
-    planNextStep(target)((status(), stockHistory))
+    planNextStep(target)(status(), stockHistory)
   }
 };

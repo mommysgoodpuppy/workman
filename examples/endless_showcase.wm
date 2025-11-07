@@ -25,7 +25,7 @@ let mod = (n, k) => {
 };
 
 let combineStrings = (parts) => {
-  listJoin((fromLiteral(""), parts))
+  listJoin(fromLiteral(""), parts)
 };
 
 let applyTwice = (fn) => {
@@ -34,12 +34,12 @@ let applyTwice = (fn) => {
   }
 };
 
-let buildWindow = match(tuple) {
+let buildWindow = match(start, size) {
   (start, size) => {
     let finish = () => {
       start + size - 1
     };
-    listRange((start, finish()))
+    listRange(start, finish())
   }
 };
 
@@ -67,16 +67,16 @@ let fizzBuzzLabel = (n) => {
 };
 
 let formatWindow = (window) => {
-  listJoin((fromLiteral(", "), listMap((fizzBuzzLabel, window))))
+  listJoin(fromLiteral(", "), listMap(fizzBuzzLabel, window))
 };
 
 let sumList = (values) => {
-  let folder = match(tuple) {
+  let folder = match(acc, value) {
     (acc, value) => {
       acc + value
     }
   };
-  listFoldl((folder, 0, values))
+  listFoldl(folder, 0, values)
 };
 
 let describeWindowSummary = (window) => {
@@ -114,7 +114,7 @@ let describeWindowSummary = (window) => {
   )
 };
 
-let describePhase = match(tuple) {
+let describePhase = match(phase, iteration, window) {
   (Counting, iteration, window) => {
     combineStrings(
       Link(
@@ -183,7 +183,7 @@ let renderState = (state) => {
         )
       };
       let body = () => {
-        describePhase((phase, iteration, window))
+        describePhase(phase, iteration, window)
       };
       match(maybeHighlight(iteration)) {
         None => {
@@ -202,7 +202,7 @@ let renderState = (state) => {
   }
 };
 
-let advancePhase = match(tuple) {
+let advancePhase = match(phase, iteration) {
   (Counting, iteration) => {
     match(cmpInt(mod(iteration, 5), 0)) {
       EQ => { Sampling },
@@ -224,10 +224,10 @@ let nextState = match(state) {
       iteration + 1
     };
     let updatedPhase = () => {
-      advancePhase((phase, nextIteration()))
+      advancePhase(phase, nextIteration())
     };
     let nextWindow = () => {
-      buildWindow((nextIteration(), windowWidth()))
+      buildWindow(nextIteration(), windowWidth())
     };
     State(updatedPhase(), nextIteration(), nextWindow())
   }
@@ -241,7 +241,7 @@ let rec mainLoop = match(state) {
 };
 
 let initialState = () => {
-  State(Counting, 0, buildWindow((0, windowWidth())))
+  State(Counting, 0, buildWindow(0, windowWidth()))
 };
 
 export let main = () => {

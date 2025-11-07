@@ -380,7 +380,7 @@ function callClosure(
 ): RuntimeValue {
   if (args.length !== closure.parameters.length) {
     throw new RuntimeError(
-      `Expected ${closure.parameters.length} argument(s) but received ${args.length}`,
+      `Non-exhaustive patterns at runtime (expected ${closure.parameters.length} argument(s) but received ${args.length})`,
       span,
       currentSource,
     );

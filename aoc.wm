@@ -1,34 +1,51 @@
--- Advent of Code 2024 - Day 3 (Mull It Over)
--- Walk the corrupted tape one character at a time looking for mul(X,Y)
--- instructions. When the pattern matches, accumulate X * Y and jump to the
--- character after the closing parenthesis. Otherwise, advance by one.
-
-from "std/string" import { charToDigit, fromLiteral, strEq };
-from "std/list/core" import { Empty, Link };
+from "std/string" import { fromLiteral, strEq };
 from "std/list" import { listSlice, listAt };
+from "std/string" import { charToDigit };
+
+-- helpers --------------------------------------------------------------
 
 let toCharCode = match(literal) {
   Link(code, _) => { code },
   Empty => { 0 }
 };
 
-let charComma = toCharCode(fromLiteral(","));
+let charComma      = toCharCode(fromLiteral(","));
 let charCloseParen = toCharCode(fromLiteral(")"));
-let mulLiteral = fromLiteral("mul(");
+let mulLiteral     = fromLiteral("mul(");
 
-let rec consumeDigits = match(tuple) {
-  (chars, index, count, value) => {
+-- A tiny result “record” via tuple aliases:
+-- ParseStep = Some((value, nextIndex)) | None
+-- Advance   = Some(nextIndex) | None
+
+-- read a single digit at i: Option((digit, i+1))
+let oneDigit = match(chars, i) {
+  (chars, i) => {
+    match(listAt(chars, i)) {
+      None => { None },
+      Some(code) => {
+        match(charToDigit(code)) {
+          None => { None },
+          Some(d) => { Some((d, add(i, 1))) }
+        }
+      }
+    }
+  }
+};
+
+-- greedy read up to 3 digits starting with an already consumed first digit
+-- internal worker: (chars, i, count, acc) -> Option((value, next))
+let rec moreDigits3 = match(chars, i, count, acc) {
+  (chars, i, count, acc) => {
     match(eq(count, 3)) {
-      true => { (value, index) },
+      true => { Some((acc, i)) },
       false => {
-        match(listAt(chars, index)) {
-          None => { (value, index) },
-          Some(code) => {
-            match(charToDigit(code)) {
-              None => { (value, index) },
-              Some(digit) => {
-                let nextValue = add(mul(value, 10), digit);
-                consumeDigits((chars, add(index, 1), add(count, 1), nextValue))
+        match(oneDigit(chars, i)) {
+          None => { Some((acc, i)) },
+          Some(pair) => {
+            match(pair) {
+              (d, i1) => {
+                let acc1 = add(mul(acc, 10), d);
+                moreDigits3(chars, i1, add(count, 1), acc1)
               }
             }
           }
@@ -38,96 +55,139 @@ let rec consumeDigits = match(tuple) {
   }
 };
 
-let readNumber = (chars, startIndex) => {
-  match(listAt(chars, startIndex)) {
-    None => { None },
-    Some(code) => {
-      match(charToDigit(code)) {
-        None => { None },
-        Some(digit) => {
-          let parsed = consumeDigits((chars, add(startIndex, 1), 1, digit));
-          match(parsed) {
-            (value, nextIndex) => { Some((value, nextIndex)) }
-          }
+-- public: readNumber(chars, i) -> Option((value, next))
+let readNumber = match(chars, i) {
+  (chars, i) => {
+    match(oneDigit(chars, i)) {
+      None => { None },
+      Some(pair) => {
+        match(pair) {
+          (d0, i1) => { moreDigits3(chars, i1, 1, d0) }
         }
       }
     }
   }
 };
 
-let expectCharAt = (chars, index, expected) => {
-  match(listAt(chars, index)) {
-    None => { None },
-    Some(code) => {
-      match(eq(code, expected)) {
-        true => { Some(add(index, 1)) },
-        false => { None }
+-- expect a single char: Option(i+1)
+let expectChar = match(chars, i, expected) {
+  (chars, i, expected) => {
+    match(listAt(chars, i)) {
+      None => { None },
+      Some(code) => {
+        match(eq(code, expected)) {
+          true => { Some(add(i, 1)) },
+          false => { None }
+        }
       }
     }
   }
 };
 
-let parseMulAt = (chars, index) => {
-  match(strEq(listSlice(chars, index, add(index, 4)), mulLiteral)) {
-    false => { None },
-    true => {
-      match(readNumber(chars, add(index, 4))) {
-        None => { None },
-        Some(leftParsed) => {
-          match(leftParsed) {
-            (leftValue, afterLeft) => {
-              match(expectCharAt(chars, afterLeft, charComma)) {
-                None => { None },
-                Some(afterComma) => {
-                  match(readNumber(chars, afterComma)) {
-                    None => { None },
-                    Some(rightParsed) => {
-                      match(rightParsed) {
-                        (rightValue, afterRight) => {
-                          match(expectCharAt(chars, afterRight, charCloseParen)) {
-                            None => { None },
-                            Some(afterClose) => {
-                              Some((mul(leftValue, rightValue), afterClose))
-                            }
-                          }
-                        }
-                      }
-                    }
+-- literal match: "mul(" at i → Option(i+4)
+let expectMulLiteral = match(chars, i) {
+  (chars, i) => {
+    match(strEq(listSlice(chars, i, add(i, 4)), mulLiteral)) {
+      true => { Some(add(i, 4)) },
+      false => { None }
+    }
+  }
+};
+
+-- tiny combinators as bundles -----------------------------------------
+
+-- andThenIndex : Option(i) × (i -> Option X) → Option X
+let andThenIndex = match(optI, k) {
+  (Some(i1), k) => { k(i1) },
+  (None,    _)  => { None }
+};
+
+-- andThenPair : Option((a, i)) × ((a, i) -> Option X) → Option X
+let andThenPair = match(optPair, k) {
+  (Some(pair), k) => { k(pair) },
+  (None,       _) => { None }
+};
+
+-- mapPair : Option((a, i)) × ((a, i) -> b) → Option(b)
+let mapPair = match(optPair, f) {
+  (Some(pair), f) => { Some(f(pair)) },
+  (None,       _) => { None }
+};
+
+-- parsing bricks as bundles -------------------------------------------
+
+-- parseLeft : (chars, i) → Option((leftValue, next))
+let parseLeft = match(chars, i) {
+  (chars, i) => { readNumber(chars, i) }
+};
+
+-- parseComma : (chars, i) → Option(i+1)
+let parseComma = match(chars, i) {
+  (chars, i) => { expectChar(chars, i, charComma) }
+};
+
+-- parseRight : (chars, i) → Option((rightValue, next))
+let parseRight = match(chars, i) {
+  (chars, i) => { readNumber(chars, i) }
+};
+
+-- parseCloseParen : (chars, i) → Option(i+1)
+let parseCloseParen = match(chars, i) {
+  (chars, i) => { expectChar(chars, i, charCloseParen) }
+};
+
+-- compose the bricks into parseMulAt ----------------------------------
+
+-- parseMulAt : (chars, i) → Option((value, next))
+let parseMulAt = match(chars, i) {
+  -- we insert bundles as arms to make the control read top-to-bottom
+  (chars, i) => {
+    andThenIndex(expectMulLiteral(chars, i), (afterMul) => {
+      andThenPair(parseLeft(chars, afterMul), (leftPair) => {
+        match(leftPair) {
+          (leftVal, afterLeft) => {
+            andThenIndex(parseComma(chars, afterLeft), (afterComma) => {
+              andThenPair(parseRight(chars, afterComma), (rightPair) => {
+                match(rightPair) {
+                  (rightVal, afterRight) => {
+                    andThenIndex(parseCloseParen(chars, afterRight), (afterClose) => {
+                      Some((mul(leftVal, rightVal), afterClose))
+                    })
                   }
                 }
-              }
-            }
+              })
+            })
           }
+        }
+      })
+    })
+  }
+};
+
+-- scanner as a bundle --------------------------------------------------
+
+let rec scan = match(chars, i, acc) {
+  (chars, i, acc) => {
+    match(listAt(chars, i)) {
+      None => { acc },
+      Some(_) => {
+        match(parseMulAt(chars, i)) {
+          Some(pair) => {
+            match(pair) {
+              (value, nextI) => { scan(chars, nextI, add(acc, value)) }
+            }
+          },
+          None => { scan(chars, add(i, 1), acc) }
         }
       }
     }
   }
 };
 
-let rec scanTape = match(tuple) {
-  (chars, index, acc) => {
-    match(listAt(chars, index)) {
-      None => { acc },
-      Some(_) => {
-        match(parseMulAt(chars, index)) {
-          None => { scanTape((chars, add(index, 1), acc)) },
-          Some(parsed) => {
-            match(parsed) {
-              (value, nextIndex) => { scanTape((chars, nextIndex, add(acc, value))) }
-            }
-          }
-        }
-      }
-    }
-  }
-};
+-- top-level ------------------------------------------------------------
 
 let corruptedMemory = fromLiteral("xmul(2,4)%&mul[3,7]!@^do_not_mul(5,5)+mul(32,64]then(mul(11,8)mul(8,5))");
 
-let part1 = () => {
-  scanTape((corruptedMemory, 0, 0))
-};
-
 let main = () => {
-  print(part1())
+  print(scan(corruptedMemory, 0, 0))
 };

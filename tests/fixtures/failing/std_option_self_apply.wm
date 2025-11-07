@@ -1,5 +1,5 @@
 from "std/option" import { map, Some };
 
 export let selfApply = () => {
-  map((map, Some(1)))
+  map(map, Some(1))
 };

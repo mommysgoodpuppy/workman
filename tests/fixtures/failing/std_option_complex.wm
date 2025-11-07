@@ -13,9 +13,9 @@ let toDoubleIfOdd = (n) => {
 
 export let pipeline = () => {
   let start = Some(10);
-  let mapped = map((inc, start));
-  let chained = flatMap((toDoubleIfOdd, mapped));
-  withDefault((0, chained))
+  let mapped = map(inc, start);
+  let chained = flatMap(toDoubleIfOdd, mapped);
+  withDefault(0, chained)
 };
 
 export let fallback = () => {
@@ -23,5 +23,5 @@ export let fallback = () => {
   let fallback = () => {
     Some(42)
   };
-  orElse((fallback, missing))
+  orElse(fallback, missing)
 };

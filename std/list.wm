@@ -8,22 +8,22 @@ export let rec listLength = match(list) {
   Link(_, rest) => { intAdd(1, listLength(rest)) }
 };
 
-export let rec listAppend = match(tuple) {
+export let rec listAppend = match(xs, ys) {
   (Empty, ys) => { ys },
-  (Link(x, rest), ys) => { Link(x, listAppend((rest, ys))) }
+  (Link(x, rest), ys) => { Link(x, listAppend(rest, ys)) }
 };
 
-export let rec listMap = match(tuple) {
+export let rec listMap = match(f, list) {
   (f, Empty) => { Empty },
-  (f, Link(x, rest)) => { Link(f(x), listMap((f, rest))) }
+  (f, Link(x, rest)) => { Link(f(x), listMap(f, rest)) }
 };
 
-export let rec listFilter = match(tuple) {
+export let rec listFilter = match(predicate, list) {
   (predicate, Empty) => { Empty },
   (predicate, Link(x, rest)) => {
     match(predicate(x)) {
-      true => { Link(x, listFilter((predicate, rest))) },
-      false => { listFilter((predicate, rest)) }
+      true => { Link(x, listFilter(predicate, rest)) },
+      false => { listFilter(predicate, rest) }
     }
   }
 };
@@ -52,14 +52,14 @@ export let rec listAt = match(list, index) {
 };
 
 
-export let rec listFoldl = match(tuple) {
+export let rec listFoldl = match(f, acc, list) {
   (f, acc, Empty) => { acc },
-  (f, acc, Link(x, rest)) => { listFoldl((f, f((acc, x)), rest)) }
+  (f, acc, Link(x, rest)) => { listFoldl(f, f(acc, x), rest) }
 };
 
-export let rec listFoldr = match(tuple) {
+export let rec listFoldr = match(f, acc, list) {
   (f, acc, Empty) => { acc },
-  (f, acc, Link(x, rest)) => { f((x, listFoldr((f, acc, rest)))) }
+  (f, acc, Link(x, rest)) => { f(x, listFoldr(f, acc, rest)) }
 };
 
 let rec reverseAcc = match(list, acc) {
@@ -71,22 +71,22 @@ export let listReverse = (list) => {
   reverseAcc(list, Empty)
 };
 
-export let rec listRange = match(tuple) {
+export let rec listRange = match(start, finish) {
   (start, finish) => {
     match(intCompare(start, finish)) {
       GT => { Empty },
-      _ => { Link(start, listRange((intAdd(start, 1), finish))) }
+      _ => { Link(start, listRange(intAdd(start, 1), finish)) }
     }
   }
 };
 
-export let rec listInsertBy = match(tuple) {
+export let rec listInsertBy = match(cmp, value, list) {
   (cmp, value, list) => {
     match(list) {
       Empty => { Link(value, Empty) },
       Link(x, rest) => {
         match(cmp(value, x)) {
-          GT => { Link(x, listInsertBy((cmp, value, rest))) },
+          GT => { Link(x, listInsertBy(cmp, value, rest)) },
           _ => { Link(value, Link(x, rest)) }
         }
       }
@@ -94,23 +94,23 @@ export let rec listInsertBy = match(tuple) {
   }
 };
 
-export let rec listInsertionSortBy = match(tuple) {
+export let rec listInsertionSortBy = match(cmp, list) {
   (cmp, list) => {
     match(list) {
       Empty => { Empty },
-      Link(x, rest) => { listInsertBy((cmp, x, listInsertionSortBy((cmp, rest)))) }
+      Link(x, rest) => { listInsertBy(cmp, x, listInsertionSortBy(cmp, rest)) }
     }
   }
 };
 
 export let listSortInt = (list) => {
-  listInsertionSortBy((intCompare, list))
+  listInsertionSortBy(intCompare, list)
 };
 
 -- Join a list of lists with a separator
--- For strings: listJoin((separator, listOfStrings))
-export let rec listJoin = match(tuple) {
+-- For strings: listJoin(separator, listOfStrings)
+export let rec listJoin = match(sep, list) {
   (sep, Empty) => { Empty },
   (sep, Link(x, Empty)) => { x },
-  (sep, Link(x, rest)) => { listAppend((x, listAppend((sep, listJoin((sep, rest)))))) }
+  (sep, Link(x, rest)) => { listAppend(x, listAppend(sep, listJoin(sep, rest))) }
 };

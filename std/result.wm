@@ -1,27 +1,27 @@
 from "std/result/core" import { Ok, Err };
 export from "std/result/core" type Result(..);
 
-export let map = match(tuple) {
+export let map = match(f, result) {
   (f, Ok(value)) => { Ok(f(value)) },
   (_, Err(error)) => { Err(error) }
 };
 
-export let mapError = match(tuple) {
+export let mapError = match(f, result) {
   (f, Ok(value)) => { Ok(value) },
   (f, Err(error)) => { Err(f(error)) }
 };
 
-export let andThen = match(tuple) {
+export let andThen = match(f, result) {
   (f, Ok(value)) => { f(value) },
   (_, Err(error)) => { Err(error) }
 };
 
-export let withDefault = match(tuple) {
+export let withDefault = match(defaultValue, result) {
   (defaultValue, Ok(value)) => { value },
   (defaultValue, Err(_)) => { defaultValue }
 };
 
-export let fold = match(tuple) {
+export let fold = match(onErr, onOk, result) {
   (onErr, onOk, Ok(value)) => { onOk(value) },
   (onErr, onOk, Err(error)) => { onErr(error) }
 };

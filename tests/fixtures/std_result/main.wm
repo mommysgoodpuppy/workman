@@ -1,55 +1,55 @@
 from "std/result" import { Ok, Err, map, mapError, andThen, withDefault, fold };
 
 export let defaultOk = () => {
-  withDefault((0, Ok(5)))
+  withDefault(0, Ok(5))
 };
 
 export let foldOk = () => {
-  fold((
+  fold(
     (err) => {
-    err
-  },
+      err
+    },
     (val) => {
-    add(val, 1)
-  },
+      add(val, 1)
+    },
     Ok(9)
-  ))
+  )
 };
 
 export let foldErr = () => {
-  fold((
+  fold(
     (err) => {
-    add(err, 1)
-  },
+      add(err, 1)
+    },
     (val) => {
-    val
-  },
+      val
+    },
     Err(3)
-  ))
+  )
 };
 
 export let mapChain = () => {
   let base = Ok(7);
-  let mapped = map((
+  let mapped = map(
     (n) => {
-    add(n, 1)
-  },
+      add(n, 1)
+    },
     base
-  ));
-  let chained = andThen((
+  );
+  let chained = andThen(
     (n) => {
-    Ok(add(n, n))
-  },
+      Ok(add(n, n))
+    },
     mapped
-  ));
-  withDefault((0, chained))
+  );
+  withDefault(0, chained)
 };
 
 export let remapError = () => {
-  mapError((
+  mapError(
     (n) => {
-    add(n, 5)
-  },
+      add(n, 5)
+    },
     Err(2)
-  ))
+  )
 };
