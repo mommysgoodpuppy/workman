@@ -725,6 +725,79 @@ class WorkmanLanguageServer {
     }
   }
 
+  /**
+   * Extract hole ID from a type scheme that contains an unknown type.
+   * This handles error provenances that wrap the actual hole.
+   */
+  private extractHoleId(scheme: TypeScheme): number | undefined {
+    if (scheme.type.kind !== "unknown") {
+      return undefined;
+    }
+    
+    const prov = scheme.type.provenance;
+    if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
+      return (prov as any).id;
+    } else if (prov.kind === "incomplete") {
+      return (prov as any).nodeId;
+    } else if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
+      // Unwrap error provenance to get the underlying hole
+      const calleeType = (prov as any).calleeType || (prov as any).actual;
+      if (calleeType?.kind === "unknown") {
+        const innerProv = calleeType.provenance;
+        if (innerProv.kind === "expr_hole" || innerProv.kind === "user_hole") {
+          return (innerProv as any).id;
+        } else if (innerProv.kind === "incomplete") {
+          return (innerProv as any).nodeId;
+        }
+      }
+    }
+    
+    return undefined;
+  }
+
+  /**
+   * Format a type scheme with Layer 3 partial type information if available.
+   * This matches the CLI behavior in wm.ts but without the (partial) suffix.
+   */
+  private formatSchemeWithPartials(
+    scheme: TypeScheme,
+    layer3: Layer3Result,
+  ): string {
+    let typeStr = formatScheme(scheme);
+    
+    // Special case: for error_inconsistent from annotations, show the expected type
+    if (scheme.type.kind === "unknown") {
+      const prov = scheme.type.provenance;
+      if (prov.kind === "error_inconsistent") {
+        const expected = (prov as any).expected;
+        if (expected) {
+          return formatScheme({ quantifiers: scheme.quantifiers, type: expected });
+        }
+      }
+    }
+    
+    // Check if this binding has partial type information from Layer 3
+    const holeId = this.extractHoleId(scheme);
+    if (holeId !== undefined) {
+      const solution = layer3.holeSolutions.get(holeId);
+      if (solution?.state === "partial" && solution.partial?.known) {
+        // Show the partial type instead of error provenance (without suffix)
+        typeStr = formatScheme({
+          quantifiers: scheme.quantifiers,
+          type: solution.partial.known,
+        });
+      } else if (solution?.state === "conflicted" && solution.conflicts) {
+        // Show conflict information
+        typeStr = `? (conflicted: ${solution.conflicts.length} conflicts)`;
+      } else {
+        // For unsolved holes, just show "?" without error provenance
+        typeStr = typeStr.replace(/\?\([^)]+\)/g, "?");
+      }
+    }
+    
+    return typeStr;
+  }
+
   private async handleHover(message: LSPMessage): Promise<LSPMessage> {
     const { textDocument, position } = message.params;
     const uri = textDocument.uri;
@@ -775,36 +848,11 @@ class WorkmanLanguageServer {
       this.log(`[LSP] Word at cursor: '${word}'`);
       const scheme = env.get(word);
       if (scheme) {
-        const typeStr = formatScheme(scheme);
+        // Use Layer 3 partial types for accurate display
+        const typeStr = this.formatSchemeWithPartials(scheme, layer3);
         this.log(`[LSP] Found type for ${word}: ${typeStr}`);
         
-        // Extract provenance from type string if present
-        // Format: ?(incomplete:reason) or ?(provenance_kind:details)
-        let cleanType = typeStr;
-        let provenanceInfo = null;
-        const provenanceMatch = typeStr.match(/\?\(([^:]+):(.+?)\)/);
-        if (provenanceMatch) {
-          const [fullMatch, kind, reason] = provenanceMatch;
-          cleanType = typeStr.replace(fullMatch, "?");
-          provenanceInfo = { kind, reason };
-        }
-        
-        let hoverText = `\`\`\`workman\n${word} : ${cleanType}\n\`\`\``;
-        
-        // Add provenance as a separate section
-        if (provenanceInfo) {
-          hoverText += `\n\n**Unknown Type:**\n`;
-          hoverText += `_${provenanceInfo.reason}_\n`;
-          
-          // Try to find partial type information
-          if (nodeId) {
-            const solution = layer3.holeSolutions.get(nodeId);
-            if (solution && solution.state === "partial" && solution.partial && solution.partial.known) {
-              hoverText += "\n**Partial Type Information:**\n";
-              hoverText += `- Known from usage: \`${typeToString(solution.partial.known)}\`\n`;
-            }
-          }
-        }
+        const hoverText = `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``;
         
         return {
           jsonrpc: "2.0",
@@ -914,7 +962,7 @@ class WorkmanLanguageServer {
         );
         this.moduleContexts.set(uri, context);
       }
-      const { env } = context;
+      const { env, layer3 } = context;
       for (const [name, scheme] of env.entries()) {
         if (name.startsWith("__op_") || name.startsWith("__prefix_")) {
           continue;
@@ -925,7 +973,8 @@ class WorkmanLanguageServer {
         while ((match = regex.exec(text)) !== null) {
           const endPos = match.index + match[0].length;
           const position = this.offsetToPosition(text, endPos);
-          const typeStr = formatScheme(scheme);
+          // Use Layer 3 partial types for accurate display
+          const typeStr = this.formatSchemeWithPartials(scheme, layer3);
           hints.push({
             position,
             label: `: ${typeStr}`,
