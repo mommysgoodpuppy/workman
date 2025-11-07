@@ -15,9 +15,28 @@ function workmanToJsString(wstr) {
   return chars.join("");
 }
 
+// Helper to convert JS string to Workman List (string)
+function jsToWorkmanString(str) {
+  if (typeof str !== "string") {
+    return str; // Not a string
+  }
+  let result = { tag: "Empty", type: "List" };
+  // Build list in reverse
+  for (let i = str.length - 1; i >= 0; i--) {
+    result = {
+      tag: "Link",
+      type: "List",
+      _0: str.charCodeAt(i),
+      _1: result,
+    };
+  }
+  return result;
+}
+
 // File System Operations
 export async function readTextFile(path) {
-  return await Deno.readTextFile(workmanToJsString(path));
+  const content = await Deno.readTextFile(workmanToJsString(path));
+  return jsToWorkmanString(content);
 }
 
 export async function writeTextFile(path, contents) {
@@ -91,7 +110,7 @@ export function setEnv(key, value) {
 }
 
 export function cwd() {
-  return Deno.cwd();
+  return jsToWorkmanString(Deno.cwd());
 }
 
 export function args() {

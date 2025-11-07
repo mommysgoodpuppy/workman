@@ -1,0 +1,74 @@
+-- Constraint Solving Examples
+-- This demonstrates how Layer 2 constraint solving works
+
+-- Example 1: Identity function (polymorphic)
+let identity = (x) => { x };
+
+-- Example 2: Function application creates constraints
+let applyToInt = (f) => { f(42) };
+
+-- Example 3: Partial type inference
+-- We know 'mystery' is a function, but not what kind
+let callMystery = (mystery) => { mystery(42) };
+
+-- Example 4: Compose creates function constraints
+let compose = (f, g) => {
+  (x) => { f(g(x)) }
+};
+
+-- Example 5: Multiple uses of polymorphic function
+let useIdentity = () => {
+  let a = identity(42);
+  let b = identity(true);
+  (a, b)
+};
+
+-- Example 6: Record field constraints
+let getName = (person) => { person.name };
+
+let getAge = (person) => { person.age };
+
+-- Example 7: Pattern matching creates constraints
+let getFirst = (pair) => {
+  match(pair) {
+    (a, b) => { a }
+  }
+};
+
+-- Example 8: List operations
+let rec sumList = (xs) => {
+  match(xs) {
+    Nil => { 0 },
+    Cons(head, tail) => { head }
+  }
+};
+
+-- Example 9: Recursive function
+let rec factorial = (n) => {
+  match(n) {
+    0 => { 1 },
+    _ => { n }
+  }
+};
+
+-- Example 10: Higher-order function
+let twice = (f) => {
+  (x) => { f(f(x)) }
+};
+
+-- NOTES:
+-- Layer 2 constraint solving works as follows:
+--
+-- 1. Layer 1 generates constraints during bidirectional typing
+-- 2. Layer 2 groups constraints by holes and attempts unification
+-- 3. Layer 3 surfaces results (solved, partial, or conflicted)
+--
+-- For example, in 'callMystery', Layer 2 knows:
+--   - mystery is called with an Int (42)
+--   - So mystery must be a function: (Int -> ?)
+--   - This is a PARTIAL solution (we know it's a function)
+--
+-- In 'compose', Layer 2 infers:
+--   - g is called with x, so g: (T1 -> T2)
+--   - f is called with g(x), so f: (T2 -> T3)
+--   - Result: (T1 -> T3)

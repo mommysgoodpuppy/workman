@@ -388,6 +388,11 @@ class WorkmanLanguageServer {
           context.layer3.diagnostics.solver,
           text,
         );
+        this.appendConflictDiagnostics(
+          diagnostics,
+          context.layer3.diagnostics.conflicts,
+          text,
+        );
       } catch (moduleError) {
         // Module-level errors (imports, type errors, etc.)
         this.log(`[LSP] Module validation error: ${moduleError}`);
@@ -541,6 +546,31 @@ class WorkmanLanguageServer {
     }
   }
 
+  private appendConflictDiagnostics(
+    target: any[],
+    conflicts: any[],
+    text: string,
+  ): void {
+    for (const conflict of conflicts) {
+      const range = conflict.span
+        ? {
+          start: this.offsetToPosition(text, conflict.span.start),
+          end: this.offsetToPosition(text, Math.max(conflict.span.end, conflict.span.start + 1)),
+        }
+        : {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        };
+      target.push({
+        range,
+        severity: 1,
+        message: conflict.message,
+        source: "workman-conflicts",
+        code: "unfillable-hole",
+      });
+    }
+  }
+
   private formatSolverDiagnostic(diag: ConstraintDiagnosticWithSpan): string {
     let base: string;
     switch (diag.reason) {
@@ -626,12 +656,42 @@ class WorkmanLanguageServer {
     return base;
   }
 
-  private renderNodeView(view: NodeView): string | null {
+  private renderNodeView(view: NodeView, holeSolutions?: Map<number, any>): string | null {
     const typeStr = this.partialTypeToString(view.finalType);
     if (!typeStr) {
       return null;
     }
-    return "```workman\n" + typeStr + "\n```";
+    
+    let result = "```workman\n" + typeStr + "\n```";
+    
+    // Check if this node has a hole solution with partial information
+    if (holeSolutions && view.nodeId !== undefined) {
+      const solution = holeSolutions.get(view.nodeId);
+      if (solution) {
+        if (solution.state === "partial" && solution.partial) {
+          result += "\n\n**Partial Type Information:**\n";
+          if (solution.partial.known) {
+            result += `- Known: \`${typeToString(solution.partial.known)}\`\n`;
+          }
+          if (solution.partial.possibilities && solution.partial.possibilities.length > 0) {
+            result += `- Possibilities: ${solution.partial.possibilities.length}\n`;
+          }
+          result += "\n_Some type information is inferred, but not everything is known yet._";
+        } else if (solution.state === "conflicted" && solution.conflicts) {
+          result += "\n\n**⚠️ Type Conflict Detected:**\n";
+          for (const conflict of solution.conflicts) {
+            const types = conflict.types.map((t: any) => typeToString(t)).join(" vs ");
+            result += `- Conflicting types: \`${types}\`\n`;
+            result += `- Reason: ${conflict.reason}\n`;
+          }
+          result += "\n_This type hole has incompatible constraints._";
+        } else if (solution.state === "unsolved") {
+          result += "\n\n_Type is not fully determined yet._";
+        }
+      }
+    }
+    
+    return result;
   }
 
   private partialTypeToString(partial: PartialType): string | null {
@@ -676,7 +736,7 @@ class WorkmanLanguageServer {
       if (nodeId) {
         const view = layer3.nodeViews.get(nodeId);
         if (view) {
-          const rendered = this.renderNodeView(view);
+          const rendered = this.renderNodeView(view, layer3.holeSolutions);
           if (rendered) {
             return {
               jsonrpc: "2.0",

@@ -1,0 +1,203 @@
+-- Constraint Solving Examples
+-- This file demonstrates how Layer 2 constraint solving works in Workman
+
+-- ============================================================================
+-- Example 1: Simple Constraint Solving
+-- ============================================================================
+-- The type of 'x' is inferred from how it's used
+let identity = (x) => { x };
+
+-- ============================================================================
+-- Example 2: Multiple Constraints (Compatible)
+-- ============================================================================
+-- Multiple constraints that agree
+let multipleCompatible = (x) => {
+  let a = x;      -- Constraint: x is T
+  let b = a;       -- Constraint: x is T
+  let c = a;       -- Constraint: x is T
+  a            -- All constraints agree: x is T
+  let a: Int = x;      -- Constraint: x is Int
+  let b = x + 1;       -- Constraint: x is Int
+  let c = x * 2;       -- Constraint: x is Int
+  a + b + c            -- All constraints agree: x is Int
+};
+
+-- ============================================================================
+-- Example 3: Function Type Inference
+-- ============================================================================
+-- The solver infers that 'f' must be a function
+let applyTwice = (f, x) => {
+  let y = f(x);    -- Constraint: f is (T1 -> T2)
+  f(y)             -- Constraint: f is (T2 -> T3)
+  -- Solver infers: f is (T -> T) for some type T
+};
+
+-- ============================================================================
+-- Example 4: Partial Type Information
+-- ============================================================================
+-- When we can't fully solve, we get partial information
+let partiallyKnown = (mystery) => {
+  -- We know mystery is a function, but not what kind
+  let result = mystery(42);
+  -- Partial type: mystery is (Int -> ?)
+  result
+};
+
+-- ============================================================================
+-- Example 5: Record Field Constraints
+-- ============================================================================
+-- Constraints from record field access
+let getName = (person) => {
+  person.name  -- Constraint: person has field 'name'
+  -- Partial type: person is { name: ?, ... }
+};
+
+let getAge = (person) => {
+  person.age  -- Constraint: person has field 'age'
+  -- Partial type: person is { age: ?, ... }
+};
+
+-- ============================================================================
+-- Example 6: Annotation Constraints
+-- ============================================================================
+-- Explicit type annotations create constraints
+let annotated = (x) => {
+  let typed: Int = x;  -- Constraint: x must be Int
+  x + 1                -- Constraint: x must be Int
+  -- Both constraints agree
+};
+
+-- ============================================================================
+-- Example 7: Branch Join Constraints
+-- ============================================================================
+-- All branches must return the same type
+let conditional = (flag) => {
+  match(flag) {
+    true => { 42 },      -- Branch 1: Int
+    false => { 0 }       -- Branch 2: Int
+  }
+  -- Constraint: both branches must unify
+  -- Result type: Int
+};
+
+-- ============================================================================
+-- Example 8: Polymorphic Constraint Solving
+-- ============================================================================
+-- The solver handles polymorphic functions
+let identity = (x) => { x };
+
+-- Each use creates fresh type variables
+let useIdentity = () => {
+  let a = identity(42);      -- Instantiate: Int -> Int
+  let b = identity(true);    -- Instantiate: Bool -> Bool
+  let c = identity("hi");    -- Instantiate: String -> String
+  (a, b, c)
+};
+
+-- ============================================================================
+-- Example 9: Nested Function Constraints
+-- ============================================================================
+-- Constraints propagate through nested functions
+let compose = (f, g) => {
+  (x) => {
+    f(g(x))
+    -- Constraint: g is (T1 -> T2)
+    -- Constraint: f is (T2 -> T3)
+    -- Result: (T1 -> T3)
+  }
+};
+
+-- ============================================================================
+-- Example 10: List Constraints
+-- ============================================================================
+-- Constraints from list operations
+let sumList = (xs) => {
+  match(xs) {
+    Nil => { 0 },
+    Cons(head, tail) => {
+      head + sumList(tail)
+      -- Constraint: head is Int
+      -- Constraint: xs is List<Int>
+    }
+  }
+};
+
+-- ============================================================================
+-- Example 11: Tuple Constraints
+-- ============================================================================
+-- Constraints from tuple patterns
+let swapPair = (pair) => {
+  match(pair) {
+    (a, b) => { (b, a) }
+    -- Constraint: pair is (T1, T2)
+    -- Result: (T2, T1)
+  }
+};
+
+-- ============================================================================
+-- Example 12: Recursive Constraints
+-- ============================================================================
+-- Recursive functions create self-referential constraints
+let rec factorial = (n) => {
+  match(n) {
+    0 => { 1 },
+    _ => { n * factorial(n - 1) }
+    -- Constraint: n is Int (from -)
+    -- Constraint: result is Int (from *)
+  }
+};
+
+-- ============================================================================
+-- CONFLICT EXAMPLES (These would show errors in a real system)
+-- ============================================================================
+
+-- Example: Conflicting Constraints
+-- Uncomment to see conflict detection in action:
+--
+-- let conflicted = (x) => {
+--   let a: Int = x;      -- Constraint: x is Int
+--   let b: Bool = x;     -- Constraint: x is Bool
+--   -- CONFLICT: x cannot be both Int and Bool!
+--   -- Layer 2 would detect this and report an unfillable hole
+--   a
+-- };
+
+-- Example: Branch Type Mismatch
+-- Uncomment to see branch conflict:
+--
+-- let branchConflict = (flag) => {
+--   match(flag) {
+--     true => { 42 },      -- Branch 1: Int
+--     false => { false }   -- Branch 2: Bool
+--   }
+--   -- CONFLICT: branches must have the same type
+-- };
+
+-- ============================================================================
+-- NOTES ON CONSTRAINT SOLVING
+-- ============================================================================
+--
+-- Layer 2 constraint solving works as follows:
+--
+-- 1. Layer 1 (Bidirectional Typing) generates constraints during type checking
+--    - call constraints: f(x) generates constraint on f's type
+--    - field constraints: r.field generates constraint on r's type
+--    - annotation constraints: (x: T) generates constraint on x
+--    - numeric/boolean constraints: x + y generates Int constraints
+--    - branch join constraints: match arms must unify
+--
+-- 2. Layer 2 (Constraint Solving) processes these constraints:
+--    - Groups constraints by the holes (unknowns) they reference
+--    - Attempts to unify all constraints for each hole
+--    - Detects conflicts when constraints are incompatible
+--    - Builds partial solutions when constraints are compatible but incomplete
+--
+-- 3. Layer 3 (Presentation) surfaces the results:
+--    - Shows solved types in LSP hover
+--    - Shows partial types when available
+--    - Reports conflicts as diagnostics
+--    - Provides hole solutions for tooling
+--
+-- This approach follows the Hazel paper's design:
+-- "Constraint solving as a type-hole-filling layer atop this gradual
+--  bidirectionally typed core."

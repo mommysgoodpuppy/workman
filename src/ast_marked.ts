@@ -192,6 +192,13 @@ export interface MMarkInconsistent extends MTypedNode {
   actual: Type;
 }
 
+export interface MMarkUnfillableHole extends MTypedNode {
+  kind: "mark_unfillable_hole";
+  subject: MExpr;
+  conflictingTypes: Type[];
+  reason: string;
+}
+
 export interface MMarkTypeExprUnknown extends MTypedNode {
   kind: "mark_type_expr_unknown";
   typeExpr: TypeExpr;
@@ -262,7 +269,8 @@ export type MMarkExpr =
   | MMarkNotFunction
   | MMarkOccursCheck
   | MMarkInconsistent
-  | MMarkUnsupportedExpr;
+  | MMarkUnsupportedExpr
+  | MMarkUnfillableHole;
 
 export type MExpr =
   | MIdentifierExpr

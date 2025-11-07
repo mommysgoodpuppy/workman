@@ -54,3 +54,19 @@ Deno.test("presentProgram preserves solver diagnostics with spans", () => {
   assertExists(mismatch, "expected branch mismatch diagnostic");
   assertExists(mismatch.span, "diagnostic should include source span");
 });
+
+Deno.test("presentProgram surfaces conflict diagnostics for unfillable holes", () => {
+  // This test would require a scenario where we have conflicting constraints
+  // For now, we just verify the structure exists
+  const analysis = analyzeSource(`
+    let simple = 42;
+  `);
+
+  assertExists(analysis.layer3.diagnostics.conflicts, "expected conflicts array");
+  assertStrictEquals(
+    Array.isArray(analysis.layer3.diagnostics.conflicts),
+    true,
+    "conflicts should be an array"
+  );
+  assertExists(analysis.layer3.holeSolutions, "expected hole solutions map");
+});

@@ -35,7 +35,7 @@ export let listFiles = (path) => {
 
 -- Append to a file
 export let appendLine = (path, line) => {
-  let existing = readTextFile(path);
+  let existing: List<Int> = readTextFile(path);
   let newContent = strConcat(existing, strConcat(fromLiteral("\n"), line));
   writeTextFile(path, newContent)
 };
@@ -47,7 +47,7 @@ export let createTodoList = (filename) => {
 };
 
 export let addTodo = (filename, task) => {
-  let existing = readTextFile(filename);
+  let existing: List<Int> = readTextFile(filename);
   let bullet = fromLiteral("- [ ] ");
   let newLine = fromLiteral("\n");
   let todoLine = strConcat(bullet, strConcat(task, newLine));
@@ -66,7 +66,7 @@ export let main = () => {
   log(fromLiteral(""));
   
   -- Get current directory
-  let currentDir = cwd();
+  let currentDir: List<Int> = cwd();
   log(strConcat(fromLiteral("Current directory: "), currentDir));
   log(fromLiteral(""));
   

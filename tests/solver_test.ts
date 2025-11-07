@@ -445,3 +445,116 @@ Deno.test("analyzeProgram does not report numeric/boolean errors for equality ch
     `expected no diagnostics, got ${JSON.stringify(analysis.layer2.diagnostics)}`,
   );
 });
+
+Deno.test("solver detects conflicts when unknown has incompatible constraints", () => {
+  const holeId: HoleId = 100;
+  const stubs: ConstraintStub[] = [
+    {
+      kind: "annotation",
+      origin: 1,
+      annotation: 2,
+      value: holeId,
+      subject: null,
+    },
+    {
+      kind: "annotation",
+      origin: 3,
+      annotation: 4,
+      value: holeId,
+      subject: null,
+    },
+  ];
+  const nodeTypeById: Map<NodeId, Type> = new Map([
+    [holeId, { kind: "unknown", provenance: { kind: "expr_hole", id: holeId } }],
+    [2, { kind: "int" }],
+    [4, { kind: "bool" }],
+  ]);
+
+  const input: SolveInput = {
+    markedProgram: EMPTY_PROGRAM,
+    constraintStubs: stubs,
+    holes: new Map([[holeId, mkUnknownInfo(holeId)]]),
+    nodeTypeById,
+    layer1Diagnostics: [],
+  };
+
+  const result = solveConstraints(input);
+  assertStrictEquals(result.conflicts.length, 1, "expected one conflict");
+  assertStrictEquals(result.conflicts[0].holeId, holeId);
+  assertStrictEquals(result.conflicts[0].reason, "type_mismatch");
+  assertStrictEquals(result.conflicts[0].types.length, 2);
+});
+
+Deno.test("solver builds partial solution when constraints are compatible", () => {
+  const holeId: HoleId = 200;
+  const stubs: ConstraintStub[] = [
+    {
+      kind: "numeric",
+      origin: 1,
+      operator: "+",
+      operands: [holeId, 3],
+      result: 4,
+    },
+  ];
+  const nodeTypeById: Map<NodeId, Type> = new Map([
+    [holeId, { kind: "unknown", provenance: { kind: "expr_hole", id: holeId } }],
+    [3, { kind: "int" }],
+    [4, { kind: "int" }],
+  ]);
+
+  const input: SolveInput = {
+    markedProgram: EMPTY_PROGRAM,
+    constraintStubs: stubs,
+    holes: new Map([[holeId, mkUnknownInfo(holeId)]]),
+    nodeTypeById,
+    layer1Diagnostics: [],
+  };
+
+  const result = solveConstraints(input);
+  const solution = result.solutions.get(holeId);
+  assert(solution, "expected solution for hole");
+  assertStrictEquals(solution.state, "partial", "expected partial solution");
+  assert(solution.partial, "expected partial type info");
+  assertStrictEquals(solution.partial.known?.kind, "int");
+});
+
+Deno.test("solver marks hole as conflicted when solution state is conflicted", () => {
+  const holeId: HoleId = 300;
+  const stubs: ConstraintStub[] = [
+    {
+      kind: "numeric",
+      origin: 1,
+      operator: "+",
+      operands: [holeId, 2],
+      result: 3,
+    },
+    {
+      kind: "boolean",
+      origin: 4,
+      operator: "&&",
+      operands: [holeId, 5],
+      result: 6,
+    },
+  ];
+  const nodeTypeById: Map<NodeId, Type> = new Map([
+    [holeId, { kind: "unknown", provenance: { kind: "expr_hole", id: holeId } }],
+    [2, { kind: "int" }],
+    [3, { kind: "int" }],
+    [5, { kind: "bool" }],
+    [6, { kind: "bool" }],
+  ]);
+
+  const input: SolveInput = {
+    markedProgram: EMPTY_PROGRAM,
+    constraintStubs: stubs,
+    holes: new Map([[holeId, mkUnknownInfo(holeId)]]),
+    nodeTypeById,
+    layer1Diagnostics: [],
+  };
+
+  const result = solveConstraints(input);
+  const solution = result.solutions.get(holeId);
+  assert(solution, "expected solution for hole");
+  assertStrictEquals(solution.state, "conflicted", "expected conflicted state");
+  assert(solution.conflicts && solution.conflicts.length > 0, "expected conflicts");
+});

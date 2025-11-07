@@ -23,9 +23,26 @@ import {
 import type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
 import type { NodeId } from "../ast.ts";
 
+export interface ConstraintConflict {
+  holeId: HoleId;
+  provenance: UnknownInfo;
+  conflictingConstraints: ConstraintStub[];
+  reason: "type_mismatch" | "arity_conflict" | "shape_conflict";
+  types: Type[];
+}
+
+export interface PartialType {
+  kind: "partial";
+  known: Type | null;
+  constraints: ConstraintStub[];
+  possibilities: Type[];
+}
+
 export interface HoleSolution {
-  state: "solved" | "unsolved";
+  state: "solved" | "partial" | "unsolved" | "conflicted";
   type?: Type;
+  partial?: PartialType;
+  conflicts?: ConstraintConflict[];
   provenance: UnknownInfo;
 }
 
@@ -43,6 +60,7 @@ export interface SolverResult {
   substitution: Substitution;
   resolvedNodeTypes: Map<NodeId, Type>;
   remarkedProgram: MProgram;
+  conflicts: ConstraintConflict[];
 }
 
 interface UnifyFailure {
@@ -99,11 +117,28 @@ export function solveConstraints(input: SolveInput): SolverResult {
     resolvedNodeTypes.set(nodeId, cloneType(resolved));
   }
 
+  // Detect conflicts in unknown types
+  const conflicts = detectConflicts(input.holes, input.constraintStubs, state.substitution, resolvedNodeTypes);
+
   const solutions: Map<HoleId, HoleSolution> = new Map();
   for (const [holeId, info] of input.holes.entries()) {
     const nodeType = resolvedNodeTypes.get(holeId);
-    if (!nodeType || nodeType.kind === "unknown") {
-      solutions.set(holeId, { state: "unsolved", provenance: info });
+    const holeConflicts = conflicts.filter((c) => c.holeId === holeId);
+    
+    if (holeConflicts.length > 0) {
+      solutions.set(holeId, { 
+        state: "conflicted", 
+        conflicts: holeConflicts,
+        provenance: info 
+      });
+    } else if (!nodeType || nodeType.kind === "unknown") {
+      // Try to build partial solution
+      const partial = buildPartialSolution(holeId, input.constraintStubs, state.substitution, resolvedNodeTypes);
+      if (partial) {
+        solutions.set(holeId, { state: "partial", partial, provenance: info });
+      } else {
+        solutions.set(holeId, { state: "unsolved", provenance: info });
+      }
     } else {
       solutions.set(holeId, { state: "solved", type: nodeType, provenance: info });
     }
@@ -122,6 +157,7 @@ export function solveConstraints(input: SolveInput): SolverResult {
     substitution: state.substitution,
     resolvedNodeTypes,
     remarkedProgram: input.markedProgram,
+    conflicts,
   };
 }
 
@@ -611,6 +647,7 @@ function remarkExpr(expr: MExpr, resolved: Map<NodeId, Type>): void {
     case "mark_occurs_check":
     case "mark_inconsistent":
     case "mark_unsupported_expr":
+    case "mark_unfillable_hole":
       return;
     case "mark_type_expr_unknown":
     case "mark_type_expr_arity":
@@ -662,4 +699,216 @@ function remarkType(node: { id: NodeId; type: Type }, resolved: Map<NodeId, Type
   if (node.type.kind === "unknown" && replacement.kind !== "unknown") {
     node.type = replacement;
   }
+}
+
+function detectConflicts(
+  holes: Map<HoleId, UnknownInfo>,
+  constraints: ConstraintStub[],
+  substitution: Substitution,
+  resolvedTypes: Map<NodeId, Type>
+): ConstraintConflict[] {
+  const conflicts: ConstraintConflict[] = [];
+  
+  // Group constraints by the holes they reference
+  const constraintsByHole = new Map<HoleId, ConstraintStub[]>();
+  
+  for (const constraint of constraints) {
+    const referencedHoles = getReferencedHoles(constraint, resolvedTypes);
+    for (const holeId of referencedHoles) {
+      if (!constraintsByHole.has(holeId)) {
+        constraintsByHole.set(holeId, []);
+      }
+      constraintsByHole.get(holeId)!.push(constraint);
+    }
+  }
+  
+  // For each hole, check if its constraints are compatible
+  for (const [holeId, holeConstraints] of constraintsByHole.entries()) {
+    const info = holes.get(holeId);
+    if (!info) continue;
+    
+    // Extract the types that the hole is constrained to be
+    const constrainedTypes: Type[] = [];
+    
+    for (const constraint of holeConstraints) {
+      const types = extractConstrainedTypes(constraint, holeId, resolvedTypes);
+      constrainedTypes.push(...types);
+    }
+    
+    // Try to unify all constrained types
+    if (constrainedTypes.length > 1) {
+      let testSubst = new Map(substitution);
+      let firstType = constrainedTypes[0];
+      let hasConflict = false;
+      const conflictingTypes: Type[] = [firstType];
+      
+      for (let i = 1; i < constrainedTypes.length; i++) {
+        const result = unifyTypes(firstType, constrainedTypes[i], testSubst);
+        if (!result.success) {
+          hasConflict = true;
+          conflictingTypes.push(constrainedTypes[i]);
+        } else {
+          testSubst = result.subst;
+          firstType = applySubstitution(firstType, testSubst);
+        }
+      }
+      
+      if (hasConflict) {
+        conflicts.push({
+          holeId,
+          provenance: info,
+          conflictingConstraints: holeConstraints,
+          reason: "type_mismatch",
+          types: conflictingTypes,
+        });
+      }
+    }
+  }
+  
+  return conflicts;
+}
+
+function getReferencedHoles(constraint: ConstraintStub, resolvedTypes: Map<NodeId, Type>): HoleId[] {
+  const holes: HoleId[] = [];
+  
+  const checkType = (nodeId: NodeId) => {
+    const type = resolvedTypes.get(nodeId);
+    if (type?.kind === "unknown" && type.provenance.kind !== "error_internal") {
+      holes.push(nodeId);
+    }
+  };
+  
+  switch (constraint.kind) {
+    case "call":
+      checkType(constraint.callee);
+      checkType(constraint.argument);
+      checkType(constraint.result);
+      break;
+    case "has_field":
+      checkType(constraint.target);
+      checkType(constraint.result);
+      break;
+    case "annotation":
+      checkType(constraint.annotation);
+      checkType(constraint.value);
+      break;
+    case "numeric":
+      constraint.operands.forEach(checkType);
+      checkType(constraint.result);
+      break;
+    case "boolean":
+      constraint.operands.forEach(checkType);
+      checkType(constraint.result);
+      break;
+    case "branch_join":
+      constraint.branches.forEach(checkType);
+      break;
+  }
+  
+  return holes;
+}
+
+function extractConstrainedTypes(
+  constraint: ConstraintStub,
+  holeId: HoleId,
+  resolvedTypes: Map<NodeId, Type>
+): Type[] {
+  const types: Type[] = [];
+  
+  switch (constraint.kind) {
+    case "annotation": {
+      if (constraint.value === holeId) {
+        const annotationType = resolvedTypes.get(constraint.annotation);
+        if (annotationType && annotationType.kind !== "unknown") {
+          types.push(annotationType);
+        }
+      }
+      break;
+    }
+    case "numeric": {
+      if (constraint.operands.includes(holeId) || constraint.result === holeId) {
+        types.push({ kind: "int" });
+      }
+      break;
+    }
+    case "boolean": {
+      if (constraint.operands.includes(holeId) || constraint.result === holeId) {
+        types.push({ kind: "bool" });
+      }
+      break;
+    }
+    case "has_field": {
+      if (constraint.target === holeId) {
+        const resultType = resolvedTypes.get(constraint.result);
+        if (resultType) {
+          const fields = new Map<string, Type>();
+          fields.set(constraint.field, resultType);
+          types.push({ kind: "record", fields });
+        }
+      }
+      break;
+    }
+  }
+  
+  return types;
+}
+
+function buildPartialSolution(
+  holeId: HoleId,
+  constraints: ConstraintStub[],
+  substitution: Substitution,
+  resolvedTypes: Map<NodeId, Type>
+): PartialType | null {
+  const relevantConstraints = constraints.filter((c) => {
+    const referenced = getReferencedHoles(c, resolvedTypes);
+    return referenced.includes(holeId);
+  });
+  
+  if (relevantConstraints.length === 0) {
+    return null;
+  }
+  
+  // Try to extract what we know about this hole
+  const possibilities: Type[] = [];
+  
+  for (const constraint of relevantConstraints) {
+    const types = extractConstrainedTypes(constraint, holeId, resolvedTypes);
+    possibilities.push(...types);
+  }
+  
+  if (possibilities.length === 0) {
+    return null;
+  }
+  
+  // Try to find a common type
+  let known: Type | null = null;
+  if (possibilities.length === 1) {
+    known = possibilities[0];
+  } else {
+    // Try to unify all possibilities
+    let testSubst = new Map(substitution);
+    let unified = possibilities[0];
+    let canUnify = true;
+    
+    for (let i = 1; i < possibilities.length; i++) {
+      const result = unifyTypes(unified, possibilities[i], testSubst);
+      if (!result.success) {
+        canUnify = false;
+        break;
+      }
+      testSubst = result.subst;
+      unified = applySubstitution(unified, testSubst);
+    }
+    
+    if (canUnify) {
+      known = unified;
+    }
+  }
+  
+  return {
+    kind: "partial",
+    known,
+    constraints: relevantConstraints,
+    possibilities,
+  };
 }
