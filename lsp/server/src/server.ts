@@ -778,28 +778,30 @@ class WorkmanLanguageServer {
         const typeStr = formatScheme(scheme);
         this.log(`[LSP] Found type for ${word}: ${typeStr}`);
         
-        let hoverText = `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``;
+        // Extract provenance from type string if present
+        // Format: ?(incomplete:reason) or ?(provenance_kind:details)
+        let cleanType = typeStr;
+        let provenanceInfo = null;
+        const provenanceMatch = typeStr.match(/\?\(([^:]+):(.+?)\)/);
+        if (provenanceMatch) {
+          const [fullMatch, kind, reason] = provenanceMatch;
+          cleanType = typeStr.replace(fullMatch, "?");
+          provenanceInfo = { kind, reason };
+        }
         
-        // Check if this is an unknown type and add provenance/partial info
-        if (typeStr.includes("?(") || typeStr.startsWith("?")) {
-          // Try to find the node for this identifier to get hole solution
+        let hoverText = `\`\`\`workman\n${word} : ${cleanType}\n\`\`\``;
+        
+        // Add provenance as a separate section
+        if (provenanceInfo) {
+          hoverText += `\n\n**Unknown Type:**\n`;
+          hoverText += `_${provenanceInfo.reason}_\n`;
+          
+          // Try to find partial type information
           if (nodeId) {
             const solution = layer3.holeSolutions.get(nodeId);
-            if (solution) {
-              // Add provenance
-              if (solution.provenance && solution.provenance.provenance) {
-                const prov = solution.provenance.provenance;
-                if (prov.kind === "incomplete" && prov.reason) {
-                  hoverText += `\n\n_${prov.reason}_`;
-                }
-              }
-              
-              // Add partial type info
-              if (solution.state === "partial" && solution.partial && solution.partial.known) {
-                hoverText += "\n\n**Partial Type Information:**\n";
-                hoverText += `- Known: \`${typeToString(solution.partial.known)}\`\n`;
-                hoverText += "\n_Some type information is inferred from usage._";
-              }
+            if (solution && solution.state === "partial" && solution.partial && solution.partial.known) {
+              hoverText += "\n**Partial Type Information:**\n";
+              hoverText += `- Known from usage: \`${typeToString(solution.partial.known)}\`\n`;
             }
           }
         }
