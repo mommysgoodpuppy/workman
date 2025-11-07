@@ -132,7 +132,7 @@ Deno.test("supports annotated let bindings", () => {
     throw new Error("expected id and three bindings");
   }
   assertEquals(idBinding.type, "Int -> Int");
-  assertEquals(threeBinding.type, "Int");
+  assertEquals(threeBinding.type, "Unit -> Int");
 });
 
 Deno.test("infers tuple pattern matches", () => {
@@ -205,7 +205,7 @@ Deno.test("generalizes tuple-producing functions", () => {
   if (!use) {
     throw new Error("expected use binding");
   }
-  assertEquals(use.type, "((Int, Int), (Bool, Bool))");
+  assertEquals(use.type, "Unit -> ((Int, Int), (Bool, Bool))");
 });
 
 Deno.test("block let generalization allows multiple instantiations", () => {
@@ -221,7 +221,7 @@ Deno.test("block let generalization allows multiple instantiations", () => {
   if (!binding) {
     throw new Error("expected useId binding");
   }
-  assertEquals(binding.type, "(Int, Bool)");
+  assertEquals(binding.type, "Unit -> (Int, Bool)");
 });
 
 Deno.test("type annotation reuses named variables", () => {
@@ -342,8 +342,8 @@ Deno.test("supports list prelude constructors", () => {
   if (!singleton || !two) {
     throw new Error("expected singleton and two bindings");
   }
-  assertEquals(singleton.type, "List<Int>");
-  assertEquals(two.type, "List<Bool>");
+  assertEquals(singleton.type, "Unit -> List<Int>");
+  assertEquals(two.type, "Unit -> List<Bool>");
 });
 
 Deno.test("first-class match builds pattern functions", () => {
@@ -368,8 +368,8 @@ Deno.test("first-class match builds pattern functions", () => {
   if (!convert || !value) {
     throw new Error("expected toBoolean and value bindings");
   }
-  assertEquals(convert.type, "Option<T> -> Bool");
-  assertEquals(value.type, "Bool");
+  assertEquals(convert.type, "Unit -> Option<T> -> Bool");
+  assertEquals(value.type, "Unit -> Bool");
 });
 
 Deno.test("type constructor name collisions produce invalid member mark", () => {

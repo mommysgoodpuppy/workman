@@ -44,8 +44,8 @@ Deno.test("shadowing in nested blocks", () => {
     };
   `;
   const summaries = inferTypes(source);
-  assertEquals(summaries.find((s) => s.name === "x")?.type, "Int");
-  assertEquals(summaries.find((s) => s.name === "y")?.type, "Int");
+  assertEquals(summaries.find((s) => s.name === "x")?.type, "Unit -> Int");
+  assertEquals(summaries.find((s) => s.name === "y")?.type, "Unit -> Int");
 });
 
 Deno.test("shadowing in match arms", () => {

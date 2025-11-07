@@ -183,12 +183,23 @@ function inferLetDeclaration(
 ): { name: string; scheme: TypeScheme }[] {
   // Non-recursive case
   if (!decl.isRecursive) {
-    const fnType = inferLetBinding(
+    let fnType = inferLetBinding(
       ctx,
       decl.parameters,
       decl.body,
       decl.annotation,
     );
+    
+    // Zero-parameter arrow functions () => { ... } should have type Unit -> T
+    // But block expressions { ... } and block let statements should NOT be wrapped
+    if (decl.isArrowSyntax && decl.parameters.length === 0) {
+      fnType = {
+        kind: "func",
+        from: { kind: "unit" },
+        to: fnType,
+      };
+    }
+    
     const scheme = generalizeInContext(ctx, fnType);
     ctx.env.set(decl.name, scheme);
     if (
@@ -259,8 +270,19 @@ function inferLetDeclaration(
 
   const results: { name: string; scheme: TypeScheme }[] = [];
   for (const binding of allBindings) {
-    const inferredType = inferredTypes.get(binding.name)!;
-    const resolvedType = applyCurrentSubst(ctx, inferredType);
+    let inferredType = inferredTypes.get(binding.name)!;
+    let resolvedType = applyCurrentSubst(ctx, inferredType);
+    
+    // Zero-parameter arrow functions () => { ... } should have type Unit -> T
+    // But block expressions { ... } and block let statements should NOT be wrapped
+    if (binding.isArrowSyntax && binding.parameters.length === 0) {
+      resolvedType = {
+        kind: "func",
+        from: { kind: "unit" },
+        to: resolvedType,
+      };
+    }
+    
     const scheme = generalizeInContext(ctx, resolvedType);
     ctx.env.set(binding.name, scheme);
     ctx.allBindings.set(binding.name, scheme); // Track in allBindings
@@ -301,6 +323,9 @@ function inferLetBinding(
     const bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
 
     let fnType: Type;
+    // Note: Zero-parameter bindings are NOT treated as functions here
+    // They are just value bindings. Top-level zero-parameter functions
+    // are handled separately in inferLetDeclaration.
     if (parameters.length === 0) {
       fnType = bodyType;
     } else {
@@ -396,7 +421,12 @@ function inferArrowFunction(
     const bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
 
     if (parameters.length === 0) {
-      return bodyType;
+      // Zero-parameter function: () => body has type Unit -> bodyType
+      return {
+        kind: "func",
+        from: { kind: "unit" },
+        to: bodyType,
+      };
     }
 
     return paramTypes.reduceRight<Type>((acc, paramType) => ({
@@ -590,6 +620,42 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
     }
     case "call": {
       let fnType = inferExpr(ctx, expr.callee);
+      
+      // Handle zero-argument calls: f() should unify with Unit -> T
+      if (expr.arguments.length === 0) {
+        const resultType = freshTypeVar();
+        registerHoleForType(
+          ctx,
+          holeOriginFromExpr(expr.callee),
+          applyCurrentSubst(ctx, fnType),
+        );
+        registerHoleForType(ctx, holeOriginFromExpr(expr), resultType);
+        
+        const unifySucceeded = unify(ctx, fnType, {
+          kind: "func",
+          from: { kind: "unit" },
+          to: resultType,
+        });
+        
+        if (!unifySucceeded) {
+          const resolvedFn = applyCurrentSubst(ctx, fnType);
+          if (resolvedFn.kind !== "func") {
+            const calleeMarked = materializeExpr(ctx, expr.callee);
+            const mark = markNotFunction(
+              ctx,
+              expr,
+              calleeMarked,
+              [],
+              resolvedFn,
+            );
+            return recordExprType(ctx, expr, mark.type);
+          }
+        }
+        
+        fnType = applyCurrentSubst(ctx, resultType);
+        return recordExprType(ctx, expr, fnType);
+      }
+      
       for (let index = 0; index < expr.arguments.length; index++) {
         const argExpr = expr.arguments[index];
         const argType = inferExpr(ctx, argExpr);

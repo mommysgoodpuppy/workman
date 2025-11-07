@@ -447,6 +447,15 @@ export function expectFunctionType(
   description: string,
 ): ExpectFunctionResult {
   const resolved = applyCurrentSubst(ctx, type);
+  
+  // Gradual typing: unknown types can be functions
+  // Create fresh unknowns for parameter and return types
+  if (resolved.kind === "unknown") {
+    const fromType = createFreshUnknown(ctx);
+    const toType = createFreshUnknown(ctx);
+    return { success: true, from: fromType, to: toType };
+  }
+  
   if (resolved.kind !== "func") {
     return { success: false, type: resolved };
   }
@@ -541,8 +550,11 @@ export function markNotFunction(
   ctx.marks.set(expr, mark);
   
   // Only record a diagnostic if it's actually an error (not just incomplete type info)
-  // For incomplete unknowns (like JS imports), this is expected gradual typing behavior
-  if (!(calleeType.kind === "unknown" && calleeType.provenance.kind === "incomplete")) {
+  // For unknowns (JS imports, explicit holes), this is expected gradual typing behavior
+  if (!(calleeType.kind === "unknown" && 
+        (calleeType.provenance.kind === "incomplete" || 
+         calleeType.provenance.kind === "expr_hole" ||
+         calleeType.provenance.kind === "user_hole"))) {
     recordLayer1Diagnostic(ctx, expr.id, "not_function", { calleeType });
   }
   
@@ -599,7 +611,23 @@ export function markInconsistent(
     actual,
   };
   ctx.marks.set(expr, mark);
-  recordLayer1Diagnostic(ctx, expr.id, "type_mismatch", { expected, actual });
+  
+  // Only record diagnostic if this is a real type error, not gradual typing
+  // Unknowns (holes, JS imports) are allowed to mismatch - Layer 2 will handle conflicts
+  const isGradualTyping = 
+    (expected.kind === "unknown" && 
+     (expected.provenance.kind === "incomplete" || 
+      expected.provenance.kind === "expr_hole" ||
+      expected.provenance.kind === "user_hole")) ||
+    (actual.kind === "unknown" && 
+     (actual.provenance.kind === "incomplete" || 
+      actual.provenance.kind === "expr_hole" ||
+      actual.provenance.kind === "user_hole"));
+  
+  if (!isGradualTyping) {
+    recordLayer1Diagnostic(ctx, expr.id, "type_mismatch", { expected, actual });
+  }
+  
   return mark;
 }
 

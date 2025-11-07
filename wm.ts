@@ -13,7 +13,7 @@ import { toFileUrl, resolve, relative } from "std/path/mod.ts";
 import { compileWorkmanGraph } from "./backends/compiler/frontends/workman.ts";
 import { emitModuleGraph } from "./backends/compiler/js/graph_emitter.ts";
 import { collectCompiledValues, invokeMainIfPresent } from "./src/runtime_display.ts";
-import { analyzeProgram } from "./src/pipeline.ts";
+import { analyzeAndPresent } from "./src/pipeline.ts";
 
 export interface RunOptions {
   sourceName?: string;
@@ -41,16 +41,96 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
   try {
     const tokens = lex(source, options.sourceName);
     const program = parseSurfaceProgram(tokens, source);
-    const analysis = analyzeProgram(program, {
+    
+    // Use full pipeline: Layer 1 → Layer 2 → Layer 3
+    const analysis = analyzeAndPresent(program, {
       source,
       sourceName: options.sourceName,
     });
+    
+    // Get types from Layer 3 (which includes partial types from Layer 2)
+    // For each binding, check if it has a partial type solution
     const types = analysis.layer1.summaries.map((
       entry: { name: string; scheme: TypeScheme },
-    ) => ({
-      name: entry.name,
-      type: formatScheme(entry.scheme),
-    }));
+    ) => {
+      let typeStr = formatScheme(entry.scheme);
+      
+      // Check if this binding has partial type information from Layer 2
+      // Extract the actual hole ID, which might be wrapped in error provenances
+      let holeId: number | undefined;
+      if (entry.scheme.type.kind === "unknown") {
+        const prov = entry.scheme.type.provenance;
+        if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
+          holeId = (prov as any).id;
+        } else if (prov.kind === "incomplete") {
+          holeId = (prov as any).nodeId;
+        } else if (prov.kind === "error_not_function" || 
+                   prov.kind === "error_inconsistent") {
+          // Unwrap error provenance to get the underlying hole
+          const calleeType = (prov as any).calleeType || (prov as any).actual;
+          if (calleeType?.kind === "unknown") {
+            const innerProv = calleeType.provenance;
+            if (innerProv.kind === "expr_hole" || innerProv.kind === "user_hole") {
+              holeId = (innerProv as any).id;
+            } else if (innerProv.kind === "incomplete") {
+              holeId = (innerProv as any).nodeId;
+            }
+          }
+        }
+      }
+      
+      if (holeId !== undefined) {
+        const solution = analysis.layer3.holeSolutions.get(holeId);
+        if (solution?.state === "partial" && solution.partial?.known) {
+          // Show the partial type instead of just "?"
+          typeStr = `${formatScheme({ quantifiers: entry.scheme.quantifiers, type: solution.partial.known })} (partial)`;
+        } else if (solution?.state === "conflicted" && solution.conflicts) {
+          typeStr = `? (conflicted: ${solution.conflicts.length} conflicts)`;
+        }
+      }
+      
+      return {
+        name: entry.name,
+        type: typeStr,
+      };
+    });
+
+    // Check for Layer 2/3 diagnostics (these are the real errors)
+    // Layer 1 errors are internal and shouldn't be surfaced
+    const hasDiagnostics = 
+      analysis.layer3.diagnostics.solver.length > 0 ||
+      analysis.layer3.diagnostics.conflicts.length > 0;
+    
+    if (hasDiagnostics) {
+      // Format diagnostics for display
+      let errorMessage = "";
+      
+      // Show solver diagnostics
+      for (const diag of analysis.layer3.diagnostics.solver) {
+        if (diag.span && source) {
+          const lines = source.split("\n");
+          const line = lines[diag.span.start] || "";
+          errorMessage += `\nType Error: ${diag.reason}\n`;
+          errorMessage += `  ${line}\n`;
+        } else {
+          errorMessage += `\nType Error: ${diag.reason}\n`;
+        }
+      }
+      
+      // Show conflict diagnostics (unfillable holes)
+      for (const conflict of analysis.layer3.diagnostics.conflicts) {
+        errorMessage += `\n${conflict.message}\n`;
+        if (conflict.span && source) {
+          const lines = source.split("\n");
+          const line = lines[conflict.span.start] || "";
+          errorMessage += `  ${line}\n`;
+        }
+      }
+      
+      if (errorMessage) {
+        throw new Error(errorMessage);
+      }
+    }
 
     let values: ValueSummary[] = [];
     const runtimeLogs: string[] = [];
@@ -74,16 +154,13 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
 
     return { types, values, runtimeLogs };
   } catch (error) {
-    if (error instanceof WorkmanError) {
-      // Format the error with source context
-      // Don't override the source if the error already has one (e.g., from a different module)
+    // Only catch parse/lex errors, not Layer 1 inference errors
+    if (error instanceof ParseError || error instanceof LexError) {
       const formatted = error.format();
       throw new Error(formatted);
     }
-    if (error instanceof Error) {
-      throw new Error(`Unhandled error: ${error.message}`);
-    }
-    throw new Error(`Unknown error: ${String(error)}`);
+    // Re-throw other errors as-is
+    throw error;
   }
 }
 
@@ -262,15 +339,127 @@ REPL Commands:
       throw new Error(`Failed to locate entry module artifacts for '${entryKey}'`);
     }
 
-    const typeSummaries = artifact.analysis.layer1.summaries.map(({ name, scheme }) => ({
-      name,
-      type: formatScheme(scheme),
-    }));
-
+    // Show all expression types from Layer 3 (like the LSP does)
     if (skipEvaluation || debugMode) {
-      if (typeSummaries.length > 0) {
-        for (const { name, type } of typeSummaries) {
-          console.log(`${name} : ${type}`);
+      const layer3 = artifact.analysis.layer3;
+      const source = await Deno.readTextFile(filePath);
+      const lines = source.split("\n");
+      
+      // Collect all node views with their spans
+      const nodeViewsWithSpans: Array<{ nodeId: number; view: any; span: any }> = [];
+      for (const [nodeId, view] of layer3.nodeViews.entries()) {
+        if (view.sourceSpan) {
+          nodeViewsWithSpans.push({ nodeId, view, span: view.sourceSpan });
+        }
+      }
+      
+      // Sort by line and column
+      nodeViewsWithSpans.sort((a, b) => {
+        if (a.span.start !== b.span.start) return a.span.start - b.span.start;
+        return a.span.end - b.span.end;
+      });
+      
+      // Helper to convert offset to line/col
+      const offsetToLineCol = (offset: number) => {
+        let line = 0;
+        let col = 0;
+        for (let i = 0; i < offset && i < source.length; i++) {
+          if (source[i] === '\n') {
+            line++;
+            col = 0;
+          } else {
+            col++;
+          }
+        }
+        return { line, col };
+      };
+      
+      console.log("\n=== Expression Types ===\n");
+      
+      for (const { nodeId, view, span } of nodeViewsWithSpans) {
+        const startPos = offsetToLineCol(span.start);
+        const endPos = offsetToLineCol(span.end);
+        const excerpt = source.substring(span.start, span.end);
+        
+        // finalType is a PartialType: { kind: "unknown" | "concrete", type?: Type }
+        let typeStr = "?";
+        if (view.finalType.kind === "concrete" && view.finalType.type) {
+          typeStr = formatScheme({ quantifiers: [], type: view.finalType.type });
+        } else if (view.finalType.kind === "unknown" && view.finalType.type) {
+          typeStr = formatScheme({ quantifiers: [], type: view.finalType.type });
+        }
+        
+        // Check for hole solutions
+        const solution = layer3.holeSolutions.get(nodeId);
+        let annotation = "";
+        
+        if (solution) {
+          if (solution.state === "partial" && solution.partial?.known) {
+            const partialType = formatScheme({ quantifiers: [], type: solution.partial.known });
+            annotation = ` 🔍 partial: ${partialType}`;
+          } else if (solution.state === "conflicted" && solution.conflicts) {
+            annotation = ` ⚠️ CONFLICT: ${solution.conflicts.length} incompatible constraints`;
+          } else if (solution.state === "unsolved") {
+            annotation = " ❓ unsolved";
+          }
+        }
+        
+        console.log(`Line ${startPos.line + 1}:${startPos.col}: ${excerpt}`);
+        console.log(`  → ${typeStr}${annotation}`);
+        console.log();
+      }
+      
+      // Also show top-level bindings summary with Layer 3 types
+      console.log("=== Top-Level Bindings ===\n");
+      const summaries = artifact.analysis.layer1.summaries;
+      if (summaries.length > 0) {
+        for (const { name, scheme } of summaries) {
+          // Try to get a better type from Layer 3 if available
+          let typeStr = formatScheme(scheme);
+          
+          // Check if the type is an unknown with a hole solution
+          if (scheme.type.kind === "unknown") {
+            const prov = scheme.type.provenance;
+            let holeId: number | undefined;
+            
+            // Extract hole ID from various provenance types
+            if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
+              holeId = (prov as any).id;
+            } else if (prov.kind === "incomplete") {
+              holeId = (prov as any).nodeId;
+            } else if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
+              // Unwrap error provenance
+              const innerType = (prov as any).calleeType || (prov as any).actual;
+              if (innerType?.kind === "unknown") {
+                const innerProv = innerType.provenance;
+                if (innerProv.kind === "expr_hole" || innerProv.kind === "user_hole") {
+                  holeId = (innerProv as any).id;
+                }
+              }
+            }
+            
+            // Look up the hole solution
+            if (holeId !== undefined) {
+              const solution = layer3.holeSolutions.get(holeId);
+              if (solution?.state === "partial" && solution.partial?.known) {
+                typeStr = formatScheme({ quantifiers: scheme.quantifiers, type: solution.partial.known });
+              } else if (solution?.state === "conflicted" && solution.conflicts) {
+                const conflictTypes = solution.conflicts.flatMap(c => c.types).slice(0, 3);
+                const typeStrs = conflictTypes.map(t => formatScheme({ quantifiers: [], type: t }));
+                typeStr = `CONFLICT (${typeStrs.join(" vs ")})`;
+              }
+            }
+            
+            // Special case: for error_inconsistent from annotations, show the expected type
+            if (prov.kind === "error_inconsistent") {
+              const expected = (prov as any).expected;
+              if (expected) {
+                typeStr = formatScheme({ quantifiers: scheme.quantifiers, type: expected });
+              }
+            }
+          }
+          
+          console.log(`${name} : ${typeStr}`);
         }
       } else {
         console.log("(no top-level let bindings)");

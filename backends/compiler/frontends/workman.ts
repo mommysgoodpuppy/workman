@@ -7,8 +7,8 @@ import {
 } from "../../../src/module_loader.ts";
 import {
   type AnalysisOptions,
-  type AnalysisResult,
-  analyzeProgram,
+  analyzeAndPresent,
+  type PresentationResult,
 } from "../../../src/pipeline.ts";
 import { type CoreModule, type CoreModuleGraph } from "../ir/core.ts";
 import {
@@ -31,7 +31,7 @@ export interface WorkmanCompilerOptions {
 
 export interface WorkmanModuleArtifacts {
   readonly node: ModuleNode;
-  readonly analysis: AnalysisResult;
+  readonly analysis: PresentationResult;
   readonly core: CoreModule;
 }
 
@@ -64,7 +64,7 @@ export async function compileWorkmanGraph(
     if (!node) {
       continue;
     }
-    const analysis = analyzeProgram(
+    const analysis = analyzeAndPresent(
       node.program,
       buildAnalysisOptions(
         node,

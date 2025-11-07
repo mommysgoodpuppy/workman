@@ -18,10 +18,10 @@ Deno.test({
   const types = new Map(result.types.map((e) => [e.name, e.type]));
   const values = new Map(result.values.map((e) => [e.name, e.value]));
 
-  assertEquals(types.get("pipeline"), "Int");
+  assertEquals(types.get("pipeline"), "Unit -> Int");
   assertEquals(values.get("pipeline"), "22"); // (10+1)=11 -> odd -> double -> withDefault passthrough
 
-  assertEquals(types.get("fallback"), "Option<Int>");
+  assertEquals(types.get("fallback"), "Unit -> Option<Int>");
   assertEquals(values.get("fallback"), "Some 42");
 });
 
@@ -33,10 +33,10 @@ Deno.test({
   const types = new Map(result.types.map((e) => [e.name, e.type]));
   const values = new Map(result.values.map((e) => [e.name, e.value]));
 
-  assertEquals(types.get("pipeline"), "Int");
+  assertEquals(types.get("pipeline"), "Unit -> Int");
   assertEquals(values.get("pipeline"), "22");
 
-  assertEquals(types.get("foldBoth"), "Int");
+  assertEquals(types.get("foldBoth"), "Unit -> Int");
   assertEquals(values.get("foldBoth"), "0");
 });
 
@@ -67,8 +67,8 @@ Deno.test({
   const typeMap = new Map(result.types.map((entry) => [entry.name, entry.type]));
   const valueMap = new Map(result.values.map((entry) => [entry.name, entry.value]));
 
-  assertEquals(typeMap.get("sumSquares"), "Int");
-  assertEquals(typeMap.get("sortedDemo"), "List<Int>");
+  assertEquals(typeMap.get("sumSquares"), "Unit -> Int");
+  assertEquals(typeMap.get("sortedDemo"), "Unit -> List<Int>");
   assertEquals(valueMap.get("sumSquares"), "55");
   assertEquals(valueMap.get("sortedDemo"), "Link 1 Link 2 Link 3 Empty");
 });

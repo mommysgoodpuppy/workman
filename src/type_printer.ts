@@ -37,6 +37,14 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       const elements = type.elements.map((el) => formatType(el, context, 0)).join(", ");
       return `(${elements})`;
     }
+    case "record": {
+      const entries = Array.from(type.fields.entries());
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      const fields = entries
+        .map(([name, fieldType]) => `${name}: ${formatType(fieldType, context, 0)}`)
+        .join(", ");
+      return `{ ${fields} }`;
+    }
     case "unit":
       return "Unit";
     case "int":

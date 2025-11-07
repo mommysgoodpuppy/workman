@@ -329,7 +329,7 @@ Deno.test("block let generalization supports polymorphic reuse", () => {
   `;
   const summaries = inferTypes(source);
   const fn = summaries.find((s) => s.name === "pair");
-  assertEquals(fn?.type, "(Int, Bool)");
+  assertEquals(fn?.type, "Unit -> (Int, Bool)");
 });
 
 Deno.test("parameter annotations share scope", () => {

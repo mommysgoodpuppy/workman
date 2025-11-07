@@ -406,9 +406,9 @@ function cloneProvenance(provenance: Provenance): Provenance {
 export function provenanceToString(provenance: Provenance): string {
   switch (provenance.kind) {
     case "user_hole":
-      return `?${provenance.id}`;
+      return "?";
     case "expr_hole":
-      return `□${provenance.id}`;
+      return "?";
     case "error_free_var":
       return `?(free ${provenance.name})`;
     case "error_not_function":

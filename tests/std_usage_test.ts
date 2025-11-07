@@ -22,9 +22,9 @@ Deno.test({
   const result = await runEntryPath(fixturePath("std_list/main.wm"));
   const { types, values } = mapsFromResult(result);
 
-  assertEquals(types.get("sumSquares"), "Int");
-  assertEquals(types.get("reversedRange"), "List<Int>");
-  assertEquals(types.get("sortedDemo"), "List<Int>");
+  assertEquals(types.get("sumSquares"), "Unit -> Int");
+  assertEquals(types.get("reversedRange"), "Unit -> List<Int>");
+  assertEquals(types.get("sortedDemo"), "Unit -> List<Int>");
 
   assertEquals(values.get("sumSquares"), "55");
   assertEquals(values.get("reversedRange"), "Link 4 Link 3 Link 2 Link 1 Empty");
@@ -38,19 +38,19 @@ Deno.test({
   const result = await runEntryPath(fixturePath("std_option/main.wm"));
   const { types, values } = mapsFromResult(result);
 
-  assertEquals(types.get("useOption"), "Int");
+  assertEquals(types.get("useOption"), "Unit -> Int");
   assertEquals(values.get("useOption"), "16");
 
-  assertEquals(types.get("boolExample"), "Option<Int>");
+  assertEquals(types.get("boolExample"), "Unit -> Option<Int>");
   assertEquals(values.get("boolExample"), "Some 9");
 
-  assertEquals(types.get("listExample"), "List<Int>");
+  assertEquals(types.get("listExample"), "Unit -> List<Int>");
   assertEquals(values.get("listExample"), "Link 7 Empty");
-  assertEquals(types.get("nestedPipeline"), "Int");
+  assertEquals(types.get("nestedPipeline"), "Unit -> Int");
   assertEquals(values.get("nestedPipeline"), "7");
-  assertEquals(types.get("lazyFallback"), "Option<Int>");
+  assertEquals(types.get("lazyFallback"), "Unit -> Option<Int>");
   assertEquals(values.get("lazyFallback"), "Some 8");
-  assertEquals(types.get("noneToList"), "List<Int>");
+  assertEquals(types.get("noneToList"), "Unit -> List<Int>");
   assertEquals(values.get("noneToList"), "Empty");
 });
 
@@ -61,16 +61,16 @@ Deno.test({
   const result = await runEntryPath(fixturePath("std_result/main.wm"));
   const { types, values } = mapsFromResult(result);
 
-  assertEquals(types.get("defaultOk"), "Int");
+  assertEquals(types.get("defaultOk"), "Unit -> Int");
   assertEquals(values.get("defaultOk"), "5");
 
-  assertEquals(types.get("foldOk"), "Int");
+  assertEquals(types.get("foldOk"), "Unit -> Int");
   assertEquals(values.get("foldOk"), "10");
 
-  assertEquals(types.get("foldErr"), "Int");
+  assertEquals(types.get("foldErr"), "Unit -> Int");
   assertEquals(values.get("foldErr"), "4");
-  assertEquals(types.get("mapChain"), "Int");
+  assertEquals(types.get("mapChain"), "Unit -> Int");
   assertEquals(values.get("mapChain"), "16");
-  assertEquals(types.get("remapError"), "Result<T, Int>");
+  assertEquals(types.get("remapError"), "Unit -> Result<T, Int>");
   assertEquals(values.get("remapError"), "Err 7");
 });

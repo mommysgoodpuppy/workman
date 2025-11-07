@@ -16,7 +16,7 @@ Deno.test({
   if (!typeSummary) {
     throw new Error("expected main in type summaries");
   }
-  assertEquals(typeSummary.type, "Unit");
+  assertEquals(typeSummary.type, "Unit -> Unit");
   assertEquals(result.runtimeLogs, ["hello"]);
 });
 
