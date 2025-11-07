@@ -37,7 +37,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.wm",
-					"match": "\\b(let|rec|and|type|match|from|import|export|as)\\b"
+					"match": "\\b(let|rec|and|type|record|match|from|import|export|as)\\b"
 				}
 			]
 		},

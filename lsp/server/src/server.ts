@@ -20,6 +20,7 @@ import { formatScheme } from "@workman/type_printer.ts";
 import {
   loadModuleGraph,
   ModuleLoaderError,
+  type ModuleImportRecord,
 } from "@workman/module_loader.ts";
 import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
 import {
@@ -28,6 +29,7 @@ import {
   TypeInfo,
   TypeScheme,
   typeToString,
+  unknownType,
 } from "@workman/types.ts";
 import {
   analyzeProgram,
@@ -934,6 +936,10 @@ class WorkmanLanguageServer {
       const initialAdtEnv = new Map<string, TypeInfo>();
 
       for (const record of node.imports) {
+        if (record.kind === "js") {
+          seedJsImport(record, initialEnv);
+          continue;
+        }
         const provider = summaries.get(record.sourcePath);
         if (!provider) {
           throw new ModuleLoaderError(
@@ -1342,6 +1348,26 @@ class WorkmanLanguageServer {
       }
     }
     return { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
+  }
+}
+
+function seedJsImport(
+  record: ModuleImportRecord,
+  env: Map<string, TypeScheme>,
+): void {
+  for (const spec of record.specifiers) {
+    if (env.has(spec.local)) {
+      throw new ModuleLoaderError(
+        `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
+      );
+    }
+    env.set(spec.local, {
+      quantifiers: [],
+      type: unknownType({
+        kind: "incomplete",
+        reason: `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
+      }),
+    });
   }
 }
 
