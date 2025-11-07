@@ -121,7 +121,8 @@ export type Expr =
   | BlockExpr
   | MatchExpr
   | MatchFunctionExpr
-  | MatchBundleLiteralExpr;
+  | MatchBundleLiteralExpr
+  | HoleExpr;
 
 export interface IdentifierExpr extends NodeBase {
   kind: "identifier";
@@ -131,6 +132,10 @@ export interface IdentifierExpr extends NodeBase {
 export interface LiteralExpr extends NodeBase {
   kind: "literal";
   literal: Literal;
+}
+
+export interface HoleExpr extends NodeBase {
+  kind: "hole";
 }
 
 export interface ConstructorExpr extends NodeBase {

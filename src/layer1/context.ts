@@ -315,6 +315,9 @@ function categoryFromProvenance(provenance: Provenance): UnknownCategory {
       return "internal";
     case "incomplete":
       return "incomplete";
+    case "expr_hole":
+    case "user_hole":
+      return "incomplete";
     default:
       return "local_conflict";
   }

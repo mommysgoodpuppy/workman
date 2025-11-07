@@ -471,6 +471,19 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         return recordExprType(ctx, expr, mark.type);
       }
       return recordExprType(ctx, expr, litType);
+    case "hole": {
+      // Explicit hole expression - create unknown type with expr_hole provenance
+      const origin: HoleOrigin = {
+        nodeId: expr.id,
+        span: expr.span,
+      };
+      const provenance: Provenance = {
+        kind: "expr_hole",
+        id: expr.id,
+      };
+      const holeType = createUnknownAndRegister(ctx, origin, provenance);
+      return recordExprType(ctx, expr, holeType);
+    }
     case "constructor": {
       const scheme = lookupEnv(ctx, expr.name);
       if (!scheme) {

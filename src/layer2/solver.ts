@@ -816,6 +816,18 @@ function extractConstrainedTypes(
   const types: Type[] = [];
   
   switch (constraint.kind) {
+    case "call": {
+      // If the callee is the hole, we know it must be a function
+      if (constraint.callee === holeId) {
+        const argType = resolvedTypes.get(constraint.argument);
+        const resType = constraint.resultType;
+        if (argType) {
+          // Build function type: (argType -> resType)
+          types.push({ kind: "func", from: argType, to: resType });
+        }
+      }
+      break;
+    }
     case "annotation": {
       if (constraint.value === holeId) {
         const annotationType = resolvedTypes.get(constraint.annotation);

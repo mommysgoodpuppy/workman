@@ -1068,6 +1068,14 @@ class SurfaceParser {
         } as Expr;
       }
       case "symbol": {
+        if (token.value === "?") {
+          const holeToken = this.consume();
+          return {
+            kind: "hole",
+            span: this.createSpan(holeToken, holeToken),
+            id: nextNodeId(),
+          } as Expr;
+        }
         if (token.value === "(") {
           return this.parseParenExpression();
         }
@@ -1079,6 +1087,15 @@ class SurfaceParser {
         }
       }
       case "operator": {
+        // Check for hole expression
+        if (token.value === "?") {
+          const holeToken = this.consume();
+          return {
+            kind: "hole",
+            span: this.createSpan(holeToken, holeToken),
+            id: nextNodeId(),
+          } as Expr;
+        }
         // Check if this is a registered prefix operator
         if (this.prefixOperators.has(token.value)) {
           const opToken = this.consume();
