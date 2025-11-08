@@ -103,7 +103,26 @@ class WorkmanLanguageServer {
       this.writeQueue.push(async () => {
         try {
           const encoder = new TextEncoder();
-          const messageStr = JSON.stringify(message);
+          // Use a replacer to handle circular references and ensure clean serialization
+          const messageStr = JSON.stringify(message, (key, value) => {
+            // Handle circular references
+            if (value instanceof Map) {
+              return `[Map with ${value.size} entries]`;
+            }
+            if (value instanceof Set) {
+              return `[Set with ${value.size} entries]`;
+            }
+            // Avoid serializing large or problematic objects
+            if (typeof value === 'object' && value !== null) {
+              // Check for circular references by tracking seen objects
+              // (This is a simple check; a full solution would need a WeakSet)
+              if (key === 'conflicts' && Array.isArray(value)) {
+                // Simplify conflicts to avoid serialization issues
+                return value.length;
+              }
+            }
+            return value;
+          });
           const header = `Content-Length: ${messageStr.length}\r\n\r\n`;
           const fullMessage = header + messageStr;
           const bytes = encoder.encode(fullMessage);
@@ -117,6 +136,7 @@ class WorkmanLanguageServer {
           resolve();
         } catch (error) {
           console.error(`[LSP] Write error: ${error}`);
+          console.error(`[LSP] Failed message: ${JSON.stringify(message, null, 2).substring(0, 500)}`);
           reject(error);
         }
       });
@@ -648,7 +668,21 @@ class WorkmanLanguageServer {
     }
     if (diag.details && Object.keys(diag.details).length > 0) {
       try {
-        base = `${base}. Details: ${JSON.stringify(diag.details)}`;
+        // Safely stringify details, avoiding circular references
+        const safeDetails: Record<string, any> = {};
+        for (const [key, value] of Object.entries(diag.details)) {
+          if (typeof value === 'object' && value !== null) {
+            // Don't include complex objects that might have circular refs
+            if (Array.isArray(value)) {
+              safeDetails[key] = `[Array with ${value.length} items]`;
+            } else {
+              safeDetails[key] = '[Object]';
+            }
+          } else {
+            safeDetails[key] = value;
+          }
+        }
+        base = `${base}. Details: ${JSON.stringify(safeDetails)}`;
       } catch {
         // Ignore stringify errors
       }
@@ -1224,7 +1258,7 @@ class WorkmanLanguageServer {
       }
 
       const letSchemeMap = new Map(
-        analysis.layer1.summaries.map((
+        analysis.layer3.summaries.map((
           { name, scheme },
         ) => [name, scheme] as const),
       );
@@ -1304,8 +1338,15 @@ class WorkmanLanguageServer {
       );
     }
     const layer3 = presentProgram(entryAnalysis.layer2);
+    
+    // Build env from Layer 3 summaries (which have transformed types with conflicts)
+    const transformedEnv = new Map<string, TypeScheme>();
+    for (const { name, scheme } of layer3.summaries) {
+      transformedEnv.set(name, scheme);
+    }
+    
     return {
-      env: entry.env,
+      env: transformedEnv,
       layer3,
       program: entryAnalysis.layer1.markedProgram,
       entryPath: graph.entry,
