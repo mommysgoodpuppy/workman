@@ -15,7 +15,6 @@ let multipleCompatible = (x) => {
   let a = x;      -- Constraint: x is T
   let b = a;       -- Constraint: x is T
   let c = a;       -- Constraint: x is T
-  a            -- All constraints agree: x is T
   let a: Int = x;      -- Constraint: x is Int
   let b = x + 1;       -- Constraint: x is Int
   let c = x * 2;       -- Constraint: x is Int
