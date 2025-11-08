@@ -30,6 +30,7 @@ import type { MatchBranchesResult } from "./infermatch.ts";
 import {
   applySubstitution,
   applySubstitutionScheme,
+  cloneType,
   cloneTypeInfo,
   cloneTypeScheme,
   composeSubstitution,
@@ -59,6 +60,7 @@ export interface Context {
   marks: Map<Expr, MExpr>;
   typeExprMarks: Map<TypeExpr, MTypeExpr>;
   nodeTypes: Map<Expr, Type>;
+  annotationTypes: Map<NodeId, Type>;
   matchResults: Map<MatchBundle, MatchBranchesResult>;
   topLevelMarks: MTopLevelMark[];
   lastUnifyFailure: UnifyFailure | null;
@@ -106,6 +108,7 @@ export function createContext(options: InferOptions = {}): Context {
     marks: new Map(),
     typeExprMarks: new Map(),
     nodeTypes: new Map(),
+    annotationTypes: new Map(),
     matchResults: new Map(),
     topLevelMarks: [],
     lastUnifyFailure: null,
@@ -159,6 +162,7 @@ export type ConstraintStub =
       kind: "annotation";
       origin: NodeId;
       annotation: NodeId;
+      annotationType?: Type;
       value: NodeId;
       subject: NodeId | null;
     }
@@ -225,10 +229,14 @@ export function recordAnnotationConstraint(
   value: Expr,
   subject?: Expr,
 ): void {
+  const resolvedAnnotationType = ctx.annotationTypes.get(annotation.id);
   ctx.constraintStubs.push({
     kind: "annotation",
     origin,
     annotation: annotation.id,
+    annotationType: resolvedAnnotationType
+      ? cloneType(resolvedAnnotationType)
+      : undefined,
     value: value.id,
     subject: subject?.id ?? null,
   });
@@ -335,6 +343,13 @@ export function registerHoleForType(
       ctx.holes.delete(origin.nodeId);
     }
     return;
+  }
+
+  if (
+    type.provenance.kind === "incomplete" &&
+    typeof (type.provenance as any).nodeId !== "number"
+  ) {
+    (type.provenance as any).nodeId = origin.nodeId;
   }
 
   const resolvedCategory = category ?? categoryFromProvenance(type.provenance);
@@ -530,7 +545,15 @@ export function markNotFunction(
   // preserve that provenance instead of wrapping it in error_not_function
   let resultType: Type;
   if (calleeType.kind === "unknown" && calleeType.provenance.kind === "incomplete") {
-    resultType = calleeType; // Keep the original incomplete provenance
+    const provenance = { ...calleeType.provenance } as Record<string, unknown>;
+    delete provenance.nodeId;
+    resultType = createUnknownAndRegister(
+      ctx,
+      origin,
+      provenance as Provenance,
+      "incomplete",
+      [callee.id],
+    );
   } else {
     resultType = createUnknownAndRegister(ctx, origin, {
       kind: "error_not_function",

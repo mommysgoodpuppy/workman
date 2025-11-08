@@ -5,7 +5,8 @@ import { LexError, WorkmanError } from "./src/error.ts";
 import { formatScheme } from "./src/type_printer.ts";
 import { evaluateProgram } from "./src/eval.ts";
 import { formatRuntimeValue } from "./src/value_printer.ts";
-import type { TypeScheme } from "./src/types.ts";
+import { cloneType } from "./src/types.ts";
+import type { Type, TypeScheme } from "./src/types.ts";
 import type { RuntimeValue } from "./src/value.ts";
 import { startRepl } from "./tools/repl.ts";
 import { runFormatter } from "./tools/fmt.ts";
@@ -14,6 +15,7 @@ import { compileWorkmanGraph } from "./backends/compiler/frontends/workman.ts";
 import { emitModuleGraph } from "./backends/compiler/js/graph_emitter.ts";
 import { collectCompiledValues, invokeMainIfPresent } from "./src/runtime_display.ts";
 import { analyzeAndPresent } from "./src/pipeline.ts";
+import type { Layer3Result } from "./src/layer3/mod.ts";
 
 export interface RunOptions {
   sourceName?: string;
@@ -35,6 +37,79 @@ export interface RunResult {
 export interface ValueSummary {
   name: string;
   value: string;
+}
+
+function holeIdFromUnknown(type: Type): number | undefined {
+  const prov = (type as any).provenance;
+  if (!prov) return undefined;
+  if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
+    return prov.id;
+  }
+  if (prov.kind === "incomplete") {
+    return prov.nodeId;
+  }
+  if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
+    const inner = prov.calleeType ?? prov.actual;
+    if (inner?.kind === "unknown") {
+      return holeIdFromUnknown(inner);
+    }
+  }
+  return undefined;
+}
+
+function substituteHoleSolutionsInType(
+  type: Type,
+  layer3: Layer3Result,
+): Type {
+  switch (type.kind) {
+    case "func":
+      return {
+        kind: "func",
+        from: substituteHoleSolutionsInType(type.from, layer3),
+        to: substituteHoleSolutionsInType(type.to, layer3),
+      };
+    case "constructor":
+      return {
+        kind: "constructor",
+        name: type.name,
+        args: type.args.map((arg) => substituteHoleSolutionsInType(arg, layer3)),
+      };
+    case "tuple":
+      return {
+        kind: "tuple",
+        elements: type.elements.map((el) =>
+          substituteHoleSolutionsInType(el, layer3)
+        ),
+      };
+    case "record": {
+      const updated = new Map<string, Type>();
+      for (const [field, fieldType] of type.fields.entries()) {
+        updated.set(field, substituteHoleSolutionsInType(fieldType, layer3));
+      }
+      return { kind: "record", fields: updated };
+    }
+    case "unknown": {
+      const holeId = holeIdFromUnknown(type);
+      if (holeId !== undefined) {
+        const solution = layer3.holeSolutions.get(holeId);
+        if (solution?.state === "partial" && solution.partial?.known) {
+          return substituteHoleSolutionsInType(solution.partial.known, layer3);
+        }
+        if (solution?.state === "conflicted" && solution.conflicts?.length) {
+          return type;
+        }
+      }
+      if (type.provenance.kind === "error_inconsistent") {
+        const expected = (type.provenance as any).expected;
+        if (expected) {
+          return substituteHoleSolutionsInType(expected, layer3);
+        }
+      }
+      return type;
+    }
+    default:
+      return type;
+  }
 }
 
 export function runFile(source: string, options: RunOptions = {}): RunResult {
@@ -414,51 +489,14 @@ REPL Commands:
       const summaries = artifact.analysis.layer1.summaries;
       if (summaries.length > 0) {
         for (const { name, scheme } of summaries) {
-          // Try to get a better type from Layer 3 if available
-          let typeStr = formatScheme(scheme);
-          
-          // Check if the type is an unknown with a hole solution
-          if (scheme.type.kind === "unknown") {
-            const prov = scheme.type.provenance;
-            let holeId: number | undefined;
-            
-            // Extract hole ID from various provenance types
-            if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
-              holeId = (prov as any).id;
-            } else if (prov.kind === "incomplete") {
-              holeId = (prov as any).nodeId;
-            } else if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
-              // Unwrap error provenance
-              const innerType = (prov as any).calleeType || (prov as any).actual;
-              if (innerType?.kind === "unknown") {
-                const innerProv = innerType.provenance;
-                if (innerProv.kind === "expr_hole" || innerProv.kind === "user_hole") {
-                  holeId = (innerProv as any).id;
-                }
-              }
-            }
-            
-            // Look up the hole solution
-            if (holeId !== undefined) {
-              const solution = layer3.holeSolutions.get(holeId);
-              if (solution?.state === "partial" && solution.partial?.known) {
-                typeStr = formatScheme({ quantifiers: scheme.quantifiers, type: solution.partial.known });
-              } else if (solution?.state === "conflicted" && solution.conflicts) {
-                const conflictTypes = solution.conflicts.flatMap(c => c.types).slice(0, 3);
-                const typeStrs = conflictTypes.map(t => formatScheme({ quantifiers: [], type: t }));
-                typeStr = `CONFLICT (${typeStrs.join(" vs ")})`;
-              }
-            }
-            
-            // Special case: for error_inconsistent from annotations, show the expected type
-            if (prov.kind === "error_inconsistent") {
-              const expected = (prov as any).expected;
-              if (expected) {
-                typeStr = formatScheme({ quantifiers: scheme.quantifiers, type: expected });
-              }
-            }
-          }
-          
+          const resolvedType = substituteHoleSolutionsInType(
+            cloneType(scheme.type),
+            layer3,
+          );
+          const typeStr = formatScheme({
+            quantifiers: scheme.quantifiers,
+            type: resolvedType,
+          });
           console.log(`${name} : ${typeStr}`);
         }
       } else {

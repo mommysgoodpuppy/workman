@@ -324,7 +324,8 @@ function solveHasFieldConstraint(state: SolverState, stub: ConstraintStub & { ki
 }
 
 function solveAnnotationConstraint(state: SolverState, stub: ConstraintStub & { kind: "annotation" }): void {
-  const annotation = getTypeForNode(state, stub.annotation);
+  const annotation = stub.annotationType ??
+    getTypeForNode(state, stub.annotation);
   const value = getTypeForNode(state, stub.value);
   const unified = unifyTypes(annotation, value, state.substitution);
   if (unified.success) {
@@ -957,7 +958,8 @@ function extractConstrainedTypes(
     }
     case "annotation": {
       if (nodeContainsHole(constraint.value)) {
-        const annotationType = resolvedTypes.get(constraint.annotation);
+        const annotationType = constraint.annotationType ??
+          resolvedTypes.get(constraint.annotation);
         if (annotationType && annotationType.kind !== "unknown") {
           types.push(annotationType);
         }

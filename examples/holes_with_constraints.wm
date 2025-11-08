@@ -1,0 +1,59 @@
+-- Explicit Holes with Constraints
+-- This demonstrates how ? creates unknowns that Layer 2 can constrain
+
+-- Example 1: Hole called as function
+-- Constraint: ? must be (Int -> T)
+let callHole = ?(42);
+
+-- Example 2: Hole in function position
+-- Constraint: ? must be (Int -> T)
+let applyToInt = (f) => { f(?) };
+
+-- Example 3: Multiple constraints on same hole
+let multiConstrained = () => {
+  let h = ?;
+  let a = h(42);     -- Constraint: h is (Int -> T1)
+  let b = h(true);   -- Constraint: h is (Bool -> T2)
+  (a, b)
+  -- CONFLICT: h cannot be both (Int -> ?) and (Bool -> ?)
+};
+
+-- Example 4: Hole with field access
+-- Constraint: ? must be { name: T }
+let accessField = ?.name;
+
+-- Example 5: Hole in record
+-- Creates record with unknown field
+let recordWithHole = { name: ?, age: 42 };
+let recordWithoutHole = { name: "jame", age: 42 };
+
+-- Example 6: Hole in tuple
+-- Creates tuple with unknown element
+let tupleWithHole = (42, ?, true);
+
+-- Example 7: Hole in pattern match
+let matchWithHole = () => {
+  match(?) {
+    Some(x) => { x },
+    None => { 0 }
+  }
+};
+
+-- Example 8: Annotated hole
+-- Constraint: ? must be Int
+let annotatedHole: Int = ?;
+
+-- Example 9: Hole as argument
+-- Constraint: mystery's parameter type
+let passHole = (mystery) => { mystery(?) };
+
+-- Example 10: Nested holes
+-- Multiple independent unknowns
+let nested = (?, (?, ?));
+
+-- NOTES:
+-- Each ? creates a fresh unknown type
+-- Layer 2 collects constraints on each unknown
+-- When constraints conflict, Layer 2 reports unfillable hole
+-- When constraints are compatible, Layer 2 builds partial type
+-- Holes are like Hazel's empty expression holes ⌈⌉

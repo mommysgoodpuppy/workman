@@ -1,7 +1,11 @@
 from "./native.js" import { greet };
+from "./api.js" import { fetchUser };
 
-let natGreet = () => {
+let useIt = () => { fetchUser(42) };
+
+let natGreet:String = () => {
   greet()
 };
 
 let main = () => { print(natGreet()) };
+

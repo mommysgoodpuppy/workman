@@ -26,6 +26,7 @@ import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
 import {
   cloneTypeInfo,
   cloneTypeScheme,
+  Type,
   TypeInfo,
   TypeScheme,
   typeToString,
@@ -123,9 +124,12 @@ class WorkmanLanguageServer {
             }
             return value;
           });
-          const header = `Content-Length: ${messageStr.length}\r\n\r\n`;
-          const fullMessage = header + messageStr;
-          const bytes = encoder.encode(fullMessage);
+          const bodyBytes = encoder.encode(messageStr);
+          const header = `Content-Length: ${bodyBytes.length}\r\n\r\n`;
+          const headerBytes = encoder.encode(header);
+          const bytes = new Uint8Array(headerBytes.length + bodyBytes.length);
+          bytes.set(headerBytes, 0);
+          bytes.set(bodyBytes, headerBytes.length);
 
           let written = 0;
           while (written < bytes.length) {
@@ -690,8 +694,8 @@ class WorkmanLanguageServer {
     return base;
   }
 
-  private renderNodeView(view: NodeView, holeSolutions?: Map<number, any>): string | null {
-    const typeStr = this.partialTypeToString(view.finalType);
+  private renderNodeView(view: NodeView, layer3: Layer3Result): string | null {
+    const typeStr = this.partialTypeToString(view.finalType, layer3);
     if (!typeStr) {
       return null;
     }
@@ -699,6 +703,7 @@ class WorkmanLanguageServer {
     let result = "```workman\n" + typeStr + "\n```";
     
     // Check if this node references a hole with solution information
+    const holeSolutions = layer3.holeSolutions;
     if (holeSolutions && view.finalType.kind === "unknown" && view.finalType.type) {
       // Extract the actual hole ID from the type
       const holeId = this.extractHoleIdFromType(view.finalType.type);
@@ -752,12 +757,23 @@ class WorkmanLanguageServer {
     return result;
   }
 
-  private partialTypeToString(partial: PartialType): string | null {
+  private partialTypeToString(
+    partial: PartialType,
+    layer3: Layer3Result,
+  ): string | null {
     switch (partial.kind) {
-      case "unknown":
-        return "?";
+      case "unknown": {
+        if (!partial.type) return "?";
+        const substituted = this.substituteTypeWithLayer3(
+          partial.type,
+          layer3,
+        );
+        return substituted ? typeToString(substituted) : "?";
+      }
       case "concrete":
-        return partial.type ? typeToString(partial.type) : null;
+        return partial.type
+          ? typeToString(this.substituteTypeWithLayer3(partial.type, layer3))
+          : null;
       default:
         return null;
     }
@@ -804,18 +820,11 @@ class WorkmanLanguageServer {
     scheme: TypeScheme,
     layer3: Layer3Result,
   ): string {
-    let typeStr = formatScheme(scheme);
-    
-    // Special case: for error_inconsistent from annotations, show the expected type
-    if (scheme.type.kind === "unknown") {
-      const prov = scheme.type.provenance;
-      if (prov.kind === "error_inconsistent") {
-        const expected = (prov as any).expected;
-        if (expected) {
-          return formatScheme({ quantifiers: scheme.quantifiers, type: expected });
-        }
-      }
-    }
+    const substitutedScheme = this.applyHoleSolutionsToScheme(
+      scheme,
+      layer3,
+    );
+    let typeStr = formatScheme(substitutedScheme);
     
     // Check if this binding has partial type information from Layer 3
     const holeId = this.extractHoleId(scheme);
@@ -824,8 +833,11 @@ class WorkmanLanguageServer {
       if (solution?.state === "partial" && solution.partial?.known) {
         // Show the partial type instead of error provenance (without suffix)
         typeStr = formatScheme({
-          quantifiers: scheme.quantifiers,
-          type: solution.partial.known,
+          quantifiers: substitutedScheme.quantifiers,
+          type: this.substituteTypeWithLayer3(
+            solution.partial.known,
+            layer3,
+          ),
         });
       } else if (solution?.state === "conflicted" && solution.conflicts) {
         // Show conflict information
@@ -837,6 +849,106 @@ class WorkmanLanguageServer {
     }
     
     return typeStr;
+  }
+
+  private applyHoleSolutionsToScheme(
+    scheme: TypeScheme,
+    layer3: Layer3Result,
+  ): TypeScheme {
+    const substitutedType = this.substituteTypeWithLayer3(scheme.type, layer3);
+    if (substitutedType === scheme.type) {
+      return scheme;
+    }
+    return {
+      quantifiers: scheme.quantifiers,
+      type: substitutedType,
+    };
+  }
+
+  private substituteTypeWithLayer3(type: Type, layer3: Layer3Result): Type {
+    switch (type.kind) {
+      case "func": {
+        const from = this.substituteTypeWithLayer3(type.from, layer3);
+        const to = this.substituteTypeWithLayer3(type.to, layer3);
+        if (from === type.from && to === type.to) {
+          return type;
+        }
+        return { kind: "func", from, to };
+      }
+      case "constructor": {
+        let changed = false;
+        const args = type.args.map((arg) => {
+          const substituted = this.substituteTypeWithLayer3(arg, layer3);
+          if (substituted !== arg) {
+            changed = true;
+          }
+          return substituted;
+        });
+        if (!changed) {
+          return type;
+        }
+        return { kind: "constructor", name: type.name, args };
+      }
+      case "tuple": {
+        let changed = false;
+        const elements = type.elements.map((el) => {
+          const substituted = this.substituteTypeWithLayer3(el, layer3);
+          if (substituted !== el) {
+            changed = true;
+          }
+          return substituted;
+        });
+        if (!changed) {
+          return type;
+        }
+        return { kind: "tuple", elements };
+      }
+      case "record": {
+        let changed = false;
+        const fields = new Map<string, Type>();
+        for (const [key, fieldType] of type.fields.entries()) {
+          const substituted = this.substituteTypeWithLayer3(fieldType, layer3);
+          if (substituted !== fieldType) {
+            changed = true;
+          }
+          fields.set(key, substituted);
+        }
+        if (!changed) {
+          return type;
+        }
+        return { kind: "record", fields };
+      }
+      case "unknown": {
+        const resolved = this.resolveUnknownType(type, layer3);
+        return resolved ?? type;
+      }
+      default:
+        return type;
+    }
+  }
+
+  private resolveUnknownType(
+    type: Type,
+    layer3: Layer3Result,
+  ): Type | null {
+    if (type.kind !== "unknown") {
+      return type;
+    }
+    const prov = type.provenance;
+    if (prov.kind === "error_inconsistent") {
+      const expected = (prov as any).expected;
+      if (expected) {
+        return this.substituteTypeWithLayer3(expected, layer3);
+      }
+    }
+    const holeId = this.extractHoleIdFromType(type);
+    if (holeId !== undefined) {
+      const solution = layer3.holeSolutions.get(holeId);
+      if (solution?.state === "partial" && solution.partial?.known) {
+        return this.substituteTypeWithLayer3(solution.partial.known, layer3);
+      }
+    }
+    return null;
   }
 
   private async handleHover(message: LSPMessage): Promise<LSPMessage> {
@@ -875,7 +987,7 @@ class WorkmanLanguageServer {
       if (nodeId) {
         const view = layer3.nodeViews.get(nodeId);
         if (view) {
-          const rendered = this.renderNodeView(view, layer3.holeSolutions);
+          const rendered = this.renderNodeView(view, layer3);
           if (rendered) {
             return {
               jsonrpc: "2.0",
@@ -1143,6 +1255,7 @@ class WorkmanLanguageServer {
     } | undefined = undefined;
     let preludeEnv: Map<string, TypeScheme> | undefined = undefined;
     let entryAnalysis: AnalysisResult | null = null;
+    let entryLayer3: Layer3Result | null = null;
 
     for (const path of graph.order) {
       const node = graph.nodes.get(path)!;
@@ -1228,6 +1341,7 @@ class WorkmanLanguageServer {
         resetCounter: true,
         source: node.source,
       });
+      const layer3Presentation = presentProgram(analysis.layer2);
 
       const exportedValues = new Map<string, TypeScheme>();
       const exportedTypes = new Map<string, TypeInfo>();
@@ -1272,10 +1386,14 @@ class WorkmanLanguageServer {
         }
       }
 
+      const substitutedSummaries = layer3Presentation.summaries.map((
+        { name, scheme },
+      ) => ({
+        name,
+        scheme: this.applyHoleSolutionsToScheme(scheme, layer3Presentation),
+      }));
       const letSchemeMap = new Map(
-        analysis.layer3.summaries.map((
-          { name, scheme },
-        ) => [name, scheme] as const),
+        substitutedSummaries.map(({ name, scheme }) => [name, scheme] as const),
       );
       for (const name of node.exportedValueNames) {
         const scheme = letSchemeMap.get(name) ??
@@ -1338,6 +1456,7 @@ class WorkmanLanguageServer {
       }
       if (path === graph.entry) {
         entryAnalysis = analysis;
+        entryLayer3 = layer3Presentation;
       }
     }
 
@@ -1352,12 +1471,15 @@ class WorkmanLanguageServer {
         `Internal error: missing analysis for entry module '${graph.entry}'`,
       );
     }
-    const layer3 = presentProgram(entryAnalysis.layer2);
+    const layer3 = entryLayer3 ?? presentProgram(entryAnalysis.layer2);
     
     // Build env from Layer 3 summaries (which have transformed types with conflicts)
     const transformedEnv = new Map<string, TypeScheme>();
     for (const { name, scheme } of layer3.summaries) {
-      transformedEnv.set(name, scheme);
+      transformedEnv.set(
+        name,
+        this.applyHoleSolutionsToScheme(scheme, layer3),
+      );
     }
     
     return {

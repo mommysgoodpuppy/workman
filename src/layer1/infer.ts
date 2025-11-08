@@ -133,8 +133,19 @@ function expectParameterName(param: Parameter): string {
 
 function recordExprType(ctx: Context, expr: Expr, type: Type): Type {
   const resolved = applyCurrentSubst(ctx, type);
+  if (resolved.kind === "unknown") {
+    registerHoleForType(ctx, holeOriginFromExpr(expr), resolved);
+  }
   ctx.nodeTypes.set(expr, resolved);
   return resolved;
+}
+
+function storeAnnotationType(
+  ctx: Context,
+  annotation: TypeExpr,
+  type: Type,
+): void {
+  ctx.annotationTypes.set(annotation.id, applyCurrentSubst(ctx, type));
 }
 
 function resolveTypeForName(ctx: Context, name: string): Type | undefined {
@@ -255,6 +266,7 @@ function inferLetDeclaration(
         binding.annotation,
         new Map(),
       );
+      storeAnnotationType(ctx, binding.annotation, annotationType);
       unify(ctx, inferred, annotationType);
     }
   }
@@ -338,6 +350,7 @@ function inferLetBinding(
 
     if (annotation) {
       const annotated = convertTypeExpr(ctx, annotation, annotationScope);
+      storeAnnotationType(ctx, annotation, annotated);
       if (unify(ctx, fnType, annotated)) {
         fnType = applyCurrentSubst(ctx, annotated);
       } else {
@@ -488,7 +501,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
         );
       }
-      return recordExprType(ctx, expr, instantiateAndApply(ctx, scheme));
+      const instantiated = instantiateAndApply(ctx, scheme);
+      if (instantiated.kind === "unknown") {
+        registerHoleForType(ctx, holeOriginFromExpr(expr), instantiated);
+      }
+      return recordExprType(ctx, expr, instantiated);
     }
     case "literal":
       const litType = literalType(expr.literal);
@@ -639,6 +656,13 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         
         if (!unifySucceeded) {
           const resolvedFn = applyCurrentSubst(ctx, fnType);
+          if (
+            resolvedFn.kind === "unknown" &&
+            resolvedFn.provenance.kind === "incomplete"
+          ) {
+            fnType = applyCurrentSubst(ctx, resultType);
+            return recordExprType(ctx, expr, fnType);
+          }
           if (resolvedFn.kind !== "func") {
             const calleeMarked = materializeExpr(ctx, expr.callee);
             const mark = markNotFunction(
@@ -651,7 +675,6 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             return recordExprType(ctx, expr, mark.type);
           }
         }
-        
         fnType = applyCurrentSubst(ctx, resultType);
         return recordExprType(ctx, expr, fnType);
       }
@@ -717,6 +740,15 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           to: resultType,
         });
         if (!unifySucceeded) {
+          const resolvedFn = applyCurrentSubst(ctx, fnType);
+          if (
+            resolvedFn.kind === "unknown" &&
+            resolvedFn.provenance.kind === "incomplete"
+          ) {
+            fnType = applyCurrentSubst(ctx, resultType);
+            continue;
+          }
+          
           const failure = ctx.lastUnifyFailure;
           const calleeMarked = materializeExpr(ctx, expr.callee);
           const argsMarked = expr.arguments.map((argument) =>
@@ -735,7 +767,6 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             return recordExprType(ctx, expr, mark.type);
           }
 
-          const resolvedFn = applyCurrentSubst(ctx, fnType);
           if (resolvedFn.kind !== "func") {
             const mark = markNotFunction(
               ctx,
