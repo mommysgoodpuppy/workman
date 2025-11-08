@@ -857,12 +857,17 @@ class WorkmanLanguageServer {
       const stdRoots = this.computeStdRoots(entryPath);
       let context = this.moduleContexts.get(uri);
       if (!context) {
-        context = await this.buildModuleContext(
-          entryPath,
-          stdRoots,
-          this.preludeModule,
-        );
-        this.moduleContexts.set(uri, context);
+        try {
+          context = await this.buildModuleContext(
+            entryPath,
+            stdRoots,
+            this.preludeModule,
+          );
+          this.moduleContexts.set(uri, context);
+        } catch (error) {
+          this.log(`[LSP] Failed to build module context for hover: ${error}`);
+          return { jsonrpc: "2.0", id: message.id, result: null };
+        }
       }
       const { layer3, env } = context;
       const offset = this.positionToOffset(text, position);
@@ -930,12 +935,17 @@ class WorkmanLanguageServer {
       const stdRoots = this.computeStdRoots(entryPath);
       let context = this.moduleContexts.get(uri);
       if (!context) {
-        context = await this.buildModuleContext(
-          entryPath,
-          stdRoots,
-          this.preludeModule,
-        );
-        this.moduleContexts.set(uri, context);
+        try {
+          context = await this.buildModuleContext(
+            entryPath,
+            stdRoots,
+            this.preludeModule,
+          );
+          this.moduleContexts.set(uri, context);
+        } catch (error) {
+          this.log(`[LSP] Failed to build module context for completion: ${error}`);
+          return { jsonrpc: "2.0", id: message.id, result: null };
+        }
       }
       const offset = this.positionToOffset(text, position);
       const { word, start } = this.getWordAtOffset(text, offset);
@@ -996,12 +1006,17 @@ class WorkmanLanguageServer {
       const stdRoots = this.computeStdRoots(entryPath);
       let context = this.moduleContexts.get(uri);
       if (!context) {
-        context = await this.buildModuleContext(
-          entryPath,
-          stdRoots,
-          this.preludeModule,
-        );
-        this.moduleContexts.set(uri, context);
+        try {
+          context = await this.buildModuleContext(
+            entryPath,
+            stdRoots,
+            this.preludeModule,
+          );
+          this.moduleContexts.set(uri, context);
+        } catch (error) {
+          this.log(`[LSP] Failed to build module context for inlay hints: ${error}`);
+          return { jsonrpc: "2.0", id: message.id, result: [] };
+        }
       }
       const { env, layer3 } = context;
       for (const [name, scheme] of env.entries()) {
