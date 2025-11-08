@@ -41,6 +41,11 @@ export interface FlowDiagnostic {
   message: string;
 }
 
+export interface TypeSummary {
+  name: string;
+  scheme: import("../types.ts").TypeScheme;
+}
+
 export interface Layer3Result {
   nodeViews: Map<NodeId, NodeView>;
   diagnostics: {
@@ -50,6 +55,7 @@ export interface Layer3Result {
   };
   holeSolutions: Map<NodeId, HoleSolution>;
   spanIndex: Map<NodeId, SourceSpan>;
+  summaries: TypeSummary[];
 }
 
 export function presentProgram(layer2: SolverResult): Layer3Result {
@@ -73,6 +79,7 @@ export function presentProgram(layer2: SolverResult): Layer3Result {
     },
     holeSolutions: layer2.solutions,
     spanIndex,
+    summaries: layer2.summaries,
   };
 }
 
@@ -83,7 +90,17 @@ function buildNodeViews(
 ): Map<NodeId, NodeView> {
   const views = new Map<NodeId, NodeView>();
   for (const [nodeId, type] of resolved.entries()) {
-    const solution = solutions.get(nodeId);
+    // First try to get solution for this node directly
+    let solution = solutions.get(nodeId);
+    
+    // If not found and this is an unknown type, extract the underlying hole ID
+    if (!solution && type.kind === "unknown") {
+      const holeId = extractHoleIdFromType(type);
+      if (holeId !== undefined && holeId !== nodeId) {
+        solution = solutions.get(holeId);
+      }
+    }
+    
     const view: NodeView = {
       nodeId,
       sourceSpan: spanIndex.get(nodeId),
@@ -92,6 +109,31 @@ function buildNodeViews(
     views.set(nodeId, view);
   }
   return views;
+}
+
+/**
+ * Extract the actual hole ID from an unknown type's provenance.
+ * This handles error provenances that wrap the underlying hole.
+ */
+function extractHoleIdFromType(type: Type): NodeId | undefined {
+  if (type.kind !== "unknown") {
+    return undefined;
+  }
+  
+  const prov = type.provenance;
+  if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
+    return (prov as any).id;
+  } else if (prov.kind === "incomplete") {
+    return (prov as any).nodeId;
+  } else if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
+    // Unwrap error provenance to get the underlying hole
+    const innerType = (prov as any).calleeType || (prov as any).actual;
+    if (innerType?.kind === "unknown") {
+      return extractHoleIdFromType(innerType);
+    }
+  }
+  
+  return undefined;
 }
 
 function attachSpansToDiagnostics(
@@ -106,11 +148,25 @@ function attachSpansToDiagnostics(
 
 function typeToPartial(type: Type, solution?: HoleSolution): PartialType {
   if (type.kind === "unknown") {
+    // If the underlying hole is conflicted, replace the error provenance
+    if (solution?.state === "conflicted") {
+      const conflictedType: Type = {
+        kind: "unknown",
+        provenance: {
+          kind: "error_unfillable_hole",
+          holeId: solution.provenance.kind === "expr_hole" ? (solution.provenance as any).id : 0,
+          conflicts: solution.conflicts || [],
+        },
+      };
+      return { kind: "unknown", type: conflictedType };
+    }
+    
     // If we have a partial solution, use it
     if (solution?.state === "partial" && solution.partial?.known) {
       return { kind: "concrete", type: solution.partial.known };
     }
-    return { kind: "unknown" };
+    
+    return { kind: "unknown", type };
   }
   return { kind: "concrete", type };
 }

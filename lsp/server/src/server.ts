@@ -664,49 +664,53 @@ class WorkmanLanguageServer {
     
     let result = "```workman\n" + typeStr + "\n```";
     
-    // Check if this node has a hole solution with partial information
-    if (holeSolutions && view.nodeId !== undefined) {
-      const solution = holeSolutions.get(view.nodeId);
-      if (solution) {
-        // Show provenance for unknown types
-        if (solution.provenance && solution.provenance.provenance) {
-          const prov = solution.provenance.provenance;
-          if (prov.kind === "incomplete" && prov.reason) {
-            result += `\n\n_${prov.reason}_`;
-          } else if (prov.kind === "expr_hole") {
-            result += "\n\n_Explicit type hole_";
-          } else if (prov.kind === "user_hole") {
-            result += "\n\n_User-specified type hole_";
-          }
-        }
-        
-        if (solution.state === "partial" && solution.partial) {
-          result += "\n\n**Partial Type Information:**\n";
-          if (solution.partial.known) {
-            result += `- Known: \`${typeToString(solution.partial.known)}\`\n`;
-          }
-          if (solution.partial.possibilities && solution.partial.possibilities.length > 0) {
-            result += `- Possibilities: ${solution.partial.possibilities.length}\n`;
-            // Show first few possibilities
-            const maxShow = 3;
-            for (let i = 0; i < Math.min(maxShow, solution.partial.possibilities.length); i++) {
-              result += `  - \`${typeToString(solution.partial.possibilities[i])}\`\n`;
-            }
-            if (solution.partial.possibilities.length > maxShow) {
-              result += `  - ... and ${solution.partial.possibilities.length - maxShow} more\n`;
+    // Check if this node references a hole with solution information
+    if (holeSolutions && view.finalType.kind === "unknown" && view.finalType.type) {
+      // Extract the actual hole ID from the type
+      const holeId = this.extractHoleIdFromType(view.finalType.type);
+      if (holeId !== undefined) {
+        const solution = holeSolutions.get(holeId);
+        if (solution) {
+          // Show provenance for unknown types
+          if (solution.provenance && solution.provenance.provenance) {
+            const prov = solution.provenance.provenance;
+            if (prov.kind === "incomplete" && prov.reason) {
+              result += `\n\n_${prov.reason}_`;
+            } else if (prov.kind === "expr_hole") {
+              result += "\n\n_Explicit type hole_";
+            } else if (prov.kind === "user_hole") {
+              result += "\n\n_User-specified type hole_";
             }
           }
-          result += "\n_Some type information is inferred, but not everything is known yet._";
-        } else if (solution.state === "conflicted" && solution.conflicts) {
-          result += "\n\n**⚠️ Type Conflict Detected:**\n";
-          for (const conflict of solution.conflicts) {
-            const types = conflict.types.map((t: any) => typeToString(t)).join(" vs ");
-            result += `- Conflicting types: \`${types}\`\n`;
-            result += `- Reason: ${conflict.reason}\n`;
+          
+          if (solution.state === "partial" && solution.partial) {
+            result += "\n\n**Partial Type Information:**\n";
+            if (solution.partial.known) {
+              result += `- Known: \`${typeToString(solution.partial.known)}\`\n`;
+            }
+            if (solution.partial.possibilities && solution.partial.possibilities.length > 0) {
+              result += `- Possibilities: ${solution.partial.possibilities.length}\n`;
+              // Show first few possibilities
+              const maxShow = 3;
+              for (let i = 0; i < Math.min(maxShow, solution.partial.possibilities.length); i++) {
+                result += `  - \`${typeToString(solution.partial.possibilities[i])}\`\n`;
+              }
+              if (solution.partial.possibilities.length > maxShow) {
+                result += `  - ... and ${solution.partial.possibilities.length - maxShow} more\n`;
+              }
+            }
+            result += "\n_Some type information is inferred, but not everything is known yet._";
+          } else if (solution.state === "conflicted" && solution.conflicts) {
+            result += "\n\n**⚠️ Type Conflict Detected:**\n";
+            for (const conflict of solution.conflicts) {
+              const types = conflict.types.map((t: any) => typeToString(t)).join(" vs ");
+              result += `- Conflicting types: \`${types}\`\n`;
+              result += `- Reason: ${conflict.reason}\n`;
+            }
+            result += "\n_This type hole has incompatible constraints._";
+          } else if (solution.state === "unsolved") {
+            result += "\n\n_Type is not fully determined yet._";
           }
-          result += "\n_This type hole has incompatible constraints._";
-        } else if (solution.state === "unsolved") {
-          result += "\n\n_Type is not fully determined yet._";
         }
       }
     }
@@ -726,15 +730,15 @@ class WorkmanLanguageServer {
   }
 
   /**
-   * Extract hole ID from a type scheme that contains an unknown type.
+   * Extract hole ID from a Type object.
    * This handles error provenances that wrap the actual hole.
    */
-  private extractHoleId(scheme: TypeScheme): number | undefined {
-    if (scheme.type.kind !== "unknown") {
+  private extractHoleIdFromType(type: any): number | undefined {
+    if (type.kind !== "unknown") {
       return undefined;
     }
     
-    const prov = scheme.type.provenance;
+    const prov = type.provenance;
     if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
       return (prov as any).id;
     } else if (prov.kind === "incomplete") {
@@ -743,16 +747,19 @@ class WorkmanLanguageServer {
       // Unwrap error provenance to get the underlying hole
       const calleeType = (prov as any).calleeType || (prov as any).actual;
       if (calleeType?.kind === "unknown") {
-        const innerProv = calleeType.provenance;
-        if (innerProv.kind === "expr_hole" || innerProv.kind === "user_hole") {
-          return (innerProv as any).id;
-        } else if (innerProv.kind === "incomplete") {
-          return (innerProv as any).nodeId;
-        }
+        return this.extractHoleIdFromType(calleeType);
       }
     }
     
     return undefined;
+  }
+
+  /**
+   * Extract hole ID from a type scheme that contains an unknown type.
+   * This handles error provenances that wrap the actual hole.
+   */
+  private extractHoleId(scheme: TypeScheme): number | undefined {
+    return this.extractHoleIdFromType(scheme.type);
   }
 
   /**

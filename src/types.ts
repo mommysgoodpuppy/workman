@@ -6,6 +6,7 @@ export type Provenance =
   | { kind: "error_not_function"; calleeType: Type }
   | { kind: "error_occurs_check"; left: Type; right: Type }
   | { kind: "error_unify_conflict"; typeA: Type; typeB: Type }
+  | { kind: "error_unfillable_hole"; holeId: number; conflicts: any[] }
   | { kind: "error_type_expr_unknown"; name: string }
   | { kind: "error_type_expr_arity"; expected: number; actual: number }
   | { kind: "error_type_expr_unsupported" }
@@ -419,6 +420,8 @@ export function provenanceToString(provenance: Provenance): string {
       return "?(inconsistent)";
     case "error_unify_conflict":
       return "?(conflict)";
+    case "error_unfillable_hole":
+      return `?(unfillable: ${provenance.conflicts.length} conflicting constraints)`;
     case "error_type_expr_unknown":
       return `?(unknown type: ${provenance.name})`;
     case "error_type_expr_arity":

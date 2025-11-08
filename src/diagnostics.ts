@@ -19,6 +19,7 @@ export type ConstraintDiagnosticReason =
   | "type_expr_unsupported"
   | "type_decl_duplicate"
   | "type_decl_invalid_member"
+  | "unfillable_hole"
   | "internal_error";
 
 export interface ConstraintDiagnostic {

@@ -26,6 +26,7 @@ export function analyzeProgram(program: Program, options: AnalysisOptions = {}):
     holes: layer1.holes,
     nodeTypeById: layer1.nodeTypeById,
     layer1Diagnostics: layer1.layer1Diagnostics,
+    summaries: layer1.summaries,
   };
 
   const layer2 = solveConstraints(solveInput);

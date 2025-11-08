@@ -52,6 +52,7 @@ export interface SolveInput {
   holes: Map<HoleId, UnknownInfo>;
   nodeTypeById: Map<NodeId, Type>;
   layer1Diagnostics: ConstraintDiagnostic[];
+  summaries: { name: string; scheme: import("../types.ts").TypeScheme }[];
 }
 
 export interface SolverResult {
@@ -61,6 +62,7 @@ export interface SolverResult {
   resolvedNodeTypes: Map<NodeId, Type>;
   remarkedProgram: MProgram;
   conflicts: ConstraintConflict[];
+  summaries: { name: string; scheme: import("../types.ts").TypeScheme }[];
 }
 
 interface UnifyFailure {
@@ -120,6 +122,18 @@ export function solveConstraints(input: SolveInput): SolverResult {
   // Detect conflicts in unknown types
   const conflicts = detectConflicts(input.holes, input.constraintStubs, state.substitution, resolvedNodeTypes);
 
+  // Add diagnostics for conflicts
+  for (const conflict of conflicts) {
+    state.diagnostics.push({
+      origin: conflict.holeId,
+      reason: "unfillable_hole",
+      details: {
+        conflictingTypes: conflict.types,
+        reason: conflict.reason,
+      },
+    });
+  }
+
   const solutions: Map<HoleId, HoleSolution> = new Map();
   for (const [holeId, info] of input.holes.entries()) {
     const nodeType = resolvedNodeTypes.get(holeId);
@@ -146,6 +160,18 @@ export function solveConstraints(input: SolveInput): SolverResult {
 
   remarkProgram(input.markedProgram, resolvedNodeTypes);
 
+  // Transform summaries with resolved types and conflict information
+  const transformedSummaries = input.summaries.map(({ name, scheme }) => {
+    const transformedType = transformTypeWithSolutions(scheme.type, solutions);
+    return {
+      name,
+      scheme: {
+        quantifiers: scheme.quantifiers,
+        type: transformedType,
+      },
+    };
+  });
+
   const combinedDiagnostics = [
     ...input.layer1Diagnostics,
     ...state.diagnostics,
@@ -158,7 +184,69 @@ export function solveConstraints(input: SolveInput): SolverResult {
     resolvedNodeTypes,
     remarkedProgram: input.markedProgram,
     conflicts,
+    summaries: transformedSummaries,
   };
+}
+
+/**
+ * Recursively transform a type, replacing error provenances with conflict markers
+ * when the underlying hole is conflicted.
+ */
+function transformTypeWithSolutions(
+  type: Type,
+  solutions: Map<HoleId, HoleSolution>,
+): Type {
+  if (type.kind === "unknown") {
+    const holeId = extractHoleIdFromType(type);
+    if (holeId !== undefined) {
+      const solution = solutions.get(holeId);
+      if (solution?.state === "conflicted") {
+        // Replace with unfillable_hole marker (constraint conflict)
+        return {
+          kind: "unknown",
+          provenance: {
+            kind: "error_unfillable_hole",
+            holeId,
+            conflicts: solution.conflicts || [],
+          },
+        };
+      } else if (solution?.state === "partial" && solution.partial?.known) {
+        // Use the partial type
+        return solution.partial.known;
+      }
+    }
+    return type;
+  }
+  
+  // Recursively transform nested types
+  switch (type.kind) {
+    case "func":
+      return {
+        kind: "func",
+        from: transformTypeWithSolutions(type.from, solutions),
+        to: transformTypeWithSolutions(type.to, solutions),
+      };
+    case "tuple":
+      return {
+        kind: "tuple",
+        elements: type.elements.map(el => transformTypeWithSolutions(el, solutions)),
+      };
+    case "record": {
+      const fields = new Map<string, Type>();
+      for (const [name, fieldType] of type.fields.entries()) {
+        fields.set(name, transformTypeWithSolutions(fieldType, solutions));
+      }
+      return { kind: "record", fields };
+    }
+    case "constructor":
+      return {
+        kind: "constructor",
+        name: type.name,
+        args: type.args.map(arg => transformTypeWithSolutions(arg, solutions)),
+      };
+    default:
+      return type;
+  }
 }
 
 interface SolverState {
@@ -770,11 +858,17 @@ function detectConflicts(
 
 function getReferencedHoles(constraint: ConstraintStub, resolvedTypes: Map<NodeId, Type>): HoleId[] {
   const holes: HoleId[] = [];
+  const seen = new Set<HoleId>();
   
   const checkType = (nodeId: NodeId) => {
     const type = resolvedTypes.get(nodeId);
-    if (type?.kind === "unknown" && type.provenance.kind !== "error_internal") {
-      holes.push(nodeId);
+    if (type?.kind === "unknown") {
+      // Extract the actual hole ID from the provenance
+      const holeId = extractHoleIdFromType(type);
+      if (holeId !== undefined && !seen.has(holeId)) {
+        holes.push(holeId);
+        seen.add(holeId);
+      }
     }
   };
   
@@ -808,6 +902,31 @@ function getReferencedHoles(constraint: ConstraintStub, resolvedTypes: Map<NodeI
   return holes;
 }
 
+/**
+ * Extract the actual hole ID from an unknown type's provenance.
+ * This handles error provenances that wrap the underlying hole.
+ */
+function extractHoleIdFromType(type: Type): HoleId | undefined {
+  if (type.kind !== "unknown") {
+    return undefined;
+  }
+  
+  const prov = type.provenance;
+  if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
+    return (prov as any).id;
+  } else if (prov.kind === "incomplete") {
+    return (prov as any).nodeId;
+  } else if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
+    // Unwrap error provenance to get the underlying hole
+    const innerType = (prov as any).calleeType || (prov as any).actual;
+    if (innerType?.kind === "unknown") {
+      return extractHoleIdFromType(innerType);
+    }
+  }
+  
+  return undefined;
+}
+
 function extractConstrainedTypes(
   constraint: ConstraintStub,
   holeId: HoleId,
@@ -815,10 +934,18 @@ function extractConstrainedTypes(
 ): Type[] {
   const types: Type[] = [];
   
+  const nodeContainsHole = (nodeId: NodeId): boolean => {
+    const type = resolvedTypes.get(nodeId);
+    if (type?.kind === "unknown") {
+      return extractHoleIdFromType(type) === holeId;
+    }
+    return false;
+  };
+  
   switch (constraint.kind) {
     case "call": {
-      // If the callee is the hole, we know it must be a function
-      if (constraint.callee === holeId) {
+      // If the callee contains the hole, we know it must be a function
+      if (nodeContainsHole(constraint.callee)) {
         const argType = resolvedTypes.get(constraint.argument);
         const resType = constraint.resultType;
         if (argType) {
@@ -829,7 +956,7 @@ function extractConstrainedTypes(
       break;
     }
     case "annotation": {
-      if (constraint.value === holeId) {
+      if (nodeContainsHole(constraint.value)) {
         const annotationType = resolvedTypes.get(constraint.annotation);
         if (annotationType && annotationType.kind !== "unknown") {
           types.push(annotationType);
@@ -838,19 +965,21 @@ function extractConstrainedTypes(
       break;
     }
     case "numeric": {
-      if (constraint.operands.includes(holeId) || constraint.result === holeId) {
+      const hasHole = constraint.operands.some(nodeContainsHole) || nodeContainsHole(constraint.result);
+      if (hasHole) {
         types.push({ kind: "int" });
       }
       break;
     }
     case "boolean": {
-      if (constraint.operands.includes(holeId) || constraint.result === holeId) {
+      const hasHole = constraint.operands.some(nodeContainsHole) || nodeContainsHole(constraint.result);
+      if (hasHole) {
         types.push({ kind: "bool" });
       }
       break;
     }
     case "has_field": {
-      if (constraint.target === holeId) {
+      if (nodeContainsHole(constraint.target)) {
         const resultType = resolvedTypes.get(constraint.result);
         if (resultType) {
           const fields = new Map<string, Type>();
