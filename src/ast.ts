@@ -22,7 +22,8 @@ export type Pattern =
   | ({ kind: "variable" } & NodeBase & { name: string })
   | ({ kind: "literal" } & NodeBase & { literal: Literal })
   | ({ kind: "constructor" } & NodeBase & { name: string; args: Pattern[] })
-  | ({ kind: "tuple" } & NodeBase & { elements: Pattern[] });
+  | ({ kind: "tuple" } & NodeBase & { elements: Pattern[] })
+  | ({ kind: "all_errors" } & NodeBase);
 
 export interface ModuleImport extends NodeBase {
   kind: "module_import";
@@ -224,7 +225,8 @@ export type TypeExpr =
   | TypeReference
   | TypeTuple
   | TypeRecordExpr
-  | TypeUnit;
+  | TypeUnit
+  | TypeErrorRowExpr;
 
 export interface TypeVariable extends NodeBase {
   kind: "type_var";
@@ -255,6 +257,18 @@ export interface TypeRecordExpr extends NodeBase {
 
 export interface TypeUnit extends NodeBase {
   kind: "type_unit";
+}
+
+export interface TypeErrorRowCase extends NodeBase {
+  kind: "type_error_row_case";
+  name: string;
+  payload?: TypeExpr;
+}
+
+export interface TypeErrorRowExpr extends NodeBase {
+  kind: "type_error_row";
+  cases: TypeErrorRowCase[];
+  hasTailWildcard: boolean;
 }
 
 export type TypeAliasMember = ConstructorAlias | TypeAliasExprMember;

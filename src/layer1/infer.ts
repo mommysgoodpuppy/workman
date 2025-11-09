@@ -19,8 +19,13 @@ import { lowerTupleParameters } from "../lower_tuple_params.ts";
 import { canonicalizeMatch } from "../passes/canonicalize_match.ts";
 import {
   applySubstitutionScheme,
+  collapseResultType,
   ConstructorInfo,
+  ErrorRowType,
+  errorRowUnion,
+  flattenResultType,
   freshTypeVar,
+  makeResultType,
   Type,
   TypeEnv,
   TypeEnvADT,
@@ -636,24 +641,31 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       return recordExprType(ctx, expr, resultType);
     }
     case "call": {
-      let fnType = inferExpr(ctx, expr.callee);
-      
+      const rawCalleeType = inferExpr(ctx, expr.callee);
+      let fnType = collapseResultType(applyCurrentSubst(ctx, rawCalleeType));
+      let accumulatedErrors: ErrorRowType | null = null;
+      const calleeResultInfo = flattenResultType(fnType);
+      if (calleeResultInfo) {
+        accumulatedErrors = calleeResultInfo.error;
+        fnType = calleeResultInfo.value;
+      }
+
       // Handle zero-argument calls: f() should unify with Unit -> T
       if (expr.arguments.length === 0) {
         const resultType = freshTypeVar();
         registerHoleForType(
           ctx,
           holeOriginFromExpr(expr.callee),
-          applyCurrentSubst(ctx, fnType),
+          applyCurrentSubst(ctx, rawCalleeType),
         );
         registerHoleForType(ctx, holeOriginFromExpr(expr), resultType);
-        
+
         const unifySucceeded = unify(ctx, fnType, {
           kind: "func",
           from: { kind: "unit" },
           to: resultType,
         });
-        
+
         if (!unifySucceeded) {
           const resolvedFn = applyCurrentSubst(ctx, fnType);
           if (
@@ -676,9 +688,20 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           }
         }
         fnType = applyCurrentSubst(ctx, resultType);
-        return recordExprType(ctx, expr, fnType);
+        let finalType = collapseResultType(fnType);
+        if (accumulatedErrors) {
+          const flattened = flattenResultType(finalType);
+          if (flattened) {
+            const merged = errorRowUnion(flattened.error, accumulatedErrors);
+            finalType = makeResultType(flattened.value, merged);
+          } else {
+            finalType = makeResultType(finalType, accumulatedErrors);
+          }
+          finalType = collapseResultType(finalType);
+        }
+        return recordExprType(ctx, expr, finalType);
       }
-      
+
       for (let index = 0; index < expr.arguments.length; index++) {
         const argExpr = expr.arguments[index];
         const argType = inferExpr(ctx, argExpr);
@@ -692,7 +715,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         registerHoleForType(
           ctx,
           holeOriginFromExpr(argExpr),
-          applyCurrentSubst(ctx, argType),
+          collapseResultType(applyCurrentSubst(ctx, argType)),
         );
         registerHoleForType(ctx, holeOriginFromExpr(expr), resultType);
         const calleeIdentifierName = expr.callee.kind === "identifier"
@@ -725,6 +748,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             argType: typeToString(applyCurrentSubst(ctx, argType)),
           }); */
         }
+        const resolvedArg = collapseResultType(applyCurrentSubst(ctx, argType));
+        const argResultInfo = flattenResultType(resolvedArg);
+        const argInputType = argResultInfo ? argResultInfo.value : resolvedArg;
+        if (argResultInfo) {
+          accumulatedErrors = accumulatedErrors
+            ? errorRowUnion(accumulatedErrors, argResultInfo.error)
+            : argResultInfo.error;
+        }
         recordCallConstraint(
           ctx,
           expr,
@@ -733,10 +764,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           expr,
           resultType,
           index,
+          argInputType,
         );
         const unifySucceeded = unify(ctx, fnType, {
           kind: "func",
-          from: argType,
+          from: argInputType,
           to: resultType,
         });
         if (!unifySucceeded) {
@@ -798,7 +830,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
         fnType = applyCurrentSubst(ctx, resultType);
       }
-      const callType = applyCurrentSubst(ctx, fnType);
+      let callType = collapseResultType(applyCurrentSubst(ctx, fnType));
+      if (accumulatedErrors) {
+        const flattened = flattenResultType(callType);
+        if (flattened) {
+          const merged = errorRowUnion(flattened.error, accumulatedErrors);
+          callType = makeResultType(flattened.value, merged);
+        } else {
+          callType = makeResultType(callType, accumulatedErrors);
+        }
+        callType = collapseResultType(callType);
+      }
       if (
         ctx.source?.includes(
           "Runtime value printer for Workman using std library",
@@ -958,11 +1000,22 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
   }
 }
 
+interface ErrorRowCoverage {
+  constructors: Set<string>;
+  coversTail: boolean;
+}
+
 type PatternCoverage =
   | { kind: "wildcard" }
-  | { kind: "constructor"; typeName: string; ctor: string }
+  | {
+    kind: "constructor";
+    typeName: string;
+    ctor: string;
+    errorRow?: ErrorRowCoverage;
+  }
   | { kind: "bool"; value: boolean }
-  | { kind: "none" };
+  | { kind: "none" }
+  | { kind: "all_errors" };
 
 export function inferProgram(
   program: Program,
@@ -1423,6 +1476,7 @@ export function inferPattern(
           marked: mark,
         };
       }
+      const errorRow = extractErrConstructorCoverage(pattern, final);
       return {
         type: final,
         bindings,
@@ -1430,6 +1484,7 @@ export function inferPattern(
           kind: "constructor",
           typeName: final.name,
           ctor: pattern.name,
+          errorRow,
         },
         marked: {
           kind: "constructor",
@@ -1438,6 +1493,20 @@ export function inferPattern(
           type: final,
           name: pattern.name,
           args: markedArgs,
+        },
+      };
+    }
+    case "all_errors": {
+      const target = applyCurrentSubst(ctx, expected);
+      return {
+        type: target,
+        bindings: new Map(),
+        coverage: { kind: "all_errors" },
+        marked: {
+          kind: "all_errors",
+          span: pattern.span,
+          id: pattern.id,
+          type: target,
         },
       };
     }
@@ -1462,6 +1531,41 @@ export function inferPattern(
         marked: mark,
       };
   }
+}
+
+function extractErrConstructorCoverage(
+  pattern: Pattern,
+  final: Type,
+): ErrorRowCoverage | undefined {
+  if (pattern.kind !== "constructor") {
+    return undefined;
+  }
+  if (pattern.name !== "Err") {
+    return undefined;
+  }
+  if (final.kind !== "constructor" || final.name !== "Result") {
+    return undefined;
+  }
+  if (pattern.args.length === 0) {
+    return {
+      constructors: new Set(),
+      coversTail: true,
+    };
+  }
+  return collectErrorRowCoverage(pattern.args[0]);
+}
+
+function collectErrorRowCoverage(
+  pattern: Pattern,
+): ErrorRowCoverage | undefined {
+  if (pattern.kind === "constructor") {
+    return { constructors: new Set([pattern.name]), coversTail: false };
+  }
+  if (pattern.kind === "wildcard" || pattern.kind === "variable") {
+    return { constructors: new Set(), coversTail: true };
+  }
+  // Any other pattern form matches all remaining constructors, so treat as tail coverage.
+  return { constructors: new Set(), coversTail: true };
 }
 
 export function ensureExhaustive(

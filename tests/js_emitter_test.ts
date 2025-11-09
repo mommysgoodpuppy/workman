@@ -2,6 +2,11 @@ import { assertEquals } from "https://deno.land/std/assert/mod.ts";
 import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
 import { emitModule } from "../backends/compiler/js/emitter.ts";
 
+const RUNTIME_MODULE_SPEC = new URL(
+  "../backends/compiler/js/runtime.mjs",
+  import.meta.url,
+).href;
+
 Deno.test({
   name: "JS emitter generates executable code for simple module",
   permissions: { read: true },
@@ -14,7 +19,7 @@ Deno.test({
 
   const code = emitModule(module, coreGraph, {
     extension: ".js",
-    runtimeModule: "./runtime.mjs",
+    runtimeModule: RUNTIME_MODULE_SPEC,
   });
 
   const dataUrl = `data:text/javascript,${encodeURIComponent(code)}`;
@@ -36,7 +41,7 @@ Deno.test({
 
   const code = emitModule(module, coreGraph, {
     extension: ".js",
-    runtimeModule: "./runtime.mjs",
+    runtimeModule: RUNTIME_MODULE_SPEC,
   });
 
   const dataUrl = `data:text/javascript,${encodeURIComponent(code)}`;
@@ -58,7 +63,7 @@ Deno.test({
 
   const code = emitModule(module, coreGraph, {
     extension: ".js",
-    runtimeModule: "./runtime.mjs",
+    runtimeModule: RUNTIME_MODULE_SPEC,
   });
 
   const dataUrl = `data:text/javascript,${encodeURIComponent(code)}`;
@@ -72,4 +77,53 @@ Deno.test({
   assertEquals(renamed.age, 7);
   assertEquals(mod.describeUser(), "Renamed");
   assertEquals(mod.ageAfterBirthday(), 21);
+});
+
+Deno.test({
+  name: "JS emitter preserves infectious Result semantics",
+  permissions: { read: true },
+}, async () => {
+  const { coreGraph } = await compileWorkmanGraph(
+    "./tests/fixtures/compiler/result_infectious/main.wm",
+  );
+  const module = coreGraph.modules.get(coreGraph.entry);
+  if (!module) throw new Error("missing module");
+
+  const code = emitModule(module, coreGraph, {
+    extension: ".js",
+    runtimeModule: RUNTIME_MODULE_SPEC,
+  });
+
+  const dataUrl = `data:text/javascript,${encodeURIComponent(code)}`;
+  const mod = await import(dataUrl);
+
+  assertEquals(mod.okFlow().tag, "Ok");
+  assertEquals(mod.okFlow()._0, 42);
+  assertEquals(mod.missingFlow().tag, "Err");
+  assertEquals(mod.badFlow().tag, "Err");
+});
+
+Deno.test({
+  name: "JS emitter lowers AllErrors patterns",
+  permissions: { read: true },
+}, async () => {
+  const { coreGraph } = await compileWorkmanGraph(
+    "./tests/fixtures/compiler/all_errors_match/main.wm",
+  );
+  const module = coreGraph.modules.get(coreGraph.entry);
+  if (!module) throw new Error("missing module");
+
+  const code = emitModule(module, coreGraph, {
+    extension: ".js",
+    runtimeModule: RUNTIME_MODULE_SPEC,
+  });
+
+  const dataUrl = `data:text/javascript,${encodeURIComponent(code)}`;
+  const mod = await import(dataUrl);
+
+  const missing = mod.missingCase();
+  const other = mod.otherCase();
+
+  assertEquals(missing.tag, "Missing");
+  assertEquals(other.tag, "Other");
 });

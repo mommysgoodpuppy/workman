@@ -24,6 +24,7 @@ import type {
   TypeDeclaration,
   TypeExpr,
   TypeRecordField,
+  TypeErrorRowCase,
   TypeParameter,
   TypeReexport,
 } from "./ast.ts";
@@ -1187,6 +1188,9 @@ class SurfaceParser {
 
   private parseTypePrimary(): TypeExpr {
     const token = this.peek();
+    if (token.kind === "symbol" && token.value === "<") {
+      return this.parseErrorRowTypeExpr();
+    }
     if (token.kind === "symbol" && token.value === "(") {
       return this.parseTypeTupleOrGrouping();
     }
@@ -1219,6 +1223,53 @@ class SurfaceParser {
     }
 
     throw this.error("Expected type expression", token);
+  }
+
+  private parseErrorRowTypeExpr(): TypeExpr {
+    const open = this.expectSymbol("<");
+    const cases: TypeErrorRowCase[] = [];
+    let hasTailWildcard = false;
+    let first = true;
+    while (!this.checkSymbol(">")) {
+      if (!first) {
+        this.expectSymbol("|");
+      }
+      first = false;
+      if (this.checkSymbol("_")) {
+        if (hasTailWildcard) {
+          throw this.error("Row wildcard already specified", this.peek());
+        }
+        const underscore = this.expectSymbol("_");
+        hasTailWildcard = true;
+        if (!this.checkSymbol(">")) {
+          throw this.error("Row wildcard must be last entry", this.peek());
+        }
+        continue;
+      }
+      const ctor = this.expectConstructor("Expected error constructor");
+      let payload: TypeExpr | undefined;
+      let end = ctor.end;
+      if (this.matchSymbol("(")) {
+        payload = this.parseTypeExpr();
+        this.expectSymbol(")");
+        end = payload.span.end;
+      }
+      cases.push({
+        kind: "type_error_row_case",
+        name: ctor.value,
+        payload,
+        span: this.spanFrom(ctor.start, end),
+        id: nextNodeId(),
+      });
+    }
+    const close = this.expectSymbol(">");
+    return {
+      kind: "type_error_row",
+      cases,
+      hasTailWildcard,
+      span: this.spanFrom(open.start, close.end),
+      id: nextNodeId(),
+    };
   }
 
   private parseRecordTypeExpr(): TypeExpr {
@@ -1290,6 +1341,14 @@ class SurfaceParser {
     if (token.kind === "symbol" && token.value === "_") {
       const underscore = this.consume();
       return { kind: "wildcard", span: this.createSpan(underscore, underscore), id: nextNodeId() };
+    }
+
+    if (
+      (token.kind === "constructor" || token.kind === "identifier") &&
+      token.value === "AllErrors"
+    ) {
+      const all = this.consume();
+      return { kind: "all_errors", span: this.createSpan(all, all), id: nextNodeId() };
     }
 
     if (token.kind === "identifier") {
@@ -1465,6 +1524,14 @@ class SurfaceParser {
     const token = this.consume();
     if (token.kind !== "identifier") {
       throw expectedTokenError("identifier", token, this.source);
+    }
+    return token;
+  }
+
+  private expectConstructor(message = "constructor"): Token {
+    const token = this.consume();
+    if (token.kind !== "constructor") {
+      throw expectedTokenError(message, token, this.source);
     }
     return token;
   }

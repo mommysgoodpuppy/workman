@@ -380,11 +380,33 @@ function applyValue(
     return target;
   }
 
-  switch (target.kind) {
+  const calleeInfo = unwrapResultForCall(target);
+  if (calleeInfo.shortCircuit) {
+    return calleeInfo.shortCircuit;
+  }
+  let callable = calleeInfo.value;
+  let infected = calleeInfo.infected;
+
+  const processedArgs: RuntimeValue[] = [];
+  for (const arg of args) {
+    const argInfo = unwrapResultForCall(arg);
+    if (argInfo.shortCircuit) {
+      return argInfo.shortCircuit;
+    }
+    if (argInfo.infected) {
+      infected = true;
+    }
+    processedArgs.push(argInfo.value);
+  }
+
+  let result: RuntimeValue;
+  switch (callable.kind) {
     case "closure":
-      return callClosure(target, args, span);
+      result = callClosure(callable, processedArgs, span);
+      break;
     case "native":
-      return callNative(target, args, span);
+      result = callNative(callable, processedArgs, span);
+      break;
     default:
       throw new RuntimeError(
         "Attempted to call a non-function value",
@@ -392,6 +414,44 @@ function applyValue(
         currentSource,
       );
   }
+
+  if (infected) {
+    return wrapResultValue(result);
+  }
+  return result;
+}
+
+interface ResultUnwrapInfo {
+  value: RuntimeValue;
+  infected: boolean;
+  shortCircuit?: RuntimeValue;
+}
+
+function unwrapResultForCall(value: RuntimeValue): ResultUnwrapInfo {
+  if (value.kind === "data") {
+    if (value.constructor === "Err") {
+      return { value, infected: true, shortCircuit: value };
+    }
+    if (value.constructor === "Ok") {
+      const payload = value.fields[0] ?? UNIT_VALUE;
+      return { value: payload, infected: true };
+    }
+  }
+  return { value, infected: false };
+}
+
+function wrapResultValue(value: RuntimeValue): RuntimeValue {
+  if (
+    value.kind === "data" &&
+    (value.constructor === "Ok" || value.constructor === "Err")
+  ) {
+    return value;
+  }
+  return {
+    kind: "data",
+    constructor: "Ok",
+    fields: [value],
+  };
 }
 
 function callClosure(

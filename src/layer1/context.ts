@@ -34,6 +34,7 @@ import {
   cloneTypeInfo,
   cloneTypeScheme,
   composeSubstitution,
+  ErrorRowType,
   generalize,
   instantiate,
   occursInType,
@@ -151,6 +152,7 @@ export type ConstraintStub =
       result: NodeId;
       resultType: Type;
       index: number;
+      argumentValueType?: Type;
     }
   | {
       kind: "branch_join";
@@ -196,6 +198,7 @@ export function recordCallConstraint(
   result: Expr,
   resultType: Type,
   index: number,
+  argumentValueType: Type,
 ): void {
   ctx.constraintStubs.push({
     kind: "call",
@@ -205,6 +208,7 @@ export function recordCallConstraint(
     result: result.id,
     resultType,
     index,
+    argumentValueType: cloneType(argumentValueType),
   });
 }
 
@@ -872,6 +876,10 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
     return { success: true, subst: current };
   }
 
+  if (left.kind === "error_row" && right.kind === "error_row") {
+    return unifyErrorRowTypes(left, right, subst);
+  }
+
   if (left.kind === right.kind) {
     return { success: true, subst };
   }
@@ -900,6 +908,51 @@ function bindVar(id: number, type: Type, subst: Substitution): UnifyResult {
   const next = new Map(subst);
   next.set(id, resolved);
   return { success: true, subst: next };
+}
+
+function unifyErrorRowTypes(
+  left: ErrorRowType,
+  right: ErrorRowType,
+  subst: Substitution,
+): UnifyResult {
+  if (left.cases.size !== right.cases.size) {
+    return {
+      success: false,
+      reason: { kind: "type_mismatch", left, right },
+    };
+  }
+  let current = subst;
+  for (const [label, leftPayload] of left.cases.entries()) {
+    if (!right.cases.has(label)) {
+      return {
+        success: false,
+        reason: { kind: "type_mismatch", left, right },
+      };
+    }
+    const rightPayload = right.cases.get(label) ?? null;
+    if (leftPayload && rightPayload) {
+      const merged = unifyTypes(leftPayload, rightPayload, current);
+      if (!merged.success) {
+        return merged;
+      }
+      current = merged.subst;
+    } else if (leftPayload || rightPayload) {
+      return {
+        success: false,
+        reason: { kind: "type_mismatch", left, right },
+      };
+    }
+  }
+  if (left.tail && right.tail) {
+    return unifyTypes(left.tail, right.tail, current);
+  }
+  if (left.tail || right.tail) {
+    return {
+      success: false,
+      reason: { kind: "type_mismatch", left, right },
+    };
+  }
+  return { success: true, subst: current };
 }
 
 export function unify(ctx: Context, a: Type, b: Type): boolean {

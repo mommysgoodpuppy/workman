@@ -14,12 +14,15 @@ import {
 } from "./context.ts";
 import {
   cloneTypeScheme,
+  collapseResultType,
+  ErrorRowType,
+  flattenResultType,
   freeTypeVars,
   freshTypeVar,
   instantiate,
   Type,
   typeToString,
-  unknownType
+  unknownType,
 } from "../types.ts";
 import { PatternInfo } from "./infer.ts";
 
@@ -28,6 +31,14 @@ export interface MatchBranchesResult {
   type: Type;
   patternInfos: PatternInfo[];
   bodyTypes: Type[];
+  errorRowCoverage?: MatchErrorRowCoverage;
+}
+
+export interface MatchErrorRowCoverage {
+  errorRow: ErrorRowType;
+  coveredConstructors: Set<string>;
+  coversTail: boolean;
+  missingConstructors: string[];
 }
 
 export function inferMatchExpression(
@@ -105,9 +116,13 @@ export function inferMatchBranches(
   const coverageMap = new Map<string, Set<string>>();
   const booleanCoverage = new Set<"true" | "false">();
   let hasWildcard = false;
+  let hasAllErrors = false;
+  let hasErrConstructor = false;
+  const handledErrorConstructors = new Set<string>();
   const patternInfos: PatternInfo[] = [];
   const bodyTypes: Type[] = [];
   const branchBodies: Expr[] = [];
+  let errorRowCoverage: MatchErrorRowCoverage | undefined;
 
   for (const arm of bundle.arms) {
     if (arm.kind === "match_bundle_reference") {
@@ -157,7 +172,33 @@ export function inferMatchBranches(
     }
     if (patternInfo.coverage.kind === "wildcard") {
       hasWildcard = true;
+    } else if (patternInfo.coverage.kind === "all_errors") {
+      hasAllErrors = true;
+      handledErrorConstructors.add("_");
+      if (
+        expected.kind === "constructor" &&
+        expected.name === "Result"
+      ) {
+        const set = coverageMap.get(expected.name) ?? new Set<string>();
+        set.add("Err");
+        coverageMap.set(expected.name, set);
+      }
     } else if (patternInfo.coverage.kind === "constructor") {
+      if (
+        patternInfo.coverage.typeName === "Result" &&
+        patternInfo.coverage.ctor === "Err"
+      ) {
+        hasErrConstructor = true;
+        const errorRow = patternInfo.coverage.errorRow;
+        if (errorRow) {
+          for (const ctor of errorRow.constructors) {
+            handledErrorConstructors.add(ctor);
+          }
+          if (errorRow.coversTail) {
+            handledErrorConstructors.add("_");
+          }
+        }
+      }
       const key = patternInfo.coverage.typeName;
       const set = coverageMap.get(key) ?? new Set<string>();
       set.add(patternInfo.coverage.ctor);
@@ -200,11 +241,22 @@ export function inferMatchBranches(
     }
   }
 
+  const resolvedScrutinee = applyCurrentSubst(ctx, scrutineeType);
+
   if (exhaustive) {
+    if (
+      hasAllErrors &&
+      resolvedScrutinee.kind === "constructor" &&
+      resolvedScrutinee.name === "Result"
+    ) {
+      const set = coverageMap.get(resolvedScrutinee.name) ?? new Set<string>();
+      set.add("Err");
+      coverageMap.set(resolvedScrutinee.name, set);
+    }
     ensureExhaustive(
       ctx,
       expr,
-      applyCurrentSubst(ctx, scrutineeType),
+      resolvedScrutinee,
       hasWildcard,
       coverageMap,
       booleanCoverage,
@@ -219,8 +271,62 @@ export function inferMatchBranches(
     recordBranchJoinConstraint(ctx, expr, branchBodies, scrutineeExpr);
   }
 
-  const resolvedResult = applyCurrentSubst(ctx, resultType);
-  const resolvedScrutinee = applyCurrentSubst(ctx, scrutineeType);
+  let resolvedResult = applyCurrentSubst(ctx, resultType);
+  const scrutineeInfo = flattenResultType(resolvedScrutinee);
+
+  const dischargeErrorRow = (okValueType: Type) => {
+    const currentInfo = flattenResultType(resolvedResult);
+    const targetResult = currentInfo
+      ? collapseResultType(currentInfo.value)
+      : resolvedResult;
+    unify(ctx, okValueType, targetResult);
+    resolvedResult = applyCurrentSubst(ctx, okValueType);
+  };
+
+  const snapshotErrorCoverage = (
+    row: ErrorRowType,
+    missing: string[],
+  ) => {
+    errorRowCoverage = {
+      errorRow: row,
+      coveredConstructors: new Set(handledErrorConstructors),
+      coversTail: handledErrorConstructors.has("_"),
+      missingConstructors: missing,
+    };
+  };
+
+  if (hasAllErrors) {
+    if (!scrutineeInfo) {
+      ctx.layer1Diagnostics.push({
+        origin: expr.id,
+        reason: "all_errors_outside_result",
+      });
+    } else if (!hasErrConstructor) {
+      ctx.layer1Diagnostics.push({
+        origin: expr.id,
+        reason: "all_errors_requires_err",
+      });
+    } else {
+      dischargeErrorRow(scrutineeInfo.value);
+      snapshotErrorCoverage(scrutineeInfo.error, []);
+    }
+  } else if (scrutineeInfo && hasErrConstructor) {
+    const missingConstructors = findMissingErrorConstructors(
+      scrutineeInfo.error,
+      handledErrorConstructors,
+    );
+    if (missingConstructors.length === 0) {
+      dischargeErrorRow(scrutineeInfo.value);
+      snapshotErrorCoverage(scrutineeInfo.error, []);
+    } else {
+      ctx.layer1Diagnostics.push({
+        origin: expr.id,
+        reason: "error_row_partial_coverage",
+        details: { constructors: missingConstructors },
+      });
+      snapshotErrorCoverage(scrutineeInfo.error, missingConstructors);
+    }
+  }
   const resultVars = freeTypeVars(resolvedResult);
   const scrutineeVars = freeTypeVars(resolvedScrutinee);
   /* console.debug("[debug] match result", {
@@ -238,7 +344,27 @@ export function inferMatchBranches(
     type: resolvedResult,
     patternInfos,
     bodyTypes,
+    errorRowCoverage,
   };
   ctx.matchResults.set(bundle, result);
   return result;
+}
+
+function findMissingErrorConstructors(
+  errorRow: ErrorRowType,
+  covered: Set<string>,
+): string[] {
+  if (covered.has("_")) {
+    return [];
+  }
+  const missing: string[] = [];
+  for (const label of errorRow.cases.keys()) {
+    if (!covered.has(label)) {
+      missing.push(label);
+    }
+  }
+  if (errorRow.tail) {
+    missing.push("_");
+  }
+  return missing;
 }

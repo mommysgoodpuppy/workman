@@ -127,9 +127,17 @@ export interface MExprStatement extends MNodeBase {
   expression: MExpr;
 }
 
+export interface MErrorRowCoverage {
+  row: Type;
+  coveredConstructors: string[];
+  coversTail: boolean;
+  missingConstructors: string[];
+}
+
 export interface MMatchBundle extends MTypedNode {
   kind: "match_bundle";
   arms: MMatchArm[];
+  errorRowCoverage?: MErrorRowCoverage;
 }
 
 export type MMatchArm = MMatchPatternArm | MMatchBundleReferenceArm;
@@ -259,6 +267,18 @@ export interface MTypeUnit extends MNodeBase {
   kind: "type_unit";
 }
 
+export interface MTypeErrorRowCase extends MNodeBase {
+  kind: "type_error_row_case";
+  name: string;
+  payload?: MTypeExpr;
+}
+
+export interface MTypeErrorRowExpr extends MNodeBase {
+  kind: "type_error_row";
+  cases: MTypeErrorRowCase[];
+  hasTailWildcard: boolean;
+}
+
 export type MTypeExpr =
   | MTypeVariable
   | MTypeFunction
@@ -266,6 +286,7 @@ export type MTypeExpr =
   | MTypeTuple
   | MTypeRecordExpr
   | MTypeUnit
+  | MTypeErrorRowExpr
   | MTypeExprMark;
 
 export type MMarkExpr =
@@ -301,6 +322,7 @@ export type MPattern =
   | MLiteralPattern
   | MConstructorPattern
   | MTuplePattern
+  | MAllErrorsPattern
   | MMarkPattern;
 
 export interface MWildcardPattern extends MTypedNode {
@@ -326,6 +348,10 @@ export interface MConstructorPattern extends MTypedNode {
 export interface MTuplePattern extends MTypedNode {
   kind: "tuple";
   elements: MPattern[];
+}
+
+export interface MAllErrorsPattern extends MTypedNode {
+  kind: "all_errors";
 }
 
 export interface MMarkPattern extends MTypedNode {

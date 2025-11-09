@@ -45,6 +45,16 @@ export function materializeMatchBundle(
   const patternInfos = matchResult?.patternInfos ?? [];
   const resolvedBundleType = matchResult?.type ?? inferredType ??
     unknownFromReason("match.bundle");
+  const errorRowCoverage = matchResult?.errorRowCoverage
+    ? {
+      row: matchResult.errorRowCoverage.errorRow,
+      coveredConstructors: Array.from(
+        matchResult.errorRowCoverage.coveredConstructors,
+      ).filter((ctor) => ctor !== "_"),
+      coversTail: matchResult.errorRowCoverage.coversTail,
+      missingConstructors: matchResult.errorRowCoverage.missingConstructors,
+    }
+    : undefined;
   const arms: MMatchArm[] = [];
   let patternIndex = 0;
 
@@ -88,6 +98,7 @@ export function materializeMatchBundle(
     id: bundle.id,
     arms,
     type: resolvedBundleType,
+    errorRowCoverage,
   } satisfies MMatchBundle;
 }
 
@@ -483,6 +494,16 @@ export function materializePattern(ctx: Context, pattern: Pattern): MPattern {
         type,
       };
     }
+    case "all_errors": {
+      const type = unknownFromReason("pattern.all_errors");
+      registerHoleForType(ctx, holeOriginFromPattern(pattern), type);
+      return {
+        kind: "all_errors",
+        span: pattern.span,
+        id: pattern.id,
+        type,
+      };
+    }
     default:
       return {
         kind: "mark_pattern",
@@ -555,6 +576,22 @@ export function materializeTypeExpr(
         kind: "type_unit",
         span: typeExpr.span,
         id: typeExpr.id,
+      };
+    case "type_error_row":
+      return {
+        kind: "type_error_row",
+        span: typeExpr.span,
+        id: typeExpr.id,
+        hasTailWildcard: typeExpr.hasTailWildcard,
+        cases: typeExpr.cases.map((entry) => ({
+          kind: "type_error_row_case",
+          span: entry.span,
+          id: entry.id,
+          name: entry.name,
+          payload: entry.payload
+            ? materializeTypeExpr(ctx, entry.payload)
+            : undefined,
+        })),
       };
   }
 }

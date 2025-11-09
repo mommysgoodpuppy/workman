@@ -29,6 +29,44 @@ export function nativePrint(value) {
   return undefined;
 }
 
+const HANDLED_RESULT_PARAMS = Symbol.for("workmanHandledResultParams");
+
+export function callInfectious(target, ...args) {
+  const calleeInfo = unwrapResultForCall(target);
+  if (calleeInfo.shortCircuit) {
+    return calleeInfo.shortCircuit;
+  }
+  let callable = calleeInfo.value;
+  let infected = calleeInfo.infected;
+  const handledParams = callable?.[HANDLED_RESULT_PARAMS];
+
+  const processedArgs = new Array(args.length);
+  for (let i = 0; i < args.length; i += 1) {
+    if (handledParams instanceof Set && handledParams.has(i)) {
+      processedArgs[i] = args[i];
+      continue;
+    }
+    const argInfo = unwrapResultForCall(args[i]);
+    if (argInfo.shortCircuit) {
+      return argInfo.shortCircuit;
+    }
+    if (argInfo.infected) {
+      infected = true;
+    }
+    processedArgs[i] = argInfo.value;
+  }
+
+  if (typeof callable !== "function") {
+    throw new Error("Attempted to call a non-function value");
+  }
+
+  const result = callable(...processedArgs);
+  if (!infected) {
+    return result;
+  }
+  return wrapResultValue(result);
+}
+
 const NONE_VALUE = Object.freeze({ tag: "None", type: "Option" });
 
 export function nativeStrFromLiteral(str) {
@@ -62,4 +100,41 @@ export function nativeStrCharAt(str, index) {
 
 export function nativeStrSlice(str, start, end) {
   return str.slice(start, end);
+}
+
+export function markResultHandler(fn, handledParams) {
+  const handledSet = new Set(handledParams);
+  Object.defineProperty(fn, HANDLED_RESULT_PARAMS, {
+    value: handledSet,
+    enumerable: false,
+  });
+  return fn;
+}
+
+function unwrapResultForCall(value) {
+  if (isResultData(value)) {
+    if (value.tag === "Err") {
+      return { value, infected: true, shortCircuit: value };
+    }
+    if (value.tag === "Ok") {
+      const payload = Object.prototype.hasOwnProperty.call(value, "_0")
+        ? value._0
+        : undefined;
+      return { value: payload, infected: true };
+    }
+  }
+  return { value, infected: false };
+}
+
+function wrapResultValue(value) {
+  if (isResultData(value)) {
+    return value;
+  }
+  return { tag: "Ok", type: "Result", _0: value };
+}
+
+function isResultData(value) {
+  return value && typeof value === "object" &&
+    value.type === "Result" &&
+    (value.tag === "Ok" || value.tag === "Err");
 }

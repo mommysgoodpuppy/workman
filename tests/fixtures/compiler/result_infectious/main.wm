@@ -1,0 +1,22 @@
+type ParseError = Missing | BadDigit;
+
+let parseMaybe = match(flag) {
+  true => { Ok(41) },
+  false => { Err(Missing) }
+};
+
+let addOne = (value) => {
+  value + 1
+};
+
+export let okFlow = () => {
+  addOne(parseMaybe(true))
+};
+
+export let missingFlow = () => {
+  addOne(parseMaybe(false))
+};
+
+export let badFlow = () => {
+  addOne(Err(BadDigit))
+};

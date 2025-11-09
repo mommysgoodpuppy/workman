@@ -45,6 +45,19 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
         .join(", ");
       return `{ ${fields} }`;
     }
+    case "error_row": {
+      const entries = Array.from(type.cases.entries());
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      const parts = entries.map(([label, payload]) =>
+        payload ? `${label}(${formatType(payload, context, 0)})` : label
+      );
+      if (type.tail) {
+        parts.push(`_${formatType(type.tail, context, 0)}`);
+      } else if (parts.length === 0) {
+        parts.push("_");
+      }
+      return `<${parts.join(" | ")}>`;
+    }
     case "unit":
       return "Unit";
     case "int":

@@ -10,6 +10,7 @@ import type {
 import { lowerProgramToValues } from "./marked_to_core.ts";
 import { InferError } from "../../../src/error.ts";
 import type { ConstraintDiagnostic } from "../../../src/diagnostics.ts";
+import { typeToString } from "../../../src/types.ts";
 import type { Type } from "../../../src/types.ts";
 import type { SourceSpan, NodeId } from "../../../src/ast.ts";
 import type { MProgram } from "../../../src/ast_marked.ts";
@@ -167,6 +168,8 @@ function simpleFormatType(type: Type): string {
       return "String";
     case "unknown":
       return "?";
+    case "error_row":
+      return typeToString(type);
     case "record":
       return `{ ${Object.entries(type.fields).map(([k, v]) => `${k}: ${simpleFormatType(v)}`).join(", ")} }`;
     default:
@@ -229,6 +232,17 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
     }
     case "non_exhaustive_match":
       return "Match expression is not exhaustive - some cases are not handled";
+    case "all_errors_outside_result":
+      return "`AllErrors` can only appear when matching a Result value";
+    case "all_errors_requires_err":
+      return "`AllErrors` must be paired with at least one `Err` arm";
+    case "error_row_partial_coverage": {
+      const missing = diagnostic.details?.constructors as string[] | undefined;
+      if (missing && missing.length > 0) {
+        return `Match does not cover error constructors: ${missing.join(", ")}`;
+      }
+      return "Match does not cover all error constructors";
+    }
     case "type_expr_unknown":
       return "Unknown type in type expression";
     case "type_expr_arity":

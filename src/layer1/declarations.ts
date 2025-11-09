@@ -346,6 +346,21 @@ export function convertTypeExpr(
     }
     case "type_unit":
       return { kind: "unit" };
+    case "type_error_row": {
+      const cases = new Map<string, Type | null>();
+      for (const entry of typeExpr.cases) {
+        const payload = entry.payload
+          ? convertTypeExpr(ctx, entry.payload, scope, options)
+          : null;
+        cases.set(entry.name, payload);
+      }
+      const tail = typeExpr.hasTailWildcard ? freshTypeVar() : undefined;
+      return {
+        kind: "error_row",
+        cases,
+        tail,
+      };
+    }
     default:
       const mark = markTypeExprUnsupported(ctx, typeExpr);
       ctx.typeExprMarks.set(typeExpr, mark);

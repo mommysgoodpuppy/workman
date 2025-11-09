@@ -19,6 +19,7 @@ import {
   occursInType,
   type Substitution,
   unknownType,
+  type ErrorRowType,
 } from "../types.ts";
 import type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
 import type { NodeId } from "../ast.ts";
@@ -258,9 +259,11 @@ interface SolverState {
 function solveCallConstraint(state: SolverState, stub: ConstraintStub & { kind: "call" }): void {
   const callee = getTypeForNode(state, stub.callee);
   const stageCallee = peelFunctionType(callee, stub.index);
-  const argument = getTypeForNode(state, stub.argument);
+  const argumentValue = stub.argumentValueType
+    ? applySubstitution(stub.argumentValueType, state.substitution)
+    : getTypeForNode(state, stub.argument);
   const result = applySubstitution(stub.resultType, state.substitution);
-  const target: Type = { kind: "func", from: argument, to: result };
+  const target: Type = { kind: "func", from: argumentValue, to: result };
   const unified = unifyTypes(stageCallee, target, state.substitution);
   if (unified.success) {
     state.substitution = unified.subst;
@@ -559,6 +562,10 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
     return { success: true, subst: current };
   }
 
+  if (resolvedLeft.kind === "error_row" && resolvedRight.kind === "error_row") {
+    return unifyErrorRows(resolvedLeft, resolvedRight, subst);
+  }
+
   if (resolvedLeft.kind === resolvedRight.kind) {
     return { success: true, subst };
   }
@@ -626,11 +633,80 @@ function typesEqual(a: Type, b: Type): boolean {
       }
       return true;
     }
+    case "error_row": {
+      if (b.kind !== "error_row" || a.cases.size !== b.cases.size) {
+        return false;
+      }
+      for (const [label, payloadA] of a.cases.entries()) {
+        if (!b.cases.has(label)) {
+          return false;
+        }
+        const payloadB = b.cases.get(label) ?? null;
+        if (Boolean(payloadA) !== Boolean(payloadB)) {
+          return false;
+        }
+        if (payloadA && payloadB && !typesEqual(payloadA, payloadB)) {
+          return false;
+        }
+      }
+      if (!a.tail && !b.tail) {
+        return true;
+      }
+      if (!a.tail || !b.tail) {
+        return false;
+      }
+      return typesEqual(a.tail, b.tail);
+    }
     case "unknown":
       return b.kind === "unknown" && a.provenance === b.provenance;
     default:
       return true;
   }
+}
+
+function unifyErrorRows(
+  left: ErrorRowType,
+  right: ErrorRowType,
+  subst: Substitution,
+): UnifyResult {
+  if (left.cases.size !== right.cases.size) {
+    return {
+      success: false,
+      reason: { kind: "type_mismatch", left, right },
+    };
+  }
+  let current = subst;
+  for (const [label, leftPayload] of left.cases.entries()) {
+    if (!right.cases.has(label)) {
+      return {
+        success: false,
+        reason: { kind: "type_mismatch", left, right },
+      };
+    }
+    const rightPayload = right.cases.get(label) ?? null;
+    if (leftPayload && rightPayload) {
+      const merged = unifyTypes(leftPayload, rightPayload, current);
+      if (!merged.success) {
+        return merged;
+      }
+      current = merged.subst;
+    } else if (leftPayload || rightPayload) {
+      return {
+        success: false,
+        reason: { kind: "type_mismatch", left, right },
+      };
+    }
+  }
+  if (left.tail && right.tail) {
+    return unifyTypes(left.tail, right.tail, current);
+  }
+  if (left.tail || right.tail) {
+    return {
+      success: false,
+      reason: { kind: "type_mismatch", left, right },
+    };
+  }
+  return { success: true, subst: current };
 }
 
 function remarkProgram(program: MProgram, resolved: Map<NodeId, Type>): void {

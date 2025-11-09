@@ -9,6 +9,7 @@ import type {
   CoreTypeConstructor,
   CoreTypeDeclaration,
 } from "../ir/core.ts";
+import { flattenResultType } from "../../../src/types.ts";
 
 interface NameState {
   used: Set<string>;
@@ -369,21 +370,59 @@ function emitLambda(
   expr: CoreExpr & { kind: "lambda" },
   ctx: EmitContext,
 ): string {
+  const handledParams = detectHandledResultParams(expr, expr.params);
   const innerScope = new Map(ctx.scope);
   const params = expr.params.map((param) =>
     resolveName(innerScope, param, ctx.state)
   );
   const body = emitExprWithScope(expr.body, ctx, innerScope);
-  if (body.includes("\n")) {
-    return `(${params.join(", ")}) => {\n${indent(`return ${body};`)}\n}`;
+  const lambda =
+    body.includes("\n")
+      ? `(${params.join(", ")}) => {\n${indent(`return ${body};`)}\n}`
+      : `(${params.join(", ")}) => ${body}`;
+  if (handledParams.length > 0) {
+    const marker = resolveVar("markResultHandler", ctx);
+    return `${marker}(${lambda}, [${handledParams.join(", ")}])`;
   }
-  return `(${params.join(", ")}) => ${body}`;
+  return lambda;
+}
+
+function detectHandledResultParams(
+  expr: CoreExpr & { kind: "lambda" },
+  originalParams: readonly string[],
+): number[] {
+  if (expr.body.kind !== "match") {
+    return [];
+  }
+  if (expr.body.scrutinee.kind !== "var") {
+    return [];
+  }
+  const paramIndex = originalParams.indexOf(expr.body.scrutinee.name);
+  if (paramIndex === -1) {
+    return [];
+  }
+  const hasAllErrors = expr.body.cases.some((kase) =>
+    kase.pattern.kind === "all_errors"
+  );
+  if (!hasAllErrors) {
+    return [];
+  }
+  return [paramIndex];
 }
 
 function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
-  const callee = emitExpr(expr.callee, ctx);
-  const args = expr.args.map((arg) => emitExpr(arg, ctx)).join(", ");
-  return `${callee}(${args})`;
+  const resultInfo = flattenResultType(expr.type);
+  if (!resultInfo) {
+    const callee = emitExpr(expr.callee, ctx);
+    const args = expr.args.map((arg) => emitExpr(arg, ctx));
+    return `(${callee})(${args.join(", ")})`;
+  }
+  const helper = resolveVar("callInfectious", ctx);
+  const segments = [
+    emitExpr(expr.callee, ctx),
+    ...expr.args.map((arg) => emitExpr(arg, ctx)),
+  ];
+  return `${helper}(${segments.join(", ")})`;
 }
 
 function emitLet(expr: CoreExpr & { kind: "let" }, ctx: EmitContext): string {
@@ -547,6 +586,15 @@ function emitPattern(
         bindings.push(...nested.bindings);
       }
       return { conditions, bindings };
+    }
+    case "all_errors": {
+      return {
+        conditions: [
+          `${ref}?.tag === "Err"`,
+          `${ref}?.type === "${pattern.resultTypeName}"`,
+        ],
+        bindings: [],
+      };
     }
     default: {
       const _exhaustive: never = pattern;

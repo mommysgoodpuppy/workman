@@ -19,6 +19,7 @@ export type Type =
   | { kind: "constructor"; name: string; args: Type[] }
   | { kind: "tuple"; elements: Type[] }
   | { kind: "record"; fields: Map<string, Type> }
+  | { kind: "error_row"; cases: Map<string, Type | null>; tail?: Type | null }
   | { kind: "unit" }
   | { kind: "int" }
   | { kind: "bool" }
@@ -32,6 +33,116 @@ export interface TypeScheme {
 }
 
 export type Substitution = Map<number, Type>;
+
+export type ErrorRowType = Extract<Type, { kind: "error_row" }>;
+
+export function isErrorRow(type: Type): type is ErrorRowType {
+  return type.kind === "error_row";
+}
+
+export function createErrorRow(
+  entries: Iterable<[string, Type | null]> = [],
+  tail?: Type | null,
+): ErrorRowType {
+  return {
+    kind: "error_row",
+    cases: new Map(entries),
+    tail,
+  };
+}
+
+export function ensureErrorRow(type: Type): ErrorRowType {
+  if (isErrorRow(type)) {
+    return type;
+  }
+  return {
+    kind: "error_row",
+    cases: new Map(),
+    tail: type,
+  };
+}
+
+export function errorRowUnion(left: Type, right: Type): ErrorRowType {
+  const lhs = ensureErrorRow(left);
+  const rhs = ensureErrorRow(right);
+  const merged = new Map<string, Type | null>();
+  for (const [label, payload] of lhs.cases.entries()) {
+    merged.set(label, payload ? cloneType(payload) : null);
+  }
+  for (const [label, payload] of rhs.cases.entries()) {
+    if (!merged.has(label)) {
+      merged.set(label, payload ? cloneType(payload) : null);
+      continue;
+    }
+    const existing = merged.get(label);
+    if (!existing && payload) {
+      merged.set(label, cloneType(payload));
+    }
+  }
+  return {
+    kind: "error_row",
+    cases: merged,
+    tail: mergeErrorRowTails(lhs.tail, rhs.tail),
+  };
+}
+
+export interface ResultTypeInfo {
+  value: Type;
+  error: ErrorRowType;
+}
+
+export function isResultType(type: Type): type is {
+  kind: "constructor";
+  name: "Result";
+  args: [Type, Type];
+} {
+  return type.kind === "constructor" && type.name === "Result" &&
+    type.args.length === 2;
+}
+
+export function makeResultType(value: Type, error?: Type): Type {
+  const errorRow = error ? ensureErrorRow(error) : createErrorRow();
+  return {
+    kind: "constructor",
+    name: "Result",
+    args: [value, errorRow],
+  };
+}
+
+export function flattenResultType(type: Type): ResultTypeInfo | null {
+  if (!isResultType(type)) {
+    return null;
+  }
+  const value = type.args[0];
+  const errorRow = ensureErrorRow(type.args[1]);
+  const inner = flattenResultType(value);
+  if (!inner) {
+    return { value, error: errorRow };
+  }
+  return {
+    value: inner.value,
+    error: errorRowUnion(inner.error, errorRow),
+  };
+}
+
+export function collapseResultType(type: Type): Type {
+  const info = flattenResultType(type);
+  if (!info) {
+    return type;
+  }
+  const collapsedValue = collapseResultType(info.value);
+  return makeResultType(collapsedValue, info.error);
+}
+
+function mergeErrorRowTails(
+  left?: Type | null,
+  right?: Type | null,
+): Type | null | undefined {
+  if (!left) return right;
+  if (!right) return left;
+  // Prefer the left tail for now; more advanced unification happens at call sites.
+  return left;
+}
 
 let nextTypeVarId = 0;
 
@@ -108,6 +219,30 @@ export function applySubstitution(type: Type, subst: Substitution): Type {
       }
       return { kind: "record", fields: updated };
     }
+    case "error_row": {
+      let changed = false;
+      const nextCases = new Map<string, Type | null>();
+      for (const [label, payload] of type.cases.entries()) {
+        if (!payload) {
+          nextCases.set(label, null);
+          continue;
+        }
+        const applied = applySubstitution(payload, subst);
+        if (applied !== payload) {
+          changed = true;
+        }
+        nextCases.set(label, applied);
+      }
+      const nextTail = type.tail ? applySubstitution(type.tail, subst) : undefined;
+      if (!changed && nextTail === type.tail) {
+        return type;
+      }
+      return {
+        kind: "error_row",
+        cases: nextCases,
+        tail: nextTail,
+      };
+    }
     case "unknown":
       return type;
     default:
@@ -166,6 +301,13 @@ export function occursInType(id: number, type: Type): boolean {
         }
       }
       return false;
+    case "error_row":
+      for (const payload of type.cases.values()) {
+        if (payload && occursInType(id, payload)) {
+          return true;
+        }
+      }
+      return type.tail ? occursInType(id, type.tail) : false;
     case "unknown":
       return false;
     default:
@@ -190,6 +332,13 @@ export function freeTypeVars(type: Type): Set<number> {
     case "record": {
       const sets = Array.from(type.fields.values()).map(freeTypeVars);
       return unionMany(sets);
+    }
+    case "error_row": {
+      const caseSets = Array.from(type.cases.values())
+        .filter((payload): payload is Type => Boolean(payload))
+        .map(freeTypeVars);
+      const tailSet = type.tail ? [freeTypeVars(type.tail)] : [];
+      return unionMany([...caseSets, ...tailSet]);
     }
     case "unknown":
       return new Set();
@@ -280,6 +429,17 @@ export function cloneType(type: Type): Type {
         fields: clonedFields,
       };
     }
+    case "error_row": {
+      const clonedCases = new Map<string, Type | null>();
+      for (const [label, payload] of type.cases.entries()) {
+        clonedCases.set(label, payload ? cloneType(payload) : null);
+      }
+      return {
+        kind: "error_row",
+        cases: clonedCases,
+        tail: type.tail ? cloneType(type.tail) : undefined,
+      };
+    }
     case "unknown":
       return {
         kind: "unknown",
@@ -352,6 +512,16 @@ export function typeToString(type: Type): string {
       ).join(", ");
       return `{ ${rendered} }`;
     }
+    case "error_row": {
+      const entries = Array.from(type.cases.entries());
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      const rendered = entries.map(([label, payload]) =>
+        payload ? `${label}(${typeToString(payload)})` : label
+      ).join(" | ");
+      const tail = type.tail ? ` | ${typeToString(type.tail)}` : "";
+      const contents = rendered.length > 0 ? rendered : "_";
+      return `<${contents}${tail}>`;
+    }
     case "unknown":
       return provenanceToString(type.provenance);
     default: {
@@ -398,7 +568,7 @@ function cloneProvenance(provenance: Provenance): Provenance {
     case "incomplete":
       return { ...provenance };
     default: {
-      const _exhaustive: never = provenance;
+      const _exhaustive = provenance;
       return _exhaustive;
     }
   }

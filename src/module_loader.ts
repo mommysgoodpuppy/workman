@@ -302,6 +302,7 @@ async function summarizeGraph(
   const preludePath = graph.prelude;
   let preludeSummary: ModuleSummary | undefined = undefined;
 
+  let counterInitialized = false;
   for (const path of graph.order) {
     const node = graph.nodes.get(path);
     if (!node) {
@@ -388,11 +389,12 @@ async function summarizeGraph(
     }
 
     let inference;
+    const shouldResetCounter = !counterInitialized;
     try {
       inference = inferProgram(node.program, {
         initialEnv,
         initialAdtEnv,
-        resetCounter: true,
+        resetCounter: shouldResetCounter,
         source: node.source,
       });
     } catch (error) {
@@ -510,6 +512,7 @@ async function summarizeGraph(
     if (path === preludePath) {
       preludeSummary = moduleSummaries.get(path);
     }
+    counterInitialized = true;
   }
   return { moduleSummaries, runtimeLogs };
 }

@@ -406,6 +406,20 @@ function lowerPattern(pattern: MPattern, state: LoweringState): CorePattern {
         type: resolved,
       };
     }
+    case "all_errors": {
+      const resolved = resolveNodeType(state, pattern.id, pattern.type);
+      if (resolved.kind !== "constructor" || resolved.name !== "Result") {
+        throw new CoreLoweringError(
+          "`AllErrors` pattern requires a Result scrutinee",
+          pattern.id,
+        );
+      }
+      return {
+        kind: "all_errors",
+        resultTypeName: resolved.name,
+        type: resolved,
+      };
+    }
     case "mark_pattern":
       // Hazel-style: Pattern has an error but we compile anyway
       // Lower as a wildcard pattern - will match anything at runtime

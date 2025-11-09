@@ -176,12 +176,18 @@ export interface CoreConstructorPattern extends CorePatternBase {
   readonly fields: readonly CorePattern[];
 }
 
+export interface CoreAllErrorsPattern extends CorePatternBase {
+  readonly kind: "all_errors";
+  readonly resultTypeName: string;
+}
+
 export type CorePattern =
   | CoreWildcardPattern
   | CoreBindingPattern
   | CoreLiteralPattern
   | CoreTuplePattern
-  | CoreConstructorPattern;
+  | CoreConstructorPattern
+  | CoreAllErrorsPattern;
 
 export interface CoreMatchCase {
   readonly pattern: CorePattern;

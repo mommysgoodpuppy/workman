@@ -1,5 +1,12 @@
 import type { SourceSpan } from "../ast.ts";
-import type { MProgram } from "../ast_marked.ts";
+import type {
+  MProgram,
+  MExpr,
+  MBlockExpr,
+  MBlockStatement,
+  MPattern,
+  MMatchBundle,
+} from "../ast_marked.ts";
 import {
   type ConstraintConflict,
   type ConstraintDiagnostic,
@@ -9,6 +16,7 @@ import {
 } from "../layer2/mod.ts";
 import type { NodeId } from "../ast.ts";
 import type { Type } from "../types.ts";
+import { cloneType } from "../types.ts";
 
 export interface PartialType {
   kind: "unknown" | "concrete";
@@ -55,11 +63,20 @@ export interface Layer3Result {
   };
   holeSolutions: Map<NodeId, HoleSolution>;
   spanIndex: Map<NodeId, SourceSpan>;
+  matchCoverages: Map<NodeId, MatchCoverageView>;
   summaries: TypeSummary[];
+}
+
+export interface MatchCoverageView {
+  row: Type;
+  coveredConstructors: string[];
+  coversTail: boolean;
+  missingConstructors: string[];
 }
 
 export function presentProgram(layer2: SolverResult): Layer3Result {
   const spanIndex = collectSpans(layer2.remarkedProgram);
+  const matchCoverages = collectMatchCoverages(layer2.remarkedProgram);
   const nodeViews = buildNodeViews(layer2.resolvedNodeTypes, layer2.solutions, spanIndex);
   const solverDiagnostics = attachSpansToDiagnostics(
     layer2.diagnostics,
@@ -79,6 +96,7 @@ export function presentProgram(layer2: SolverResult): Layer3Result {
     },
     holeSolutions: layer2.solutions,
     spanIndex,
+    matchCoverages,
     summaries: layer2.summaries,
   };
 }
@@ -217,6 +235,19 @@ function typeToString(type: Type): string {
         .join(", ");
       return `{ ${fields} }`;
     }
+    case "error_row": {
+      const entries = Array.from(type.cases.entries());
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      const parts = entries.map(([label, payload]) =>
+        payload ? `${label}(${typeToString(payload)})` : label
+      );
+      if (type.tail) {
+        parts.push(`_${typeToString(type.tail)}`);
+      } else if (parts.length === 0) {
+        parts.push("_");
+      }
+      return `<${parts.join(" | ")}>`;
+    }
     case "unknown":
       return "?";
     default:
@@ -228,6 +259,167 @@ function collectSpans(program: MProgram): Map<NodeId, SourceSpan> {
   const spans = new Map<NodeId, SourceSpan>();
   traverse(program, spans, new Set());
   return spans;
+}
+
+function collectMatchCoverages(program: MProgram): Map<NodeId, MatchCoverageView> {
+  const coverages = new Map<NodeId, MatchCoverageView>();
+  for (const decl of program.declarations) {
+    if (decl.kind === "let") {
+      collectCoverageFromBlock(decl.body, coverages);
+      if (decl.mutualBindings) {
+        for (const binding of decl.mutualBindings) {
+          collectCoverageFromBlock(binding.body, coverages);
+        }
+      }
+    }
+  }
+  return coverages;
+}
+
+function collectCoverageFromBlock(
+  block: MBlockExpr,
+  coverages: Map<NodeId, MatchCoverageView>,
+): void {
+  for (const stmt of block.statements) {
+    collectCoverageFromStatement(stmt, coverages);
+  }
+  if (block.result) {
+    collectCoverageFromExpr(block.result, coverages);
+  }
+}
+
+function collectCoverageFromStatement(
+  statement: MBlockStatement,
+  coverages: Map<NodeId, MatchCoverageView>,
+): void {
+  if (statement.kind === "let_statement") {
+    collectCoverageFromBlock(statement.declaration.body, coverages);
+    if (statement.declaration.mutualBindings) {
+      for (const binding of statement.declaration.mutualBindings) {
+        collectCoverageFromBlock(binding.body, coverages);
+      }
+    }
+  } else if (statement.kind === "expr_statement") {
+    collectCoverageFromExpr(statement.expression, coverages);
+  }
+}
+
+function collectCoverageFromExpr(
+  expr: MExpr,
+  coverages: Map<NodeId, MatchCoverageView>,
+): void {
+  switch (expr.kind) {
+    case "identifier":
+    case "literal":
+    case "hole":
+    case "mark_free_var":
+    case "mark_not_function":
+    case "mark_occurs_check":
+    case "mark_inconsistent":
+    case "mark_unsupported_expr":
+    case "mark_type_expr_unknown":
+    case "mark_type_expr_arity":
+    case "mark_type_expr_unsupported":
+      return;
+    case "constructor":
+      expr.args.forEach((arg) => collectCoverageFromExpr(arg, coverages));
+      return;
+    case "tuple":
+      expr.elements.forEach((el) => collectCoverageFromExpr(el, coverages));
+      return;
+    case "record_literal":
+      expr.fields.forEach((field) => collectCoverageFromExpr(field.value, coverages));
+      return;
+    case "call":
+      collectCoverageFromExpr(expr.callee, coverages);
+      expr.arguments.forEach((arg) => collectCoverageFromExpr(arg, coverages));
+      return;
+    case "record_projection":
+      collectCoverageFromExpr(expr.target, coverages);
+      return;
+    case "binary":
+      collectCoverageFromExpr(expr.left, coverages);
+      collectCoverageFromExpr(expr.right, coverages);
+      return;
+    case "unary":
+      collectCoverageFromExpr(expr.operand, coverages);
+      return;
+    case "arrow":
+      expr.parameters.forEach((param) => collectCoverageFromPattern(param.pattern, coverages));
+      collectCoverageFromBlock(expr.body, coverages);
+      return;
+    case "block":
+      collectCoverageFromBlock(expr, coverages);
+      return;
+    case "match":
+      recordCoverageForBundle(expr.id, expr.bundle, coverages);
+      collectCoverageFromExpr(expr.scrutinee, coverages);
+      collectCoverageFromMatchBundle(expr.bundle, coverages);
+      return;
+    case "match_fn":
+      expr.parameters.forEach((param) => collectCoverageFromExpr(param, coverages));
+      recordCoverageForBundle(expr.id, expr.bundle, coverages);
+      collectCoverageFromMatchBundle(expr.bundle, coverages);
+      return;
+    case "match_bundle_literal":
+      recordCoverageForBundle(expr.id, expr.bundle, coverages);
+      collectCoverageFromMatchBundle(expr.bundle, coverages);
+      return;
+    default:
+      return;
+  }
+}
+
+function collectCoverageFromPattern(
+  pattern: MPattern,
+  coverages: Map<NodeId, MatchCoverageView>,
+): void {
+  switch (pattern.kind) {
+    case "literal":
+    case "wildcard":
+    case "variable":
+    case "all_errors":
+    case "mark_pattern":
+      return;
+    case "constructor":
+      pattern.args.forEach((arg) => collectCoverageFromPattern(arg, coverages));
+      return;
+    case "tuple":
+      pattern.elements.forEach((el) => collectCoverageFromPattern(el, coverages));
+      return;
+  }
+}
+
+function collectCoverageFromMatchBundle(
+  bundle: MMatchBundle,
+  coverages: Map<NodeId, MatchCoverageView>,
+): void {
+  bundle.arms.forEach((arm) => {
+    if (arm.kind === "match_pattern") {
+      collectCoverageFromPattern(arm.pattern, coverages);
+      collectCoverageFromExpr(arm.body, coverages);
+    }
+  });
+}
+
+function recordCoverageForBundle(
+  ownerId: NodeId,
+  bundle: MMatchBundle,
+  coverages: Map<NodeId, MatchCoverageView>,
+): void {
+  if (!bundle.errorRowCoverage) {
+    return;
+  }
+  coverages.set(ownerId, cloneMatchCoverage(bundle.errorRowCoverage));
+}
+
+function cloneMatchCoverage(coverage: { row: Type; coveredConstructors: string[]; coversTail: boolean; missingConstructors: string[]; }): MatchCoverageView {
+  return {
+    row: cloneType(coverage.row),
+    coveredConstructors: [...coverage.coveredConstructors],
+    coversTail: coverage.coversTail,
+    missingConstructors: [...coverage.missingConstructors],
+  };
 }
 
 export function findNodeAtOffset(
