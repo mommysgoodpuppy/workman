@@ -394,6 +394,7 @@ export interface TypeInfo {
   parameters: number[];
   constructors: ConstructorInfo[];
   alias?: Type;
+  isAlias?: boolean;
 }
 
 export type TypeEnvADT = Map<string, TypeInfo>;
@@ -615,6 +616,7 @@ export function cloneTypeInfo(info: TypeInfo): TypeInfo {
     parameters: [...info.parameters],
     constructors: info.constructors.map(cloneConstructorInfo),
     alias: info.alias ? cloneType(info.alias) : undefined,
+    isAlias: info.isAlias,
   };
 }
 

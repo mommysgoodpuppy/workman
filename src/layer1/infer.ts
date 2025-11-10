@@ -1232,9 +1232,15 @@ export function inferProgram(
   /* console.debug("[debug] final substitution entries", Array.from(ctx.subst.entries()).map(([id, type]) => [id, formatScheme({ quantifiers: [], type })]));
   console.debug("[debug] final summaries", finalSummaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) })));
  */
+  // Expose only real ADTs to downstream layers; aliases live only for type expansion.
+  const filteredAdtEnv: Map<string, import("../types.ts").TypeInfo> = new Map();
+  for (const [name, info] of ctx.adtEnv.entries()) {
+    if ((info as any).isAlias) continue;
+    filteredAdtEnv.set(name, info);
+  }
   return {
     env: finalEnv,
-    adtEnv: ctx.adtEnv,
+    adtEnv: filteredAdtEnv,
     summaries: finalSummaries,
     allBindings: ctx.allBindings,
     markedProgram,

@@ -52,6 +52,7 @@ export function registerTypeName(ctx: Context, decl: TypeDeclaration): RegisterT
     name: decl.name,
     parameters: parameterIds,
     constructors: [] as ConstructorInfo[],
+    isAlias: false,
   };
   ctx.adtEnv.set(decl.name, adtInfo);
 
@@ -176,6 +177,7 @@ function registerTypeAlias(
   const aliasType = convertTypeExpr(ctx, decl.members[0].type, typeScope, { allowNewVariables: false });
   adtInfo.alias = cloneType(aliasType);
   adtInfo.constructors = [];
+  adtInfo.isAlias = true;
   return { success: true };
 }
 
