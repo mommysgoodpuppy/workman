@@ -10,6 +10,7 @@ type ParseResult =
 
 record ParseStep { value: Int, next: Int };
 
+-- Build a cursor/value pair for downstream helpers.
 let makeStep = (v, n) => {
   ({ value: v, next: n })
 };
@@ -19,18 +20,15 @@ let charCloseParen = char(")");
 let mulLiteral = fromLiteral("mul(");
 let mulLiteralLength = listLength(mulLiteral);
 
+-- Read exactly one digit or raise ExpectedDigit to the caller.
 let readRequiredDigit = (chars, i) => {
-  match(listAt(chars, i, ExpectedDigit)) {
-    Err(error) => { Err(error) },
-    Ok(code) => {
-      match(charToDigit(code, ExpectedDigit)) {
-        Err(error) => { Err(error) },
-        Ok(digit) => { Ok(makeStep(digit, i + 1)) }
-      }
-    }
-  }
+  makeStep(
+    charToDigit(listAt(chars, i, ExpectedDigit), ExpectedDigit),
+    i + 1
+  )
 };
 
+-- Extend up to three total digits, stopping cleanly if parsing fails.
 let rec extendDigits = (chars, step, count) => {
   match(count == 3) {
     true => { step },
@@ -54,6 +52,7 @@ let rec extendDigits = (chars, step, count) => {
   }
 };
 
+-- Require a specific delimiter at the cursor.
 let expectCharAt = (chars, i, expected, error) => {
   match(listAt(chars, i, error)) {
     Ok(code) => {
@@ -66,6 +65,7 @@ let expectCharAt = (chars, i, expected, error) => {
   }
 };
 
+-- Check for the mul( literal at a position, otherwise resume scanning.
 let expectMulLiteral = (chars, i) => {
   match(strEq(listSlice(chars, i, i + mulLiteralLength), mulLiteral)) {
     true => { Ok(i + mulLiteralLength) },
@@ -73,19 +73,21 @@ let expectMulLiteral = (chars, i) => {
   }
 };
 
+-- Parse mul(X,Y) at an index and return the product plus next cursor.
 let parseMulAt = (chars, i) => {
   let afterMul = expectMulLiteral(chars, i);
   let leftStep = extendDigits(chars, readRequiredDigit(chars, afterMul), 1);
   let afterComma = expectCharAt(chars, leftStep.next, charComma, ExpectedComma);
   let rightStep = extendDigits(chars, readRequiredDigit(chars, afterComma), 1);
-  match(expectCharAt(chars, rightStep.next, charCloseParen, ExpectedCloseParen)) {
-    Ok(afterClose) => { Ok(makeStep(leftStep.value * rightStep.value, afterClose)) },
-    Err(error) => { Err(error) }
-  }
+  makeStep(
+    leftStep.value * rightStep.value,
+    expectCharAt(chars, rightStep.next, charCloseParen, ExpectedCloseParen)
+  )
 };
 
 -- scanner as a bundle --------------------------------------------------
 
+-- Walk the memory, summing successful multiplications.
 let rec scan = (chars, i, acc) => {
   match(listAt(chars, i, NotMul)) {
     Err(_) => { acc },
