@@ -10,10 +10,13 @@ import type { Type, TypeScheme } from "./src/types.ts";
 import type { RuntimeValue } from "./src/value.ts";
 import { startRepl } from "./tools/repl.ts";
 import { runFormatter } from "./tools/fmt.ts";
-import { toFileUrl, resolve, relative } from "std/path/mod.ts";
+import { relative, resolve, toFileUrl } from "std/path/mod.ts";
 import { compileWorkmanGraph } from "./backends/compiler/frontends/workman.ts";
 import { emitModuleGraph } from "./backends/compiler/js/graph_emitter.ts";
-import { collectCompiledValues, invokeMainIfPresent } from "./src/runtime_display.ts";
+import {
+  collectCompiledValues,
+  invokeMainIfPresent,
+} from "./src/runtime_display.ts";
 import { analyzeAndPresent } from "./src/pipeline.ts";
 import type { Layer3Result } from "./src/layer3/mod.ts";
 
@@ -48,7 +51,9 @@ function holeIdFromUnknown(type: Type): number | undefined {
   if (prov.kind === "incomplete") {
     return prov.nodeId;
   }
-  if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
+  if (
+    prov.kind === "error_not_function" || prov.kind === "error_inconsistent"
+  ) {
     const inner = prov.calleeType ?? prov.actual;
     if (inner?.kind === "unknown") {
       return holeIdFromUnknown(inner);
@@ -72,7 +77,9 @@ function substituteHoleSolutionsInType(
       return {
         kind: "constructor",
         name: type.name,
-        args: type.args.map((arg) => substituteHoleSolutionsInType(arg, layer3)),
+        args: type.args.map((arg) =>
+          substituteHoleSolutionsInType(arg, layer3)
+        ),
       };
     case "tuple":
       return {
@@ -116,20 +123,20 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
   try {
     const tokens = lex(source, options.sourceName);
     const program = parseSurfaceProgram(tokens, source);
-    
+
     // Use full pipeline: Layer 1 → Layer 2 → Layer 3
     const analysis = analyzeAndPresent(program, {
       source,
       sourceName: options.sourceName,
     });
-    
+
     // Get types from Layer 3 (which includes partial types from Layer 2)
     // For each binding, check if it has a partial type solution
     const types = analysis.layer1.summaries.map((
       entry: { name: string; scheme: TypeScheme },
     ) => {
       let typeStr = formatScheme(entry.scheme);
-      
+
       // Check if this binding has partial type information from Layer 2
       // Extract the actual hole ID, which might be wrapped in error provenances
       let holeId: number | undefined;
@@ -139,13 +146,17 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
           holeId = (prov as any).id;
         } else if (prov.kind === "incomplete") {
           holeId = (prov as any).nodeId;
-        } else if (prov.kind === "error_not_function" || 
-                   prov.kind === "error_inconsistent") {
+        } else if (
+          prov.kind === "error_not_function" ||
+          prov.kind === "error_inconsistent"
+        ) {
           // Unwrap error provenance to get the underlying hole
           const calleeType = (prov as any).calleeType || (prov as any).actual;
           if (calleeType?.kind === "unknown") {
             const innerProv = calleeType.provenance;
-            if (innerProv.kind === "expr_hole" || innerProv.kind === "user_hole") {
+            if (
+              innerProv.kind === "expr_hole" || innerProv.kind === "user_hole"
+            ) {
               holeId = (innerProv as any).id;
             } else if (innerProv.kind === "incomplete") {
               holeId = (innerProv as any).nodeId;
@@ -153,17 +164,22 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
           }
         }
       }
-      
+
       if (holeId !== undefined) {
         const solution = analysis.layer3.holeSolutions.get(holeId);
         if (solution?.state === "partial" && solution.partial?.known) {
           // Show the partial type instead of just "?"
-          typeStr = `${formatScheme({ quantifiers: entry.scheme.quantifiers, type: solution.partial.known })} (partial)`;
+          typeStr = `${
+            formatScheme({
+              quantifiers: entry.scheme.quantifiers,
+              type: solution.partial.known,
+            })
+          } (partial)`;
         } else if (solution?.state === "conflicted" && solution.conflicts) {
           typeStr = `? (conflicted: ${solution.conflicts.length} conflicts)`;
         }
       }
-      
+
       return {
         name: entry.name,
         type: typeStr,
@@ -172,14 +188,13 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
 
     // Check for Layer 2/3 diagnostics (these are the real errors)
     // Layer 1 errors are internal and shouldn't be surfaced
-    const hasDiagnostics = 
-      analysis.layer3.diagnostics.solver.length > 0 ||
+    const hasDiagnostics = analysis.layer3.diagnostics.solver.length > 0 ||
       analysis.layer3.diagnostics.conflicts.length > 0;
-    
+
     if (hasDiagnostics) {
       // Format diagnostics for display
       let errorMessage = "";
-      
+
       // Show solver diagnostics
       for (const diag of analysis.layer3.diagnostics.solver) {
         if (diag.span && source) {
@@ -191,7 +206,7 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
           errorMessage += `\nType Error: ${diag.reason}\n`;
         }
       }
-      
+
       // Show conflict diagnostics (unfillable holes)
       for (const conflict of analysis.layer3.diagnostics.conflicts) {
         errorMessage += `\n${conflict.message}\n`;
@@ -201,7 +216,7 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
           errorMessage += `  ${line}\n`;
         }
       }
-      
+
       if (errorMessage) {
         throw new Error(errorMessage);
       }
@@ -275,7 +290,10 @@ function parseCompileArgs(args: string[]): CompileArgs {
   return { entryPath, outDir };
 }
 
-async function compileToDirectory(entryPath: string, outDir?: string): Promise<void> {
+async function compileToDirectory(
+  entryPath: string,
+  outDir?: string,
+): Promise<void> {
   if (!entryPath.endsWith(".wm")) {
     throw new Error("Expected a .wm entry file");
   }
@@ -294,7 +312,9 @@ async function compileToDirectory(entryPath: string, outDir?: string): Promise<v
     outDir: resolvedOutDir,
   });
 
-  console.log(`Emitted ${emitResult.moduleFiles.size} module(s) to ${resolvedOutDir}`);
+  console.log(
+    `Emitted ${emitResult.moduleFiles.size} module(s) to ${resolvedOutDir}`,
+  );
   const entryRelative = relative(Deno.cwd(), emitResult.entryPath);
   const runtimeRelative = relative(Deno.cwd(), emitResult.runtimePath);
   console.log(`Entry module: ${entryRelative}`);
@@ -328,6 +348,7 @@ Usage:
   wm <file.wm>          Run a Workman file
   wm --debug <file.wm>  Run a file and print types/values
   wm type <file.wm>     Type-check a file (skip evaluation)
+  wm err <file.wm>      Check for type errors only
   wm compile <file.wm> [--out-dir <dir>]
                         Emit JavaScript modules for the given entry
   wm fmt <files...>     Format Workman files
@@ -338,6 +359,7 @@ Examples:
   wm main.wm            # Run main.wm without extra debug output
   wm --debug main.wm    # Run main.wm and show types + values
   wm type main.wm       # Only type-check main.wm
+  wm err main.wm        # Check main.wm for type errors only
   wm fmt .              # Format all .wm files recursively
   wm compile main.wm    # Emit JS modules into ./dist
 
@@ -375,17 +397,32 @@ REPL Commands:
 
   let filePath: string;
   let skipEvaluation = false;
+  let showErrorsOnly = false;
 
   if (args[0] === "type") {
     if (args.length !== 2) {
-      console.error("Usage: wm [fmt|type|compile] <file.wm> | wm <file.wm> | wm (REPL mode)");
+      console.error(
+        "Usage: wm [fmt|type|err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)",
+      );
       Deno.exit(1);
     }
     filePath = args[1];
     skipEvaluation = true;
+  } else if (args[0] === "err") {
+    if (args.length !== 2) {
+      console.error(
+        "Usage: wm [fmt|type|err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)",
+      );
+      Deno.exit(1);
+    }
+    filePath = args[1];
+    showErrorsOnly = true;
+    skipEvaluation = true;
   } else {
     if (args.length !== 1) {
-      console.error("Usage: wm [fmt|type|compile] <file.wm> | wm <file.wm> | wm (REPL mode)");
+      console.error(
+        "Usage: wm [fmt|type|err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)",
+      );
       Deno.exit(1);
     }
     filePath = args[0];
@@ -411,35 +448,39 @@ REPL Commands:
     const artifact = compileResult.modules.get(entryKey);
     const coreModule = compileResult.coreGraph.modules.get(entryKey);
     if (!artifact || !coreModule) {
-      throw new Error(`Failed to locate entry module artifacts for '${entryKey}'`);
+      throw new Error(
+        `Failed to locate entry module artifacts for '${entryKey}'`,
+      );
     }
 
     // Show all expression types from Layer 3 (like the LSP does)
-    if (skipEvaluation || debugMode) {
+    if ((skipEvaluation || debugMode) && !showErrorsOnly) {
       const layer3 = artifact.analysis.layer3;
       const source = await Deno.readTextFile(filePath);
       const lines = source.split("\n");
-      
+
       // Collect all node views with their spans
-      const nodeViewsWithSpans: Array<{ nodeId: number; view: any; span: any }> = [];
+      const nodeViewsWithSpans: Array<
+        { nodeId: number; view: any; span: any }
+      > = [];
       for (const [nodeId, view] of layer3.nodeViews.entries()) {
         if (view.sourceSpan) {
           nodeViewsWithSpans.push({ nodeId, view, span: view.sourceSpan });
         }
       }
-      
+
       // Sort by line and column
       nodeViewsWithSpans.sort((a, b) => {
         if (a.span.start !== b.span.start) return a.span.start - b.span.start;
         return a.span.end - b.span.end;
       });
-      
+
       // Helper to convert offset to line/col
       const offsetToLineCol = (offset: number) => {
         let line = 0;
         let col = 0;
         for (let i = 0; i < offset && i < source.length; i++) {
-          if (source[i] === '\n') {
+          if (source[i] === "\n") {
             line++;
             col = 0;
           } else {
@@ -448,37 +489,47 @@ REPL Commands:
         }
         return { line, col };
       };
-      
+
       console.log("\n=== Expression Types ===\n");
-      
+
       for (const { nodeId, view, span } of nodeViewsWithSpans) {
         const startPos = offsetToLineCol(span.start);
         const endPos = offsetToLineCol(span.end);
         const excerpt = source.substring(span.start, span.end);
-        
+
         // finalType is a PartialType: { kind: "unknown" | "concrete", type?: Type }
         let typeStr = "?";
         if (view.finalType.kind === "concrete" && view.finalType.type) {
-          typeStr = formatScheme({ quantifiers: [], type: view.finalType.type });
+          typeStr = formatScheme({
+            quantifiers: [],
+            type: view.finalType.type,
+          });
         } else if (view.finalType.kind === "unknown" && view.finalType.type) {
-          typeStr = formatScheme({ quantifiers: [], type: view.finalType.type });
+          typeStr = formatScheme({
+            quantifiers: [],
+            type: view.finalType.type,
+          });
         }
-        
+
         // Check for hole solutions
         const solution = layer3.holeSolutions.get(nodeId);
         let annotation = "";
-        
+
         if (solution) {
           if (solution.state === "partial" && solution.partial?.known) {
-            const partialType = formatScheme({ quantifiers: [], type: solution.partial.known });
+            const partialType = formatScheme({
+              quantifiers: [],
+              type: solution.partial.known,
+            });
             annotation = ` 🔍 partial: ${partialType}`;
           } else if (solution.state === "conflicted" && solution.conflicts) {
-            annotation = ` ⚠️ CONFLICT: ${solution.conflicts.length} incompatible constraints`;
+            annotation =
+              ` ⚠️ CONFLICT: ${solution.conflicts.length} incompatible constraints`;
           } else if (solution.state === "unsolved") {
             annotation = " ❓ unsolved";
           }
         }
-        
+
         console.log(`Line ${startPos.line + 1}:${startPos.col}: ${excerpt}`);
         console.log(`  → ${typeStr}${annotation}`);
         const coverage = layer3.matchCoverages.get(nodeId);
@@ -493,7 +544,7 @@ REPL Commands:
             : "(none)";
           if (coverage.missingConstructors.length === 0) {
             if (coverage.dischargesResult) {
-            console.log(
+              console.log(
                 `  ⚡ discharges Err row ${rowStr}; constructors: ${handledLabel}`,
               );
             } else {
@@ -510,7 +561,7 @@ REPL Commands:
         }
         console.log();
       }
-      
+
       // Also show top-level bindings summary with Layer 3 types
       console.log("=== Top-Level Bindings ===\n");
       const summaries = artifact.analysis.layer1.summaries;
@@ -523,11 +574,20 @@ REPL Commands:
             ctorToAdt.set(ctor.name, adtName);
           }
         }
-        const formatErrorSummary = (type: import("./src/types.ts").Type): string | null => {
-          if (type.kind !== "constructor" || type.name !== "Result" || type.args.length !== 2) return null;
+        const formatErrorSummary = (
+          type: import("./src/types.ts").Type,
+        ): string | null => {
+          if (
+            type.kind !== "constructor" || type.name !== "Result" ||
+            type.args.length !== 2
+          ) return null;
           const errArg = type.args[1];
-          const ensureRow = (t: import("./src/types.ts").Type): import("./src/types.ts").ErrorRowType => {
-            return (t.kind === "error_row") ? t : { kind: "error_row", cases: new Map(), tail: t };
+          const ensureRow = (
+            t: import("./src/types.ts").Type,
+          ): import("./src/types.ts").ErrorRowType => {
+            return (t.kind === "error_row")
+              ? t
+              : { kind: "error_row", cases: new Map(), tail: t };
           };
           const row = ensureRow(errArg);
           const caseLabels = new Set<string>(Array.from(row.cases.keys()));
@@ -540,7 +600,10 @@ REPL Commands:
           for (const [adtName, info] of adtEnv.entries()) {
             let allCovered = true;
             for (const ctor of info.constructors) {
-              if (!caseLabels.has(ctor.name)) { allCovered = false; break; }
+              if (!caseLabels.has(ctor.name)) {
+                allCovered = false;
+                break;
+              }
             }
             if (allCovered) {
               fullAdts.add(adtName);
@@ -579,6 +642,48 @@ REPL Commands:
       }
     }
 
+    // Check for errors in err mode
+    if (showErrorsOnly) {
+      const layer3 = artifact.analysis.layer3;
+      const source = await Deno.readTextFile(filePath);
+      const hasDiagnostics = layer3.diagnostics.solver.length > 0 ||
+        layer3.diagnostics.conflicts.length > 0;
+
+      if (hasDiagnostics) {
+        // Format diagnostics for display
+        let errorMessage = "";
+
+        // Show solver diagnostics
+        for (const diag of layer3.diagnostics.solver) {
+          if (diag.span && source) {
+            const lines = source.split("\n");
+            const line = lines[diag.span.start] || "";
+            errorMessage += `\nType Error: ${diag.reason}\n`;
+            errorMessage += `  ${line}\n`;
+          } else {
+            errorMessage += `\nType Error: ${diag.reason}\n`;
+          }
+        }
+
+        // Show conflict diagnostics (unfillable holes)
+        for (const conflict of layer3.diagnostics.conflicts) {
+          errorMessage += `\n${conflict.message}\n`;
+          if (conflict.span && source) {
+            const lines = source.split("\n");
+            const line = lines[conflict.span.start] || "";
+            errorMessage += `  ${line}\n`;
+          }
+        }
+
+        if (errorMessage) {
+          console.error(errorMessage.trim());
+          Deno.exit(1);
+        }
+      }
+      // If no errors, exit successfully with no output
+      Deno.exit(0);
+    }
+
     if (!skipEvaluation) {
       const tempDir = await Deno.makeTempDir({ prefix: "workman-cli-" });
       try {
@@ -586,9 +691,14 @@ REPL Commands:
           outDir: tempDir,
         });
         const moduleUrl = toFileUrl(emitResult.entryPath).href;
-        const moduleExports = await import(moduleUrl) as Record<string, unknown>;
+        const moduleExports = await import(moduleUrl) as Record<
+          string,
+          unknown
+        >;
         await invokeMainIfPresent(moduleExports);
-        const forcedValueNames = coreModule.values.map((binding) => binding.name);
+        const forcedValueNames = coreModule.values.map((binding) =>
+          binding.name
+        );
         const values = collectCompiledValues(moduleExports, coreModule, {
           forcedValueNames,
         });
