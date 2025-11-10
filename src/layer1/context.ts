@@ -26,7 +26,10 @@ import type {
   MTypeExpr,
   MTypeExprMark,
 } from "../ast_marked.ts";
-import type { MatchBranchesResult } from "./infermatch.ts";
+import type {
+  MatchBranchesResult,
+  MatchErrorRowCoverage,
+} from "./infermatch.ts";
 import {
   applySubstitution,
   applySubstitutionScheme,
@@ -143,6 +146,13 @@ export interface UnknownInfo {
   origin: HoleOrigin;
 }
 
+export interface ErrorRowCoverageStub {
+  row: ErrorRowType;
+  coveredConstructors: string[];
+  coversTail: boolean;
+  missingConstructors: string[];
+}
+
 export type ConstraintStub =
   | {
       kind: "call";
@@ -153,12 +163,15 @@ export type ConstraintStub =
       resultType: Type;
       index: number;
       argumentValueType?: Type;
+      argumentErrorRow?: ErrorRowType;
     }
   | {
       kind: "branch_join";
       origin: NodeId;
       scrutinee: NodeId | null;
       branches: NodeId[];
+      dischargesResult?: boolean;
+      errorRowCoverage?: ErrorRowCoverageStub;
     }
   | {
       kind: "annotation";
@@ -199,6 +212,7 @@ export function recordCallConstraint(
   resultType: Type,
   index: number,
   argumentValueType: Type,
+  argumentErrorRow?: ErrorRowType,
 ): void {
   ctx.constraintStubs.push({
     kind: "call",
@@ -209,6 +223,7 @@ export function recordCallConstraint(
     resultType,
     index,
     argumentValueType: cloneType(argumentValueType),
+    argumentErrorRow: argumentErrorRow ? cloneType(argumentErrorRow) as ErrorRowType : undefined,
   });
 }
 
@@ -217,12 +232,28 @@ export function recordBranchJoinConstraint(
   origin: Expr,
   branchBodies: Expr[],
   scrutinee?: Expr,
+  metadata?: {
+    dischargesResult?: boolean;
+    errorRowCoverage?: MatchErrorRowCoverage;
+  },
 ): void {
+  const coverage = metadata?.errorRowCoverage
+    ? {
+      row: metadata.errorRowCoverage.errorRow,
+      coveredConstructors: Array.from(
+        metadata.errorRowCoverage.coveredConstructors,
+      ),
+      coversTail: metadata.errorRowCoverage.coversTail,
+      missingConstructors: metadata.errorRowCoverage.missingConstructors,
+    }
+    : undefined;
   ctx.constraintStubs.push({
     kind: "branch_join",
     origin: origin.id,
     scrutinee: scrutinee?.id ?? null,
     branches: branchBodies.map((body) => body.id),
+    dischargesResult: metadata?.dischargesResult ?? false,
+    errorRowCoverage: coverage,
   });
 }
 

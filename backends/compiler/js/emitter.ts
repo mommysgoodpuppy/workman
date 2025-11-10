@@ -394,17 +394,15 @@ function detectHandledResultParams(
   if (expr.body.kind !== "match") {
     return [];
   }
+  const coverage = expr.body.errorRowCoverage;
+  if (!coverage || !coverage.dischargesResult) {
+    return [];
+  }
   if (expr.body.scrutinee.kind !== "var") {
     return [];
   }
   const paramIndex = originalParams.indexOf(expr.body.scrutinee.name);
   if (paramIndex === -1) {
-    return [];
-  }
-  const hasAllErrors = expr.body.cases.some((kase) =>
-    kase.pattern.kind === "all_errors"
-  );
-  if (!hasAllErrors) {
     return [];
   }
   return [paramIndex];

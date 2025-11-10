@@ -103,11 +103,20 @@ export interface CorePrimExpr extends CoreNodeMeta {
   readonly args: readonly CoreExpr[];
 }
 
+export interface CoreMatchCoverage {
+  readonly row: Type;
+  readonly coveredConstructors: readonly string[];
+  readonly coversTail: boolean;
+  readonly missingConstructors: readonly string[];
+  readonly dischargesResult: boolean;
+}
+
 export interface CoreMatchExpr extends CoreNodeMeta {
   readonly kind: "match";
   readonly scrutinee: CoreExpr;
   readonly cases: readonly CoreMatchCase[];
   readonly fallback?: CoreExpr;
+  readonly errorRowCoverage?: CoreMatchCoverage;
 }
 
 export type CoreExpr =

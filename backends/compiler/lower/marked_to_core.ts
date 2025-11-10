@@ -335,11 +335,25 @@ function lowerMatchExpr(
   const cases: CoreMatchCase[] = bundle.arms.map((arm) =>
     lowerMatchArm(arm, state)
   );
+  const errorRowCoverage = bundle.errorRowCoverage
+    ? {
+      row: bundle.errorRowCoverage.row,
+      coveredConstructors: [
+        ...bundle.errorRowCoverage.coveredConstructors,
+      ],
+      coversTail: bundle.errorRowCoverage.coversTail,
+      missingConstructors: [
+        ...bundle.errorRowCoverage.missingConstructors,
+      ],
+      dischargesResult: bundle.dischargesResult ?? false,
+    }
+    : undefined;
   return {
     kind: "match",
     scrutinee: loweredScrutinee,
     cases,
     type: resolveNodeType(state, expr.id, expr.type),
+    errorRowCoverage,
   };
 }
 

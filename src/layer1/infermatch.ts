@@ -25,6 +25,7 @@ import {
   unknownType,
 } from "../types.ts";
 import { PatternInfo } from "./infer.ts";
+import type { ConstraintDiagnosticReason } from "../diagnostics.ts";
 
 
 export interface MatchBranchesResult {
@@ -32,6 +33,7 @@ export interface MatchBranchesResult {
   patternInfos: PatternInfo[];
   bodyTypes: Type[];
   errorRowCoverage?: MatchErrorRowCoverage;
+  dischargesResult?: boolean;
 }
 
 export interface MatchErrorRowCoverage {
@@ -104,6 +106,8 @@ export function inferMatchBundleLiteral(
   };
 }
 
+type MatchBranchKind = "ok" | "err" | "all_errors" | "other";
+
 export function inferMatchBranches(
   ctx: Context,
   expr: Expr,
@@ -123,6 +127,8 @@ export function inferMatchBranches(
   const bodyTypes: Type[] = [];
   const branchBodies: Expr[] = [];
   let errorRowCoverage: MatchErrorRowCoverage | undefined;
+  const branchMetadata: { kind: MatchBranchKind; type: Type }[] = [];
+  let dischargedResult = false;
 
   for (const arm of bundle.arms) {
     if (arm.kind === "match_bundle_reference") {
@@ -170,6 +176,7 @@ export function inferMatchBranches(
     if (arm.kind === "match_pattern") {
       branchBodies.push(arm.body);
     }
+    const branchKind = classifyBranchKind(patternInfo);
     if (patternInfo.coverage.kind === "wildcard") {
       hasWildcard = true;
     } else if (patternInfo.coverage.kind === "all_errors") {
@@ -231,7 +238,9 @@ export function inferMatchBranches(
       }
       return inferExpr(ctx, arm.body);
     });
-    bodyTypes.push(applyCurrentSubst(ctx, bodyType));
+    const resolvedBodyType = applyCurrentSubst(ctx, bodyType);
+    bodyTypes.push(resolvedBodyType);
+    branchMetadata.push({ kind: branchKind, type: resolvedBodyType });
 
     if (!resultType) {
       resultType = bodyType;
@@ -242,6 +251,20 @@ export function inferMatchBranches(
   }
 
   const resolvedScrutinee = applyCurrentSubst(ctx, scrutineeType);
+  const guardReasons: ConstraintDiagnosticReason[] = [];
+  const okBranchesReturnResult = branchMetadata.some((branch) =>
+    branch.kind === "ok" && flattenResultType(branch.type) !== null
+  );
+  if (okBranchesReturnResult) {
+    guardReasons.push("result_match_ok_returns_result");
+  }
+  const errBranchesReturnResult = branchMetadata.some((branch) =>
+    (branch.kind === "err" || branch.kind === "all_errors") &&
+    flattenResultType(branch.type) !== null
+  );
+  if (errBranchesReturnResult) {
+    guardReasons.push("result_match_err_returns_result");
+  }
 
   if (exhaustive) {
     if (
@@ -265,10 +288,6 @@ export function inferMatchBranches(
 
   if (!resultType) {
     resultType = freshTypeVar();
-  }
-
-  if (branchBodies.length > 0 && scrutineeExpr) {
-    recordBranchJoinConstraint(ctx, expr, branchBodies, scrutineeExpr);
   }
 
   let resolvedResult = applyCurrentSubst(ctx, resultType);
@@ -307,8 +326,16 @@ export function inferMatchBranches(
         reason: "all_errors_requires_err",
       });
     } else {
-      dischargeErrorRow(scrutineeInfo.value);
-      snapshotErrorCoverage(scrutineeInfo.error, []);
+      if (guardReasons.length > 0) {
+        for (const reason of guardReasons) {
+          ctx.layer1Diagnostics.push({ origin: expr.id, reason });
+        }
+        snapshotErrorCoverage(scrutineeInfo.error, []);
+      } else {
+        dischargedResult = true;
+        dischargeErrorRow(scrutineeInfo.value);
+        snapshotErrorCoverage(scrutineeInfo.error, []);
+      }
     }
   } else if (scrutineeInfo && hasErrConstructor) {
     const missingConstructors = findMissingErrorConstructors(
@@ -316,8 +343,19 @@ export function inferMatchBranches(
       handledErrorConstructors,
     );
     if (missingConstructors.length === 0) {
-      dischargeErrorRow(scrutineeInfo.value);
-      snapshotErrorCoverage(scrutineeInfo.error, []);
+      if (guardReasons.length > 0) {
+        for (const reason of guardReasons) {
+          ctx.layer1Diagnostics.push({
+            origin: expr.id,
+            reason,
+          });
+        }
+        snapshotErrorCoverage(scrutineeInfo.error, []);
+      } else {
+        dischargedResult = true;
+        dischargeErrorRow(scrutineeInfo.value);
+        snapshotErrorCoverage(scrutineeInfo.error, []);
+      }
     } else {
       ctx.layer1Diagnostics.push({
         origin: expr.id,
@@ -327,6 +365,19 @@ export function inferMatchBranches(
       snapshotErrorCoverage(scrutineeInfo.error, missingConstructors);
     }
   }
+  if (branchBodies.length > 0 && scrutineeExpr) {
+    recordBranchJoinConstraint(
+      ctx,
+      expr,
+      branchBodies,
+      scrutineeExpr,
+      {
+        dischargesResult: dischargedResult,
+        errorRowCoverage,
+      },
+    );
+  }
+
   const resultVars = freeTypeVars(resolvedResult);
   const scrutineeVars = freeTypeVars(resolvedScrutinee);
   /* console.debug("[debug] match result", {
@@ -345,6 +396,7 @@ export function inferMatchBranches(
     patternInfos,
     bodyTypes,
     errorRowCoverage,
+    dischargesResult: dischargedResult,
   };
   ctx.matchResults.set(bundle, result);
   return result;
@@ -367,4 +419,20 @@ function findMissingErrorConstructors(
     missing.push("_");
   }
   return missing;
+}
+
+function classifyBranchKind(info: PatternInfo): MatchBranchKind {
+  const coverage = info.coverage;
+  if (coverage.kind === "all_errors") {
+    return "all_errors";
+  }
+  if (coverage.kind === "constructor" && coverage.typeName === "Result") {
+    if (coverage.ctor === "Ok") {
+      return "ok";
+    }
+    if (coverage.ctor === "Err") {
+      return "err";
+    }
+  }
+  return "other";
 }

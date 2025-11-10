@@ -243,6 +243,24 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
       }
       return "Match does not cover all error constructors";
     }
+    case "result_match_ok_returns_result":
+      return "Ok branches must return bare values when unwrapping a Result";
+    case "result_match_err_returns_result":
+      return "Err branches must return bare values when discharging a Result";
+    case "infectious_call_result_mismatch": {
+      const row = diagnostic.details?.errorRow as Type | undefined;
+      const rowLabel = row ? simpleFormatType(row) : "the incoming error row";
+      return `This call must return a Result because its argument carries ${rowLabel}`;
+    }
+    case "infectious_match_result_mismatch": {
+      const row = diagnostic.details?.errorRow as Type | undefined;
+      const missing = diagnostic.details?.missingConstructors as string[] | undefined;
+      const rowLabel = row ? ` for row ${simpleFormatType(row)}` : "";
+      const missingLabel = missing && missing.length > 0
+        ? `; missing constructors: ${missing.join(", ")}`
+        : "";
+      return `Match claimed to discharge a Result but remained infectious${rowLabel}${missingLabel}`;
+    }
     case "type_expr_unknown":
       return "Unknown type in type expression";
     case "type_expr_arity":

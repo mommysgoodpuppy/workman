@@ -46,6 +46,11 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       return `{ ${fields} }`;
     }
     case "error_row": {
+      // Ergonomic printing: if this row has no explicit cases and only a tail,
+      // print the tail type directly (e.g., ParseError instead of <_ParseError>).
+      if (type.cases.size === 0 && type.tail) {
+        return formatType(type.tail, context, 0);
+      }
       const entries = Array.from(type.cases.entries());
       entries.sort(([a], [b]) => a.localeCompare(b));
       const parts = entries.map(([label, payload]) =>

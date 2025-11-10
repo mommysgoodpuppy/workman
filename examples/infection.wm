@@ -1,0 +1,20 @@
+type ParseError = Missing | Other;
+
+let parseMaybe = match(flag) {
+  true => { Ok(1) },
+  false => { Err(Missing) }
+};
+
+let addOne = (value) => {
+  value + 1
+};
+
+let thing = (x) => {
+  match(x) {
+    Ok(value) => { value },
+    Err(_) => { 0 }
+  }
+};
+
+let forced = addOne(thing(parseMaybe(true))) + 1;
+let main = print(forced);

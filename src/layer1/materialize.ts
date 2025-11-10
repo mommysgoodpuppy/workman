@@ -99,6 +99,7 @@ export function materializeMatchBundle(
     arms,
     type: resolvedBundleType,
     errorRowCoverage,
+    dischargesResult: matchResult?.dischargesResult ?? false,
   } satisfies MMatchBundle;
 }
 

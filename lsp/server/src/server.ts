@@ -17,33 +17,21 @@ import {
 import { InferError } from "@workman/layer1/infer.ts";
 import { LexError, WorkmanError } from "@workman/error.ts";
 import { formatScheme } from "@workman/type_printer.ts";
-import {
-  loadModuleGraph,
-  ModuleLoaderError,
-  type ModuleImportRecord,
-} from "@workman/module_loader.ts";
+import { ModuleLoaderError } from "@workman/module_loader.ts";
 import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
-import {
-  cloneTypeInfo,
-  cloneTypeScheme,
-  Type,
-  TypeInfo,
-  TypeScheme,
-  typeToString,
-  unknownType,
-} from "@workman/types.ts";
-import {
-  analyzeProgram,
-  type AnalysisResult,
-} from "@workman/pipeline.ts";
+import { Type, TypeScheme, typeToString } from "@workman/types.ts";
 import {
   findNodeAtOffset,
-  presentProgram,
   type ConstraintDiagnosticWithSpan,
+  type FlowDiagnostic,
   type Layer3Result,
   type NodeView,
   type PartialType,
+  type MatchCoverageView,
 } from "@workman/layer3/mod.ts";
+import {
+  compileWorkmanGraph,
+} from "../../../backends/compiler/frontends/workman.ts";
 import type {
   MLetDeclaration,
   MProgram,
@@ -76,6 +64,7 @@ class WorkmanLanguageServer {
       env: Map<string, TypeScheme>;
       layer3: Layer3Result;
       program: MProgram;
+      adtEnv: Map<string, import("@workman/types.ts").TypeInfo>;
       entryPath: string;
     }
   >();
@@ -417,6 +406,11 @@ class WorkmanLanguageServer {
           context.layer3.diagnostics.conflicts,
           text,
         );
+        this.appendFlowDiagnostics(
+          diagnostics,
+          context.layer3.diagnostics.flow,
+          text,
+        );
       } catch (moduleError) {
         // Module-level errors (imports, type errors, etc.)
         this.log(`[LSP] Module validation error: ${moduleError}`);
@@ -595,6 +589,32 @@ class WorkmanLanguageServer {
     }
   }
 
+  private appendFlowDiagnostics(
+    target: any[],
+    flowDiagnostics: FlowDiagnostic[],
+    text: string,
+  ): void {
+    for (const diag of flowDiagnostics) {
+      const span = diag.span;
+      const range = span
+        ? {
+          start: this.offsetToPosition(text, span.start),
+          end: this.offsetToPosition(text, Math.max(span.end, span.start + 1)),
+        }
+        : {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        };
+      target.push({
+        range,
+        severity: 2, // warning
+        message: diag.message,
+        source: "workman-flow",
+        code: diag.kind,
+      });
+    }
+  }
+
   private formatSolverDiagnostic(diag: ConstraintDiagnosticWithSpan): string {
     let base: string;
     switch (diag.reason) {
@@ -666,6 +686,24 @@ class WorkmanLanguageServer {
       case "internal_error":
         base = "Internal type inference error";
         break;
+      case "infectious_call_result_mismatch": {
+        const row = diag.details?.errorRow as Type | undefined;
+        const rowLabel = row ? typeToString(row) : "an unresolved error row";
+        base = `This call must remain infectious because an argument carries ${rowLabel}`;
+        break;
+      }
+      case "infectious_match_result_mismatch": {
+        const row = diag.details?.errorRow as Type | undefined;
+        const missing = Array.isArray(diag.details?.missingConstructors)
+          ? (diag.details?.missingConstructors as string[]).join(", ")
+          : null;
+        const rowLabel = row ? ` for row ${typeToString(row)}` : "";
+        base = `Match claimed to discharge Result errors${rowLabel} but remained infectious`;
+        if (missing && missing.length > 0) {
+          base += `. Missing constructors: ${missing}`;
+        }
+        break;
+      }
       default:
         base = `Solver diagnostic: ${diag.reason}`;
         break;
@@ -694,14 +732,52 @@ class WorkmanLanguageServer {
     return base;
   }
 
-  private renderNodeView(view: NodeView, layer3: Layer3Result): string | null {
+  private renderNodeView(
+    view: NodeView,
+    layer3: Layer3Result,
+    coverage?: MatchCoverageView,
+  ): string | null {
     const typeStr = this.partialTypeToString(view.finalType, layer3);
     if (!typeStr) {
       return null;
     }
     
     let result = "```workman\n" + typeStr + "\n```";
+    // If the type is a Result, append an error summary grouped by ADT
+    try {
+      const resolved = this.substituteTypeWithLayer3(
+        (view.finalType.kind === "unknown" && view.finalType.type) ? view.finalType.type : (view.finalType as any).type ?? (view as any),
+        layer3,
+      );
+      const t = (view.finalType.kind === "concrete") ? view.finalType.type : resolved;
+      const summary = this.summarizeErrorRowFromType(t, this.moduleContexts.get(layer3.spanIndex.keys().next().value)?.adtEnv ?? new Map());
+      if (summary) {
+        result += `\n\nErrors: ${summary}`;
+      }
+    } catch {}
     
+    if (coverage) {
+      const rowStr = formatScheme({ quantifiers: [], type: coverage.row });
+      const handled = [...coverage.coveredConstructors];
+      if (coverage.coversTail) {
+        handled.push("_");
+      }
+      const handledLabel = handled.length > 0 ? handled.join(", ") : "(none)";
+      if (coverage.missingConstructors.length === 0) {
+        if (coverage.dischargesResult) {
+          result +=
+            `\n\n⚡ Discharges Err row ${rowStr}; constructors: ${handledLabel}`;
+        } else {
+          result +=
+            `\n\n⚠️ Err row ${rowStr} still infectious (handled: ${handledLabel})`;
+        }
+      } else {
+        const missingLabel = coverage.missingConstructors.join(", ");
+        result +=
+          `\n\n⚠️ Missing Err constructors ${missingLabel} for row ${rowStr} (handled: ${handledLabel})`;
+      }
+    }
+
     // Check if this node references a hole with solution information
     const holeSolutions = layer3.holeSolutions;
     if (holeSolutions && view.finalType.kind === "unknown" && view.finalType.type) {
@@ -987,7 +1063,8 @@ class WorkmanLanguageServer {
       if (nodeId) {
         const view = layer3.nodeViews.get(nodeId);
         if (view) {
-          const rendered = this.renderNodeView(view, layer3);
+          const coverage = layer3.matchCoverages.get(nodeId);
+          const rendered = this.renderNodeView(view, layer3, coverage);
           if (rendered) {
             return {
               jsonrpc: "2.0",
@@ -1223,14 +1300,6 @@ class WorkmanLanguageServer {
     return { word: text.substring(start, end), start, end };
   }
 
-  private isStdCoreModule(path: string): boolean {
-    const normalized = path.replaceAll("\\", "/");
-    if (normalized.includes("/std/core/")) return true;
-    return normalized.endsWith("/std/list/core.wm") ||
-      normalized.endsWith("/std/option/core.wm") ||
-      normalized.endsWith("/std/result/core.wm");
-  }
-
   private async buildModuleContext(
     entryPath: string,
     stdRoots: string[],
@@ -1241,239 +1310,24 @@ class WorkmanLanguageServer {
     program: MProgram;
     entryPath: string;
   }> {
-    const graph = await loadModuleGraph(entryPath, { stdRoots, preludeModule });
-    const summaries = new Map<string, {
-      exportsValues: Map<string, TypeScheme>;
-      exportsTypes: Map<string, TypeInfo>;
-      env: Map<string, TypeScheme>;
-      adtEnv: Map<string, TypeInfo>;
-    }>();
-    const preludePath = graph.prelude;
-    let preludeSummary: {
-      exportsValues: Map<string, TypeScheme>;
-      exportsTypes: Map<string, TypeInfo>;
-    } | undefined = undefined;
-    let preludeEnv: Map<string, TypeScheme> | undefined = undefined;
-    let entryAnalysis: AnalysisResult | null = null;
-    let entryLayer3: Layer3Result | null = null;
+    const compileResult = await compileWorkmanGraph(entryPath, {
+      loader: {
+        stdRoots,
+        preludeModule,
+        skipEvaluation: true,
+      },
+    });
 
-    for (const path of graph.order) {
-      const node = graph.nodes.get(path)!;
-      const initialEnv = new Map<string, TypeScheme>();
-      const initialAdtEnv = new Map<string, TypeInfo>();
-
-      for (const record of node.imports) {
-        if (record.kind === "js") {
-          seedJsImport(record, initialEnv);
-          continue;
-        }
-        const provider = summaries.get(record.sourcePath);
-        if (!provider) {
-          throw new ModuleLoaderError(
-            `Module '${path}' depends on '${record.sourcePath}' which failed to load`,
-          );
-        }
-        for (const spec of record.specifiers) {
-          const val = provider.exportsValues.get(spec.imported);
-          const typ = provider.exportsTypes.get(spec.imported);
-          if (!val && !typ) {
-            throw new ModuleLoaderError(
-              `Module '${record.sourcePath}' does not export '${spec.imported}' (imported by '${record.importerPath}')`,
-            );
-          }
-          if (val) {
-            initialEnv.set(spec.local, cloneTypeScheme(val));
-          }
-          if (typ) {
-            if (spec.local !== spec.imported) {
-              throw new ModuleLoaderError(
-                `Type import aliasing is not supported in Stage M1 (imported '${spec.imported}' as '${spec.local}')`,
-              );
-            }
-            if (initialAdtEnv.has(spec.imported)) {
-              throw new ModuleLoaderError(
-                `Duplicate imported type '${spec.imported}' in module '${record.importerPath}'`,
-              );
-            }
-            initialAdtEnv.set(spec.imported, cloneTypeInfo(typ));
-          }
-        }
-      }
-
-      if (
-        preludeSummary && path !== preludePath && !this.isStdCoreModule(path)
-      ) {
-        for (const [name, scheme] of preludeSummary.exportsValues.entries()) {
-          if (!initialEnv.has(name)) {
-            initialEnv.set(name, cloneTypeScheme(scheme));
-          }
-        }
-        for (const [name, info] of preludeSummary.exportsTypes.entries()) {
-          if (!initialAdtEnv.has(name)) {
-            initialAdtEnv.set(name, cloneTypeInfo(info));
-          }
-        }
-        if (preludeEnv) {
-          const preludeNode = graph.nodes.get(preludePath!);
-          if (preludeNode) {
-            for (const decl of preludeNode.program.declarations) {
-              if (decl.kind === "infix") {
-                const opName = `__op_${decl.operator}`;
-                const scheme = preludeEnv.get(opName);
-                if (scheme && !initialEnv.has(opName)) {
-                  initialEnv.set(opName, cloneTypeScheme(scheme));
-                }
-              } else if (decl.kind === "prefix") {
-                const opName = `__prefix_${decl.operator}`;
-                const scheme = preludeEnv.get(opName);
-                if (scheme && !initialEnv.has(opName)) {
-                  initialEnv.set(opName, cloneTypeScheme(scheme));
-                }
-              }
-            }
-          }
-        }
-      }
-
-      const analysis = analyzeProgram(node.program, {
-        initialEnv,
-        initialAdtEnv,
-        resetCounter: true,
-        source: node.source,
-      });
-      const layer3Presentation = presentProgram(analysis.layer2);
-
-      const exportedValues = new Map<string, TypeScheme>();
-      const exportedTypes = new Map<string, TypeInfo>();
-
-      for (const record of node.reexports) {
-        const provider = summaries.get(record.sourcePath);
-        if (!provider) {
-          throw new ModuleLoaderError(
-            `Module '${path}' depends on '${record.sourcePath}' which failed to load`,
-          );
-        }
-        for (const typeExport of record.typeExports) {
-          const providedType = provider.exportsTypes.get(typeExport.name);
-          if (!providedType) {
-            throw new ModuleLoaderError(
-              `Module '${record.importerPath}' re-exports type '${typeExport.name}' from '${record.rawSource}' which does not export it`,
-            );
-          }
-          if (exportedTypes.has(typeExport.name)) {
-            throw new ModuleLoaderError(
-              `Duplicate export '${typeExport.name}' in '${record.importerPath}'`,
-            );
-          }
-          const clonedInfo = cloneTypeInfo(providedType);
-          exportedTypes.set(typeExport.name, clonedInfo);
-          if (typeExport.exportConstructors) {
-            for (const ctor of clonedInfo.constructors) {
-              const providedScheme = provider.exportsValues.get(ctor.name);
-              if (!providedScheme) {
-                throw new ModuleLoaderError(
-                  `Module '${record.importerPath}' re-exports constructor '${ctor.name}' from '${record.rawSource}' but runtime type is missing in provider`,
-                );
-              }
-              if (exportedValues.has(ctor.name)) {
-                throw new ModuleLoaderError(
-                  `Duplicate export '${ctor.name}' in '${record.importerPath}'`,
-                );
-              }
-              exportedValues.set(ctor.name, cloneTypeScheme(providedScheme));
-            }
-          }
-        }
-      }
-
-      const substitutedSummaries = layer3Presentation.summaries.map((
-        { name, scheme },
-      ) => ({
-        name,
-        scheme: this.applyHoleSolutionsToScheme(scheme, layer3Presentation),
-      }));
-      const letSchemeMap = new Map(
-        substitutedSummaries.map(({ name, scheme }) => [name, scheme] as const),
-      );
-      for (const name of node.exportedValueNames) {
-        const scheme = letSchemeMap.get(name) ??
-          analysis.layer1.env.get(name);
-        if (!scheme) {
-          throw new ModuleLoaderError(
-            `Exported let '${name}' was not inferred in '${path}'`,
-          );
-        }
-        if (exportedValues.has(name)) {
-          throw new ModuleLoaderError(
-            `Duplicate export '${name}' in '${path}'`,
-          );
-        }
-        exportedValues.set(name, cloneTypeScheme(scheme));
-      }
-
-      for (const typeName of node.exportedTypeNames) {
-        const info = analysis.layer1.adtEnv.get(typeName);
-        if (!info) {
-          throw new ModuleLoaderError(
-            `Exported type '${typeName}' was not defined in '${path}'`,
-          );
-        }
-        if (exportedTypes.has(typeName)) {
-          throw new ModuleLoaderError(
-            `Duplicate export '${typeName}' in '${path}'`,
-          );
-        }
-        const clonedInfo = cloneTypeInfo(info);
-        exportedTypes.set(typeName, clonedInfo);
-        for (const ctor of clonedInfo.constructors) {
-          const scheme = analysis.layer1.env.get(ctor.name);
-          if (!scheme) {
-            throw new ModuleLoaderError(
-              `Constructor '${ctor.name}' for type '${typeName}' missing in '${path}'`,
-            );
-          }
-          if (exportedValues.has(ctor.name)) {
-            throw new ModuleLoaderError(
-              `Duplicate export '${ctor.name}' in '${path}'`,
-            );
-          }
-          exportedValues.set(ctor.name, cloneTypeScheme(scheme));
-        }
-      }
-
-      summaries.set(path, {
-        exportsValues: exportedValues,
-        exportsTypes: exportedTypes,
-        env: analysis.layer1.env,
-        adtEnv: analysis.layer1.adtEnv,
-      });
-      if (path === preludePath) {
-        preludeSummary = {
-          exportsValues: exportedValues,
-          exportsTypes: exportedTypes,
-        };
-        preludeEnv = analysis.layer1.env;
-      }
-      if (path === graph.entry) {
-        entryAnalysis = analysis;
-        entryLayer3 = layer3Presentation;
-      }
-    }
-
-    const entry = summaries.get(graph.entry);
-    if (!entry) {
+    const entryModulePath = compileResult.coreGraph.entry;
+    const entryArtifact = compileResult.modules.get(entryModulePath);
+    if (!entryArtifact) {
       throw new ModuleLoaderError(
-        `Internal error: failed to load entry module '${graph.entry}'`,
+        `Internal error: missing entry module artifacts for '${entryModulePath}'`,
       );
     }
-    if (!entryAnalysis) {
-      throw new ModuleLoaderError(
-        `Internal error: missing analysis for entry module '${graph.entry}'`,
-      );
-    }
-    const layer3 = entryLayer3 ?? presentProgram(entryAnalysis.layer2);
-    
-    // Build env from Layer 3 summaries (which have transformed types with conflicts)
+
+    const layer3 = entryArtifact.analysis.layer3;
+    const adtEnv = entryArtifact.analysis.layer1.adtEnv;
     const transformedEnv = new Map<string, TypeScheme>();
     for (const { name, scheme } of layer3.summaries) {
       transformedEnv.set(
@@ -1481,13 +1335,47 @@ class WorkmanLanguageServer {
         this.applyHoleSolutionsToScheme(scheme, layer3),
       );
     }
-    
+
     return {
       env: transformedEnv,
       layer3,
-      program: entryAnalysis.layer1.markedProgram,
-      entryPath: graph.entry,
+      program: entryArtifact.analysis.layer1.markedProgram,
+      adtEnv,
+      entryPath: entryModulePath,
     };
+  }
+
+  private summarizeErrorRowFromType(
+    type: Type | undefined,
+    adtEnv: Map<string, import("@workman/types.ts").TypeInfo>,
+  ): string | null {
+    if (!type) return null;
+    if (type.kind !== "constructor" || type.name !== "Result" || type.args.length !== 2) return null;
+    const errArg = type.args[1];
+    const ensureRow = (t: Type): import("@workman/types.ts").ErrorRowType => (
+      t.kind === "error_row" ? t : { kind: "error_row", cases: new Map(), tail: t }
+    );
+    const row = ensureRow(errArg);
+    const caseLabels = new Set<string>(Array.from(row.cases.keys()));
+    const fullAdts = new Set<string>();
+    if (row.tail && row.tail.kind === "constructor") {
+      fullAdts.add(row.tail.name);
+    }
+    for (const [adtName, info] of adtEnv.entries()) {
+      let allCovered = true;
+      for (const ctor of info.constructors) {
+        if (!caseLabels.has(ctor.name)) { allCovered = false; break; }
+      }
+      if (allCovered) {
+        fullAdts.add(adtName);
+        for (const ctor of info.constructors) caseLabels.delete(ctor.name);
+      }
+    }
+    const parts: string[] = [];
+    for (const adt of fullAdts) parts.push(adt);
+    for (const lbl of caseLabels) parts.push(lbl);
+    if (parts.length === 0) return null;
+    return parts.join(" | ");
   }
 
   private uriToFsPath(uri: string): string {
@@ -1691,26 +1579,6 @@ class WorkmanLanguageServer {
       }
     }
     return { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
-  }
-}
-
-function seedJsImport(
-  record: ModuleImportRecord,
-  env: Map<string, TypeScheme>,
-): void {
-  for (const spec of record.specifiers) {
-    if (env.has(spec.local)) {
-      throw new ModuleLoaderError(
-        `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
-      );
-    }
-    env.set(spec.local, {
-      quantifiers: [],
-      type: unknownType({
-        kind: "incomplete",
-        reason: `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
-      }),
-    });
   }
 }
 

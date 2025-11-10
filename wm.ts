@@ -481,13 +481,82 @@ REPL Commands:
         
         console.log(`Line ${startPos.line + 1}:${startPos.col}: ${excerpt}`);
         console.log(`  → ${typeStr}${annotation}`);
+        const coverage = layer3.matchCoverages.get(nodeId);
+        if (coverage) {
+          const rowStr = formatScheme({ quantifiers: [], type: coverage.row });
+          const handledConstructors = [...coverage.coveredConstructors];
+          if (coverage.coversTail) {
+            handledConstructors.push("_");
+          }
+          const handledLabel = handledConstructors.length > 0
+            ? handledConstructors.join(", ")
+            : "(none)";
+          if (coverage.missingConstructors.length === 0) {
+            if (coverage.dischargesResult) {
+            console.log(
+                `  ⚡ discharges Err row ${rowStr}; constructors: ${handledLabel}`,
+              );
+            } else {
+              console.log(
+                `  ⚠️ covers Err row ${rowStr} but infection continues (handled: ${handledLabel})`,
+              );
+            }
+          } else {
+            const missingLabel = coverage.missingConstructors.join(", ");
+            console.log(
+              `  ⚠️ missing Err constructors ${missingLabel} for row ${rowStr} (handled: ${handledLabel})`,
+            );
+          }
+        }
         console.log();
       }
       
       // Also show top-level bindings summary with Layer 3 types
       console.log("=== Top-Level Bindings ===\n");
       const summaries = artifact.analysis.layer1.summaries;
+      const adtEnv = artifact.analysis.layer1.adtEnv;
       if (summaries.length > 0) {
+        // Precompute constructor->ADT index
+        const ctorToAdt = new Map<string, string>();
+        for (const [adtName, info] of adtEnv.entries()) {
+          for (const ctor of info.constructors) {
+            ctorToAdt.set(ctor.name, adtName);
+          }
+        }
+        const formatErrorSummary = (type: import("./src/types.ts").Type): string | null => {
+          if (type.kind !== "constructor" || type.name !== "Result" || type.args.length !== 2) return null;
+          const errArg = type.args[1];
+          const ensureRow = (t: import("./src/types.ts").Type): import("./src/types.ts").ErrorRowType => {
+            return (t.kind === "error_row") ? t : { kind: "error_row", cases: new Map(), tail: t };
+          };
+          const row = ensureRow(errArg);
+          const caseLabels = new Set<string>(Array.from(row.cases.keys()));
+          const fullAdts = new Set<string>();
+          // Tail is an ADT type -> add that ADT
+          if (row.tail && row.tail.kind === "constructor") {
+            fullAdts.add(row.tail.name);
+          }
+          // Add ADTs that are fully covered by explicit constructors
+          for (const [adtName, info] of adtEnv.entries()) {
+            let allCovered = true;
+            for (const ctor of info.constructors) {
+              if (!caseLabels.has(ctor.name)) { allCovered = false; break; }
+            }
+            if (allCovered) {
+              fullAdts.add(adtName);
+              // remove consumed labels so we don't also list them as partials
+              for (const ctor of info.constructors) {
+                caseLabels.delete(ctor.name);
+              }
+            }
+          }
+          const parts: string[] = [];
+          for (const adt of fullAdts) parts.push(adt);
+          // Remaining labels that couldn't be grouped – show as ctor names
+          for (const lbl of caseLabels) parts.push(lbl);
+          if (parts.length === 0) return null;
+          return parts.join(" | ");
+        };
         for (const { name, scheme } of summaries) {
           const resolvedType = substituteHoleSolutionsInType(
             cloneType(scheme.type),
@@ -497,7 +566,13 @@ REPL Commands:
             quantifiers: scheme.quantifiers,
             type: resolvedType,
           });
-          console.log(`${name} : ${typeStr}`);
+          const errorSummary = formatErrorSummary(resolvedType);
+          if (errorSummary) {
+            console.log(`${name} : ${typeStr}`);
+            console.log(`  errors: ${errorSummary}`);
+          } else {
+            console.log(`${name} : ${typeStr}`);
+          }
         }
       } else {
         console.log("(no top-level let bindings)");

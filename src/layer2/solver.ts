@@ -11,7 +11,12 @@ import {
   MMatchBundle,
   MLetDeclaration,
 } from "../ast_marked.ts";
-import type { ConstraintStub, HoleId, UnknownInfo } from "../layer1/context.ts";
+import type {
+  ConstraintStub,
+  HoleId,
+  UnknownInfo,
+  ErrorRowCoverageStub,
+} from "../layer1/context.ts";
 import {
   type Type,
   applySubstitution,
@@ -20,6 +25,8 @@ import {
   type Substitution,
   unknownType,
   type ErrorRowType,
+  flattenResultType,
+  errorRowUnion,
 } from "../types.ts";
 import type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
 import type { NodeId } from "../ast.ts";
@@ -119,6 +126,13 @@ export function solveConstraints(input: SolveInput): SolverResult {
     const resolved = applySubstitution(type, state.substitution);
     resolvedNodeTypes.set(nodeId, cloneType(resolved));
   }
+
+  enforceInfectiousMetadata(
+    input.constraintStubs,
+    resolvedNodeTypes,
+    input.nodeTypeById,
+    state.diagnostics,
+  );
 
   // Detect conflicts in unknown types
   const conflicts = detectConflicts(input.holes, input.constraintStubs, state.substitution, resolvedNodeTypes);
@@ -280,7 +294,11 @@ function solveCallConstraint(state: SolverState, stub: ConstraintStub & { kind: 
     return;
   }
 
-  registerUnifyFailure(state, stub.origin, unified.reason);
+  const extraDetails = {
+    argumentIndex: stub.index,
+    argumentErrorRow: stub.argumentErrorRow,
+  };
+  registerUnifyFailure(state, stub.origin, unified.reason, extraDetails);
 }
 
 function solveHasFieldConstraint(state: SolverState, stub: ConstraintStub & { kind: "has_field" }): void {
@@ -417,7 +435,12 @@ function solveBranchJoinConstraint(state: SolverState, stub: ConstraintStub & { 
       state.diagnostics.push({
         origin: stub.origin,
         reason: "branch_mismatch",
-        details: { branchIndex: index },
+        details: {
+          branchIndex: index,
+          dischargesResult: stub.dischargesResult ?? false,
+          errorRow: stub.errorRowCoverage?.row,
+          missingConstructors: stub.errorRowCoverage?.missingConstructors,
+        },
       });
       return;
     }
@@ -430,6 +453,12 @@ function solveBranchJoinConstraint(state: SolverState, stub: ConstraintStub & { 
     state.diagnostics.push({
       origin: stub.origin,
       reason: "branch_mismatch",
+      details: {
+        branchIndex: "result",
+        dischargesResult: stub.dischargesResult ?? false,
+        errorRow: stub.errorRowCoverage?.row,
+        missingConstructors: stub.errorRowCoverage?.missingConstructors,
+      },
     });
     return;
   }
@@ -445,7 +474,12 @@ function getTypeForNode(state: SolverState, nodeId: NodeId): Type {
   return unknownType({ kind: "incomplete", reason: "solver.missing_node" });
 }
 
-function registerUnifyFailure(state: SolverState, origin: NodeId, failure: UnifyFailure): void {
+function registerUnifyFailure(
+  state: SolverState,
+  origin: NodeId,
+  failure: UnifyFailure,
+  extraDetails?: Record<string, unknown>,
+): void {
   const reason: ConstraintDiagnosticReason =
     failure.kind === "occurs_check"
       ? "occurs_cycle"
@@ -458,6 +492,7 @@ function registerUnifyFailure(state: SolverState, origin: NodeId, failure: Unify
     details: {
       left: failure.left,
       right: failure.right,
+      ...(extraDetails ?? {}),
     },
   });
 }
@@ -863,6 +898,161 @@ function remarkType(node: { id: NodeId; type: Type }, resolved: Map<NodeId, Type
   }
   if (node.type.kind === "unknown" && replacement.kind !== "unknown") {
     node.type = replacement;
+  }
+}
+
+function enforceInfectiousMetadata(
+  stubs: ConstraintStub[],
+  resolved: Map<NodeId, Type>,
+  original: Map<NodeId, Type>,
+  diagnostics: ConstraintDiagnostic[],
+): void {
+  const infectiousCalls = new Map<NodeId, ErrorRowType>();
+  const dischargedMatches = new Map<NodeId, ErrorRowCoverageStub | undefined>();
+
+  for (const stub of stubs) {
+    if (stub.kind === "call" && stub.argumentErrorRow) {
+      const existing = infectiousCalls.get(stub.result);
+      if (existing) {
+        infectiousCalls.set(
+          stub.result,
+          errorRowUnion(existing, stub.argumentErrorRow),
+        );
+      } else {
+        infectiousCalls.set(
+          stub.result,
+          cloneType(stub.argumentErrorRow) as ErrorRowType,
+        );
+      }
+    } else if (stub.kind === "branch_join" && stub.dischargesResult) {
+      dischargedMatches.set(stub.origin, stub.errorRowCoverage);
+    }
+  }
+
+  const getNodeType = (nodeId: NodeId): Type | undefined => {
+    return resolved.get(nodeId) ?? original.get(nodeId);
+  };
+
+  const flaggedCalls = new Set<NodeId>();
+  const flaggedMatches = new Set<NodeId>();
+
+  const reportInfectiousValue = (
+    nodeId: NodeId,
+    row?: ErrorRowType,
+  ) => {
+    if (flaggedCalls.has(nodeId)) {
+      return;
+    }
+    flaggedCalls.add(nodeId);
+    diagnostics.push({
+      origin: nodeId,
+      reason: "infectious_call_result_mismatch",
+      details: row ? { errorRow: row } : undefined,
+    });
+  };
+
+  const flagCallNode = (nodeId: NodeId, force = false) => {
+    const nodeType = getNodeType(nodeId);
+    if (!force) {
+      if (!nodeType) {
+        return;
+      }
+      if (flattenResultType(nodeType)) {
+        return;
+      }
+    }
+    const row = infectiousCalls.get(nodeId) ??
+      (nodeType ? flattenResultType(nodeType)?.error : undefined);
+    if (!row) {
+      return;
+    }
+    reportInfectiousValue(nodeId, row);
+  };
+
+  const flagMatchNode = (nodeId: NodeId, force = false) => {
+    const coverage = dischargedMatches.get(nodeId);
+    if (!coverage || flaggedMatches.has(nodeId)) {
+      return;
+    }
+    if (!force) {
+      const nodeType = getNodeType(nodeId);
+      if (!nodeType) {
+        return;
+      }
+      if (!flattenResultType(nodeType)) {
+        return;
+      }
+    }
+    flaggedMatches.add(nodeId);
+    diagnostics.push({
+      origin: nodeId,
+      reason: "infectious_match_result_mismatch",
+      details: {
+        errorRow: coverage?.row,
+        missingConstructors: coverage?.missingConstructors,
+      },
+    });
+  };
+
+  for (const nodeId of infectiousCalls.keys()) {
+    flagCallNode(nodeId);
+  }
+  for (const nodeId of dischargedMatches.keys()) {
+    flagMatchNode(nodeId);
+  }
+
+  for (const stub of stubs) {
+    switch (stub.kind) {
+      case "numeric": {
+        for (const operand of stub.operands) {
+          flagCallNode(operand, true);
+        }
+        flagCallNode(stub.result, true);
+        break;
+      }
+      case "boolean": {
+        for (const operand of stub.operands) {
+          flagCallNode(operand, true);
+        }
+        flagCallNode(stub.result, true);
+        break;
+      }
+      case "annotation": {
+        const annotationType = stub.annotationType ??
+          getNodeType(stub.annotation) ??
+          getNodeType(stub.origin);
+        if (!annotationType) {
+          break;
+        }
+        const annotationResultInfo = flattenResultType(annotationType);
+        if (!annotationResultInfo) {
+          const valueType = getNodeType(stub.value);
+          const valueResultInfo = valueType
+            ? flattenResultType(valueType)
+            : undefined;
+          const originalValueType = original.get(stub.value);
+          const originalValueInfo = originalValueType
+            ? flattenResultType(originalValueType)
+            : undefined;
+          if (valueResultInfo) {
+            reportInfectiousValue(stub.value, valueResultInfo.error);
+          } else if (originalValueInfo) {
+            reportInfectiousValue(stub.value, originalValueInfo.error);
+          } else {
+            flagCallNode(stub.value, true);
+          }
+        } else if (dischargedMatches.has(stub.value)) {
+          flagMatchNode(stub.value, true);
+        }
+        break;
+      }
+      case "has_field": {
+        flagCallNode(stub.target, true);
+        break;
+      }
+      default:
+        break;
+    }
   }
 }
 

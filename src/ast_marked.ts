@@ -138,6 +138,7 @@ export interface MMatchBundle extends MTypedNode {
   kind: "match_bundle";
   arms: MMatchArm[];
   errorRowCoverage?: MErrorRowCoverage;
+  dischargesResult?: boolean;
 }
 
 export type MMatchArm = MMatchPatternArm | MMatchBundleReferenceArm;

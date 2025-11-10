@@ -750,12 +750,35 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         }
         const resolvedArg = collapseResultType(applyCurrentSubst(ctx, argType));
         const argResultInfo = flattenResultType(resolvedArg);
-        const argInputType = argResultInfo ? argResultInfo.value : resolvedArg;
-        if (argResultInfo) {
-          accumulatedErrors = accumulatedErrors
-            ? errorRowUnion(accumulatedErrors, argResultInfo.error)
-            : argResultInfo.error;
+        const argBareValueType = argResultInfo
+          ? argResultInfo.value
+          : resolvedArg;
+
+        // First, try to pass the full argument through. If that fails and the
+        // argument is a Result, fall back to infectious semantics by unwrapping.
+        let unifySucceeded = unify(ctx, fnType, {
+          kind: "func",
+          from: resolvedArg,
+          to: resultType,
+        });
+        let argumentValueType = resolvedArg;
+        let argumentErrorRow: ErrorRowType | undefined;
+        if (!unifySucceeded && argResultInfo) {
+          const fallbackSucceeded = unify(ctx, fnType, {
+            kind: "func",
+            from: argBareValueType,
+            to: resultType,
+          });
+          if (fallbackSucceeded) {
+            argumentValueType = argBareValueType;
+            argumentErrorRow = argResultInfo.error;
+            accumulatedErrors = accumulatedErrors
+              ? errorRowUnion(accumulatedErrors, argResultInfo.error)
+              : argResultInfo.error;
+            unifySucceeded = true;
+          }
         }
+
         recordCallConstraint(
           ctx,
           expr,
@@ -764,13 +787,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           expr,
           resultType,
           index,
-          argInputType,
+          argumentValueType,
+          argumentErrorRow,
         );
-        const unifySucceeded = unify(ctx, fnType, {
-          kind: "func",
-          from: argInputType,
-          to: resultType,
-        });
         if (!unifySucceeded) {
           const resolvedFn = applyCurrentSubst(ctx, fnType);
           if (

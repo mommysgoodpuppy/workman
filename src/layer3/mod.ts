@@ -44,10 +44,18 @@ export interface ConflictDiagnostic {
   message: string;
 }
 
-export interface FlowDiagnostic {
-  kind: "not_implemented";
-  message: string;
-}
+export type FlowDiagnostic =
+  | {
+    kind: "not_implemented";
+    message: string;
+  }
+  | {
+    kind: "match_error_row_partial";
+    nodeId: NodeId;
+    span?: SourceSpan;
+    missingConstructors: string[];
+    message: string;
+  };
 
 export interface TypeSummary {
   name: string;
@@ -72,11 +80,12 @@ export interface MatchCoverageView {
   coveredConstructors: string[];
   coversTail: boolean;
   missingConstructors: string[];
+  dischargesResult: boolean;
 }
 
 export function presentProgram(layer2: SolverResult): Layer3Result {
   const spanIndex = collectSpans(layer2.remarkedProgram);
-  const matchCoverages = collectMatchCoverages(layer2.remarkedProgram);
+  const coverageInfo = collectMatchCoverages(layer2.remarkedProgram);
   const nodeViews = buildNodeViews(layer2.resolvedNodeTypes, layer2.solutions, spanIndex);
   const solverDiagnostics = attachSpansToDiagnostics(
     layer2.diagnostics,
@@ -86,17 +95,21 @@ export function presentProgram(layer2: SolverResult): Layer3Result {
     layer2.conflicts,
     spanIndex,
   );
+  const flowDiagnostics = buildCoverageDiagnostics(
+    coverageInfo.partials,
+    spanIndex,
+  );
 
   return {
     nodeViews,
     diagnostics: {
       solver: solverDiagnostics,
       conflicts: conflictDiagnostics,
-      flow: [],
+      flow: flowDiagnostics,
     },
     holeSolutions: layer2.solutions,
     spanIndex,
-    matchCoverages,
+    matchCoverages: coverageInfo.coverages,
     summaries: layer2.summaries,
   };
 }
@@ -236,6 +249,10 @@ function typeToString(type: Type): string {
       return `{ ${fields} }`;
     }
     case "error_row": {
+      // Ergonomic printing: tail-only rows render as the tail type directly
+      if (type.cases.size === 0 && type.tail) {
+        return typeToString(type.tail);
+      }
       const entries = Array.from(type.cases.entries());
       entries.sort(([a], [b]) => a.localeCompare(b));
       const parts = entries.map(([label, payload]) =>
@@ -255,58 +272,86 @@ function typeToString(type: Type): string {
   }
 }
 
+function buildCoverageDiagnostics(
+  partials: CoveragePartialInfo[],
+  spanIndex: Map<NodeId, SourceSpan>,
+): FlowDiagnostic[] {
+  return partials.map((entry) => {
+    const missing = entry.coverage.missingConstructors.join(", ");
+    return {
+      kind: "match_error_row_partial",
+      nodeId: entry.nodeId,
+      span: spanIndex.get(entry.nodeId),
+      missingConstructors: entry.coverage.missingConstructors,
+      message: `Match does not cover Err constructors: ${missing}`,
+    };
+  });
+}
+
 function collectSpans(program: MProgram): Map<NodeId, SourceSpan> {
   const spans = new Map<NodeId, SourceSpan>();
   traverse(program, spans, new Set());
   return spans;
 }
 
-function collectMatchCoverages(program: MProgram): Map<NodeId, MatchCoverageView> {
+interface CoveragePartialInfo {
+  nodeId: NodeId;
+  coverage: MatchCoverageView;
+}
+
+function collectMatchCoverages(program: MProgram): {
+  coverages: Map<NodeId, MatchCoverageView>;
+  partials: CoveragePartialInfo[];
+} {
   const coverages = new Map<NodeId, MatchCoverageView>();
+  const partials: CoveragePartialInfo[] = [];
   for (const decl of program.declarations) {
     if (decl.kind === "let") {
-      collectCoverageFromBlock(decl.body, coverages);
+      collectCoverageFromBlock(decl.body, coverages, partials);
       if (decl.mutualBindings) {
         for (const binding of decl.mutualBindings) {
-          collectCoverageFromBlock(binding.body, coverages);
+          collectCoverageFromBlock(binding.body, coverages, partials);
         }
       }
     }
   }
-  return coverages;
+  return { coverages, partials };
 }
 
 function collectCoverageFromBlock(
   block: MBlockExpr,
   coverages: Map<NodeId, MatchCoverageView>,
+  partials: CoveragePartialInfo[],
 ): void {
   for (const stmt of block.statements) {
-    collectCoverageFromStatement(stmt, coverages);
+    collectCoverageFromStatement(stmt, coverages, partials);
   }
   if (block.result) {
-    collectCoverageFromExpr(block.result, coverages);
+    collectCoverageFromExpr(block.result, coverages, partials);
   }
 }
 
 function collectCoverageFromStatement(
   statement: MBlockStatement,
   coverages: Map<NodeId, MatchCoverageView>,
+  partials: CoveragePartialInfo[],
 ): void {
   if (statement.kind === "let_statement") {
-    collectCoverageFromBlock(statement.declaration.body, coverages);
+    collectCoverageFromBlock(statement.declaration.body, coverages, partials);
     if (statement.declaration.mutualBindings) {
       for (const binding of statement.declaration.mutualBindings) {
-        collectCoverageFromBlock(binding.body, coverages);
+        collectCoverageFromBlock(binding.body, coverages, partials);
       }
     }
   } else if (statement.kind === "expr_statement") {
-    collectCoverageFromExpr(statement.expression, coverages);
+    collectCoverageFromExpr(statement.expression, coverages, partials);
   }
 }
 
 function collectCoverageFromExpr(
   expr: MExpr,
   coverages: Map<NodeId, MatchCoverageView>,
+  partials: CoveragePartialInfo[],
 ): void {
   switch (expr.kind) {
     case "identifier":
@@ -322,48 +367,48 @@ function collectCoverageFromExpr(
     case "mark_type_expr_unsupported":
       return;
     case "constructor":
-      expr.args.forEach((arg) => collectCoverageFromExpr(arg, coverages));
+      expr.args.forEach((arg) => collectCoverageFromExpr(arg, coverages, partials));
       return;
     case "tuple":
-      expr.elements.forEach((el) => collectCoverageFromExpr(el, coverages));
+      expr.elements.forEach((el) => collectCoverageFromExpr(el, coverages, partials));
       return;
     case "record_literal":
-      expr.fields.forEach((field) => collectCoverageFromExpr(field.value, coverages));
+      expr.fields.forEach((field) => collectCoverageFromExpr(field.value, coverages, partials));
       return;
     case "call":
-      collectCoverageFromExpr(expr.callee, coverages);
-      expr.arguments.forEach((arg) => collectCoverageFromExpr(arg, coverages));
+      collectCoverageFromExpr(expr.callee, coverages, partials);
+      expr.arguments.forEach((arg) => collectCoverageFromExpr(arg, coverages, partials));
       return;
     case "record_projection":
-      collectCoverageFromExpr(expr.target, coverages);
+      collectCoverageFromExpr(expr.target, coverages, partials);
       return;
     case "binary":
-      collectCoverageFromExpr(expr.left, coverages);
-      collectCoverageFromExpr(expr.right, coverages);
+      collectCoverageFromExpr(expr.left, coverages, partials);
+      collectCoverageFromExpr(expr.right, coverages, partials);
       return;
     case "unary":
-      collectCoverageFromExpr(expr.operand, coverages);
+      collectCoverageFromExpr(expr.operand, coverages, partials);
       return;
     case "arrow":
-      expr.parameters.forEach((param) => collectCoverageFromPattern(param.pattern, coverages));
-      collectCoverageFromBlock(expr.body, coverages);
+      expr.parameters.forEach((param) => collectCoverageFromPattern(param.pattern, coverages, partials));
+      collectCoverageFromBlock(expr.body, coverages, partials);
       return;
     case "block":
-      collectCoverageFromBlock(expr, coverages);
+      collectCoverageFromBlock(expr, coverages, partials);
       return;
     case "match":
-      recordCoverageForBundle(expr.id, expr.bundle, coverages);
-      collectCoverageFromExpr(expr.scrutinee, coverages);
-      collectCoverageFromMatchBundle(expr.bundle, coverages);
+      recordCoverageForBundle(expr.id, expr.bundle, coverages, partials);
+      collectCoverageFromExpr(expr.scrutinee, coverages, partials);
+      collectCoverageFromMatchBundle(expr.bundle, coverages, partials);
       return;
     case "match_fn":
-      expr.parameters.forEach((param) => collectCoverageFromExpr(param, coverages));
-      recordCoverageForBundle(expr.id, expr.bundle, coverages);
-      collectCoverageFromMatchBundle(expr.bundle, coverages);
+      expr.parameters.forEach((param) => collectCoverageFromExpr(param, coverages, partials));
+      recordCoverageForBundle(expr.id, expr.bundle, coverages, partials);
+      collectCoverageFromMatchBundle(expr.bundle, coverages, partials);
       return;
     case "match_bundle_literal":
-      recordCoverageForBundle(expr.id, expr.bundle, coverages);
-      collectCoverageFromMatchBundle(expr.bundle, coverages);
+      recordCoverageForBundle(expr.id, expr.bundle, coverages, partials);
+      collectCoverageFromMatchBundle(expr.bundle, coverages, partials);
       return;
     default:
       return;
@@ -373,6 +418,7 @@ function collectCoverageFromExpr(
 function collectCoverageFromPattern(
   pattern: MPattern,
   coverages: Map<NodeId, MatchCoverageView>,
+  partials: CoveragePartialInfo[],
 ): void {
   switch (pattern.kind) {
     case "literal":
@@ -382,10 +428,10 @@ function collectCoverageFromPattern(
     case "mark_pattern":
       return;
     case "constructor":
-      pattern.args.forEach((arg) => collectCoverageFromPattern(arg, coverages));
+      pattern.args.forEach((arg) => collectCoverageFromPattern(arg, coverages, partials));
       return;
     case "tuple":
-      pattern.elements.forEach((el) => collectCoverageFromPattern(el, coverages));
+      pattern.elements.forEach((el) => collectCoverageFromPattern(el, coverages, partials));
       return;
   }
 }
@@ -393,11 +439,12 @@ function collectCoverageFromPattern(
 function collectCoverageFromMatchBundle(
   bundle: MMatchBundle,
   coverages: Map<NodeId, MatchCoverageView>,
+  partials: CoveragePartialInfo[],
 ): void {
   bundle.arms.forEach((arm) => {
     if (arm.kind === "match_pattern") {
-      collectCoverageFromPattern(arm.pattern, coverages);
-      collectCoverageFromExpr(arm.body, coverages);
+      collectCoverageFromPattern(arm.pattern, coverages, partials);
+      collectCoverageFromExpr(arm.body, coverages, partials);
     }
   });
 }
@@ -406,19 +453,36 @@ function recordCoverageForBundle(
   ownerId: NodeId,
   bundle: MMatchBundle,
   coverages: Map<NodeId, MatchCoverageView>,
+  partials: CoveragePartialInfo[],
 ): void {
   if (!bundle.errorRowCoverage) {
     return;
   }
-  coverages.set(ownerId, cloneMatchCoverage(bundle.errorRowCoverage));
+  const cloned = cloneMatchCoverage(
+    bundle.errorRowCoverage,
+    bundle.dischargesResult ?? false,
+  );
+  coverages.set(ownerId, cloned);
+  if (cloned.missingConstructors.length > 0) {
+    partials.push({ nodeId: ownerId, coverage: cloned });
+  }
 }
 
-function cloneMatchCoverage(coverage: { row: Type; coveredConstructors: string[]; coversTail: boolean; missingConstructors: string[]; }): MatchCoverageView {
+function cloneMatchCoverage(
+  coverage: {
+    row: Type;
+    coveredConstructors: string[];
+    coversTail: boolean;
+    missingConstructors: string[];
+  },
+  dischargesResult: boolean,
+): MatchCoverageView {
   return {
     row: cloneType(coverage.row),
     coveredConstructors: [...coverage.coveredConstructors],
     coversTail: coverage.coversTail,
     missingConstructors: [...coverage.missingConstructors],
+    dischargesResult,
   };
 }
 
