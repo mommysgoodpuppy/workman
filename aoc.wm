@@ -37,7 +37,7 @@ let readRequiredDigit = (chars, i) => {
 };
 
 let rec extendDigits = (chars, step, count) => {
-  match(eq(count, 3)) {
+  match(count == 3) {
     true => { Ok(step) },
     false => {
       match(listAt(chars, step.next)) {
@@ -67,7 +67,7 @@ let expectCharAt = (chars, i, expected, error) => {
   match(listAt(chars, i)) {
     None => { Err(error) },
     Some(code) => {
-      match(eq(code, expected)) {
+      match(code == expected) {
         true => { Ok(i + 1) },
         false => { Err(error) }
       }
