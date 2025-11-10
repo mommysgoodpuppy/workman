@@ -16,8 +16,8 @@ let charCloseParen = char(")");
 let mulLiteral = fromLiteral("mul(");
 let mulLiteralLength = listLength(mulLiteral);
 
-let makeStep = (value, next) => {
-  ({ value: value, next: next })
+let makeStep = (v, n) => {
+  ({ value: v, next: n })
 };
 
 let readRequiredDigit = (chars, i) => {
@@ -34,13 +34,13 @@ let readRequiredDigit = (chars, i) => {
 
 let rec extendDigits = (chars, step, count) => {
   match(count == 3) {
-    true => { Ok(step) },
+    true => { step },
     false => {
       match(listAt(chars, step.next)) {
-        None => { Ok(step) },
+        None => { step },
         Some(code) => {
           match(charToDigit(code)) {
-            None => { Ok(step) },
+            None => { step },
             Some(digit) => {
               let combined = makeStep(
                 step.value * 10 + digit,
@@ -55,9 +55,7 @@ let rec extendDigits = (chars, step, count) => {
   }
 };
 
-let readNumber = (chars, i) => {
-  extendDigits(chars, readRequiredDigit(chars, i), 1)
-};
+
 
 let expectCharAt = (chars, i, expected, error) => {
   match(listAt(chars, i)) {
@@ -78,33 +76,13 @@ let expectMulLiteral = (chars, i) => {
   }
 };
 
-let parseLeft = (chars, i) => {
-  readNumber(chars, i)
-};
-
-let parseComma = (chars, step) => {
-  expectCharAt(chars, step.next, charComma, ExpectedComma)
-};
-
-let parseRight = (chars, i) => {
-  readNumber(chars, i) 
-};
-
-let parseCloseParen = (chars, step) => {
-  expectCharAt(chars, step.next, charCloseParen, ExpectedCloseParen)
-};
-
-let buildMulStep = (leftStep, rightStep, nextIndex) => {
-  Ok(makeStep(leftStep.value * rightStep.value, nextIndex))
-};
-
 let parseMulAt = (chars, i) => {
   let afterMul = expectMulLiteral(chars, i);
-  let leftStep = parseLeft(chars, afterMul);
-  let afterComma = parseComma(chars, leftStep);
-  let rightStep = parseRight(chars, afterComma);
-  match(parseCloseParen(chars, rightStep)) {
-    Ok(afterClose) => { buildMulStep(leftStep, rightStep, afterClose) },
+  let leftStep = extendDigits(chars, readRequiredDigit(chars, afterMul), 1);
+  let afterComma = expectCharAt(chars, leftStep.next, charComma, ExpectedComma);
+  let rightStep = extendDigits(chars, readRequiredDigit(chars, afterComma), 1);
+  match(expectCharAt(chars, rightStep.next, charCloseParen, ExpectedCloseParen)) {
+    Ok(afterClose) => { Ok(makeStep(leftStep.value * rightStep.value, afterClose)) },
     Err(error) => { Err(error) }
   }
 };

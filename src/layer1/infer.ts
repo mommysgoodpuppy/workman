@@ -32,6 +32,7 @@ import {
   TypeScheme,
   typeToString,
   unknownType,
+  cloneType,
 } from "../types.ts";
 import { formatScheme } from "../type_printer.ts";
 import type {
@@ -630,15 +631,29 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
     }
     case "record_projection": {
       const targetType = inferExpr(ctx, expr.target);
-      const resultType = freshTypeVar();
-      recordHasFieldConstraint(ctx, expr, expr.target, expr.field, expr);
+      const resolvedTarget = collapseResultType(
+        applyCurrentSubst(ctx, targetType),
+      );
+      const targetResultInfo = flattenResultType(resolvedTarget);
+      const projectedValueType = freshTypeVar();
+      const projectionType = targetResultInfo
+        ? makeResultType(cloneType(projectedValueType), targetResultInfo.error)
+        : projectedValueType;
+      recordHasFieldConstraint(
+        ctx,
+        expr,
+        expr.target,
+        expr.field,
+        expr,
+        projectedValueType,
+      );
       registerHoleForType(
         ctx,
         holeOriginFromExpr(expr.target),
         applyCurrentSubst(ctx, targetType),
       );
-      registerHoleForType(ctx, holeOriginFromExpr(expr), resultType);
-      return recordExprType(ctx, expr, resultType);
+      registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
+      return recordExprType(ctx, expr, projectionType);
     }
     case "call": {
       const rawCalleeType = inferExpr(ctx, expr.callee);
@@ -748,22 +763,38 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             argType: typeToString(applyCurrentSubst(ctx, argType)),
           }); */
         }
+        fnType = applyCurrentSubst(ctx, fnType);
         const resolvedArg = collapseResultType(applyCurrentSubst(ctx, argType));
         const argResultInfo = flattenResultType(resolvedArg);
         const argBareValueType = argResultInfo
           ? argResultInfo.value
           : resolvedArg;
 
-        // First, try to pass the full argument through. If that fails and the
-        // argument is a Result, fall back to infectious semantics by unwrapping.
-        let unifySucceeded = unify(ctx, fnType, {
-          kind: "func",
-          from: resolvedArg,
-          to: resultType,
-        });
+        const expectedParamType = fnType.kind === "func"
+          ? applyCurrentSubst(ctx, fnType.from)
+          : undefined;
+        const expectsResult = expectedParamType
+          ? flattenResultType(expectedParamType) !== null
+          : false;
+
         let argumentValueType = resolvedArg;
         let argumentErrorRow: ErrorRowType | undefined;
-        if (!unifySucceeded && argResultInfo) {
+        if (!expectsResult && argResultInfo) {
+          argumentValueType = argBareValueType;
+          argumentErrorRow = argResultInfo.error;
+          accumulatedErrors = accumulatedErrors
+            ? errorRowUnion(accumulatedErrors, argResultInfo.error)
+            : argResultInfo.error;
+        }
+
+        // Try to pass the preferred argument shape through. If that fails and
+        // the argument is a Result, fall back to infectious semantics by unwrapping.
+        let unifySucceeded = unify(ctx, fnType, {
+          kind: "func",
+          from: argumentValueType,
+          to: resultType,
+        });
+        if (!unifySucceeded && argResultInfo && expectsResult) {
           const fallbackSucceeded = unify(ctx, fnType, {
             kind: "func",
             from: argBareValueType,
@@ -918,9 +949,32 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         return recordExprType(ctx, expr, mark.type);
       }
       const opType = instantiateAndApply(ctx, scheme);
+      let fnType = collapseResultType(applyCurrentSubst(ctx, opType));
+      let accumulatedErrors: ErrorRowType | null = null;
+      const calleeResultInfo = flattenResultType(fnType);
+      if (calleeResultInfo) {
+        accumulatedErrors = calleeResultInfo.error;
+        fnType = calleeResultInfo.value;
+      }
 
       // Apply the function to both arguments
       const resultType1 = freshTypeVar();
+      const resolvedLeft = collapseResultType(applyCurrentSubst(ctx, leftType));
+      const leftResultInfo = flattenResultType(resolvedLeft);
+      const leftArgType = leftResultInfo ? leftResultInfo.value : resolvedLeft;
+      if (leftResultInfo) {
+        accumulatedErrors = accumulatedErrors
+          ? errorRowUnion(accumulatedErrors, leftResultInfo.error)
+          : leftResultInfo.error;
+      }
+      const resolvedRight = collapseResultType(applyCurrentSubst(ctx, rightType));
+      const rightResultInfo = flattenResultType(resolvedRight);
+      const rightArgType = rightResultInfo ? rightResultInfo.value : resolvedRight;
+      if (rightResultInfo) {
+        accumulatedErrors = accumulatedErrors
+          ? errorRowUnion(accumulatedErrors, rightResultInfo.error)
+          : rightResultInfo.error;
+      }
       if (NUMERIC_BINARY_OPERATORS.has(expr.operator)) {
         recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
       }
@@ -934,10 +988,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
       }
       if (
-        !unify(ctx, opType, {
+        !unify(ctx, fnType, {
           kind: "func",
-          from: leftType,
-          to: { kind: "func", from: rightType, to: resultType1 },
+          from: leftArgType,
+          to: { kind: "func", from: rightArgType, to: resultType1 },
         })
       ) {
         const failure = ctx.lastUnifyFailure;
@@ -957,12 +1011,23 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           expr,
           materializeExpr(ctx, expr.left),
           expected,
-          applyCurrentSubst(ctx, leftType),
+          applyCurrentSubst(ctx, leftArgType),
         );
         return recordExprType(ctx, expr, mark.type);
       }
 
-      return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType1));
+      let callType = collapseResultType(applyCurrentSubst(ctx, resultType1));
+      if (accumulatedErrors) {
+        const flattened = flattenResultType(callType);
+        if (flattened) {
+          const merged = errorRowUnion(flattened.error, accumulatedErrors);
+          callType = makeResultType(flattened.value, merged);
+        } else {
+          callType = makeResultType(callType, accumulatedErrors);
+        }
+        callType = collapseResultType(callType);
+      }
+      return recordExprType(ctx, expr, callType);
     }
     case "unary": {
       // Unary operators are desugared to function calls
@@ -977,9 +1042,26 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         return recordExprType(ctx, expr, mark.type);
       }
       const opType = instantiateAndApply(ctx, scheme);
+      let fnType = collapseResultType(applyCurrentSubst(ctx, opType));
+      let accumulatedErrors: ErrorRowType | null = null;
+      const calleeResultInfo = flattenResultType(fnType);
+      if (calleeResultInfo) {
+        accumulatedErrors = calleeResultInfo.error;
+        fnType = calleeResultInfo.value;
+      }
 
       // Apply the function to the operand
       const resultType = freshTypeVar();
+      const resolvedOperand = collapseResultType(applyCurrentSubst(ctx, operandType));
+      const operandResultInfo = flattenResultType(resolvedOperand);
+      const operandArgType = operandResultInfo
+        ? operandResultInfo.value
+        : resolvedOperand;
+      if (operandResultInfo) {
+        accumulatedErrors = accumulatedErrors
+          ? errorRowUnion(accumulatedErrors, operandResultInfo.error)
+          : operandResultInfo.error;
+      }
       if (NUMERIC_UNARY_OPERATORS.has(expr.operator)) {
         recordNumericConstraint(ctx, expr, [expr.operand], expr.operator);
       }
@@ -987,7 +1069,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         recordBooleanConstraint(ctx, expr, [expr.operand], expr.operator);
       }
       if (
-        !unify(ctx, opType, { kind: "func", from: operandType, to: resultType })
+        !unify(ctx, fnType, { kind: "func", from: operandArgType, to: resultType })
       ) {
         const failure = ctx.lastUnifyFailure;
         if (failure?.kind === "occurs_check") {
@@ -1006,12 +1088,23 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           expr,
           materializeExpr(ctx, expr.operand),
           expected,
-          applyCurrentSubst(ctx, operandType),
+          applyCurrentSubst(ctx, operandArgType),
         );
         return recordExprType(ctx, expr, mark.type);
       }
 
-      return recordExprType(ctx, expr, applyCurrentSubst(ctx, resultType));
+      let callType = collapseResultType(applyCurrentSubst(ctx, resultType));
+      if (accumulatedErrors) {
+        const flattened = flattenResultType(callType);
+        if (flattened) {
+          const merged = errorRowUnion(flattened.error, accumulatedErrors);
+          callType = makeResultType(flattened.value, merged);
+        } else {
+          callType = makeResultType(callType, accumulatedErrors);
+        }
+        callType = collapseResultType(callType);
+      }
+      return recordExprType(ctx, expr, callType);
     }
     default:
       const mark = markUnsupportedExpr(ctx, expr, (expr as Expr).kind);

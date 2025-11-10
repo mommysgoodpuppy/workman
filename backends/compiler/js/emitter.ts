@@ -36,6 +36,25 @@ export interface EmitModuleOptions {
   };
 }
 
+const PRELUDE_OPERATOR_ALIASES = new Map<string, string>([
+  ["__op_+", "add"],
+  ["__op_-", "sub"],
+  ["__op_*", "mul"],
+  ["__op_/", "div"],
+  ["__op_==", "eq"],
+  ["__op_!=", "neq"],
+  ["__op_<", "lt"],
+  ["__op_>", "gt"],
+  ["__op_<=", "lte"],
+  ["__op_>=", "gte"],
+  ["__op_&&", "boolAnd"],
+  ["__op_||", "boolOr"],
+]);
+
+const PRELUDE_PREFIX_ALIASES = new Map<string, string>([
+  ["__prefix_!", "not"],
+]);
+
 export function emitModule(
   module: CoreModule,
   graph: CoreModuleGraph,
@@ -357,6 +376,13 @@ function emitRecord(expr: CoreExpr & { kind: "record" }, ctx: EmitContext): stri
 }
 
 function emitData(expr: CoreExpr & { kind: "data" }, ctx: EmitContext): string {
+  if (expr.typeName === "Result" && expr.constructor === "Ok") {
+    const wrapper = resolveVar("wrapResultValue", ctx);
+    const value = expr.fields.length > 0
+      ? emitExpr(expr.fields[0], ctx)
+      : "undefined";
+    return `${wrapper}(${value})`;
+  }
   const fieldEntries = expr.fields.map((field, index) =>
     `  _${index}: ${emitExpr(field, ctx)}`
   ).join(",\n");
@@ -669,7 +695,8 @@ function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
         throw new Error("record_get expects string literal field");
       }
       const fieldName = JSON.stringify(field.literal.value);
-      return `(${target})[${fieldName}]`;
+      const fn = resolveVar("recordGetInfectious", ctx);
+      return `${fn}(${target}, ${fieldName})`;
     }
     default:
       throw new CoreLoweringError(
@@ -680,6 +707,13 @@ function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
 }
 
 function resolveVar(name: string, ctx: EmitContext): string {
+  const operatorAlias = PRELUDE_OPERATOR_ALIASES.get(name) ??
+    PRELUDE_PREFIX_ALIASES.get(name);
+  if (operatorAlias && ctx.scope.has(operatorAlias)) {
+    const resolved = ctx.scope.get(operatorAlias)!;
+    ctx.scope.set(name, resolved);
+    return resolved;
+  }
   if (ctx.scope.has(name)) {
     return ctx.scope.get(name)!;
   }

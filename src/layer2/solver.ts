@@ -27,6 +27,7 @@ import {
   type ErrorRowType,
   flattenResultType,
   errorRowUnion,
+  makeResultType,
 } from "../types.ts";
 import type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
 import type { NodeId } from "../ast.ts";
@@ -305,32 +306,45 @@ function solveHasFieldConstraint(state: SolverState, stub: ConstraintStub & { ki
   const target = getTypeForNode(state, stub.target);
   const result = getTypeForNode(state, stub.result);
   const resolvedTarget = applySubstitution(target, state.substitution);
+  const targetResultInfo = flattenResultType(resolvedTarget);
+  const targetValue = targetResultInfo
+    ? applySubstitution(targetResultInfo.value, state.substitution)
+    : resolvedTarget;
+  const projectedValue = stub.projectedValueType
+    ? applySubstitution(stub.projectedValueType, state.substitution)
+    : null;
 
-  if (resolvedTarget.kind === "record") {
-    const fieldType = resolvedTarget.fields.get(stub.field);
-    if (!fieldType) {
-      state.diagnostics.push({
-        origin: stub.origin,
-        reason: "missing_field",
-        details: { field: stub.field },
-      });
-      return;
-    }
-    const unified = unifyTypes(fieldType, result, state.substitution);
-    if (unified.success) {
-      state.substitution = unified.subst;
-    } else {
-      registerUnifyFailure(state, stub.origin, unified.reason);
-    }
+  if (targetValue.kind === "record") {
+    projectFieldFromRecord(
+      state,
+      stub,
+      targetValue,
+      result,
+      targetResultInfo?.error ?? null,
+      projectedValue,
+    );
     return;
   }
 
-  if (resolvedTarget.kind === "var" || resolvedTarget.kind === "unknown") {
+  if (targetValue.kind === "var" || targetValue.kind === "unknown") {
     const fields = new Map<string, Type>();
-    fields.set(stub.field, result);
-    const unified = unifyTypes(resolvedTarget, { kind: "record", fields }, state.substitution);
+    fields.set(stub.field, projectedValue ?? result);
+    const recordType: Type = { kind: "record", fields };
+    const unified = unifyTypes(
+      targetValue,
+      recordType,
+      state.substitution,
+    );
     if (unified.success) {
       state.substitution = unified.subst;
+      projectFieldFromRecord(
+        state,
+        stub,
+        recordType,
+        result,
+        targetResultInfo?.error ?? null,
+        projectedValue,
+      );
       return;
     }
     registerUnifyFailure(state, stub.origin, unified.reason);
@@ -340,8 +354,61 @@ function solveHasFieldConstraint(state: SolverState, stub: ConstraintStub & { ki
   state.diagnostics.push({
     origin: stub.origin,
     reason: "not_record",
-    details: { actual: resolvedTarget.kind },
+    details: { actual: targetValue.kind },
   });
+}
+
+function projectFieldFromRecord(
+  state: SolverState,
+  stub: ConstraintStub & { kind: "has_field" },
+  recordType: Extract<Type, { kind: "record" }>,
+  result: Type,
+  carriedError: ErrorRowType | null,
+  projectedValue?: Type | null,
+): void {
+  const fieldType = recordType.fields.get(stub.field);
+  if (!fieldType) {
+    state.diagnostics.push({
+      origin: stub.origin,
+      reason: "missing_field",
+      details: { field: stub.field },
+    });
+    return;
+  }
+  const resolvedFieldType = applySubstitution(fieldType, state.substitution);
+  const fieldResultInfo = flattenResultType(resolvedFieldType);
+  const projectedValueType = fieldResultInfo
+    ? applySubstitution(fieldResultInfo.value, state.substitution)
+    : resolvedFieldType;
+  const valueTarget = projectedValue ?? projectedValueType;
+  if (projectedValue) {
+    const unifyValue = unifyTypes(
+      projectedValueType,
+      valueTarget,
+      state.substitution,
+    );
+    if (!unifyValue.success) {
+      registerUnifyFailure(state, stub.origin, unifyValue.reason);
+      return;
+    }
+    state.substitution = unifyValue.subst;
+  }
+  let combinedError = carriedError;
+  if (fieldResultInfo) {
+    combinedError = combinedError
+      ? errorRowUnion(combinedError, fieldResultInfo.error)
+      : fieldResultInfo.error;
+  }
+  const finalValue = applySubstitution(valueTarget, state.substitution);
+  const finalType = combinedError
+    ? makeResultType(cloneType(finalValue), combinedError)
+    : finalValue;
+  const unified = unifyTypes(finalType, result, state.substitution);
+  if (unified.success) {
+    state.substitution = unified.subst;
+  } else {
+    registerUnifyFailure(state, stub.origin, unified.reason);
+  }
 }
 
 function solveAnnotationConstraint(state: SolverState, stub: ConstraintStub & { kind: "annotation" }): void {
@@ -359,10 +426,13 @@ function solveAnnotationConstraint(state: SolverState, stub: ConstraintStub & { 
 function solveNumericConstraint(state: SolverState, stub: ConstraintStub & { kind: "numeric" }): void {
   const intType: Type = { kind: "int" };
   let currentSubst = state.substitution;
+  let accumulatedErrors: ErrorRowType | null = null;
 
   for (const operand of stub.operands) {
-    const operandType = getTypeForNode(state, operand);
-    const unified = unifyTypes(operandType, intType, currentSubst);
+    const operandType = applySubstitution(getTypeForNode(state, operand), currentSubst);
+    const operandInfo = flattenResultType(operandType);
+    const operandValue = operandInfo ? operandInfo.value : operandType;
+    const unified = unifyTypes(operandValue, intType, currentSubst);
     if (!unified.success) {
       state.diagnostics.push({
         origin: stub.origin,
@@ -372,10 +442,25 @@ function solveNumericConstraint(state: SolverState, stub: ConstraintStub & { kin
       return;
     }
     currentSubst = unified.subst;
+    if (operandInfo) {
+      accumulatedErrors = accumulatedErrors
+        ? errorRowUnion(accumulatedErrors, operandInfo.error)
+        : operandInfo.error;
+    }
   }
 
   const resultType = getTypeForNode(state, stub.result);
-  const unifiedResult = unifyTypes(resultType, intType, currentSubst);
+  const resultInfo = flattenResultType(applySubstitution(resultType, currentSubst));
+  let combinedErrors = accumulatedErrors;
+  if (resultInfo && resultInfo.error) {
+    combinedErrors = combinedErrors
+      ? errorRowUnion(combinedErrors, resultInfo.error)
+      : resultInfo.error;
+  }
+  const expectedResultType = combinedErrors
+    ? makeResultType(intType, combinedErrors)
+    : intType;
+  const unifiedResult = unifyTypes(resultType, expectedResultType, currentSubst);
   if (!unifiedResult.success) {
     state.diagnostics.push({
       origin: stub.origin,
@@ -391,10 +476,13 @@ function solveNumericConstraint(state: SolverState, stub: ConstraintStub & { kin
 function solveBooleanConstraint(state: SolverState, stub: ConstraintStub & { kind: "boolean" }): void {
   const boolType: Type = { kind: "bool" };
   let currentSubst = state.substitution;
+  let accumulatedErrors: ErrorRowType | null = null;
 
   for (const operand of stub.operands) {
-    const operandType = getTypeForNode(state, operand);
-    const unified = unifyTypes(operandType, boolType, currentSubst);
+    const operandType = applySubstitution(getTypeForNode(state, operand), currentSubst);
+    const operandInfo = flattenResultType(operandType);
+    const operandValue = operandInfo ? operandInfo.value : operandType;
+    const unified = unifyTypes(operandValue, boolType, currentSubst);
     if (!unified.success) {
       state.diagnostics.push({
         origin: stub.origin,
@@ -404,10 +492,25 @@ function solveBooleanConstraint(state: SolverState, stub: ConstraintStub & { kin
       return;
     }
     currentSubst = unified.subst;
+    if (operandInfo) {
+      accumulatedErrors = accumulatedErrors
+        ? errorRowUnion(accumulatedErrors, operandInfo.error)
+        : operandInfo.error;
+    }
   }
 
   const resultType = getTypeForNode(state, stub.result);
-  const unifiedResult = unifyTypes(resultType, boolType, currentSubst);
+  const resultInfo = flattenResultType(applySubstitution(resultType, currentSubst));
+  let combinedErrors = accumulatedErrors;
+  if (resultInfo && resultInfo.error) {
+    combinedErrors = combinedErrors
+      ? errorRowUnion(combinedErrors, resultInfo.error)
+      : resultInfo.error;
+  }
+  const expectedResultType = combinedErrors
+    ? makeResultType(boolType, combinedErrors)
+    : boolType;
+  const unifiedResult = unifyTypes(resultType, expectedResultType, currentSubst);
   if (!unifiedResult.success) {
     state.diagnostics.push({
       origin: stub.origin,
@@ -1003,20 +1106,6 @@ function enforceInfectiousMetadata(
 
   for (const stub of stubs) {
     switch (stub.kind) {
-      case "numeric": {
-        for (const operand of stub.operands) {
-          flagCallNode(operand, true);
-        }
-        flagCallNode(stub.result, true);
-        break;
-      }
-      case "boolean": {
-        for (const operand of stub.operands) {
-          flagCallNode(operand, true);
-        }
-        flagCallNode(stub.result, true);
-        break;
-      }
       case "annotation": {
         const annotationType = stub.annotationType ??
           getNodeType(stub.annotation) ??
@@ -1047,7 +1136,7 @@ function enforceInfectiousMetadata(
         break;
       }
       case "has_field": {
-        flagCallNode(stub.target, true);
+        flagCallNode(stub.target);
         break;
       }
       default:

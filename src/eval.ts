@@ -344,7 +344,12 @@ function evaluateRecordProjection(
   env: Environment,
   expr: Expr & { kind: "record_projection" },
 ): RuntimeValue {
-  const target = evaluateExpr(env, expr.target);
+  const rawTarget = evaluateExpr(env, expr.target);
+  const targetInfo = unwrapResultForCall(rawTarget);
+  if (targetInfo.shortCircuit) {
+    return targetInfo.shortCircuit;
+  }
+  const target = targetInfo.value;
   if (target.kind !== "record") {
     throw new RuntimeError(
       `Attempted to project '${expr.field}' from a non-record value`,
@@ -359,7 +364,11 @@ function evaluateRecordProjection(
       currentSource,
     );
   }
-  return target.fields.get(expr.field)!;
+  const fieldValue = target.fields.get(expr.field)!;
+  if (targetInfo.infected) {
+    return wrapResultValue(fieldValue);
+  }
+  return fieldValue;
 }
 
 function evaluateCallExpr(

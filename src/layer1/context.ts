@@ -187,6 +187,7 @@ export type ConstraintStub =
       target: NodeId;
       field: string;
       result: NodeId;
+      projectedValueType?: Type;
     }
   | {
       kind: "numeric";
@@ -283,6 +284,7 @@ export function recordHasFieldConstraint(
   target: Expr,
   field: string,
   result: Expr,
+  projectedValueType?: Type,
 ): void {
   ctx.constraintStubs.push({
     kind: "has_field",
@@ -290,6 +292,9 @@ export function recordHasFieldConstraint(
     target: target.id,
     field,
     result: result.id,
+    projectedValueType: projectedValueType
+      ? cloneType(projectedValueType)
+      : undefined,
   });
 }
 

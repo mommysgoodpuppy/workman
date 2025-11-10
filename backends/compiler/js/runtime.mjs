@@ -67,6 +67,27 @@ export function callInfectious(target, ...args) {
   return wrapResultValue(result);
 }
 
+export function recordGetInfectious(target, field) {
+  const targetInfo = unwrapResultForCall(target);
+  if (targetInfo.shortCircuit) {
+    return targetInfo.shortCircuit;
+  }
+  const value = targetInfo.value;
+  if (!value || typeof value !== "object") {
+    throw new Error(
+      `Attempted to project '${field}' from a non-record value`,
+    );
+  }
+  if (!(field in value)) {
+    throw new Error(`Record is missing field '${field}'`);
+  }
+  const fieldValue = value[field];
+  if (!targetInfo.infected) {
+    return fieldValue;
+  }
+  return wrapResultValue(fieldValue);
+}
+
 const NONE_VALUE = Object.freeze({ tag: "None", type: "Option" });
 
 export function nativeStrFromLiteral(str) {
@@ -126,7 +147,7 @@ function unwrapResultForCall(value) {
   return { value, infected: false };
 }
 
-function wrapResultValue(value) {
+export function wrapResultValue(value) {
   if (isResultData(value)) {
     return value;
   }
