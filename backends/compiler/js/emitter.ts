@@ -309,7 +309,7 @@ function emitExports(module: CoreModule, ctx: EmitContext): string | undefined {
 function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
   switch (expr.kind) {
     case "literal":
-      return emitLiteral(expr);
+      return emitLiteral(expr, ctx);
     case "var":
       return resolveVar(expr.name, ctx);
     case "tuple":
@@ -341,13 +341,13 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
     default:
       throw new CoreLoweringError(
         `Unsupported expression kind '${(expr as CoreExpr).kind}'`,
-        expr.origin,
       );
   }
 }
 
 function emitLiteral(
   expr: { literal: { kind: string; value?: unknown } },
+  ctx: EmitContext,
 ): string {
   switch (expr.literal.kind) {
     case "unit":
@@ -357,8 +357,11 @@ function emitLiteral(
       return String(expr.literal.value);
     case "bool":
       return expr.literal.value ? "true" : "false";
-    case "string":
-      return JSON.stringify(expr.literal.value);
+    case "string": {
+      // String literals now desugar to native String type
+      const fn = resolveVar("nativeStringFromLiteral", ctx);
+      return `${fn}(${JSON.stringify(expr.literal.value)})`;
+    }
     default:
       throw new Error(`Unsupported literal kind '${expr.literal.kind}'`);
   }
@@ -568,7 +571,7 @@ function emitPattern(
       };
     }
     case "literal": {
-      const literalExpr = emitLiteral({ literal: pattern.literal });
+      const literalExpr = emitLiteral({ literal: pattern.literal }, ctx);
       return {
         conditions: [`${ref} === ${literalExpr}`],
         bindings: [],

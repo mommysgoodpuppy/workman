@@ -1,8 +1,29 @@
 -- Core string operations
--- Provides the bridge between string literals and List<Int>
+-- Dual representation: String (backend-native) and List<Int> (functional)
 
--- Convert a string literal to List<Int> (list of character codes)
--- This is the only native string operation we need
+-- String type - backend-specific representation
+-- In JS: native string, in Rust: std::string::String, etc.
+-- Note: This is currently just the primitive string type
+-- TODO: Make this truly opaque once language supports opaque types
+
+-- Convert a string literal to String (backend-native)
+-- String literals "..." desugar to this
+export let stringFromLiteral = (lit) => {
+  nativeStringFromLiteral(lit)
+};
+
+-- Convert String to List<Int> for functional operations
+export let stringToList = (str) => {
+  nativeStringToList(str)
+};
+
+-- Convert List<Int> back to String
+export let listToString = (chars) => {
+  nativeListToString(chars)
+};
+
+-- Legacy: Convert string literal to List<Int> directly
+-- Deprecated: use stringFromLiteral + stringToList instead
 export let strFromLiteral = (lit) => {
   nativeStrFromLiteral(lit)
 };

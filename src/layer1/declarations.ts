@@ -379,6 +379,11 @@ export function registerPrelude(ctx: Context): void {
   registerIntBinaryPrimitive(ctx, "nativeDiv");
   registerPrintPrimitive(ctx, "nativePrint");
   registerStrFromLiteralPrimitive(ctx, "nativeStrFromLiteral");
+  
+  // Minimal dual representation String API (only conversions)
+  registerStringFromLiteralPrimitive(ctx, "nativeStringFromLiteral");
+  registerStringToListPrimitive(ctx, "nativeStringToList");
+  registerListToStringPrimitive(ctx, "nativeListToString");
 }
 
 function buildConstructorInfo(
@@ -513,3 +518,52 @@ function bindTypeAlias(ctx: Context, name: string, scheme: TypeScheme, aliasOf?:
   const target = aliasOf ? ctx.env.get(aliasOf) : undefined;
   ctx.env.set(name, aliasOf && target ? target : scheme);
 }
+
+// New dual representation String API primitives
+
+function registerStringFromLiteralPrimitive(ctx: Context, name: string): void {
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: { kind: "string" },
+      to: { kind: "string" },
+    },
+  };
+  ctx.env.set(name, scheme);
+}
+
+function registerStringToListPrimitive(ctx: Context, name: string): void {
+  const listType: Type = {
+    kind: "constructor",
+    name: "List",
+    args: [{ kind: "int" }],
+  };
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: { kind: "string" },
+      to: listType,
+    },
+  };
+  ctx.env.set(name, scheme);
+}
+
+function registerListToStringPrimitive(ctx: Context, name: string): void {
+  const listType: Type = {
+    kind: "constructor",
+    name: "List",
+    args: [{ kind: "int" }],
+  };
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: listType,
+      to: { kind: "string" },
+    },
+  };
+  ctx.env.set(name, scheme);
+}
+

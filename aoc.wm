@@ -1,5 +1,6 @@
-from "std/string" import { fromLiteral, strEq };
-from "std/list" import { listSlice, listAt, listLength};
+from "std/nativeString" import { stringToList, stringConcat, intToString };
+from "std/string" import { strEq };
+from "std/list" import { listSlice, listAt, listLength };
 from "std/string" import { charToDigit, char };
 
 type ParseResult =
@@ -17,7 +18,7 @@ let makeStep = (v, n) => {
 
 let charComma = char(",");
 let charCloseParen = char(")");
-let mulLiteral = fromLiteral("mul(");
+let mulLiteral = stringToList("mul(");  -- String literal → List<Int>
 let mulLiteralLength = listLength(mulLiteral);
 
 -- Read exactly one digit or raise ExpectedDigit to the caller.
@@ -84,9 +85,6 @@ let parseMulAt = (chars, i) => {
     expectCharAt(chars, rightStep.next, charCloseParen, ExpectedCloseParen)
   )
 };
-
--- scanner as a bundle --------------------------------------------------
-
 -- Walk the memory, summing successful multiplications.
 let rec scan = (chars, i, acc) => {
   match(listAt(chars, i, NotMul)) {
@@ -94,15 +92,16 @@ let rec scan = (chars, i, acc) => {
     Ok(_) => {
       match(parseMulAt(chars, i)) {
         Ok(step) => { scan(chars, step.next, acc + step.value) },
-        _ => { scan(chars, i + 1, acc) }
+        _ => {
+          print(stringConcat("failed to parse at ", intToString(i)));
+          scan(chars, i + 1, acc)
+        }
       }
     }
   }
 };
 
--- top-level ------------------------------------------------------------
-
-let corruptedMemory = fromLiteral("xmul(2,4)%&mul[3,7]!@^do_not_mul(5,5)+mul(32,64]then(mul(11,8)mul(8,5))");
+let corruptedMemory = stringToList("xmul(2,4)%&mul[3,7]!@^do_not_mul(5,5)+mul(32,64]then(mul(11,8)mul(8,5))");
 
 let main = () => {
   print(scan(corruptedMemory, 0, 0))

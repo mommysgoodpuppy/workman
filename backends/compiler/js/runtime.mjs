@@ -24,8 +24,31 @@ export function nativeCharEq(left, right) {
   return left === right;
 }
 
+function listToString(list) {
+  if (!list || typeof list !== "object") {
+    return String(list);
+  }
+  if (list.type === "List") {
+    let result = "";
+    let current = list;
+    while (current.tag === "Link") {
+      result += String.fromCharCode(current._0);
+      current = current._1;
+    }
+    return result;
+  }
+  return String(list);
+}
+
+function formatValue(value) {
+  if (value && typeof value === "object" && value.type === "List") {
+    return listToString(value);
+  }
+  return value;
+}
+
 export function nativePrint(value) {
-  console.log(value);
+  console.log(formatValue(value));
   return undefined;
 }
 
@@ -90,6 +113,7 @@ export function recordGetInfectious(target, field) {
 
 const NONE_VALUE = Object.freeze({ tag: "None", type: "Option" });
 
+// Legacy: Convert string literal to List<Int>
 export function nativeStrFromLiteral(str) {
   let result = { tag: "Empty", type: "List" };
   for (let index = str.length - 1; index >= 0; index -= 1) {
@@ -100,6 +124,39 @@ export function nativeStrFromLiteral(str) {
       _0: charCode,
       _1: result,
     };
+  }
+  return result;
+}
+
+// New dual representation API
+
+// String literal to native String (just return the JS string)
+export function nativeStringFromLiteral(str) {
+  return str;
+}
+
+// Convert native String to List<Int>
+export function nativeStringToList(str) {
+  let result = { tag: "Empty", type: "List" };
+  for (let index = str.length - 1; index >= 0; index -= 1) {
+    const charCode = str.charCodeAt(index);
+    result = {
+      tag: "Link",
+      type: "List",
+      _0: charCode,
+      _1: result,
+    };
+  }
+  return result;
+}
+
+// Convert List<Int> to native String
+export function nativeListToString(list) {
+  let result = "";
+  let current = list;
+  while (current.tag === "Link") {
+    result += String.fromCharCode(current._0);
+    current = current._1;
   }
   return result;
 }
@@ -122,6 +179,9 @@ export function nativeStrCharAt(str, index) {
 export function nativeStrSlice(str, start, end) {
   return str.slice(start, end);
 }
+
+// Note: String operations (concat, length, slice, etc.) are implemented
+// in Workman stdlib using the conversion primitives above
 
 export function markResultHandler(fn, handledParams) {
   const handledSet = new Set(handledParams);
