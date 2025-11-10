@@ -230,10 +230,10 @@ export let digitToChar = (n) => {
 };
 
 -- Convert character code to digit (returns Option<Int>)
-export let charToDigit = (c) => {
+export let charToDigit = (c, error) => {
   match(isDigit(c)) {
-    false => { None },
-    true => { Some(sub(c, char0())) }
+    false => { Err(error) },
+    true => { Ok(sub(c, char0())) }
   }
 };
 

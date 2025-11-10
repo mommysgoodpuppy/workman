@@ -83,7 +83,6 @@ let conditional = (flag) => {
 -- Example 8: Polymorphic Constraint Solving
 -- ============================================================================
 -- The solver handles polymorphic functions
-let identity = (x) => { x };
 
 -- Each use creates fresh type variables
 let useIdentity = () => {

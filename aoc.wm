@@ -2,7 +2,7 @@ from "std/string" import { fromLiteral, strEq };
 from "std/list" import { listSlice, listAt, listLength};
 from "std/string" import { charToDigit, char };
 
-type ParseError =
+type ParseResult =
   | NotMul
   | ExpectedDigit
   | ExpectedComma
@@ -10,23 +10,22 @@ type ParseError =
 
 record ParseStep { value: Int, next: Int };
 
--- helpers --------------------------------------------------------------
+let makeStep = (v, n) => {
+  ({ value: v, next: n })
+};
+
 let charComma = char(",");
 let charCloseParen = char(")");
 let mulLiteral = fromLiteral("mul(");
 let mulLiteralLength = listLength(mulLiteral);
 
-let makeStep = (v, n) => {
-  ({ value: v, next: n })
-};
-
 let readRequiredDigit = (chars, i) => {
-  match(listAt(chars, i)) {
-    None => { Err(ExpectedDigit) },
-    Some(code) => {
-      match(charToDigit(code)) {
-        None => { Err(ExpectedDigit) },
-        Some(digit) => { Ok(makeStep(digit, i + 1)) }
+  match(listAt(chars, i, ExpectedDigit)) {
+    Err(error) => { Err(error) },
+    Ok(code) => {
+      match(charToDigit(code, ExpectedDigit)) {
+        Err(error) => { Err(error) },
+        Ok(digit) => { Ok(makeStep(digit, i + 1)) }
       }
     }
   }
@@ -36,12 +35,12 @@ let rec extendDigits = (chars, step, count) => {
   match(count == 3) {
     true => { step },
     false => {
-      match(listAt(chars, step.next)) {
-        None => { step },
-        Some(code) => {
-          match(charToDigit(code)) {
-            None => { step },
-            Some(digit) => {
+      match(listAt(chars, step.next, ExpectedDigit)) {
+        Err(_) => { step },
+        Ok(code) => {
+          match(charToDigit(code, ExpectedDigit)) {
+            Err(_) => { step },
+            Ok(digit) => {
               let combined = makeStep(
                 step.value * 10 + digit,
                 step.next + 1
@@ -55,17 +54,15 @@ let rec extendDigits = (chars, step, count) => {
   }
 };
 
-
-
 let expectCharAt = (chars, i, expected, error) => {
-  match(listAt(chars, i)) {
-    None => { Err(error) },
-    Some(code) => {
+  match(listAt(chars, i, error)) {
+    Ok(code) => {
       match(code == expected) {
         true => { Ok(i + 1) },
         false => { Err(error) }
       }
-    }
+    },
+    _ => { Err(error) }
   }
 };
 
@@ -90,9 +87,9 @@ let parseMulAt = (chars, i) => {
 -- scanner as a bundle --------------------------------------------------
 
 let rec scan = (chars, i, acc) => {
-  match(listAt(chars, i)) {
-    None => { acc },
-    Some(_) => {
+  match(listAt(chars, i, NotMul)) {
+    Err(_) => { acc },
+    Ok(_) => {
       match(parseMulAt(chars, i)) {
         Ok(step) => { scan(chars, step.next, acc + step.value) },
         _ => { scan(chars, i + 1, acc) }

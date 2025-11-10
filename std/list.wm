@@ -1,6 +1,6 @@
 from "std/list/core" import { Empty, Link };
 from "std/core/int" import { intAdd, intSub, intCompare };
-from "std/option/core" import { Some, None };
+from "std/result/core" import { Ok, Err };
 from "std/core/ordering" import { LT, EQ, GT };
 
 export let rec listLength = match(list) {
@@ -45,10 +45,10 @@ export let listSlice = (list, start, end) => {
   listTake(dropped, intSub(end, start))
 };
 
-export let rec listAt = match(list, index) {
-  (Empty, _) => { None },
-  (Link(x, _), 0) => { Some(x) },
-  (Link(_, rest), index) => { listAt(rest, intSub(index, 1)) }
+export let rec listAt = match(list, index, error) {
+  (Empty, _, error) => { Err(error) },
+  (Link(x, _), 0, _) => { Ok(x) },
+  (Link(_, rest), index, error) => { listAt(rest, intSub(index, 1), error) }
 };
 
 
