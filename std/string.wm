@@ -7,12 +7,31 @@ from "std/option/core" import { Some, None };
 from "std/list/core" import { Empty, Link };
 from "std/core/int" import { intAdd as add, intSub as sub, intMul as mul, intDiv as div, intCompare as cmpInt, intEq as eq };
 from "std/core/ordering" import { LT, EQ, GT };
+from "std/result/core" import { Ok, Err };
 
 -- Type alias for clarity (just documentation, not enforced)
 -- type String = List<Int>;
 
+type CharLiteralErrorInternal =
+  EmptyLiteral
+  | MultiCharLiteral;
+
+export type CharLiteralError = CharLiteralErrorInternal;
+
 export let fromLiteral = (literal) => {
   strFromLiteral(literal)
+};
+
+export let char = (literal) => {
+  match(strFromLiteral(literal)) {
+    Empty => { Err(EmptyLiteral) },
+    Link(code, rest) => {
+      match(rest) {
+        Empty => { Ok(code) },
+        _ => { Err(MultiCharLiteral) }
+      }
+    }
+  }
 };
 
 -- Character code constants

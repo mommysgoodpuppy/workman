@@ -1,6 +1,6 @@
 from "std/string" import { fromLiteral, strEq };
-from "std/list" import { listSlice, listAt };
-from "std/string" import { charToDigit };
+from "std/list" import { listSlice, listAt, listLength};
+from "std/string" import { charToDigit, char };
 
 type ParseError =
   | NotMul
@@ -11,14 +11,10 @@ type ParseError =
 record ParseStep { value: Int, next: Int };
 
 -- helpers --------------------------------------------------------------
-let toCharCode = match(literal) {
-  Link(code, _) => { code },
-  Empty => { 0 }
-};
-
-let charComma = toCharCode(fromLiteral(","));
-let charCloseParen = toCharCode(fromLiteral(")"));
+let charComma = char(",");
+let charCloseParen = char(")");
 let mulLiteral = fromLiteral("mul(");
+let mulLiteralLength = listLength(mulLiteral);
 
 let makeStep = (value, next) => {
   ({ value: value, next: next })
@@ -76,8 +72,8 @@ let expectCharAt = (chars, i, expected, error) => {
 };
 
 let expectMulLiteral = (chars, i) => {
-  match(strEq(listSlice(chars, i, i + 4), mulLiteral)) {
-    true => { Ok(i + 4) },
+  match(strEq(listSlice(chars, i, i + mulLiteralLength), mulLiteral)) {
+    true => { Ok(i + mulLiteralLength) },
     false => { Err(NotMul) }
   }
 };
@@ -121,8 +117,7 @@ let rec scan = (chars, i, acc) => {
     Some(_) => {
       match(parseMulAt(chars, i)) {
         Ok(step) => { scan(chars, step.next, acc + step.value) },
-        Err(NotMul) => { scan(chars, i + 1, acc) },
-        AllErrors => { scan(chars, i + 1, acc) }
+        _ => { scan(chars, i + 1, acc) }
       }
     }
   }
