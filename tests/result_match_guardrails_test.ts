@@ -1,4 +1,4 @@
-import { assertArrayIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { inferProgram } from "../src/layer1/infer.ts";
@@ -22,7 +22,7 @@ function inferSource(source: string) {
   });
 }
 
-Deno.test("Result match guardrails flag Result-returning arms", () => {
+Deno.test("Result matches returning Result simply remain infectious", () => {
   const source = `
     type ParseError = Bad;
     let handle = (value: Result<Int, <Bad>>) => {
@@ -33,11 +33,10 @@ Deno.test("Result match guardrails flag Result-returning arms", () => {
     };
   `;
   const result = inferSource(source);
-  const reasons = result.layer1Diagnostics.map((diag) => diag.reason);
-  assertArrayIncludes(reasons, [
-    "result_match_ok_returns_result",
-    "result_match_err_returns_result",
-  ]);
+  if (result.layer1Diagnostics.length > 0) {
+    console.error("Unexpected diagnostics:", result.layer1Diagnostics);
+  }
+  assertEquals(result.layer1Diagnostics.length, 0);
   const binding = result.summaries.find((entry) => entry.name === "handle");
   if (!binding) {
     throw new Error("expected handle summary");

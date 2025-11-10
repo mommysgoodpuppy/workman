@@ -25,7 +25,6 @@ import {
   unknownType,
 } from "../types.ts";
 import { PatternInfo } from "./infer.ts";
-import type { ConstraintDiagnosticReason } from "../diagnostics.ts";
 
 
 export interface MatchBranchesResult {
@@ -251,20 +250,14 @@ export function inferMatchBranches(
   }
 
   const resolvedScrutinee = applyCurrentSubst(ctx, scrutineeType);
-  const guardReasons: ConstraintDiagnosticReason[] = [];
   const okBranchesReturnResult = branchMetadata.some((branch) =>
     branch.kind === "ok" && flattenResultType(branch.type) !== null
   );
-  if (okBranchesReturnResult) {
-    guardReasons.push("result_match_ok_returns_result");
-  }
   const errBranchesReturnResult = branchMetadata.some((branch) =>
     (branch.kind === "err" || branch.kind === "all_errors") &&
     flattenResultType(branch.type) !== null
   );
-  if (errBranchesReturnResult) {
-    guardReasons.push("result_match_err_returns_result");
-  }
+  const preventsDischarge = okBranchesReturnResult || errBranchesReturnResult;
 
   if (exhaustive) {
     if (
@@ -293,13 +286,14 @@ export function inferMatchBranches(
   let resolvedResult = applyCurrentSubst(ctx, resultType);
   const scrutineeInfo = flattenResultType(resolvedScrutinee);
 
-  const dischargeErrorRow = (okValueType: Type) => {
+  const dischargeErrorRow = () => {
     const currentInfo = flattenResultType(resolvedResult);
-    const targetResult = currentInfo
-      ? collapseResultType(currentInfo.value)
-      : resolvedResult;
-    unify(ctx, okValueType, targetResult);
-    resolvedResult = applyCurrentSubst(ctx, okValueType);
+    if (currentInfo) {
+      resolvedResult = applyCurrentSubst(
+        ctx,
+        collapseResultType(currentInfo.value),
+      );
+    }
   };
 
   const snapshotErrorCoverage = (
@@ -320,22 +314,12 @@ export function inferMatchBranches(
         origin: expr.id,
         reason: "all_errors_outside_result",
       });
-    } else if (!hasErrConstructor) {
-      ctx.layer1Diagnostics.push({
-        origin: expr.id,
-        reason: "all_errors_requires_err",
-      });
+    } else if (preventsDischarge) {
+      snapshotErrorCoverage(scrutineeInfo.error, []);
     } else {
-      if (guardReasons.length > 0) {
-        for (const reason of guardReasons) {
-          ctx.layer1Diagnostics.push({ origin: expr.id, reason });
-        }
-        snapshotErrorCoverage(scrutineeInfo.error, []);
-      } else {
-        dischargedResult = true;
-        dischargeErrorRow(scrutineeInfo.value);
-        snapshotErrorCoverage(scrutineeInfo.error, []);
-      }
+      dischargedResult = true;
+      dischargeErrorRow();
+      snapshotErrorCoverage(scrutineeInfo.error, []);
     }
   } else if (scrutineeInfo && hasErrConstructor) {
     const missingConstructors = findMissingErrorConstructors(
@@ -343,17 +327,11 @@ export function inferMatchBranches(
       handledErrorConstructors,
     );
     if (missingConstructors.length === 0) {
-      if (guardReasons.length > 0) {
-        for (const reason of guardReasons) {
-          ctx.layer1Diagnostics.push({
-            origin: expr.id,
-            reason,
-          });
-        }
+      if (preventsDischarge) {
         snapshotErrorCoverage(scrutineeInfo.error, []);
       } else {
         dischargedResult = true;
-        dischargeErrorRow(scrutineeInfo.value);
+        dischargeErrorRow();
         snapshotErrorCoverage(scrutineeInfo.error, []);
       }
     } else {
@@ -380,17 +358,12 @@ export function inferMatchBranches(
 
   const resultVars = freeTypeVars(resolvedResult);
   const scrutineeVars = freeTypeVars(resolvedScrutinee);
-  /* console.debug("[debug] match result", {
-    scrutinee: typeToString(resolvedScrutinee),
-    result: typeToString(resolvedResult),
-    resultVars: Array.from(resultVars),
-    scrutineeVars: Array.from(scrutineeVars),
-  }); */
   for (const id of resultVars) {
     if (!scrutineeVars.has(id)) {
       ctx.nonGeneralizable.add(id);
     }
   }
+
   const result: MatchBranchesResult = {
     type: resolvedResult,
     patternInfos,

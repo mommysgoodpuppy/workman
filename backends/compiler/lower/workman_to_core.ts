@@ -243,10 +243,6 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
       }
       return "Match does not cover all error constructors";
     }
-    case "result_match_ok_returns_result":
-      return "Ok branches must return bare values when unwrapping a Result";
-    case "result_match_err_returns_result":
-      return "Err branches must return bare values when discharging a Result";
     case "infectious_call_result_mismatch": {
       const row = diagnostic.details?.errorRow as Type | undefined;
       const rowLabel = row ? simpleFormatType(row) : "the incoming error row";

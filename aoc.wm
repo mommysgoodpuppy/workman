@@ -1,52 +1,57 @@
 from "std/string" import { fromLiteral, strEq };
 from "std/list" import { listSlice, listAt };
 from "std/string" import { charToDigit };
-from "std/option" import { flatMap };
+
+type ParseError =
+  | NotMul
+  | ExpectedDigit
+  | ExpectedComma
+  | ExpectedCloseParen;
 
 record ParseStep { value: Int, next: Int };
 
 -- helpers --------------------------------------------------------------
-
 let toCharCode = match(literal) {
   Link(code, _) => { code },
   Empty => { 0 }
 };
 
-let charComma      = toCharCode(fromLiteral(","));
+let charComma = toCharCode(fromLiteral(","));
 let charCloseParen = toCharCode(fromLiteral(")"));
-let mulLiteral     = fromLiteral("mul(");
+let mulLiteral = fromLiteral("mul(");
 
 let makeStep = (value, next) => {
   ({ value: value, next: next })
 };
 
--- read a single digit at i: Option((digit, i+1))
-let oneDigit = match(chars, i) {
-  (chars, i) => {
-    match(listAt(chars, i)) {
-      None => { None },
-      Some(code) => {
-        match(charToDigit(code)) {
-          None => { None },
-          Some(d) => { Some(makeStep(d, add(i, 1))) }
-        }
+let readRequiredDigit = (chars, i) => {
+  match(listAt(chars, i)) {
+    None => { Err(ExpectedDigit) },
+    Some(code) => {
+      match(charToDigit(code)) {
+        None => { Err(ExpectedDigit) },
+        Some(digit) => { Ok(makeStep(digit, i + 1)) }
       }
     }
   }
 };
 
--- greedy read up to 3 digits starting with an already consumed first digit
--- internal worker: (chars, i, count, acc) -> Option((value, next))
-let rec moreDigits3 = match(chars, i, count, acc) {
-  (chars, i, count, acc) => {
-    match(eq(count, 3)) {
-      true => { Some(makeStep(acc, i)) },
-      false => {
-        match(oneDigit(chars, i)) {
-          None => { Some(makeStep(acc, i)) },
-          Some(step) => {
-            let acc1 = add(mul(acc, 10), step.value);
-            moreDigits3(chars, step.next, add(count, 1), acc1)
+let rec extendDigits = (chars, step, count) => {
+  match(eq(count, 3)) {
+    true => { Ok(step) },
+    false => {
+      match(listAt(chars, step.next)) {
+        None => { Ok(step) },
+        Some(code) => {
+          match(charToDigit(code)) {
+            None => { Ok(step) },
+            Some(digit) => {
+              let combined = makeStep(
+                step.value * 10 + digit,
+                step.next + 1
+              );
+              extendDigits(chars, combined, count + 1)
+            }
           }
         }
       }
@@ -54,107 +59,70 @@ let rec moreDigits3 = match(chars, i, count, acc) {
   }
 };
 
--- public: readNumber(chars, i) -> Option((value, next))
-let readNumber = match(chars, i) {
-  (chars, i) => {
-    match(oneDigit(chars, i)) {
-      None => { None },
-      Some(step) => { moreDigits3(chars, step.next, 1, step.value) }
-    }
-  }
+let readNumber = (chars, i) => {
+  extendDigits(chars, readRequiredDigit(chars, i), 1)
 };
 
--- expect a single char: Option(i+1)
-let expectChar = match(chars, i, expected) {
-  (chars, i, expected) => {
-    match(listAt(chars, i)) {
-      None => { None },
-      Some(code) => {
-        match(eq(code, expected)) {
-          true => { Some(add(i, 1)) },
-          false => { None }
-        }
+let expectCharAt = (chars, i, expected, error) => {
+  match(listAt(chars, i)) {
+    None => { Err(error) },
+    Some(code) => {
+      match(eq(code, expected)) {
+        true => { Ok(i + 1) },
+        false => { Err(error) }
       }
     }
   }
 };
 
--- literal match: "mul(" at i → Option(i+4)
-let expectMulLiteral = match(chars, i) {
-  (chars, i) => {
-    match(strEq(listSlice(chars, i, add(i, 4)), mulLiteral)) {
-      true => { Some(add(i, 4)) },
-      false => { None }
-    }
+let expectMulLiteral = (chars, i) => {
+  match(strEq(listSlice(chars, i, i + 4), mulLiteral)) {
+    true => { Ok(i + 4) },
+    false => { Err(NotMul) }
   }
 };
 
--- parsing bricks as bundles -------------------------------------------
-
--- parseLeft : (chars, i) → Option((leftValue, next))
-let parseLeft = match(chars, i) {
-  (chars, i) => { readNumber(chars, i) }
+let parseLeft = (chars, i) => {
+  readNumber(chars, i)
 };
 
--- parseComma : (chars, i) → Option(i+1)
-let parseComma = match(chars, i) {
-  (chars, i) => { expectChar(chars, i, charComma) }
+let parseComma = (chars, step) => {
+  expectCharAt(chars, step.next, charComma, ExpectedComma)
 };
 
--- parseRight : (chars, i) → Option((rightValue, next))
-let parseRight = match(chars, i) {
-  (chars, i) => { readNumber(chars, i) }
+let parseRight = (chars, i) => {
+  readNumber(chars, i) 
 };
 
--- parseCloseParen : (chars, i) → Option(i+1)
-let parseCloseParen = match(chars, i) {
-  (chars, i) => { expectChar(chars, i, charCloseParen) }
+let parseCloseParen = (chars, step) => {
+  expectCharAt(chars, step.next, charCloseParen, ExpectedCloseParen)
 };
 
--- compose the bricks into parseMulAt ----------------------------------
+let buildMulStep = (leftStep, rightStep, nextIndex) => {
+  Ok(makeStep(leftStep.value * rightStep.value, nextIndex))
+};
 
-let parseMulAt = match(chars, i) {
-  (chars, i) => {
-    flatMap(
-      (afterMul) => {
-        flatMap(
-          (leftStep) => {
-            flatMap(
-              (afterComma) => {
-                flatMap(
-                  (rightStep) => {
-                    flatMap(
-                      (afterClose) => {
-                        Some(makeStep(mul(leftStep.value, rightStep.value), afterClose))
-                      },
-                      parseCloseParen(chars, rightStep.next)
-                    )
-                  },
-                  parseRight(chars, afterComma)
-                )
-              },
-              parseComma(chars, leftStep.next)
-            )
-          },
-          parseLeft(chars, afterMul)
-        )
-      },
-      expectMulLiteral(chars, i)
-    )
+let parseMulAt = (chars, i) => {
+  let afterMul = expectMulLiteral(chars, i);
+  let leftStep = parseLeft(chars, afterMul);
+  let afterComma = parseComma(chars, leftStep);
+  let rightStep = parseRight(chars, afterComma);
+  match(parseCloseParen(chars, rightStep)) {
+    Ok(afterClose) => { buildMulStep(leftStep, rightStep, afterClose) },
+    Err(error) => { Err(error) }
   }
 };
 
 -- scanner as a bundle --------------------------------------------------
 
-let rec scan = match(chars, i, acc) {
-  (chars, i, acc) => {
-    match(listAt(chars, i)) {
-      None => { acc },
-      Some(_) => {
-        match(parseMulAt(chars, i)) {
-          Some(step) => { scan(chars, step.next, add(acc, step.value)) },
-          None => { scan(chars, add(i, 1), acc) }
-        }
+let rec scan = (chars, i, acc) => {
+  match(listAt(chars, i)) {
+    None => { acc },
+    Some(_) => {
+      match(parseMulAt(chars, i)) {
+        Ok(step) => { scan(chars, step.next, acc + step.value) },
+        Err(NotMul) => { scan(chars, i + 1, acc) },
+        AllErrors => { scan(chars, i + 1, acc) }
       }
     }
   }

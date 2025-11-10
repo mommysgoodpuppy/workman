@@ -89,7 +89,7 @@ Deno.test("TODO: factory returning AllErrors handler stays infectious-free", () 
     };
 
     let makeChecker = () => {
-      match(result) {
+      match(result) => {
         Ok(value) => { value },
         Err(_) => { 0 },
         AllErrors => { 0 }
