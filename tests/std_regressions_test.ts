@@ -1,13 +1,21 @@
 import { fromFileUrl } from "std/path/mod.ts";
-import { assertEquals, assertRejects } from "https://deno.land/std/assert/mod.ts";
+import {
+  assertEquals,
+  assertRejects,
+} from "https://deno.land/std/assert/mod.ts";
 import { runEntryPath } from "../src/module_loader.ts";
+import { runCompiledEntryPath } from "./test_prelude.ts";
 
 function failingFixture(relative: string): string {
-  return fromFileUrl(new URL(`./fixtures/failing/${relative}`, import.meta.url));
+  return fromFileUrl(
+    new URL(`./fixtures/failing/${relative}`, import.meta.url),
+  );
 }
 
 function fixturePath(relative: string): string {
-  return fromFileUrl(new URL(`./fixtures/std_usage/${relative}`, import.meta.url));
+  return fromFileUrl(
+    new URL(`./fixtures/std_usage/${relative}`, import.meta.url),
+  );
 }
 
 Deno.test({
@@ -27,9 +35,11 @@ Deno.test({
 
 Deno.test({
   name: "std result complex pipeline (map -> andThen -> fold)",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
-  const result = await runEntryPath(failingFixture("std_result_complex.wm"));
+  const result = await runCompiledEntryPath(
+    failingFixture("std_result_complex.wm"),
+  );
   const types = new Map(result.types.map((e) => [e.name, e.type]));
   const values = new Map(result.values.map((e) => [e.name, e.value]));
 
@@ -46,7 +56,11 @@ Deno.test({
   permissions: { read: true },
 }, async () => {
   const entry = failingFixture("std_option_self_apply.wm");
-  await assertRejects(() => runEntryPath(entry), Error, "Non-exhaustive patterns at runtime");
+  await assertRejects(
+    () => runEntryPath(entry),
+    Error,
+    "Non-exhaustive patterns at runtime",
+  );
 });
 
 Deno.test({
@@ -54,9 +68,12 @@ Deno.test({
   permissions: { read: true },
 }, async () => {
   const entry = failingFixture("std_result_self_apply.wm");
-  await assertRejects(() => runEntryPath(entry), Error, "Non-exhaustive patterns at runtime");
+  await assertRejects(
+    () => runEntryPath(entry),
+    Error,
+    "Non-exhaustive patterns at runtime",
+  );
 });
-
 
 Deno.test({
   name: "std list utilities operate with tuple lowering",
@@ -64,8 +81,12 @@ Deno.test({
 }, async () => {
   const entry = fixturePath("main.wm");
   const result = await runEntryPath(entry);
-  const typeMap = new Map(result.types.map((entry) => [entry.name, entry.type]));
-  const valueMap = new Map(result.values.map((entry) => [entry.name, entry.value]));
+  const typeMap = new Map(
+    result.types.map((entry) => [entry.name, entry.type]),
+  );
+  const valueMap = new Map(
+    result.values.map((entry) => [entry.name, entry.value]),
+  );
 
   assertEquals(typeMap.get("sumSquares"), "Unit -> Int");
   assertEquals(typeMap.get("sortedDemo"), "Unit -> List<Int>");

@@ -1,10 +1,5 @@
 import { Expr, MatchBundle, MatchBundleLiteralExpr } from "../ast.ts";
-import {
-  Context,
-  ensureExhaustive,
-  inferExpr,
-  inferPattern,
-} from "./infer.ts";
+import { Context, ensureExhaustive, inferExpr, inferPattern } from "./infer.ts";
 import {
   applyCurrentSubst,
   markUnsupportedExpr,
@@ -25,7 +20,6 @@ import {
   unknownType,
 } from "../types.ts";
 import { PatternInfo } from "./infer.ts";
-
 
 export interface MatchBranchesResult {
   type: Type;
@@ -132,7 +126,9 @@ export function inferMatchBranches(
   for (const arm of bundle.arms) {
     if (arm.kind === "match_bundle_reference") {
       const existingScheme = ctx.env.get(arm.name);
-      const scheme = existingScheme ? cloneTypeScheme(existingScheme) : undefined;
+      const scheme = existingScheme
+        ? cloneTypeScheme(existingScheme)
+        : undefined;
       if (!scheme) {
         markUnsupportedExpr(ctx, expr, "match_bundle_reference");
         hasWildcard = true;

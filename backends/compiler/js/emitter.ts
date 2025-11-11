@@ -1,4 +1,10 @@
-import { dirname, extname, relative, isAbsolute, toFileUrl } from "std/path/mod.ts";
+import {
+  dirname,
+  extname,
+  isAbsolute,
+  relative,
+  toFileUrl,
+} from "std/path/mod.ts";
 import type {
   CoreExpr,
   CoreMatchCase,
@@ -111,8 +117,9 @@ export function emitModule(
       .map(([exported, local]) =>
         exported === local ? exported : `${exported} as ${local}`
       );
-    const runtimeImport =
-      `import { ${specifiers.join(", ")} } from "${runtimeModule}";`;
+    const runtimeImport = `import { ${
+      specifiers.join(", ")
+    } } from "${runtimeModule}";`;
     lines.splice(runtimeImportIndex, 0, runtimeImport);
   }
 
@@ -367,7 +374,10 @@ function emitLiteral(
   }
 }
 
-function emitRecord(expr: CoreExpr & { kind: "record" }, ctx: EmitContext): string {
+function emitRecord(
+  expr: CoreExpr & { kind: "record" },
+  ctx: EmitContext,
+): string {
   if (expr.fields.length === 0) {
     return "({})";
   }
@@ -405,10 +415,9 @@ function emitLambda(
     resolveName(innerScope, param, ctx.state)
   );
   const body = emitExprWithScope(expr.body, ctx, innerScope);
-  const lambda =
-    body.includes("\n")
-      ? `(${params.join(", ")}) => {\n${indent(`return ${body};`)}\n}`
-      : `(${params.join(", ")}) => ${body}`;
+  const lambda = body.includes("\n")
+    ? `(${params.join(", ")}) => {\n${indent(`return ${body};`)}\n}`
+    : `(${params.join(", ")}) => ${body}`;
   if (handledParams.length > 0) {
     const marker = resolveVar("markResultHandler", ctx);
     return `${marker}(${lambda}, [${handledParams.join(", ")}])`;
@@ -423,18 +432,86 @@ function detectHandledResultParams(
   if (expr.body.kind !== "match") {
     return [];
   }
-  const coverage = expr.body.errorRowCoverage;
-  if (!coverage || !coverage.dischargesResult) {
+
+  // Handle direct parameter: match(param) { Ok(...) => ..., Err(...) => ... }
+  if (expr.body.scrutinee.kind === "var") {
+    const paramIndex = originalParams.indexOf(expr.body.scrutinee.name);
+    if (paramIndex === -1) {
+      return [];
+    }
+    // Check if patterns contain Ok/Err constructors
+    const hasResultPatterns = expr.body.cases.some((c) =>
+      hasResultConstructorPattern(c.pattern)
+    );
+    if (hasResultPatterns) {
+      return [paramIndex];
+    }
+    // Fall back to coverage check
+    const coverage = expr.body.errorRowCoverage;
+    if (coverage?.dischargesResult) {
+      return [paramIndex];
+    }
     return [];
   }
-  if (expr.body.scrutinee.kind !== "var") {
-    return [];
+
+  // Handle tuple of parameters: match((param1, param2)) { (_, Ok(...)) => ... }
+  if (expr.body.scrutinee.kind === "tuple") {
+    const handledIndices: number[] = [];
+
+    // Check each pattern to see which tuple positions have Result constructors
+    for (const matchCase of expr.body.cases) {
+      if (matchCase.pattern.kind === "tuple") {
+        for (let i = 0; i < matchCase.pattern.elements.length; i++) {
+          const element = matchCase.pattern.elements[i];
+          if (hasResultConstructorPattern(element)) {
+            // Find which parameter this tuple position corresponds to
+            const scrutineeElement = expr.body.scrutinee.elements[i];
+            if (scrutineeElement?.kind === "var") {
+              const paramIndex = originalParams.indexOf(scrutineeElement.name);
+              if (paramIndex !== -1 && !handledIndices.includes(paramIndex)) {
+                handledIndices.push(paramIndex);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (handledIndices.length > 0) {
+      return handledIndices;
+    }
+
+    // Fall back to checking if any element variables are in the param list
+    const coverage = expr.body.errorRowCoverage;
+    if (coverage?.dischargesResult) {
+      for (const element of expr.body.scrutinee.elements) {
+        if (element.kind === "var") {
+          const paramIndex = originalParams.indexOf(element.name);
+          if (paramIndex !== -1) {
+            handledIndices.push(paramIndex);
+          }
+        }
+      }
+      return handledIndices;
+    }
   }
-  const paramIndex = originalParams.indexOf(expr.body.scrutinee.name);
-  if (paramIndex === -1) {
-    return [];
+
+  return [];
+}
+
+// Helper to check if a pattern contains Ok or Err constructors
+function hasResultConstructorPattern(pattern: CorePattern): boolean {
+  switch (pattern.kind) {
+    case "constructor":
+      return pattern.constructor === "Ok" || pattern.constructor === "Err";
+    case "tuple":
+      return pattern.elements.some(hasResultConstructorPattern);
+    case "wildcard":
+    case "binding":
+    case "literal":
+    case "all_errors":
+      return false;
   }
-  return [paramIndex];
 }
 
 function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {

@@ -1,5 +1,5 @@
-from "std/result/core" import { Result };
-from "std/result" import { Ok, Err, map, mapError, andThen, withDefault, fold };
+from "std/result/core" import { Ok, Err };
+from "std/result" import { map, mapError, andThen, withDefault, fold };
 
 let inc = (n) => {
   add(n, 1)
@@ -16,7 +16,7 @@ let strErr = (e) => {
 };
 
 export let pipeline = () => {
-  let start = Ok(10);
+  let start: Result<Int, String> = Ok(10);
   let mapped = map(inc, start);
   let chained = andThen(doubleIfOdd, mapped);
   withDefault(0, chained)

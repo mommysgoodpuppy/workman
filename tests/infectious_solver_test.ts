@@ -1,8 +1,14 @@
-import { assertArrayIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import {
+  assert,
+  assertArrayIncludes,
+  assertEquals,
+  assertExists,
+} from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { analyzeProgram } from "../src/pipeline.ts";
 import { freshPreludeTypeEnv } from "./test_prelude.ts";
+import { formatScheme } from "../src/type_printer.ts";
 
 function analyzeSource(source: string) {
   const context = freshPreludeTypeEnv();
@@ -21,7 +27,7 @@ function analyzeSource(source: string) {
   });
 }
 
-Deno.test("solver flags infectious calls that lose Result rows", () => {
+Deno.test("solver allows infectious calls and spreads Result types", () => {
   const analysis = analyzeSource(`
     type ParseError = Missing;
 
@@ -37,9 +43,20 @@ Deno.test("solver flags infectious calls that lose Result rows", () => {
     let forced = addOne(parseMaybe(false)) + 1;
   `);
 
-  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
-  console.log("Emitted diagnostics:", reasons);
-  assertArrayIncludes(reasons, ["infectious_call_result_mismatch"]);
+  // Should have no errors - infection spreading is allowed
+  assertEquals(analysis.layer2.diagnostics.length, 0);
+
+  // Verify that 'forced' has the infected type
+  const forcedScheme = analysis.layer1.summaries.find((s) =>
+    s.name === "forced"
+  )?.scheme;
+  assertExists(forcedScheme);
+  const forcedType = formatScheme(forcedScheme);
+  // Should be Result<Int, ParseError>, not Int
+  assert(
+    forcedType.includes("Result"),
+    `Expected Result type, got: ${forcedType}`,
+  );
 });
 
 Deno.test("solver flags matches that claim to discharge but remain infectious", () => {
@@ -60,7 +77,7 @@ Deno.test("solver flags matches that claim to discharge but remain infectious", 
   assertArrayIncludes(reasons, ["infectious_match_result_mismatch"]);
 });
 
-Deno.test("solver flags infectious record projections", () => {
+Deno.test("solver allows infectious record projections and spreads Result types", () => {
   const analysis = analyzeSource(`
     type ParseError = Missing;
     let wrap = (value) => {
@@ -77,8 +94,20 @@ Deno.test("solver flags infectious record projections", () => {
     };
   `);
 
-  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
-  assertArrayIncludes(reasons, ["infectious_call_result_mismatch"]);
+  // Should have no errors - infection spreading is allowed
+  assertEquals(analysis.layer2.diagnostics.length, 0);
+
+  // Verify that 'forcedField' has the infected return type
+  const forcedFieldScheme = analysis.layer1.summaries.find((s) =>
+    s.name === "forcedField"
+  )?.scheme;
+  assertExists(forcedFieldScheme);
+  const forcedFieldType = formatScheme(forcedFieldScheme);
+  // Should be Unit -> Result<Int, ParseError>, not Unit -> Int
+  assert(
+    forcedFieldType.includes("Result"),
+    `Expected Result type, got: ${forcedFieldType}`,
+  );
 });
 
 Deno.test("solver flags infectious annotations expecting bare types", () => {

@@ -1,4 +1,4 @@
-from "std/result" import { Ok, Err, map, mapError, andThen, withDefault, fold };
+from "std/result" import { map, mapError, andThen, withDefault, fold };
 
 export let defaultOk = () => {
   withDefault(0, Ok(5))

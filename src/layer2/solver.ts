@@ -1,35 +1,41 @@
-export type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
+export type {
+  ConstraintDiagnostic,
+  ConstraintDiagnosticReason,
+} from "../diagnostics.ts";
 
 import {
-  type MProgram,
   MBlockExpr,
   type MBlockStatement,
   MExpr,
-  MParameter,
-  MPattern,
+  MLetDeclaration,
   type MMatchArm,
   MMatchBundle,
-  MLetDeclaration,
+  MParameter,
+  MPattern,
+  type MProgram,
 } from "../ast_marked.ts";
 import type {
   ConstraintStub,
+  ErrorRowCoverageStub,
   HoleId,
   UnknownInfo,
-  ErrorRowCoverageStub,
 } from "../layer1/context.ts";
 import {
-  type Type,
   applySubstitution,
   cloneType,
+  type ErrorRowType,
+  errorRowUnion,
+  flattenResultType,
+  makeResultType,
   occursInType,
   type Substitution,
+  type Type,
   unknownType,
-  type ErrorRowType,
-  flattenResultType,
-  errorRowUnion,
-  makeResultType,
 } from "../types.ts";
-import type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
+import type {
+  ConstraintDiagnostic,
+  ConstraintDiagnosticReason,
+} from "../diagnostics.ts";
 import type { NodeId } from "../ast.ts";
 
 export interface ConstraintConflict {
@@ -105,10 +111,18 @@ export function solveConstraints(input: SolveInput): SolverResult {
   // 2. Calls & field access - propagate types from function signatures
   // 3. Numeric/boolean - check that operands are the right type
   // 4. Branch joins - ensure branch consistency
-  const annotationStubs = input.constraintStubs.filter(s => s.kind === "annotation");
-  const callAndFieldStubs = input.constraintStubs.filter(s => s.kind === "call" || s.kind === "has_field");
-  const numericBooleanStubs = input.constraintStubs.filter(s => s.kind === "numeric" || s.kind === "boolean");
-  const branchStubs = input.constraintStubs.filter(s => s.kind === "branch_join");
+  const annotationStubs = input.constraintStubs.filter((s) =>
+    s.kind === "annotation"
+  );
+  const callAndFieldStubs = input.constraintStubs.filter((s) =>
+    s.kind === "call" || s.kind === "has_field"
+  );
+  const numericBooleanStubs = input.constraintStubs.filter((s) =>
+    s.kind === "numeric" || s.kind === "boolean"
+  );
+  const branchStubs = input.constraintStubs.filter((s) =>
+    s.kind === "branch_join"
+  );
 
   // Phase 1: Annotations
   for (const stub of annotationStubs) {
@@ -152,7 +166,12 @@ export function solveConstraints(input: SolveInput): SolverResult {
   );
 
   // Detect conflicts in unknown types
-  const conflicts = detectConflicts(input.holes, input.constraintStubs, state.substitution, resolvedNodeTypes);
+  const conflicts = detectConflicts(
+    input.holes,
+    input.constraintStubs,
+    state.substitution,
+    resolvedNodeTypes,
+  );
 
   // Add diagnostics for conflicts
   for (const conflict of conflicts) {
@@ -170,23 +189,32 @@ export function solveConstraints(input: SolveInput): SolverResult {
   for (const [holeId, info] of input.holes.entries()) {
     const nodeType = resolvedNodeTypes.get(holeId);
     const holeConflicts = conflicts.filter((c) => c.holeId === holeId);
-    
+
     if (holeConflicts.length > 0) {
-      solutions.set(holeId, { 
-        state: "conflicted", 
+      solutions.set(holeId, {
+        state: "conflicted",
         conflicts: holeConflicts,
-        provenance: info 
+        provenance: info,
       });
     } else if (!nodeType || nodeType.kind === "unknown") {
       // Try to build partial solution
-      const partial = buildPartialSolution(holeId, input.constraintStubs, state.substitution, resolvedNodeTypes);
+      const partial = buildPartialSolution(
+        holeId,
+        input.constraintStubs,
+        state.substitution,
+        resolvedNodeTypes,
+      );
       if (partial) {
         solutions.set(holeId, { state: "partial", partial, provenance: info });
       } else {
         solutions.set(holeId, { state: "unsolved", provenance: info });
       }
     } else {
-      solutions.set(holeId, { state: "solved", type: nodeType, provenance: info });
+      solutions.set(holeId, {
+        state: "solved",
+        type: nodeType,
+        provenance: info,
+      });
     }
   }
 
@@ -249,7 +277,7 @@ function transformTypeWithSolutions(
     }
     return type;
   }
-  
+
   // Recursively transform nested types
   switch (type.kind) {
     case "func":
@@ -261,7 +289,9 @@ function transformTypeWithSolutions(
     case "tuple":
       return {
         kind: "tuple",
-        elements: type.elements.map(el => transformTypeWithSolutions(el, solutions)),
+        elements: type.elements.map((el) =>
+          transformTypeWithSolutions(el, solutions)
+        ),
       };
     case "record": {
       const fields = new Map<string, Type>();
@@ -274,7 +304,9 @@ function transformTypeWithSolutions(
       return {
         kind: "constructor",
         name: type.name,
-        args: type.args.map(arg => transformTypeWithSolutions(arg, solutions)),
+        args: type.args.map((arg) =>
+          transformTypeWithSolutions(arg, solutions)
+        ),
       };
     default:
       return type;
@@ -287,7 +319,10 @@ interface SolverState {
   nodeTypeById: Map<NodeId, Type>;
 }
 
-function solveCallConstraint(state: SolverState, stub: ConstraintStub & { kind: "call" }): void {
+function solveCallConstraint(
+  state: SolverState,
+  stub: ConstraintStub & { kind: "call" },
+): void {
   const callee = getTypeForNode(state, stub.callee);
   const stageCallee = peelFunctionType(callee, stub.index);
   const argumentValue = stub.argumentValueType
@@ -318,7 +353,10 @@ function solveCallConstraint(state: SolverState, stub: ConstraintStub & { kind: 
   registerUnifyFailure(state, stub.origin, unified.reason, extraDetails);
 }
 
-function solveHasFieldConstraint(state: SolverState, stub: ConstraintStub & { kind: "has_field" }): void {
+function solveHasFieldConstraint(
+  state: SolverState,
+  stub: ConstraintStub & { kind: "has_field" },
+): void {
   const target = getTypeForNode(state, stub.target);
   const result = getTypeForNode(state, stub.result);
   const resolvedTarget = applySubstitution(target, state.substitution);
@@ -427,7 +465,10 @@ function projectFieldFromRecord(
   }
 }
 
-function solveAnnotationConstraint(state: SolverState, stub: ConstraintStub & { kind: "annotation" }): void {
+function solveAnnotationConstraint(
+  state: SolverState,
+  stub: ConstraintStub & { kind: "annotation" },
+): void {
   const annotation = stub.annotationType ??
     getTypeForNode(state, stub.annotation);
   const value = getTypeForNode(state, stub.value);
@@ -439,21 +480,27 @@ function solveAnnotationConstraint(state: SolverState, stub: ConstraintStub & { 
   }
 }
 
-function solveNumericConstraint(state: SolverState, stub: ConstraintStub & { kind: "numeric" }): void {
+function solveNumericConstraint(
+  state: SolverState,
+  stub: ConstraintStub & { kind: "numeric" },
+): void {
   const intType: Type = { kind: "int" };
   let currentSubst = state.substitution;
   let accumulatedErrors: ErrorRowType | null = null;
 
   for (const operand of stub.operands) {
-    const operandType = applySubstitution(getTypeForNode(state, operand), currentSubst);
+    const operandType = applySubstitution(
+      getTypeForNode(state, operand),
+      currentSubst,
+    );
     const operandInfo = flattenResultType(operandType);
     const operandValue = operandInfo ? operandInfo.value : operandType;
-    
+
     // Skip unknown types - they'll be constrained elsewhere or represent holes
     if (operandValue.kind === "unknown") {
       continue;
     }
-    
+
     const unified = unifyTypes(operandValue, intType, currentSubst);
     if (!unified.success) {
       state.diagnostics.push({
@@ -475,10 +522,12 @@ function solveNumericConstraint(state: SolverState, stub: ConstraintStub & { kin
   // Only check result type for arithmetic operators (+, -, *, /)
   const comparisonOperators = new Set([">", "<", ">=", "<=", "==", "!="]);
   const isComparison = comparisonOperators.has(stub.operator);
-  
+
   if (!isComparison) {
     const resultType = getTypeForNode(state, stub.result);
-    const resultInfo = flattenResultType(applySubstitution(resultType, currentSubst));
+    const resultInfo = flattenResultType(
+      applySubstitution(resultType, currentSubst),
+    );
     let combinedErrors = accumulatedErrors;
     if (resultInfo && resultInfo.error) {
       combinedErrors = combinedErrors
@@ -488,7 +537,11 @@ function solveNumericConstraint(state: SolverState, stub: ConstraintStub & { kin
     const expectedResultType = combinedErrors
       ? makeResultType(intType, combinedErrors)
       : intType;
-    const unifiedResult = unifyTypes(resultType, expectedResultType, currentSubst);
+    const unifiedResult = unifyTypes(
+      resultType,
+      expectedResultType,
+      currentSubst,
+    );
     if (!unifiedResult.success) {
       state.diagnostics.push({
         origin: stub.origin,
@@ -503,13 +556,19 @@ function solveNumericConstraint(state: SolverState, stub: ConstraintStub & { kin
   state.substitution = currentSubst;
 }
 
-function solveBooleanConstraint(state: SolverState, stub: ConstraintStub & { kind: "boolean" }): void {
+function solveBooleanConstraint(
+  state: SolverState,
+  stub: ConstraintStub & { kind: "boolean" },
+): void {
   const boolType: Type = { kind: "bool" };
   let currentSubst = state.substitution;
   let accumulatedErrors: ErrorRowType | null = null;
 
   for (const operand of stub.operands) {
-    const operandType = applySubstitution(getTypeForNode(state, operand), currentSubst);
+    const operandType = applySubstitution(
+      getTypeForNode(state, operand),
+      currentSubst,
+    );
     const operandInfo = flattenResultType(operandType);
     const operandValue = operandInfo ? operandInfo.value : operandType;
     const unified = unifyTypes(operandValue, boolType, currentSubst);
@@ -530,7 +589,9 @@ function solveBooleanConstraint(state: SolverState, stub: ConstraintStub & { kin
   }
 
   const resultType = getTypeForNode(state, stub.result);
-  const resultInfo = flattenResultType(applySubstitution(resultType, currentSubst));
+  const resultInfo = flattenResultType(
+    applySubstitution(resultType, currentSubst),
+  );
   let combinedErrors = accumulatedErrors;
   if (resultInfo && resultInfo.error) {
     combinedErrors = combinedErrors
@@ -540,7 +601,11 @@ function solveBooleanConstraint(state: SolverState, stub: ConstraintStub & { kin
   const expectedResultType = combinedErrors
     ? makeResultType(boolType, combinedErrors)
     : boolType;
-  const unifiedResult = unifyTypes(resultType, expectedResultType, currentSubst);
+  const unifiedResult = unifyTypes(
+    resultType,
+    expectedResultType,
+    currentSubst,
+  );
   if (!unifiedResult.success) {
     state.diagnostics.push({
       origin: stub.origin,
@@ -553,7 +618,10 @@ function solveBooleanConstraint(state: SolverState, stub: ConstraintStub & { kin
   state.substitution = unifiedResult.subst;
 }
 
-function solveBranchJoinConstraint(state: SolverState, stub: ConstraintStub & { kind: "branch_join" }): void {
+function solveBranchJoinConstraint(
+  state: SolverState,
+  stub: ConstraintStub & { kind: "branch_join" },
+): void {
   if (stub.branches.length === 0) {
     return;
   }
@@ -613,12 +681,11 @@ function registerUnifyFailure(
   failure: UnifyFailure,
   extraDetails?: Record<string, unknown>,
 ): void {
-  const reason: ConstraintDiagnosticReason =
-    failure.kind === "occurs_check"
-      ? "occurs_cycle"
-      : failure.kind === "arity_mismatch"
-      ? "arity_mismatch"
-      : "type_mismatch";
+  const reason: ConstraintDiagnosticReason = failure.kind === "occurs_check"
+    ? "occurs_cycle"
+    : failure.kind === "arity_mismatch"
+    ? "arity_mismatch"
+    : "type_mismatch";
   state.diagnostics.push({
     origin,
     reason,
@@ -669,12 +736,19 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
     return unifyTypes(resolvedLeft.to, resolvedRight.to, first.subst);
   }
 
-  if (resolvedLeft.kind === "constructor" && resolvedRight.kind === "constructor") {
-    if (resolvedLeft.name !== resolvedRight.name || resolvedLeft.args.length !== resolvedRight.args.length) {
+  if (
+    resolvedLeft.kind === "constructor" && resolvedRight.kind === "constructor"
+  ) {
+    if (
+      resolvedLeft.name !== resolvedRight.name ||
+      resolvedLeft.args.length !== resolvedRight.args.length
+    ) {
       return {
         success: false,
         reason: {
-          kind: resolvedLeft.name !== resolvedRight.name ? "type_mismatch" : "arity_mismatch",
+          kind: resolvedLeft.name !== resolvedRight.name
+            ? "type_mismatch"
+            : "arity_mismatch",
           left: resolvedLeft,
           right: resolvedRight,
         },
@@ -682,7 +756,11 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
     }
     let current = subst;
     for (let index = 0; index < resolvedLeft.args.length; index += 1) {
-      const result = unifyTypes(resolvedLeft.args[index], resolvedRight.args[index], current);
+      const result = unifyTypes(
+        resolvedLeft.args[index],
+        resolvedRight.args[index],
+        current,
+      );
       if (!result.success) return result;
       current = result.subst;
     }
@@ -693,12 +771,20 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
     if (resolvedLeft.elements.length !== resolvedRight.elements.length) {
       return {
         success: false,
-        reason: { kind: "arity_mismatch", left: resolvedLeft, right: resolvedRight },
+        reason: {
+          kind: "arity_mismatch",
+          left: resolvedLeft,
+          right: resolvedRight,
+        },
       };
     }
     let current = subst;
     for (let index = 0; index < resolvedLeft.elements.length; index += 1) {
-      const result = unifyTypes(resolvedLeft.elements[index], resolvedRight.elements[index], current);
+      const result = unifyTypes(
+        resolvedLeft.elements[index],
+        resolvedRight.elements[index],
+        current,
+      );
       if (!result.success) return result;
       current = result.subst;
     }
@@ -709,7 +795,11 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
     if (resolvedLeft.fields.size !== resolvedRight.fields.size) {
       return {
         success: false,
-        reason: { kind: "arity_mismatch", left: resolvedLeft, right: resolvedRight },
+        reason: {
+          kind: "arity_mismatch",
+          left: resolvedLeft,
+          right: resolvedRight,
+        },
       };
     }
     let current = subst;
@@ -718,7 +808,11 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
       if (!rightType) {
         return {
           success: false,
-          reason: { kind: "type_mismatch", left: resolvedLeft, right: resolvedRight },
+          reason: {
+            kind: "type_mismatch",
+            left: resolvedLeft,
+            right: resolvedRight,
+          },
         };
       }
       const result = unifyTypes(leftType, rightType, current);
@@ -774,7 +868,10 @@ function typesEqual(a: Type, b: Type): boolean {
       return typesEqual(a.from, (b as Type & { kind: "func" }).from) &&
         typesEqual(a.to, (b as Type & { kind: "func" }).to);
     case "constructor": {
-      if (b.kind !== "constructor" || a.name !== b.name || a.args.length !== b.args.length) {
+      if (
+        b.kind !== "constructor" || a.name !== b.name ||
+        a.args.length !== b.args.length
+      ) {
         return false;
       }
       for (let i = 0; i < a.args.length; i++) {
@@ -889,7 +986,10 @@ function remarkProgram(program: MProgram, resolved: Map<NodeId, Type>): void {
   }
 }
 
-function remarkLetDeclaration(decl: MLetDeclaration, resolved: Map<NodeId, Type>): void {
+function remarkLetDeclaration(
+  decl: MLetDeclaration,
+  resolved: Map<NodeId, Type>,
+): void {
   remarkType(decl, resolved);
   for (const param of decl.parameters) {
     remarkParameter(param, resolved);
@@ -902,7 +1002,10 @@ function remarkLetDeclaration(decl: MLetDeclaration, resolved: Map<NodeId, Type>
   }
 }
 
-function remarkParameter(parameter: MParameter, resolved: Map<NodeId, Type>): void {
+function remarkParameter(
+  parameter: MParameter,
+  resolved: Map<NodeId, Type>,
+): void {
   remarkType(parameter, resolved);
   remarkPattern(parameter.pattern, resolved);
   if (parameter.annotation) {
@@ -920,7 +1023,10 @@ function remarkBlockExpr(block: MBlockExpr, resolved: Map<NodeId, Type>): void {
   }
 }
 
-function remarkBlockStatement(statement: MBlockStatement, resolved: Map<NodeId, Type>): void {
+function remarkBlockStatement(
+  statement: MBlockStatement,
+  resolved: Map<NodeId, Type>,
+): void {
   if (statement.kind === "let_statement") {
     remarkLetDeclaration(statement.declaration, resolved);
   } else if (statement.kind === "expr_statement") {
@@ -1010,7 +1116,10 @@ function remarkPattern(pattern: MPattern, resolved: Map<NodeId, Type>): void {
   }
 }
 
-function remarkMatchBundle(bundle: MMatchBundle, resolved: Map<NodeId, Type>): void {
+function remarkMatchBundle(
+  bundle: MMatchBundle,
+  resolved: Map<NodeId, Type>,
+): void {
   remarkType(bundle, resolved);
   bundle.arms.forEach((arm) => remarkMatchArm(arm, resolved));
 }
@@ -1024,7 +1133,10 @@ function remarkMatchArm(arm: MMatchArm, resolved: Map<NodeId, Type>): void {
   remarkExpr(arm.body, resolved);
 }
 
-function remarkType(node: { id: NodeId; type: Type }, resolved: Map<NodeId, Type>): void {
+function remarkType(
+  node: { id: NodeId; type: Type },
+  resolved: Map<NodeId, Type>,
+): void {
   const replacement = resolved.get(node.id);
   if (!replacement) {
     return;
@@ -1179,13 +1291,13 @@ function detectConflicts(
   holes: Map<HoleId, UnknownInfo>,
   constraints: ConstraintStub[],
   substitution: Substitution,
-  resolvedTypes: Map<NodeId, Type>
+  resolvedTypes: Map<NodeId, Type>,
 ): ConstraintConflict[] {
   const conflicts: ConstraintConflict[] = [];
-  
+
   // Group constraints by the holes they reference
   const constraintsByHole = new Map<HoleId, ConstraintStub[]>();
-  
+
   for (const constraint of constraints) {
     const referencedHoles = getReferencedHoles(constraint, resolvedTypes);
     for (const holeId of referencedHoles) {
@@ -1195,27 +1307,27 @@ function detectConflicts(
       constraintsByHole.get(holeId)!.push(constraint);
     }
   }
-  
+
   // For each hole, check if its constraints are compatible
   for (const [holeId, holeConstraints] of constraintsByHole.entries()) {
     const info = holes.get(holeId);
     if (!info) continue;
-    
+
     // Extract the types that the hole is constrained to be
     const constrainedTypes: Type[] = [];
-    
+
     for (const constraint of holeConstraints) {
       const types = extractConstrainedTypes(constraint, holeId, resolvedTypes);
       constrainedTypes.push(...types);
     }
-    
+
     // Try to unify all constrained types
     if (constrainedTypes.length > 1) {
       let testSubst = new Map(substitution);
       let firstType = constrainedTypes[0];
       let hasConflict = false;
       const conflictingTypes: Type[] = [firstType];
-      
+
       for (let i = 1; i < constrainedTypes.length; i++) {
         const result = unifyTypes(firstType, constrainedTypes[i], testSubst);
         if (!result.success) {
@@ -1226,7 +1338,7 @@ function detectConflicts(
           firstType = applySubstitution(firstType, testSubst);
         }
       }
-      
+
       if (hasConflict) {
         conflicts.push({
           holeId,
@@ -1238,14 +1350,17 @@ function detectConflicts(
       }
     }
   }
-  
+
   return conflicts;
 }
 
-function getReferencedHoles(constraint: ConstraintStub, resolvedTypes: Map<NodeId, Type>): HoleId[] {
+function getReferencedHoles(
+  constraint: ConstraintStub,
+  resolvedTypes: Map<NodeId, Type>,
+): HoleId[] {
   const holes: HoleId[] = [];
   const seen = new Set<HoleId>();
-  
+
   const checkType = (nodeId: NodeId) => {
     const type = resolvedTypes.get(nodeId);
     if (type?.kind === "unknown") {
@@ -1257,7 +1372,7 @@ function getReferencedHoles(constraint: ConstraintStub, resolvedTypes: Map<NodeI
       }
     }
   };
-  
+
   switch (constraint.kind) {
     case "call":
       checkType(constraint.callee);
@@ -1284,7 +1399,7 @@ function getReferencedHoles(constraint: ConstraintStub, resolvedTypes: Map<NodeI
       constraint.branches.forEach(checkType);
       break;
   }
-  
+
   return holes;
 }
 
@@ -1296,30 +1411,32 @@ function extractHoleIdFromType(type: Type): HoleId | undefined {
   if (type.kind !== "unknown") {
     return undefined;
   }
-  
+
   const prov = type.provenance;
   if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
     return (prov as any).id;
   } else if (prov.kind === "incomplete") {
     return (prov as any).nodeId;
-  } else if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
+  } else if (
+    prov.kind === "error_not_function" || prov.kind === "error_inconsistent"
+  ) {
     // Unwrap error provenance to get the underlying hole
     const innerType = (prov as any).calleeType || (prov as any).actual;
     if (innerType?.kind === "unknown") {
       return extractHoleIdFromType(innerType);
     }
   }
-  
+
   return undefined;
 }
 
 function extractConstrainedTypes(
   constraint: ConstraintStub,
   holeId: HoleId,
-  resolvedTypes: Map<NodeId, Type>
+  resolvedTypes: Map<NodeId, Type>,
 ): Type[] {
   const types: Type[] = [];
-  
+
   const nodeContainsHole = (nodeId: NodeId): boolean => {
     const type = resolvedTypes.get(nodeId);
     if (type?.kind === "unknown") {
@@ -1327,7 +1444,7 @@ function extractConstrainedTypes(
     }
     return false;
   };
-  
+
   switch (constraint.kind) {
     case "call": {
       // If the callee contains the hole, we know it must be a function
@@ -1352,14 +1469,16 @@ function extractConstrainedTypes(
       break;
     }
     case "numeric": {
-      const hasHole = constraint.operands.some(nodeContainsHole) || nodeContainsHole(constraint.result);
+      const hasHole = constraint.operands.some(nodeContainsHole) ||
+        nodeContainsHole(constraint.result);
       if (hasHole) {
         types.push({ kind: "int" });
       }
       break;
     }
     case "boolean": {
-      const hasHole = constraint.operands.some(nodeContainsHole) || nodeContainsHole(constraint.result);
+      const hasHole = constraint.operands.some(nodeContainsHole) ||
+        nodeContainsHole(constraint.result);
       if (hasHole) {
         types.push({ kind: "bool" });
       }
@@ -1377,7 +1496,7 @@ function extractConstrainedTypes(
       break;
     }
   }
-  
+
   return types;
 }
 
@@ -1385,29 +1504,29 @@ function buildPartialSolution(
   holeId: HoleId,
   constraints: ConstraintStub[],
   substitution: Substitution,
-  resolvedTypes: Map<NodeId, Type>
+  resolvedTypes: Map<NodeId, Type>,
 ): PartialType | null {
   const relevantConstraints = constraints.filter((c) => {
     const referenced = getReferencedHoles(c, resolvedTypes);
     return referenced.includes(holeId);
   });
-  
+
   if (relevantConstraints.length === 0) {
     return null;
   }
-  
+
   // Try to extract what we know about this hole
   const possibilities: Type[] = [];
-  
+
   for (const constraint of relevantConstraints) {
     const types = extractConstrainedTypes(constraint, holeId, resolvedTypes);
     possibilities.push(...types);
   }
-  
+
   if (possibilities.length === 0) {
     return null;
   }
-  
+
   // Try to find a common type
   let known: Type | null = null;
   if (possibilities.length === 1) {
@@ -1417,7 +1536,7 @@ function buildPartialSolution(
     let testSubst = new Map(substitution);
     let unified = possibilities[0];
     let canUnify = true;
-    
+
     for (let i = 1; i < possibilities.length; i++) {
       const result = unifyTypes(unified, possibilities[i], testSubst);
       if (!result.success) {
@@ -1427,12 +1546,12 @@ function buildPartialSolution(
       testSubst = result.subst;
       unified = applySubstitution(unified, testSubst);
     }
-    
+
     if (canUnify) {
       known = unified;
     }
   }
-  
+
   return {
     kind: "partial",
     known,

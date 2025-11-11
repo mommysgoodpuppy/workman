@@ -33,7 +33,7 @@ function expectNoDiagnostics(source: string) {
   );
 }
 
-Deno.test("TODO: first-class match bundle discharges AllErrors infection", () => {
+Deno.test("first-class match bundle discharges AllErrors infection", () => {
   const source = `
     type ParseError = Missing | Other;
 
@@ -53,7 +53,7 @@ Deno.test("TODO: first-class match bundle discharges AllErrors infection", () =>
   expectNoDiagnostics(source);
 });
 
-Deno.test("TODO: helper function using AllErrors stops infection", () => {
+Deno.test("helper function using AllErrors stops infection", () => {
   const source = `
     type ParseError = Missing | Other;
 
@@ -79,7 +79,7 @@ Deno.test("TODO: helper function using AllErrors stops infection", () => {
   expectNoDiagnostics(source);
 });
 
-Deno.test("TODO: factory returning AllErrors handler stays infectious-free", () => {
+Deno.test("factory returning AllErrors handler stays infectious-free", () => {
   const source = `
     type ParseError = Missing | Other;
 
