@@ -1,10 +1,17 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { inferProgram, type InferResult } from "../src/layer1/infer.ts";
+import { analyzeProgram } from "../src/pipeline.ts";
 import { lowerTupleParameters } from "../src/lower_tuple_params.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { NodeId, Program } from "../src/ast.ts";
-import { assertEquals, assertFalse, assertObjectMatch, assertExists } from "https://deno.land/std/assert/mod.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertFalse,
+  assertObjectMatch,
+} from "https://deno.land/std/assert/mod.ts";
+import { assert } from "https://deno.land/std/assert/mod.ts";
 import { freshPreludeTypeEnv } from "./test_prelude.ts";
 
 type PreludeContext = ReturnType<typeof freshPreludeTypeEnv>;
@@ -25,7 +32,10 @@ function parseProgramWithPrelude(source: string): {
   return { program, context };
 }
 
-function inferProgramWithPrelude(program: Program, context?: PreludeContext): InferResult {
+function inferProgramWithPrelude(
+  program: Program,
+  context?: PreludeContext,
+): InferResult {
   const ctx = context ?? freshPreludeTypeEnv();
   return inferProgram(program, {
     initialEnv: ctx.initialEnv,
@@ -39,12 +49,21 @@ function inferTypes(source: string) {
   return inferProgramWithPrelude(program, context);
 }
 
+function analyzeSource(source: string) {
+  const { program, context } = parseProgramWithPrelude(source);
+  return analyzeProgram(program, {
+    initialEnv: context.initialEnv,
+    initialAdtEnv: context.initialAdtEnv,
+    registerPrelude: false,
+  });
+}
+
 function collectNodeIds(program: any): NodeId[] {
   const ids: NodeId[] = [];
   const seen = new Set<NodeId>();
 
   function visit(node: any): void {
-    if (node && typeof node === 'object' && 'id' in node) {
+    if (node && typeof node === "object" && "id" in node) {
       if (!seen.has(node.id)) {
         seen.add(node.id);
         ids.push(node.id);
@@ -57,7 +76,7 @@ function collectNodeIds(program: any): NodeId[] {
         const value = node[key];
         if (Array.isArray(value)) {
           value.forEach(visit);
-        } else if (value && typeof value === 'object') {
+        } else if (value && typeof value === "object") {
           visit(value);
         }
       }
@@ -75,7 +94,10 @@ Deno.test("infers polymorphic identity function", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   assertEquals(summaries.length, 1);
   assertEquals(summaries[0], { name: "id", type: "T -> T" });
 });
@@ -91,7 +113,10 @@ Deno.test("infers constructors and ADT match", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const binding = summaries.find((entry) => entry.name === "mapOption");
   if (!binding) {
     throw new Error("expected mapOption binding");
@@ -108,11 +133,12 @@ Deno.test("rejects non-exhaustive match", () => {
       }
     };
   `;
-  const result = inferTypes(source);
-
-  const marks = Array.from(result.marks.values());
-  const nonExhaustiveMark = marks.find((mark) => mark.kind === "mark_unsupported_expr" && mark.exprKind === "match_non_exhaustive");
-  assertExists(nonExhaustiveMark);
+  const analysis = analyzeSource(source);
+  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
+  assert(
+    reasons.includes("non_exhaustive_match"),
+    `expected non_exhaustive_match diagnostic, got ${JSON.stringify(reasons)}`,
+  );
 });
 
 Deno.test("supports annotated let bindings", () => {
@@ -125,7 +151,10 @@ Deno.test("supports annotated let bindings", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const idBinding = summaries.find((entry) => entry.name === "id");
   const threeBinding = summaries.find((entry) => entry.name === "three");
   if (!idBinding || !threeBinding) {
@@ -145,7 +174,10 @@ Deno.test("infers tuple pattern matches", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const binding = summaries.find((entry) => entry.name === "fst");
   if (!binding) {
     throw new Error("expected fst binding");
@@ -160,7 +192,10 @@ Deno.test("infers tuple parameter destructuring", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const swap = summaries.find((entry) => entry.name === "swap");
   if (!swap) {
     throw new Error("expected swap binding");
@@ -175,7 +210,10 @@ Deno.test("infers tuple literal types", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const pair = summaries.find((entry) => entry.name === "pair");
   if (!pair) {
     throw new Error("expected pair binding");
@@ -195,7 +233,10 @@ Deno.test("generalizes tuple-producing functions", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const dup = summaries.find((entry) => entry.name === "dup");
   if (!dup) {
     throw new Error("expected dup binding");
@@ -216,7 +257,10 @@ Deno.test("block let generalization allows multiple instantiations", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const binding = summaries.find((entry) => entry.name === "useId");
   if (!binding) {
     throw new Error("expected useId binding");
@@ -234,7 +278,10 @@ Deno.test("type annotation reuses named variables", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const choose = summaries.find((entry) => entry.name === "choose");
   if (!choose) {
     throw new Error("expected choose binding");
@@ -257,7 +304,10 @@ Deno.test("occurs check triggers on ill-typed recursion", () => {
     throw new Error("expected mark_occurs_check");
   }
   assertEquals(occurs.subject.kind, "identifier");
-  assertEquals(occurs.subject.kind === "identifier" ? occurs.subject.name : undefined, "loop");
+  assertEquals(
+    occurs.subject.kind === "identifier" ? occurs.subject.name : undefined,
+    "loop",
+  );
   assertEquals(occurs.left.kind, "var");
   assertEquals(occurs.right.kind, "func");
 });
@@ -272,7 +322,9 @@ Deno.test("constructor arity mismatch fails", () => {
   const result = inferTypes(source);
 
   const marks = Array.from(result.marks.values());
-  const notFunctionMark = marks.find((mark) => mark.kind === "mark_not_function");
+  const notFunctionMark = marks.find((mark) =>
+    mark.kind === "mark_not_function"
+  );
   assertExists(notFunctionMark);
 });
 
@@ -289,8 +341,11 @@ Deno.test("rejects duplicate pattern bindings", () => {
 
   // Find mark_pattern in the marked program
   function findMarkPattern(node: any): any {
-    if (node && typeof node === 'object') {
-      if (node.kind === 'mark_pattern' && node.data?.issue === 'duplicate_variable') {
+    if (node && typeof node === "object") {
+      if (
+        node.kind === "mark_pattern" &&
+        node.data?.issue === "duplicate_variable"
+      ) {
         return node;
       }
       for (const key in node) {
@@ -321,7 +376,12 @@ Deno.test("rejects annotation mismatches", () => {
     throw new Error("expected mark_inconsistent");
   }
   assertEquals(inconsistent.subject.kind, "identifier");
-  assertEquals(inconsistent.subject.kind === "identifier" ? inconsistent.subject.name : undefined, "x");
+  assertEquals(
+    inconsistent.subject.kind === "identifier"
+      ? inconsistent.subject.name
+      : undefined,
+    "x",
+  );
   assertEquals(inconsistent.expected.kind, "bool");
   assertEquals(inconsistent.actual.kind, "func");
 });
@@ -336,7 +396,10 @@ Deno.test("supports list prelude constructors", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const singleton = summaries.find((entry) => entry.name === "singleton");
   const two = summaries.find((entry) => entry.name === "two");
   if (!singleton || !two) {
@@ -362,7 +425,10 @@ Deno.test("first-class match builds pattern functions", () => {
     };
   `;
   const result = inferTypes(source);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   const convert = summaries.find((entry) => entry.name === "toBoolean");
   const value = summaries.find((entry) => entry.name === "value");
   if (!convert || !value) {
@@ -379,7 +445,9 @@ type Dup = First | First;
   const { program, context } = parseProgramWithPrelude(source);
   const result = inferProgramWithPrelude(program, context);
 
-  const marks = result.markedProgram.declarations.filter((decl) => decl.kind === "mark_type_decl_invalid_member");
+  const marks = result.markedProgram.declarations.filter((decl) =>
+    decl.kind === "mark_type_decl_invalid_member"
+  );
   assertEquals(marks.length, 1);
   const mark = marks[0];
   if (mark.kind !== "mark_type_decl_invalid_member") {
@@ -401,7 +469,9 @@ let bad: Int<Int> = () => {
   const { program, context } = parseProgramWithPrelude(source);
   const result = inferProgramWithPrelude(program, context);
 
-  const letDecl = result.markedProgram.declarations.find((decl) => decl.kind === "let");
+  const letDecl = result.markedProgram.declarations.find((decl) =>
+    decl.kind === "let"
+  );
   assertExists(letDecl);
   if (letDecl?.kind !== "let") {
     throw new Error("expected let declaration");
@@ -423,7 +493,9 @@ type Option = Some;
   const result = inferProgramWithPrelude(program, context);
 
   assertEquals(result.markedProgram.declarations.length, 2);
-  const mark = result.markedProgram.declarations.find((decl) => decl.kind === "mark_type_decl_duplicate");
+  const mark = result.markedProgram.declarations.find((decl) =>
+    decl.kind === "mark_type_decl_duplicate"
+  );
   assertExists(mark);
   if (mark?.kind !== "mark_type_decl_duplicate") {
     throw new Error("expected mark_type_decl_duplicate");
@@ -454,19 +526,30 @@ Deno.test("lowering preserves and allocates node IDs correctly", () => {
 
   // Original IDs should be preserved (may be in different order due to new nodes)
   for (const originalId of idsBefore) {
-    assertEquals(idsAfter.includes(originalId), true, `Original ID ${originalId} should be preserved ${idsAfter}`);
+    assertEquals(
+      idsAfter.includes(originalId),
+      true,
+      `Original ID ${originalId} should be preserved ${idsAfter}`,
+    );
   }
 
   // New IDs should be strictly increasing and greater than existing ones
   const maxOriginalId = Math.max(...idsBefore);
-  const newIds = idsAfter.filter(id => !idsBefore.includes(id));
+  const newIds = idsAfter.filter((id) => !idsBefore.includes(id));
   for (const newId of newIds) {
-    assertEquals(newId > maxOriginalId, true, `New ID ${newId} should be greater than max original ID ${maxOriginalId}`);
+    assertEquals(
+      newId > maxOriginalId,
+      true,
+      `New ID ${newId} should be greater than max original ID ${maxOriginalId}`,
+    );
   }
 
   // Verify the function still has the expected type
   const result = inferProgramWithPrelude(program, context);
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   assertEquals(summaries.length, 1);
   assertEquals(summaries[0], { name: "swap", type: "(T, U) -> (U, T)" });
 });
@@ -483,7 +566,10 @@ Deno.test("inference completes successfully with ID-annotated AST", () => {
   const result = inferProgramWithPrelude(program, context);
 
   // Verify the function has the expected type
-  const summaries = result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
   assertEquals(summaries.length, 1);
   assertEquals(summaries[0], { name: "identity", type: "T -> T" });
 

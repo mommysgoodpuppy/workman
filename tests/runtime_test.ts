@@ -1,10 +1,12 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { inferProgram } from "../src/layer1/infer.ts";
+import { analyzeProgram } from "../src/pipeline.ts";
 import { evaluateProgram } from "../src/eval.ts";
 import type { TypeScheme } from "../src/types.ts";
-import type { RuntimeValue, NativeFunctionValue } from "../src/value.ts";
+import type { NativeFunctionValue, RuntimeValue } from "../src/value.ts";
 import {
+  assert,
   assertEquals,
   assertExists,
 } from "https://deno.land/std/assert/mod.ts";
@@ -33,23 +35,32 @@ function evaluateSource(source: string) {
     ["add", native2("add", (a, b) => a + b)],
     ["sub", native2("sub", (a, b) => a - b)],
     ["mul", native2("mul", (a, b) => a * b)],
-    ["div", native2("div", (a, b) => {
-      if (b === 0) throw new Error("Division by zero");
-      return Math.trunc(a / b);
-    })],
+    [
+      "div",
+      native2("div", (a, b) => {
+        if (b === 0) throw new Error("Division by zero");
+        return Math.trunc(a / b);
+      }),
+    ],
   ]);
 
   inferProgram(program, { initialEnv });
   return evaluateProgram(program, { initialBindings });
 }
 
-function native2(name: string, impl: (a: number, b: number) => number): NativeFunctionValue {
+function native2(
+  name: string,
+  impl: (a: number, b: number) => number,
+): NativeFunctionValue {
   return {
     kind: "native",
     name,
     arity: 2,
     collectedArgs: [],
-    impl: (args) => ({ kind: "int", value: impl(expectInt(args[0]), expectInt(args[1])) }),
+    impl: (args) => ({
+      kind: "int",
+      value: impl(expectInt(args[0]), expectInt(args[1])),
+    }),
   };
 }
 
@@ -91,7 +102,9 @@ Deno.test("supports recursive factorial", () => {
     throw new Error("Expected 'five' binding");
   }
   if (five.value.kind !== "int") {
-    throw new Error(`Expected five to evaluate to an int, received ${five.value.kind}`);
+    throw new Error(
+      `Expected five to evaluate to an int, received ${five.value.kind}`,
+    );
   }
   assertEquals(five.value.value, 120);
 });
@@ -109,7 +122,10 @@ Deno.test("throws on constructor arity mismatch", () => {
   const notFunction = Array.from(result.marks.values()).find((mark) =>
     mark.kind === "mark_not_function"
   );
-  assertExists(notFunction, "expected mark_not_function for constructor arity mismatch");
+  assertExists(
+    notFunction,
+    "expected mark_not_function for constructor arity mismatch",
+  );
 });
 
 Deno.test("throws on non-exhaustive runtime match", () => {
@@ -120,11 +136,12 @@ Deno.test("throws on non-exhaustive runtime match", () => {
   `;
   const tokens = lex(source);
   const program = parseSurfaceProgram(tokens);
-  const result = inferProgram(program);
-  const nonExhaustive = Array.from(result.marks.values()).find((mark) =>
-    mark.kind === "mark_unsupported_expr" && mark.exprKind === "match_non_exhaustive"
+  const analysis = analyzeProgram(program);
+  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
+  assert(
+    reasons.includes("non_exhaustive_match"),
+    `expected non_exhaustive_match diagnostic, got ${JSON.stringify(reasons)}`,
   );
-  assertExists(nonExhaustive, "expected non-exhaustive match mark");
 });
 
 Deno.test("evaluates tuple parameter destructuring", () => {

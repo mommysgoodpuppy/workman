@@ -1,6 +1,7 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { inferProgram } from "../src/layer1/infer.ts";
+import { analyzeProgram } from "../src/pipeline.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import {
   assert,
@@ -34,13 +35,18 @@ function inferTypes(source: string) {
     initialPrefixOperators,
   );
   const result = inferProgramWithPrelude(program);
-  return result.summaries.map(({ name, scheme }) => ({ name, type: formatScheme(scheme) }));
+  return result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
 }
 
 function inferModule(source: string) {
   const {
     initialOperators,
     initialPrefixOperators,
+    initialEnv,
+    initialAdtEnv,
   } = freshPreludeTypeEnv();
   const tokens = lex(source);
   const program = parseSurfaceProgram(
@@ -51,7 +57,12 @@ function inferModule(source: string) {
     initialPrefixOperators,
   );
   const result = inferProgramWithPrelude(program);
-  return { program, result };
+  const analysis = analyzeProgram(program, {
+    initialEnv,
+    initialAdtEnv,
+    registerPrelude: false,
+  });
+  return { program, result, analysis };
 }
 
 // ============================================================================
@@ -75,7 +86,7 @@ Deno.test("first-class match desugars correctly", () => {
   const summaries = inferTypes(source);
   const old = summaries.find((s) => s.name === "extractOld");
   const newSyntax = summaries.find((s) => s.name === "extractNew");
-  
+
   assertEquals(old?.type, "Option<Int> -> Int");
   assertEquals(newSyntax?.type, "Option<Int> -> Int");
   // Both should have identical types
@@ -154,7 +165,7 @@ Deno.test("multiple ADTs in same program", () => {
   const summaries = inferTypes(source);
   const opt = summaries.find((s) => s.name === "optToResult");
   const res = summaries.find((s) => s.name === "resultToEither");
-  
+
   assertEquals(opt?.type, "Option<T> -> Result<T, Int>");
   // Type variable ordering may vary
   assertEquals(res?.type.includes("Result"), true);
@@ -179,9 +190,18 @@ Deno.test("wildcard in various positions", () => {
     };
   `;
   const summaries = inferTypes(source);
-  assertEquals(summaries.find((s) => s.name === "first")?.type, "Triple<T, U, V> -> T");
-  assertEquals(summaries.find((s) => s.name === "second")?.type, "Triple<T, U, V> -> U");
-  assertEquals(summaries.find((s) => s.name === "third")?.type, "Triple<T, U, V> -> V");
+  assertEquals(
+    summaries.find((s) => s.name === "first")?.type,
+    "Triple<T, U, V> -> T",
+  );
+  assertEquals(
+    summaries.find((s) => s.name === "second")?.type,
+    "Triple<T, U, V> -> U",
+  );
+  assertEquals(
+    summaries.find((s) => s.name === "third")?.type,
+    "Triple<T, U, V> -> V",
+  );
 });
 
 // ============================================================================
@@ -220,7 +240,10 @@ Deno.test("mixed literal and constructor patterns", () => {
     };
   `;
   const summaries = inferTypes(source);
-  assertEquals(summaries.find((s) => s.name === "describe")?.type, "Option<Int> -> Bool");
+  assertEquals(
+    summaries.find((s) => s.name === "describe")?.type,
+    "Option<Int> -> Bool",
+  );
 });
 
 // ============================================================================
@@ -238,7 +261,10 @@ Deno.test("rejects undefined constructor", () => {
   const mark = Array.from(result.marks.values()).find((entry) =>
     entry.kind === "mark_free_var" && entry.name === "v"
   );
-  assertExists(mark, "expected mark_free_var for unbound pattern variable from undefined constructor");
+  assertExists(
+    mark,
+    "expected mark_free_var for unbound pattern variable from undefined constructor",
+  );
 });
 
 Deno.test("rejects undefined variable", () => {
@@ -282,7 +308,10 @@ Deno.test("rejects type annotation mismatch with clear error", () => {
   const inconsistent = Array.from(result.marks.values()).find((entry) =>
     entry.kind === "mark_inconsistent"
   );
-  assertExists(inconsistent, "expected mark_inconsistent for annotation mismatch");
+  assertExists(
+    inconsistent,
+    "expected mark_inconsistent for annotation mismatch",
+  );
 });
 
 // ============================================================================
@@ -389,12 +418,12 @@ Deno.test("non-exhaustive match on polymorphic input is rejected", () => {
       }
     };
   `;
-  const { result } = inferModule(source);
-  const nonExhaustive = Array.from(result.marks.values()).find((entry) =>
-    entry.kind === "mark_unsupported_expr" &&
-    entry.exprKind === "match_non_exhaustive"
+  const { analysis } = inferModule(source);
+  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
+  assert(
+    reasons.includes("non_exhaustive_match"),
+    `expected non_exhaustive_match diagnostic, got ${JSON.stringify(reasons)}`,
   );
-  assertExists(nonExhaustive, "expected non-exhaustive match mark");
 });
 
 Deno.test("constructor partially applied triggers error", () => {
@@ -408,7 +437,10 @@ Deno.test("constructor partially applied triggers error", () => {
   const notFunction = Array.from(result.marks.values()).find((entry) =>
     entry.kind === "mark_not_function"
   );
-  assertExists(notFunction, "expected mark_not_function for partial constructor application");
+  assertExists(
+    notFunction,
+    "expected mark_not_function for partial constructor application",
+  );
 });
 
 Deno.test("occurs check failure surfaces error", () => {

@@ -1,16 +1,23 @@
 import type { NodeId } from "../src/ast.ts";
 import type { MLetDeclaration, MProgram } from "../src/ast_marked.ts";
 import {
-  solveConstraints,
   type ConstraintDiagnosticReason,
+  solveConstraints,
   type SolveInput,
 } from "../src/layer2/mod.ts";
 import type { Type } from "../src/types.ts";
-import type { ConstraintStub, UnknownInfo, HoleId } from "../src/layer1/context.ts";
+import type {
+  ConstraintStub,
+  HoleId,
+  UnknownInfo,
+} from "../src/layer1/context.ts";
 import { analyzeProgram } from "../src/pipeline.ts";
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { assert, assertStrictEquals } from "https://deno.land/std/assert/mod.ts";
+import {
+  assert,
+  assertStrictEquals,
+} from "https://deno.land/std/assert/mod.ts";
 import { freshPreludeTypeEnv } from "./test_prelude.ts";
 
 const EMPTY_PROGRAM: MProgram = {
@@ -29,11 +36,16 @@ function mkUnknownInfo(id: HoleId): UnknownInfo {
   };
 }
 
-function collectReasons(reasons: ConstraintDiagnosticReason[], expected: ConstraintDiagnosticReason): void {
+function collectReasons(
+  reasons: ConstraintDiagnosticReason[],
+  expected: ConstraintDiagnosticReason,
+): void {
   assertStrictEquals(
     reasons.includes(expected),
     true,
-    `expected diagnostics to include ${expected}, got ${JSON.stringify(reasons)}`,
+    `expected diagnostics to include ${expected}, got ${
+      JSON.stringify(reasons)
+    }`,
   );
 }
 
@@ -59,7 +71,10 @@ function analyzeSource(source: string) {
   });
 }
 
-function findLetDeclaration(program: MProgram, name: string): MLetDeclaration | undefined {
+function findLetDeclaration(
+  program: MProgram,
+  name: string,
+): MLetDeclaration | undefined {
   for (const decl of program.declarations) {
     if (decl.kind === "let" && decl.name === name) {
       return decl;
@@ -92,6 +107,7 @@ Deno.test("solver surfaces not_function diagnostic when call callee is non-funct
     holes: new Map(),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
 
   const result = solveConstraints(input);
@@ -120,6 +136,7 @@ Deno.test("solver detects branch mismatch diagnostics", () => {
     holes: new Map(),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
 
   const result = solveConstraints(input);
@@ -150,8 +167,8 @@ Deno.test("solver resolves unknown hole via annotation constraint", () => {
     holes,
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   const holeSolution = result.solutions.get(holeId);
   assertStrictEquals(holeSolution?.state, "solved");
@@ -216,7 +233,10 @@ Deno.test("solver surfaces missing_field diagnostic when record lacks requested 
   const nodeTypeById = new Map<NodeId, Type>([
     [
       targetId,
-      { kind: "record", fields: new Map<string, Type>([["foo", { kind: "int" }]]) },
+      {
+        kind: "record",
+        fields: new Map<string, Type>([["foo", { kind: "int" }]]),
+      },
     ],
     [resultId, { kind: "int" }],
   ]);
@@ -227,8 +247,8 @@ Deno.test("solver surfaces missing_field diagnostic when record lacks requested 
     holes: new Map(),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   const reasons = result.diagnostics.map((diag) => diag.reason);
   collectReasons(reasons, "missing_field");
@@ -257,8 +277,8 @@ Deno.test("solver surfaces not_record diagnostic when projecting field from non-
     holes: new Map(),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   const reasons = result.diagnostics.map((diag) => diag.reason);
   collectReasons(reasons, "not_record");
@@ -295,8 +315,8 @@ Deno.test("solver surfaces occurs_cycle diagnostic for recursive annotation", ()
     holes: new Map(),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   const reasons = result.diagnostics.map((diag) => diag.reason);
   collectReasons(reasons, "occurs_cycle");
@@ -325,8 +345,8 @@ Deno.test("solver surfaces type_mismatch diagnostic when annotation disagrees wi
     holes: new Map(),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   const reasons = result.diagnostics.map((diag) => diag.reason);
   collectReasons(reasons, "type_mismatch");
@@ -369,8 +389,8 @@ Deno.test("solver surfaces arity_mismatch diagnostic when constructor arity conf
     holes: new Map(),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   const reasons = result.diagnostics.map((diag) => diag.reason);
   collectReasons(reasons, "arity_mismatch");
@@ -401,8 +421,8 @@ Deno.test("solver surfaces not_numeric diagnostic when numeric operands are non-
     holes: new Map(),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   const reasons = result.diagnostics.map((diag) => diag.reason);
   collectReasons(reasons, "not_numeric");
@@ -442,7 +462,9 @@ Deno.test("analyzeProgram does not report numeric/boolean errors for equality ch
   assertStrictEquals(
     analysis.layer2.diagnostics.length,
     0,
-    `expected no diagnostics, got ${JSON.stringify(analysis.layer2.diagnostics)}`,
+    `expected no diagnostics, got ${
+      JSON.stringify(analysis.layer2.diagnostics)
+    }`,
   );
 });
 
@@ -465,7 +487,10 @@ Deno.test("solver detects conflicts when unknown has incompatible constraints", 
     },
   ];
   const nodeTypeById: Map<NodeId, Type> = new Map([
-    [holeId, { kind: "unknown", provenance: { kind: "expr_hole", id: holeId } }],
+    [holeId, {
+      kind: "unknown",
+      provenance: { kind: "expr_hole", id: holeId },
+    }],
     [2, { kind: "int" }],
     [4, { kind: "bool" }],
   ]);
@@ -476,8 +501,8 @@ Deno.test("solver detects conflicts when unknown has incompatible constraints", 
     holes: new Map([[holeId, mkUnknownInfo(holeId)]]),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   assertStrictEquals(result.conflicts.length, 1, "expected one conflict");
   assertStrictEquals(result.conflicts[0].holeId, holeId);
@@ -497,7 +522,10 @@ Deno.test("solver builds partial solution when constraints are compatible", () =
     },
   ];
   const nodeTypeById: Map<NodeId, Type> = new Map([
-    [holeId, { kind: "unknown", provenance: { kind: "expr_hole", id: holeId } }],
+    [holeId, {
+      kind: "unknown",
+      provenance: { kind: "expr_hole", id: holeId },
+    }],
     [3, { kind: "int" }],
     [4, { kind: "int" }],
   ]);
@@ -508,8 +536,8 @@ Deno.test("solver builds partial solution when constraints are compatible", () =
     holes: new Map([[holeId, mkUnknownInfo(holeId)]]),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   const solution = result.solutions.get(holeId);
   assert(solution, "expected solution for hole");
@@ -537,7 +565,10 @@ Deno.test("solver marks hole as conflicted when solution state is conflicted", (
     },
   ];
   const nodeTypeById: Map<NodeId, Type> = new Map([
-    [holeId, { kind: "unknown", provenance: { kind: "expr_hole", id: holeId } }],
+    [holeId, {
+      kind: "unknown",
+      provenance: { kind: "expr_hole", id: holeId },
+    }],
     [2, { kind: "int" }],
     [3, { kind: "int" }],
     [5, { kind: "bool" }],
@@ -550,11 +581,14 @@ Deno.test("solver marks hole as conflicted when solution state is conflicted", (
     holes: new Map([[holeId, mkUnknownInfo(holeId)]]),
     nodeTypeById,
     layer1Diagnostics: [],
+    summaries: [],
   };
-
   const result = solveConstraints(input);
   const solution = result.solutions.get(holeId);
   assert(solution, "expected solution for hole");
   assertStrictEquals(solution.state, "conflicted", "expected conflicted state");
-  assert(solution.conflicts && solution.conflicts.length > 0, "expected conflicts");
+  assert(
+    solution.conflicts && solution.conflicts.length > 0,
+    "expected conflicts",
+  );
 });

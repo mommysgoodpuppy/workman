@@ -38,6 +38,7 @@ Deno.test("solver flags infectious calls that lose Result rows", () => {
   `);
 
   const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
+  console.log("Emitted diagnostics:", reasons);
   assertArrayIncludes(reasons, ["infectious_call_result_mismatch"]);
 });
 
