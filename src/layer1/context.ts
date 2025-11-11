@@ -52,7 +52,10 @@ import {
   unknownType,
 } from "../types.ts";
 import { InferError } from "../error.ts";
-import type { ConstraintDiagnostic, ConstraintDiagnosticReason } from "../diagnostics.ts";
+import type {
+  ConstraintDiagnostic,
+  ConstraintDiagnosticReason,
+} from "../diagnostics.ts";
 
 export interface Context {
   env: TypeEnv;
@@ -155,54 +158,54 @@ export interface ErrorRowCoverageStub {
 
 export type ConstraintStub =
   | {
-      kind: "call";
-      origin: NodeId;
-      callee: NodeId;
-      argument: NodeId;
-      result: NodeId;
-      resultType: Type;
-      index: number;
-      argumentValueType?: Type;
-      argumentErrorRow?: ErrorRowType;
-    }
+    kind: "call";
+    origin: NodeId;
+    callee: NodeId;
+    argument: NodeId;
+    result: NodeId;
+    resultType: Type;
+    index: number;
+    argumentValueType?: Type;
+    argumentErrorRow?: ErrorRowType;
+  }
   | {
-      kind: "branch_join";
-      origin: NodeId;
-      scrutinee: NodeId | null;
-      branches: NodeId[];
-      dischargesResult?: boolean;
-      errorRowCoverage?: ErrorRowCoverageStub;
-    }
+    kind: "branch_join";
+    origin: NodeId;
+    scrutinee: NodeId | null;
+    branches: NodeId[];
+    dischargesResult?: boolean;
+    errorRowCoverage?: ErrorRowCoverageStub;
+  }
   | {
-      kind: "annotation";
-      origin: NodeId;
-      annotation: NodeId;
-      annotationType?: Type;
-      value: NodeId;
-      subject: NodeId | null;
-    }
+    kind: "annotation";
+    origin: NodeId;
+    annotation: NodeId;
+    annotationType?: Type;
+    value: NodeId;
+    subject: NodeId | null;
+  }
   | {
-      kind: "has_field";
-      origin: NodeId;
-      target: NodeId;
-      field: string;
-      result: NodeId;
-      projectedValueType?: Type;
-    }
+    kind: "has_field";
+    origin: NodeId;
+    target: NodeId;
+    field: string;
+    result: NodeId;
+    projectedValueType?: Type;
+  }
   | {
-      kind: "numeric";
-      origin: NodeId;
-      operator: string;
-      operands: NodeId[];
-      result: NodeId;
-    }
+    kind: "numeric";
+    origin: NodeId;
+    operator: string;
+    operands: NodeId[];
+    result: NodeId;
+  }
   | {
-      kind: "boolean";
-      origin: NodeId;
-      operator: string;
-      operands: NodeId[];
-      result: NodeId;
-    };
+    kind: "boolean";
+    origin: NodeId;
+    operator: string;
+    operands: NodeId[];
+    result: NodeId;
+  };
 
 export function recordCallConstraint(
   ctx: Context,
@@ -224,7 +227,9 @@ export function recordCallConstraint(
     resultType,
     index,
     argumentValueType: cloneType(argumentValueType),
-    argumentErrorRow: argumentErrorRow ? cloneType(argumentErrorRow) as ErrorRowType : undefined,
+    argumentErrorRow: argumentErrorRow
+      ? cloneType(argumentErrorRow) as ErrorRowType
+      : undefined,
   });
 }
 
@@ -502,7 +507,7 @@ export function expectFunctionType(
   description: string,
 ): ExpectFunctionResult {
   const resolved = applyCurrentSubst(ctx, type);
-  
+
   // Gradual typing: unknown types can be functions
   // Create fresh unknowns for parameter and return types
   if (resolved.kind === "unknown") {
@@ -510,7 +515,7 @@ export function expectFunctionType(
     const toType = createFreshUnknown(ctx);
     return { success: true, from: fromType, to: toType };
   }
-  
+
   if (resolved.kind !== "func") {
     return { success: false, type: resolved };
   }
@@ -580,11 +585,13 @@ export function markNotFunction(
   calleeType: Type,
 ): MMarkNotFunction {
   const origin = holeOriginFromExpr(expr);
-  
+
   // If the callee is already an incomplete unknown (e.g., JS import),
   // preserve that provenance instead of wrapping it in error_not_function
   let resultType: Type;
-  if (calleeType.kind === "unknown" && calleeType.provenance.kind === "incomplete") {
+  if (
+    calleeType.kind === "unknown" && calleeType.provenance.kind === "incomplete"
+  ) {
     const provenance = { ...calleeType.provenance } as Record<string, unknown>;
     delete provenance.nodeId;
     resultType = createUnknownAndRegister(
@@ -600,7 +607,7 @@ export function markNotFunction(
       calleeType,
     });
   }
-  
+
   const mark: MMarkNotFunction = {
     kind: "mark_not_function",
     span: expr.span,
@@ -611,16 +618,18 @@ export function markNotFunction(
     calleeType,
   };
   ctx.marks.set(expr, mark);
-  
+
   // Only record a diagnostic if it's actually an error (not just incomplete type info)
   // For unknowns (JS imports, explicit holes), this is expected gradual typing behavior
-  if (!(calleeType.kind === "unknown" && 
-        (calleeType.provenance.kind === "incomplete" || 
-         calleeType.provenance.kind === "expr_hole" ||
-         calleeType.provenance.kind === "user_hole"))) {
+  if (
+    !(calleeType.kind === "unknown" &&
+      (calleeType.provenance.kind === "incomplete" ||
+        calleeType.provenance.kind === "expr_hole" ||
+        calleeType.provenance.kind === "user_hole"))
+  ) {
     recordLayer1Diagnostic(ctx, expr.id, "not_function", { calleeType });
   }
-  
+
   return mark;
 }
 
@@ -648,7 +657,10 @@ export function markOccursCheck(
     right: resolvedRight,
   };
   ctx.marks.set(expr, mark);
-  recordLayer1Diagnostic(ctx, expr.id, "occurs_cycle", { left: resolvedLeft, right: resolvedRight });
+  recordLayer1Diagnostic(ctx, expr.id, "occurs_cycle", {
+    left: resolvedLeft,
+    right: resolvedRight,
+  });
   return mark;
 }
 
@@ -674,23 +686,22 @@ export function markInconsistent(
     actual,
   };
   ctx.marks.set(expr, mark);
-  
+
   // Only record diagnostic if this is a real type error, not gradual typing
   // Unknowns (holes, JS imports) are allowed to mismatch - Layer 2 will handle conflicts
-  const isGradualTyping = 
-    (expected.kind === "unknown" && 
-     (expected.provenance.kind === "incomplete" || 
+  const isGradualTyping = (expected.kind === "unknown" &&
+    (expected.provenance.kind === "incomplete" ||
       expected.provenance.kind === "expr_hole" ||
       expected.provenance.kind === "user_hole")) ||
-    (actual.kind === "unknown" && 
-     (actual.provenance.kind === "incomplete" || 
-      actual.provenance.kind === "expr_hole" ||
-      actual.provenance.kind === "user_hole"));
-  
+    (actual.kind === "unknown" &&
+      (actual.provenance.kind === "incomplete" ||
+        actual.provenance.kind === "expr_hole" ||
+        actual.provenance.kind === "user_hole"));
+
   if (!isGradualTyping) {
     recordLayer1Diagnostic(ctx, expr.id, "type_mismatch", { expected, actual });
   }
-  
+
   return mark;
 }
 
@@ -819,6 +830,7 @@ export function markNonExhaustive(
   expr: Expr,
   scrutineeSpan: SourceSpan,
   missingCases: string[],
+  scrutineeType?: Type,
 ): MMarkUnsupportedExpr {
   const origin = holeOriginFromExpr(expr);
   const mark: MMarkUnsupportedExpr = {
@@ -831,10 +843,13 @@ export function markNonExhaustive(
     }, "incomplete"),
     exprKind: "match_non_exhaustive",
   };
-  ctx.marks.set(expr, mark);
+  // Don't replace the match expression with a mark - just record the diagnostic
+  // This allows the match to continue through the pipeline and be compiled
+  // ctx.marks.set(expr, mark);
   recordLayer1Diagnostic(ctx, expr.id, "non_exhaustive_match", {
     missingCases,
     scrutineeSpan,
+    scrutineeType,
   });
   return mark;
 }

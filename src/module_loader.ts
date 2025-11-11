@@ -1,18 +1,22 @@
 import { dirname, extname, isAbsolute, join, resolve } from "std/path/mod.ts";
 import { lex } from "./lexer.ts";
-import { parseSurfaceProgram, ParseError, type OperatorInfo } from "./parser.ts";
-import { ModuleError, LexError } from "./error.ts";
+import {
+  type OperatorInfo,
+  ParseError,
+  parseSurfaceProgram,
+} from "./parser.ts";
+import { LexError, ModuleError } from "./error.ts";
 import type {
   ImportSpecifier,
+  LetDeclaration,
   ModuleImport,
   ModuleReexport,
   Program,
   SourceSpan,
-  LetDeclaration,
 } from "./ast.ts";
 import type { TypeInfo, TypeScheme } from "./types.ts";
 import { cloneTypeInfo, cloneTypeScheme, unknownType } from "./types.ts";
-import { inferProgram, InferError } from "./layer1/infer.ts";
+import { InferError, inferProgram } from "./layer1/infer.ts";
 import { evaluateProgram } from "./eval.ts";
 import type { RuntimeValue } from "./value.ts";
 import { lookupValue } from "./value.ts";
@@ -23,6 +27,8 @@ export interface ModuleLoaderOptions {
   stdRoots?: string[];
   preludeModule?: string;
   skipEvaluation?: boolean;
+  /** Map of absolute file paths to their in-memory content (for LSP) */
+  sourceOverrides?: Map<string, string>;
 }
 
 export interface ModuleGraph {
@@ -120,20 +126,27 @@ function isStdCoreModule(path: string): boolean {
   if (normalized.includes("/std/core/")) {
     return true;
   }
-  return normalized.endsWith("/std/list/core.wm")
-    || normalized.endsWith("/std/option/core.wm")
-    || normalized.endsWith("/std/result/core.wm");
+  return normalized.endsWith("/std/list/core.wm") ||
+    normalized.endsWith("/std/option/core.wm") ||
+    normalized.endsWith("/std/result/core.wm");
 }
 
-export async function loadModuleGraph(entryPath: string, options: ModuleLoaderOptions = {}): Promise<ModuleGraph> {
+export async function loadModuleGraph(
+  entryPath: string,
+  options: ModuleLoaderOptions = {},
+): Promise<ModuleGraph> {
   const normalizedEntry = resolveEntryPath(entryPath);
   const normalizedOptions = normalizeOptions(options);
-  
+
   let preludePath: string | undefined;
   if (normalizedOptions.preludeModule) {
-    preludePath = resolveModuleSpecifier(normalizedEntry, normalizedOptions.preludeModule, normalizedOptions);
+    preludePath = resolveModuleSpecifier(
+      normalizedEntry,
+      normalizedOptions.preludeModule,
+      normalizedOptions,
+    );
   }
-  
+
   const ctx: LoaderContext = {
     options: normalizedOptions,
     programCache: new Map(),
@@ -172,7 +185,9 @@ function applyReexports(
       );
     }
     if (exportedTypes.has(typeExport.name)) {
-      throw moduleError(`Duplicate export '${typeExport.name}' in '${record.importerPath}'`);
+      throw moduleError(
+        `Duplicate export '${typeExport.name}' in '${record.importerPath}'`,
+      );
     }
     const clonedInfo = cloneTypeInfo(providedType);
     exportedTypes.set(typeExport.name, clonedInfo);
@@ -185,7 +200,9 @@ function applyReexports(
           );
         }
         if (exportedValues.has(ctor.name)) {
-          throw moduleError(`Duplicate export '${ctor.name}' in '${record.importerPath}'`);
+          throw moduleError(
+            `Duplicate export '${ctor.name}' in '${record.importerPath}'`,
+          );
         }
         exportedValues.set(ctor.name, cloneTypeScheme(providedScheme));
         if (exportedRuntime) {
@@ -202,7 +219,10 @@ function applyReexports(
   }
 }
 
-export async function runEntryPath(entryPath: string, options: ModuleLoaderOptions = {}): Promise<{
+export async function runEntryPath(
+  entryPath: string,
+  options: ModuleLoaderOptions = {},
+): Promise<{
   types: { name: string; type: string }[];
   values: { name: string; value: string }[];
   runtimeLogs: string[];
@@ -212,12 +232,16 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
   const entryNode = graph.nodes.get(graph.entry);
   const entrySummary = moduleSummaries.get(graph.entry);
   if (!entryNode || !entrySummary) {
-    throw moduleError(`Internal error: failed to load entry module '${graph.entry}'`);
+    throw moduleError(
+      `Internal error: failed to load entry module '${graph.entry}'`,
+    );
   }
   const types = entrySummary.letSchemeOrder.map((name) => {
     const scheme = entrySummary.letSchemes.get(name);
     if (!scheme) {
-      throw moduleError(`Missing type information for '${name}' in '${graph.entry}'`);
+      throw moduleError(
+        `Missing type information for '${name}' in '${graph.entry}'`,
+      );
     }
     return { name, type: formatScheme(scheme) };
   });
@@ -225,7 +249,9 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
   const values = entrySummary.letValueOrder.map((name) => {
     const value = entrySummary.letRuntime.get(name);
     if (!value) {
-      throw moduleError(`Missing runtime value for '${name}' in '${graph.entry}'`);
+      throw moduleError(
+        `Missing runtime value for '${name}' in '${graph.entry}'`,
+      );
     }
     return { name, value: formatRuntimeValue(value) };
   });
@@ -233,7 +259,10 @@ export async function runEntryPath(entryPath: string, options: ModuleLoaderOptio
   return { types, values, runtimeLogs };
 }
 
-export async function loadModuleSummaries(entryPath: string, options: ModuleLoaderOptions = {}): Promise<{
+export async function loadModuleSummaries(
+  entryPath: string,
+  options: ModuleLoaderOptions = {},
+): Promise<{
   graph: ModuleGraph;
   summaries: Map<string, ModuleSummary>;
 }> {
@@ -242,14 +271,18 @@ export async function loadModuleSummaries(entryPath: string, options: ModuleLoad
   return { graph, summaries: moduleSummaries };
 }
 
-export async function loadPreludeEnvironment(options: ModuleLoaderOptions = {}): Promise<{
+export async function loadPreludeEnvironment(
+  options: ModuleLoaderOptions = {},
+): Promise<{
   env: Map<string, TypeScheme>;
   adtEnv: Map<string, TypeInfo>;
   operators: Map<string, OperatorInfo>;
   prefixOperators: Set<string>;
 }> {
   const normalizedOptions = normalizeOptions(options);
-  const preludePath = resolveEntryPath(normalizedOptions.preludeModule ?? "std/prelude");
+  const preludePath = resolveEntryPath(
+    normalizedOptions.preludeModule ?? "std/prelude",
+  );
   const { graph, summaries } = await loadModuleSummaries(preludePath, {
     ...normalizedOptions,
     preludeModule: normalizedOptions.preludeModule,
@@ -309,18 +342,23 @@ async function summarizeGraph(
       throw moduleError(`Internal error: missing node for '${path}'`);
     }
 
-     const hasJsImports = node.imports.some((record) => record.kind === "js");
-     if (hasJsImports && !skipEvaluation) {
-       throw moduleError(
-         `Module '${path}' imports a JavaScript module ('${node.imports.find((record) => record.kind === "js")?.rawSource ?? "unknown"}'). ` +
-           "Run through the compiler pipeline (e.g., 'wm compile') to enable JS interop.",
-         path,
-       );
-     }
+    const hasJsImports = node.imports.some((record) => record.kind === "js");
+    if (hasJsImports && !skipEvaluation) {
+      throw moduleError(
+        `Module '${path}' imports a JavaScript module ('${
+          node.imports.find((record) => record.kind === "js")?.rawSource ??
+            "unknown"
+        }'). ` +
+          "Run through the compiler pipeline (e.g., 'wm compile') to enable JS interop.",
+        path,
+      );
+    }
 
     const initialEnv = new Map<string, TypeScheme>();
     const initialAdtEnv = new Map<string, TypeInfo>();
-    const initialBindings = skipEvaluation ? undefined : new Map<string, RuntimeValue>();
+    const initialBindings = skipEvaluation
+      ? undefined
+      : new Map<string, RuntimeValue>();
     const skipPrelude = isStdCoreModule(path);
 
     for (const record of node.imports) {
@@ -330,9 +368,17 @@ async function summarizeGraph(
       }
       const provider = moduleSummaries.get(record.sourcePath);
       if (!provider) {
-        throw moduleError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
+        throw moduleError(
+          `Module '${path}' depends on '${record.sourcePath}' which failed to load`,
+        );
       }
-      applyImports(record, provider, initialEnv, initialAdtEnv, initialBindings);
+      applyImports(
+        record,
+        provider,
+        initialEnv,
+        initialAdtEnv,
+        initialBindings,
+      );
     }
 
     if (preludeSummary && path !== preludePath && !skipPrelude) {
@@ -353,14 +399,16 @@ async function summarizeGraph(
           }
         }
       }
-      
+
       // Register operator implementation functions
       const preludeNode = graph.nodes.get(preludePath!);
       if (preludeNode) {
         for (const decl of preludeNode.program.declarations) {
           if (decl.kind === "infix") {
             const opFuncName = `__op_${decl.operator}`;
-            const implScheme = preludeSummary.exports.values.get(decl.implementation);
+            const implScheme = preludeSummary.exports.values.get(
+              decl.implementation,
+            );
             if (implScheme && !initialEnv.has(opFuncName)) {
               initialEnv.set(opFuncName, cloneTypeScheme(implScheme));
             }
@@ -373,7 +421,9 @@ async function summarizeGraph(
           }
           if (decl.kind === "prefix") {
             const opFuncName = `__prefix_${decl.operator}`;
-            const implScheme = preludeSummary.exports.values.get(decl.implementation);
+            const implScheme = preludeSummary.exports.values.get(
+              decl.implementation,
+            );
             if (implScheme && !initialEnv.has(opFuncName)) {
               initialEnv.set(opFuncName, cloneTypeScheme(implScheme));
             }
@@ -410,7 +460,9 @@ async function summarizeGraph(
     const letSchemeOrder: string[] = [];
     for (const { name, scheme } of inference.summaries) {
       if (letSchemes.has(name)) {
-        throw moduleError(`Duplicate let binding '${name}' inferred in '${path}'`);
+        throw moduleError(
+          `Duplicate let binding '${name}' inferred in '${path}'`,
+        );
       }
       letSchemes.set(name, cloneTypeScheme(scheme));
       letSchemeOrder.push(name);
@@ -418,20 +470,32 @@ async function summarizeGraph(
 
     const exportedValues = new Map<string, TypeScheme>();
     const exportedTypes = new Map<string, TypeInfo>();
-    const reexportedRuntime = skipEvaluation ? undefined : new Map<string, RuntimeValue>();
+    const reexportedRuntime = skipEvaluation
+      ? undefined
+      : new Map<string, RuntimeValue>();
 
     for (const record of node.reexports) {
       const provider = moduleSummaries.get(record.sourcePath);
       if (!provider) {
-        throw moduleError(`Module '${path}' depends on '${record.sourcePath}' which failed to load`);
+        throw moduleError(
+          `Module '${path}' depends on '${record.sourcePath}' which failed to load`,
+        );
       }
-      applyReexports(record, provider, exportedValues, exportedTypes, reexportedRuntime);
+      applyReexports(
+        record,
+        provider,
+        exportedValues,
+        exportedTypes,
+        reexportedRuntime,
+      );
     }
 
     for (const name of node.exportedValueNames) {
       const scheme = letSchemes.get(name) ?? inference.env.get(name);
       if (!scheme) {
-        throw moduleError(`Exported let '${name}' was not inferred in '${path}'`);
+        throw moduleError(
+          `Exported let '${name}' was not inferred in '${path}'`,
+        );
       }
       if (exportedValues.has(name)) {
         throw moduleError(`Duplicate export '${name}' in '${path}'`);
@@ -442,7 +506,9 @@ async function summarizeGraph(
     for (const typeName of node.exportedTypeNames) {
       const info = inference.adtEnv.get(typeName);
       if (!info) {
-        throw moduleError(`Exported type '${typeName}' was not defined in '${path}'`);
+        throw moduleError(
+          `Exported type '${typeName}' was not defined in '${path}'`,
+        );
       }
       if (exportedTypes.has(typeName)) {
         throw moduleError(`Duplicate export '${typeName}' in '${path}'`);
@@ -452,7 +518,9 @@ async function summarizeGraph(
       for (const ctor of clonedInfo.constructors) {
         const scheme = inference.env.get(ctor.name);
         if (!scheme) {
-          throw moduleError(`Constructor '${ctor.name}' for type '${typeName}' missing in '${path}'`);
+          throw moduleError(
+            `Constructor '${ctor.name}' for type '${typeName}' missing in '${path}'`,
+          );
         }
         if (exportedValues.has(ctor.name)) {
           throw moduleError(`Duplicate export '${ctor.name}' in '${path}'`);
@@ -523,7 +591,8 @@ function normalizeOptions(options: ModuleLoaderOptions): ModuleLoaderOptions {
     : [resolve("std")];
   const preludeModule = options.preludeModule ?? "std/prelude";
   const skipEvaluation = options.skipEvaluation ?? false;
-  return { stdRoots, preludeModule, skipEvaluation };
+  const sourceOverrides = options.sourceOverrides;
+  return { stdRoots, preludeModule, skipEvaluation, sourceOverrides };
 }
 
 function resolveEntryPath(path: string): string {
@@ -549,15 +618,22 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     let program: Program | null = null;
     let imports: ModuleImportRecord[] = [];
     let reexports: ModuleReexportRecord[] = [];
-    
+
     try {
       program = await loadProgram(path, ctx);
       imports = resolveImports(path, program.imports, ctx);
-      reexports = collectReexports(program.reexports, path, ctx.options, ctx.preludePath);
+      reexports = collectReexports(
+        program.reexports,
+        path,
+        ctx.options,
+        ctx.preludePath,
+      );
     } catch (error) {
       // If parse failed, we'll need to parse with operators later
       // For now, just continue - we can't discover imports without parsing
-      if (error instanceof ModuleError && error.message.includes("Parse Error")) {
+      if (
+        error instanceof ModuleError && error.message.includes("Parse Error")
+      ) {
         // Parse failed, likely due to operators - we'll handle this after visiting dependencies
         program = null;
       } else {
@@ -569,7 +645,9 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     // For now, assume standard dependencies
     if (!program) {
       // Visit prelude if available
-      if (ctx.preludePath && path !== ctx.preludePath && !isStdCoreModule(path)) {
+      if (
+        ctx.preludePath && path !== ctx.preludePath && !isStdCoreModule(path)
+      ) {
         if (!ctx.nodes.has(ctx.preludePath)) {
           await visitModule(ctx.preludePath, ctx);
         }
@@ -590,7 +668,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     // Collect operators from dependencies
     const availableOperators = new Map<string, OperatorInfo>();
     const availablePrefixOperators = new Set<string>();
-    
+
     // Include prelude operators if this isn't the prelude or a std core module
     const skipPrelude = isStdCoreModule(path);
     if (ctx.preludePath && path !== ctx.preludePath && !skipPrelude) {
@@ -604,7 +682,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
         }
       }
     }
-    
+
     // Include operators from explicit imports (if we had a successful first parse)
     if (program) {
       for (const record of imports) {
@@ -622,12 +700,25 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
 
     // Parse or reparse with operators
     let finalProgram: Program;
-    if (!program || availableOperators.size > 0 || availablePrefixOperators.size > 0) {
+    if (
+      !program || availableOperators.size > 0 ||
+      availablePrefixOperators.size > 0
+    ) {
       ctx.programCache.delete(path); // Clear cache to force reparse
-      finalProgram = await loadProgram(path, ctx, availableOperators, availablePrefixOperators);
+      finalProgram = await loadProgram(
+        path,
+        ctx,
+        availableOperators,
+        availablePrefixOperators,
+      );
       // Update imports/reexports from the successful parse
       imports = resolveImports(path, finalProgram.imports, ctx);
-      reexports = collectReexports(finalProgram.reexports, path, ctx.options, ctx.preludePath);
+      reexports = collectReexports(
+        finalProgram.reexports,
+        path,
+        ctx.options,
+        ctx.preludePath,
+      );
     } else {
       finalProgram = program;
     }
@@ -653,7 +744,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     ctx.nodes.set(path, {
       path,
       program: finalProgram,
-      source: await loadSource(path),
+      source: await loadSource(path, ctx),
       imports,
       reexports,
       exportedValueNames: exports.values,
@@ -669,27 +760,48 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
   }
 }
 
-async function loadSource(path: string): Promise<string> {
+async function loadSource(path: string, ctx: LoaderContext): Promise<string> {
+  // Check for in-memory override (e.g., from LSP)
+  const override = ctx.options.sourceOverrides?.get(path);
+  if (override !== undefined) {
+    return override;
+  }
+
   try {
     return await Deno.readTextFile(path);
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
       throw moduleError(`Module not found: '${path}'`);
     }
-    throw moduleError(`Failed to read '${path}': ${error instanceof Error ? error.message : String(error)}`);
+    throw moduleError(
+      `Failed to read '${path}': ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 }
 
-async function loadProgram(path: string, ctx: LoaderContext, operators?: Map<string, OperatorInfo>, prefixOperators?: Set<string>): Promise<Program> {
+async function loadProgram(
+  path: string,
+  ctx: LoaderContext,
+  operators?: Map<string, OperatorInfo>,
+  prefixOperators?: Set<string>,
+): Promise<Program> {
   const cached = ctx.programCache.get(path);
   if (cached) {
     return cached;
   }
-  const source = await loadSource(path);
+  const source = await loadSource(path, ctx);
   let program: Program;
   try {
     const tokens = lex(source, path);
-    program = parseSurfaceProgram(tokens, source, false, operators, prefixOperators);
+    program = parseSurfaceProgram(
+      tokens,
+      source,
+      false,
+      operators,
+      prefixOperators,
+    );
   } catch (error) {
     if (error instanceof ParseError || error instanceof LexError) {
       const formatted = error.format(source);
@@ -701,10 +813,18 @@ async function loadProgram(path: string, ctx: LoaderContext, operators?: Map<str
   return program;
 }
 
-function resolveImports(path: string, imports: ModuleImport[], ctx: LoaderContext): ModuleImportRecord[] {
+function resolveImports(
+  path: string,
+  imports: ModuleImport[],
+  ctx: LoaderContext,
+): ModuleImportRecord[] {
   const records: ModuleImportRecord[] = [];
   for (const entry of imports) {
-    const resolvedPath = resolveModuleSpecifier(path, entry.source, ctx.options);
+    const resolvedPath = resolveModuleSpecifier(
+      path,
+      entry.source,
+      ctx.options,
+    );
     const kind = detectModuleKind(resolvedPath);
     if (kind === "workman" && sameModulePath(resolvedPath, ctx.preludePath)) {
       throw moduleError(
@@ -718,7 +838,9 @@ function resolveImports(path: string, imports: ModuleImport[], ctx: LoaderContex
         path,
       );
     }
-    const specifiers = entry.specifiers.map((specifier) => parseImportSpecifier(specifier, path));
+    const specifiers = entry.specifiers.map((specifier) =>
+      parseImportSpecifier(specifier, path)
+    );
     records.push({
       sourcePath: resolvedPath,
       kind,
@@ -731,9 +853,14 @@ function resolveImports(path: string, imports: ModuleImport[], ctx: LoaderContex
   return records;
 }
 
-function parseImportSpecifier(specifier: ImportSpecifier, path: string): NamedImportRecord {
+function parseImportSpecifier(
+  specifier: ImportSpecifier,
+  path: string,
+): NamedImportRecord {
   if (specifier.kind === "namespace") {
-    throw moduleError(`Namespace imports are not supported in Stage M1 (${path})`);
+    throw moduleError(
+      `Namespace imports are not supported in Stage M1 (${path})`,
+    );
   }
   return {
     imported: specifier.imported,
@@ -742,7 +869,15 @@ function parseImportSpecifier(specifier: ImportSpecifier, path: string): NamedIm
   };
 }
 
-function collectExports(program: Program, path: string): { values: string[]; types: string[]; operators: Map<string, OperatorInfo>; prefixOperators: Set<string> } {
+function collectExports(
+  program: Program,
+  path: string,
+): {
+  values: string[];
+  types: string[];
+  operators: Map<string, OperatorInfo>;
+  prefixOperators: Set<string>;
+} {
   const valueNames: string[] = [];
   const typeNames: string[] = [];
   const operators = new Map<string, OperatorInfo>();
@@ -755,7 +890,9 @@ function collectExports(program: Program, path: string): { values: string[]; typ
       forEachLetBinding(decl, (binding) => {
         if (binding.export) {
           if (valueSet.has(binding.name)) {
-            throw moduleError(`Duplicate export '${binding.name}' in '${path}'`);
+            throw moduleError(
+              `Duplicate export '${binding.name}' in '${path}'`,
+            );
           }
           valueSet.add(binding.name);
           valueNames.push(binding.name);
@@ -820,7 +957,10 @@ function collectReexports(
   return records;
 }
 
-function forEachLetBinding(decl: LetDeclaration, fn: (binding: LetDeclaration) => void): void {
+function forEachLetBinding(
+  decl: LetDeclaration,
+  fn: (binding: LetDeclaration) => void,
+): void {
   fn(decl);
   if (decl.mutualBindings) {
     for (const binding of decl.mutualBindings) {
@@ -829,7 +969,11 @@ function forEachLetBinding(decl: LetDeclaration, fn: (binding: LetDeclaration) =
   }
 }
 
-function resolveModuleSpecifier(importerPath: string, specifier: string, options: ModuleLoaderOptions): string {
+function resolveModuleSpecifier(
+  importerPath: string,
+  specifier: string,
+  options: ModuleLoaderOptions,
+): string {
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     const target = resolve(dirname(importerPath), specifier);
     return ensureWmExtension(target);
@@ -846,10 +990,14 @@ function resolveModuleSpecifier(importerPath: string, specifier: string, options
         return candidate;
       }
     }
-    throw moduleError(`Module not found in std roots: '${specifier}' imported by '${importerPath}'`);
+    throw moduleError(
+      `Module not found in std roots: '${specifier}' imported by '${importerPath}'`,
+    );
   }
 
-  throw moduleError(`Unsupported module specifier '${specifier}' in '${importerPath}'`);
+  throw moduleError(
+    `Unsupported module specifier '${specifier}' in '${importerPath}'`,
+  );
 }
 
 function ensureWmExtension(path: string): string {
@@ -951,7 +1099,8 @@ function createJsImportScheme(
     quantifiers: [],
     type: unknownType({
       kind: "incomplete",
-      reason: `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
+      reason:
+        `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
     }),
   };
 }

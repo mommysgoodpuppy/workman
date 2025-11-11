@@ -1,11 +1,11 @@
 import type { SourceSpan } from "../ast.ts";
 import type {
-  MProgram,
-  MExpr,
   MBlockExpr,
   MBlockStatement,
-  MPattern,
+  MExpr,
   MMatchBundle,
+  MPattern,
+  MProgram,
 } from "../ast_marked.ts";
 import {
   type ConstraintConflict,
@@ -86,7 +86,11 @@ export interface MatchCoverageView {
 export function presentProgram(layer2: SolverResult): Layer3Result {
   const spanIndex = collectSpans(layer2.remarkedProgram);
   const coverageInfo = collectMatchCoverages(layer2.remarkedProgram);
-  const nodeViews = buildNodeViews(layer2.resolvedNodeTypes, layer2.solutions, spanIndex);
+  const nodeViews = buildNodeViews(
+    layer2.resolvedNodeTypes,
+    layer2.solutions,
+    spanIndex,
+  );
   const solverDiagnostics = attachSpansToDiagnostics(
     layer2.diagnostics,
     spanIndex,
@@ -123,7 +127,7 @@ function buildNodeViews(
   for (const [nodeId, type] of resolved.entries()) {
     // First try to get solution for this node directly
     let solution = solutions.get(nodeId);
-    
+
     // If not found and this is an unknown type, extract the underlying hole ID
     if (!solution && type.kind === "unknown") {
       const holeId = extractHoleIdFromType(type);
@@ -131,7 +135,7 @@ function buildNodeViews(
         solution = solutions.get(holeId);
       }
     }
-    
+
     const view: NodeView = {
       nodeId,
       sourceSpan: spanIndex.get(nodeId),
@@ -150,20 +154,22 @@ function extractHoleIdFromType(type: Type): NodeId | undefined {
   if (type.kind !== "unknown") {
     return undefined;
   }
-  
+
   const prov = type.provenance;
   if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
     return (prov as any).id;
   } else if (prov.kind === "incomplete") {
     return (prov as any).nodeId;
-  } else if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
+  } else if (
+    prov.kind === "error_not_function" || prov.kind === "error_inconsistent"
+  ) {
     // Unwrap error provenance to get the underlying hole
     const innerType = (prov as any).calleeType || (prov as any).actual;
     if (innerType?.kind === "unknown") {
       return extractHoleIdFromType(innerType);
     }
   }
-  
+
   return undefined;
 }
 
@@ -185,18 +191,20 @@ function typeToPartial(type: Type, solution?: HoleSolution): PartialType {
         kind: "unknown",
         provenance: {
           kind: "error_unfillable_hole",
-          holeId: solution.provenance.kind === "expr_hole" ? (solution.provenance as any).id : 0,
+          holeId: solution.provenance.kind === "expr_hole"
+            ? (solution.provenance as any).id
+            : 0,
           conflicts: solution.conflicts || [],
         },
       };
       return { kind: "unknown", type: conflictedType };
     }
-    
+
     // If we have a partial solution, use it
     if (solution?.state === "partial" && solution.partial?.known) {
       return { kind: "concrete", type: solution.partial.known };
     }
-    
+
     return { kind: "unknown", type };
   }
   return { kind: "concrete", type };
@@ -258,9 +266,19 @@ function typeToString(type: Type): string {
       const parts = entries.map(([label, payload]) =>
         payload ? `${label}(${typeToString(payload)})` : label
       );
+
+      // Simplify display: if one concrete case with an open tail variable, hide the tail
+      if (parts.length === 1 && type.tail?.kind === "var") {
+        return `<${parts[0]}>`;
+      }
+
+      // Otherwise show full notation with tail
       if (type.tail) {
-        parts.push(`_${typeToString(type.tail)}`);
+        const tailStr = typeToString(type.tail);
+        // Tail represents "all other potential errors" - prefix with _
+        parts.push(`_${tailStr}`);
       } else if (parts.length === 0) {
+        // Empty error row
         parts.push("_");
       }
       return `<${parts.join(" | ")}>`;
@@ -367,17 +385,25 @@ function collectCoverageFromExpr(
     case "mark_type_expr_unsupported":
       return;
     case "constructor":
-      expr.args.forEach((arg) => collectCoverageFromExpr(arg, coverages, partials));
+      expr.args.forEach((arg) =>
+        collectCoverageFromExpr(arg, coverages, partials)
+      );
       return;
     case "tuple":
-      expr.elements.forEach((el) => collectCoverageFromExpr(el, coverages, partials));
+      expr.elements.forEach((el) =>
+        collectCoverageFromExpr(el, coverages, partials)
+      );
       return;
     case "record_literal":
-      expr.fields.forEach((field) => collectCoverageFromExpr(field.value, coverages, partials));
+      expr.fields.forEach((field) =>
+        collectCoverageFromExpr(field.value, coverages, partials)
+      );
       return;
     case "call":
       collectCoverageFromExpr(expr.callee, coverages, partials);
-      expr.arguments.forEach((arg) => collectCoverageFromExpr(arg, coverages, partials));
+      expr.arguments.forEach((arg) =>
+        collectCoverageFromExpr(arg, coverages, partials)
+      );
       return;
     case "record_projection":
       collectCoverageFromExpr(expr.target, coverages, partials);
@@ -390,7 +416,9 @@ function collectCoverageFromExpr(
       collectCoverageFromExpr(expr.operand, coverages, partials);
       return;
     case "arrow":
-      expr.parameters.forEach((param) => collectCoverageFromPattern(param.pattern, coverages, partials));
+      expr.parameters.forEach((param) =>
+        collectCoverageFromPattern(param.pattern, coverages, partials)
+      );
       collectCoverageFromBlock(expr.body, coverages, partials);
       return;
     case "block":
@@ -402,7 +430,9 @@ function collectCoverageFromExpr(
       collectCoverageFromMatchBundle(expr.bundle, coverages, partials);
       return;
     case "match_fn":
-      expr.parameters.forEach((param) => collectCoverageFromExpr(param, coverages, partials));
+      expr.parameters.forEach((param) =>
+        collectCoverageFromExpr(param, coverages, partials)
+      );
       recordCoverageForBundle(expr.id, expr.bundle, coverages, partials);
       collectCoverageFromMatchBundle(expr.bundle, coverages, partials);
       return;
@@ -428,10 +458,14 @@ function collectCoverageFromPattern(
     case "mark_pattern":
       return;
     case "constructor":
-      pattern.args.forEach((arg) => collectCoverageFromPattern(arg, coverages, partials));
+      pattern.args.forEach((arg) =>
+        collectCoverageFromPattern(arg, coverages, partials)
+      );
       return;
     case "tuple":
-      pattern.elements.forEach((el) => collectCoverageFromPattern(el, coverages, partials));
+      pattern.elements.forEach((el) =>
+        collectCoverageFromPattern(el, coverages, partials)
+      );
       return;
   }
 }

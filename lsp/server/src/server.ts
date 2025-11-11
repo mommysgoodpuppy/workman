@@ -10,32 +10,30 @@ console.log = console.error;
 
 import { lex } from "@workman/lexer.ts";
 import {
+  type OperatorInfo,
   ParseError,
   parseSurfaceProgram,
-  type OperatorInfo,
 } from "@workman/parser.ts";
 import { InferError } from "@workman/layer1/infer.ts";
 import { LexError, WorkmanError } from "@workman/error.ts";
 import { formatScheme } from "@workman/type_printer.ts";
 import { ModuleLoaderError } from "@workman/module_loader.ts";
 import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
+import { resolve } from "std/path/resolve.ts";
 import { Type, TypeScheme, typeToString } from "@workman/types.ts";
 import {
-  findNodeAtOffset,
   type ConstraintDiagnosticWithSpan,
+  findNodeAtOffset,
   type FlowDiagnostic,
   type Layer3Result,
+  type MatchCoverageView,
   type NodeView,
   type PartialType,
-  type MatchCoverageView,
 } from "@workman/layer3/mod.ts";
 import {
   compileWorkmanGraph,
 } from "../../../backends/compiler/frontends/workman.ts";
-import type {
-  MLetDeclaration,
-  MProgram,
-} from "@workman/ast_marked.ts";
+import type { MLetDeclaration, MProgram } from "@workman/ast_marked.ts";
 
 interface LSPMessage {
   jsonrpc: string;
@@ -68,6 +66,8 @@ class WorkmanLanguageServer {
       entryPath: string;
     }
   >();
+  private validationInProgress = new Map<string, Promise<void>>();
+  private validationTimers = new Map<string, number>();
 
   private log(message: string) {
     const timestamp = new Date().toISOString();
@@ -103,10 +103,10 @@ class WorkmanLanguageServer {
               return `[Set with ${value.size} entries]`;
             }
             // Avoid serializing large or problematic objects
-            if (typeof value === 'object' && value !== null) {
+            if (typeof value === "object" && value !== null) {
               // Check for circular references by tracking seen objects
               // (This is a simple check; a full solution would need a WeakSet)
-              if (key === 'conflicts' && Array.isArray(value)) {
+              if (key === "conflicts" && Array.isArray(value)) {
                 // Simplify conflicts to avoid serialization issues
                 return value.length;
               }
@@ -129,7 +129,11 @@ class WorkmanLanguageServer {
           resolve();
         } catch (error) {
           console.error(`[LSP] Write error: ${error}`);
-          console.error(`[LSP] Failed message: ${JSON.stringify(message, null, 2).substring(0, 500)}`);
+          console.error(
+            `[LSP] Failed message: ${
+              JSON.stringify(message, null, 2).substring(0, 500)
+            }`,
+          );
           reject(error);
         }
       });
@@ -209,7 +213,10 @@ class WorkmanLanguageServer {
     }
   }
 
-  private concatBuffers(existing: Uint8Array, incoming: Uint8Array): Uint8Array {
+  private concatBuffers(
+    existing: Uint8Array,
+    incoming: Uint8Array,
+  ): Uint8Array {
     if (existing.length === 0) {
       return incoming.slice();
     }
@@ -271,6 +278,9 @@ class WorkmanLanguageServer {
       case "textDocument/inlayHint":
         return await this.handleInlayHint(message);
 
+      case "workspace/didChangeWatchedFiles":
+        return await this.handleDidChangeWatchedFiles(message);
+
       case "shutdown":
         return { jsonrpc: "2.0", id: message.id, result: null };
 
@@ -329,6 +339,13 @@ class WorkmanLanguageServer {
           hoverProvider: true,
           definitionProvider: true,
           inlayHintProvider: true,
+          workspace: {
+            fileOperations: {
+              didChange: {
+                filters: [{ pattern: { glob: "**/*.wm" } }],
+              },
+            },
+          },
         },
         serverInfo: {
           name: "workman-language-server",
@@ -344,7 +361,7 @@ class WorkmanLanguageServer {
     const text = textDocument.text;
 
     this.documents.set(uri, text);
-    await this.validateDocument(uri, text);
+    await this.ensureValidation(uri, text);
 
     return null;
   }
@@ -358,7 +375,30 @@ class WorkmanLanguageServer {
     if (contentChanges.length > 0) {
       const text = contentChanges[0].text;
       this.documents.set(uri, text);
-      await this.validateDocument(uri, text);
+      await this.ensureValidation(uri, text);
+    }
+
+    return null;
+  }
+
+  private async handleDidChangeWatchedFiles(
+    message: LSPMessage,
+  ): Promise<LSPMessage | null> {
+    const { changes } = message.params;
+
+    if (!Array.isArray(changes)) {
+      return null;
+    }
+
+    // Revalidate all changed files that we have open
+    for (const change of changes) {
+      const uri = change.uri;
+      const text = this.documents.get(uri);
+
+      if (text !== undefined) {
+        // File is open in the editor, revalidate it
+        await this.ensureValidation(uri, text);
+      }
     }
 
     return null;
@@ -369,88 +409,40 @@ class WorkmanLanguageServer {
 
     this.log(`[LSP] Validating document: ${uri}`);
 
+    // Only clear the context for this specific file, not all contexts
+    // This allows caching of dependency analysis
     this.moduleContexts.delete(uri);
+
     const entryPath = this.uriToFsPath(uri);
     const stdRoots = this.computeStdRoots(entryPath);
 
-    // First, try to parse the current document directly to get better error positions
+    // Use the module loader to parse and analyze the document
+    // It will use the in-memory content via sourceOverrides
     try {
-      const tokens = lex(text, uri);
-      const { operators, prefixOperators } = await this.getPreludeOperatorSets(
+      const sourceOverrides = new Map([[entryPath, text]]);
+      const context = await this.buildModuleContext(
         entryPath,
         stdRoots,
+        this.preludeModule,
+        sourceOverrides,
       );
-      const program = parseSurfaceProgram(
-        tokens,
+      this.moduleContexts.set(uri, context);
+      this.log(`[LSP] Module analysis completed (${entryPath})`);
+      this.appendSolverDiagnostics(
+        diagnostics,
+        context.layer3.diagnostics.solver,
         text,
-        false,
-        operators.size > 0 ? operators : undefined,
-        prefixOperators.size > 0 ? prefixOperators : undefined,
       );
-      // If parsing succeeds, try full module analysis without executing the program
-      try {
-        const context = await this.buildModuleContext(
-          entryPath,
-          stdRoots,
-          this.preludeModule,
-        );
-        this.moduleContexts.set(uri, context);
-        this.log(`[LSP] Module analysis completed (${entryPath})`);
-        this.appendSolverDiagnostics(
-          diagnostics,
-          context.layer3.diagnostics.solver,
-          text,
-        );
-        this.appendConflictDiagnostics(
-          diagnostics,
-          context.layer3.diagnostics.conflicts,
-          text,
-        );
-        this.appendFlowDiagnostics(
-          diagnostics,
-          context.layer3.diagnostics.flow,
-          text,
-        );
-      } catch (moduleError) {
-        // Module-level errors (imports, type errors, etc.)
-        this.log(`[LSP] Module validation error: ${moduleError}`);
-        if (moduleError instanceof InferError) {
-          const range = moduleError.span
-            ? {
-              start: this.offsetToPosition(text, moduleError.span.start),
-              end: this.offsetToPosition(text, moduleError.span.end),
-            }
-            : this.estimateRangeFromMessage(text, moduleError.message);
-          diagnostics.push({
-            range,
-            severity: 1,
-            message: moduleError.format(text),
-            source: "workman-typechecker",
-            code: "type-error",
-          });
-        } else if (moduleError instanceof ModuleLoaderError) {
-          const msg = String(moduleError.message);
-          const range = this.estimateRangeFromMessage(text, msg);
-          diagnostics.push({
-            range,
-            severity: 1,
-            message: msg,
-            source: "workman-modules",
-            code: "module-error",
-          });
-        } else {
-          diagnostics.push({
-            range: {
-              start: { line: 0, character: 0 },
-              end: { line: 0, character: 1 },
-            },
-            severity: 1,
-            message: `Internal error: ${moduleError}`,
-            source: "workman",
-            code: "internal-error",
-          });
-        }
-      }
+      this.appendConflictDiagnostics(
+        diagnostics,
+        context.layer3.diagnostics.conflicts,
+        text,
+      );
+      this.appendFlowDiagnostics(
+        diagnostics,
+        context.layer3.diagnostics.flow,
+        text,
+      );
     } catch (error) {
       this.log(`[LSP] Validation error: ${error}`);
 
@@ -492,14 +484,75 @@ class WorkmanLanguageServer {
           code: "type-error",
         });
       } else if (error instanceof ModuleLoaderError) {
-        const msg = String(error.message);
-        const range = this.estimateRangeFromMessage(text, msg);
+        // Check if the ModuleLoaderError wraps a WorkmanError with location info
+        const cause = (error as any).cause;
+        let range;
+        let message = String(error.message);
+        let source = "workman-modules";
+        let code = "module-error";
+
+        if (cause instanceof LexError) {
+          const position = this.offsetToPosition(text, cause.position);
+          const endPos = this.offsetToPosition(text, cause.position + 1);
+          range = { start: position, end: endPos };
+          message = cause.format(text);
+          source = "workman-lexer";
+          code = "lex-error";
+        } else if (cause instanceof ParseError) {
+          const startPos = this.offsetToPosition(text, cause.token.start);
+          const endPos = this.offsetToPosition(text, cause.token.end);
+          range = { start: startPos, end: endPos };
+          message = cause.format(text);
+          source = "workman-parser";
+          code = "parse-error";
+        } else if (cause instanceof InferError) {
+          range = cause.span
+            ? {
+              start: this.offsetToPosition(text, cause.span.start),
+              end: this.offsetToPosition(text, cause.span.end),
+            }
+            : this.estimateRangeFromMessage(text, cause.message);
+          message = cause.format(text);
+          source = "workman-typechecker";
+          code = "type-error";
+        } else {
+          // Try to parse location from formatted error message
+          const locationMatch = message.match(/at line (\d+), column (\d+)/);
+          if (locationMatch) {
+            const line = Number.parseInt(locationMatch[1], 10) - 1; // 0-indexed
+            const column = Number.parseInt(locationMatch[2], 10) - 1; // 0-indexed
+            // Find the token at this location
+            const errorOffset = this.positionToOffset(text, {
+              line,
+              character: column,
+            });
+            const { word, start, end } = this.getWordAtOffset(
+              text,
+              errorOffset,
+            );
+            // Use the word boundaries if we found a word, otherwise just highlight the position
+            if (word && word.length > 0) {
+              range = {
+                start: this.offsetToPosition(text, start),
+                end: this.offsetToPosition(text, end),
+              };
+            } else {
+              range = {
+                start: { line, character: column },
+                end: { line, character: column + 1 },
+              };
+            }
+          } else {
+            range = this.estimateRangeFromMessage(text, message);
+          }
+        }
+
         diagnostics.push({
           range,
           severity: 1,
-          message: msg,
-          source: "workman-modules",
-          code: "module-error",
+          message,
+          source,
+          code,
         });
       } else {
         diagnostics.push({
@@ -548,7 +601,10 @@ class WorkmanLanguageServer {
       const range = diag.span
         ? {
           start: this.offsetToPosition(text, diag.span.start),
-          end: this.offsetToPosition(text, Math.max(diag.span.end, diag.span.start + 1)),
+          end: this.offsetToPosition(
+            text,
+            Math.max(diag.span.end, diag.span.start + 1),
+          ),
         }
         : {
           start: { line: 0, character: 0 },
@@ -573,7 +629,10 @@ class WorkmanLanguageServer {
       const range = conflict.span
         ? {
           start: this.offsetToPosition(text, conflict.span.start),
-          end: this.offsetToPosition(text, Math.max(conflict.span.end, conflict.span.start + 1)),
+          end: this.offsetToPosition(
+            text,
+            Math.max(conflict.span.end, conflict.span.start + 1),
+          ),
         }
         : {
           start: { line: 0, character: 0 },
@@ -595,7 +654,7 @@ class WorkmanLanguageServer {
     text: string,
   ): void {
     for (const diag of flowDiagnostics) {
-      const span = diag.span;
+      const span = "span" in diag ? diag.span : undefined;
       const range = span
         ? {
           start: this.offsetToPosition(text, span.start),
@@ -661,9 +720,28 @@ class WorkmanLanguageServer {
           : "This expression form is not supported here";
         break;
       }
-      case "non_exhaustive_match":
+      case "non_exhaustive_match": {
         base = "Match expression is not exhaustive";
+        const missing = Array.isArray(diag.details?.missingCases)
+          ? (diag.details.missingCases as string[]).join(", ")
+          : null;
+        if (missing) {
+          base += ` - missing cases: ${missing}`;
+        }
+        // Add information about the scrutinee type if it's a Result (infectious)
+        const scrutineeType = diag.details?.scrutineeType as Type | undefined;
+        if (
+          scrutineeType?.kind === "constructor" &&
+          scrutineeType.name === "Result"
+        ) {
+          const errorType = scrutineeType.args[1];
+          const errorTypeStr = errorType ? typeToString(errorType) : "?";
+          base +=
+            `\n\nThe scrutinee has type Result<?, ${errorTypeStr}> (infectious Result from an operation that can fail).`;
+          base += `\nHandle both Ok and Err cases, or use a wildcard pattern.`;
+        }
         break;
+      }
       case "type_expr_unknown": {
         const reason = typeof diag.details?.reason === "string"
           ? diag.details.reason
@@ -689,7 +767,8 @@ class WorkmanLanguageServer {
       case "infectious_call_result_mismatch": {
         const row = diag.details?.errorRow as Type | undefined;
         const rowLabel = row ? typeToString(row) : "an unresolved error row";
-        base = `This call must remain infectious because an argument carries ${rowLabel}`;
+        base =
+          `This call must remain infectious because an argument carries ${rowLabel}`;
         break;
       }
       case "infectious_match_result_mismatch": {
@@ -698,7 +777,8 @@ class WorkmanLanguageServer {
           ? (diag.details?.missingConstructors as string[]).join(", ")
           : null;
         const rowLabel = row ? ` for row ${typeToString(row)}` : "";
-        base = `Match claimed to discharge Result errors${rowLabel} but remained infectious`;
+        base =
+          `Match claimed to discharge Result errors${rowLabel} but remained infectious`;
         if (missing && missing.length > 0) {
           base += `. Missing constructors: ${missing}`;
         }
@@ -713,12 +793,12 @@ class WorkmanLanguageServer {
         // Safely stringify details, avoiding circular references
         const safeDetails: Record<string, any> = {};
         for (const [key, value] of Object.entries(diag.details)) {
-          if (typeof value === 'object' && value !== null) {
+          if (typeof value === "object" && value !== null) {
             // Don't include complex objects that might have circular refs
             if (Array.isArray(value)) {
               safeDetails[key] = `[Array with ${value.length} items]`;
             } else {
-              safeDetails[key] = '[Object]';
+              safeDetails[key] = "[Object]";
             }
           } else {
             safeDetails[key] = value;
@@ -736,26 +816,31 @@ class WorkmanLanguageServer {
     view: NodeView,
     layer3: Layer3Result,
     coverage?: MatchCoverageView,
+    adtEnv?: Map<string, import("@workman/types.ts").TypeInfo>,
   ): string | null {
     const typeStr = this.partialTypeToString(view.finalType, layer3);
     if (!typeStr) {
       return null;
     }
-    
+
     let result = "```workman\n" + typeStr + "\n```";
     // If the type is a Result, append an error summary grouped by ADT
     try {
       const resolved = this.substituteTypeWithLayer3(
-        (view.finalType.kind === "unknown" && view.finalType.type) ? view.finalType.type : (view.finalType as any).type ?? (view as any),
+        (view.finalType.kind === "unknown" && view.finalType.type)
+          ? view.finalType.type
+          : (view.finalType as any).type ?? (view as any),
         layer3,
       );
-      const t = (view.finalType.kind === "concrete") ? view.finalType.type : resolved;
-      const summary = this.summarizeErrorRowFromType(t, this.moduleContexts.get(layer3.spanIndex.keys().next().value)?.adtEnv ?? new Map());
+      const t = (view.finalType.kind === "concrete")
+        ? view.finalType.type
+        : resolved;
+      const summary = this.summarizeErrorRowFromType(t, adtEnv ?? new Map());
       if (summary) {
         result += `\n\nErrors: ${summary}`;
       }
     } catch {}
-    
+
     if (coverage) {
       const rowStr = formatScheme({ quantifiers: [], type: coverage.row });
       const handled = [...coverage.coveredConstructors];
@@ -780,7 +865,9 @@ class WorkmanLanguageServer {
 
     // Check if this node references a hole with solution information
     const holeSolutions = layer3.holeSolutions;
-    if (holeSolutions && view.finalType.kind === "unknown" && view.finalType.type) {
+    if (
+      holeSolutions && view.finalType.kind === "unknown" && view.finalType.type
+    ) {
       // Extract the actual hole ID from the type
       const holeId = this.extractHoleIdFromType(view.finalType.type);
       if (holeId !== undefined) {
@@ -797,28 +884,44 @@ class WorkmanLanguageServer {
               result += "\n\n_User-specified type hole_";
             }
           }
-          
+
           if (solution.state === "partial" && solution.partial) {
             result += "\n\n**Partial Type Information:**\n";
             if (solution.partial.known) {
-              result += `- Known: \`${typeToString(solution.partial.known)}\`\n`;
+              result += `- Known: \`${
+                typeToString(solution.partial.known)
+              }\`\n`;
             }
-            if (solution.partial.possibilities && solution.partial.possibilities.length > 0) {
-              result += `- Possibilities: ${solution.partial.possibilities.length}\n`;
+            if (
+              solution.partial.possibilities &&
+              solution.partial.possibilities.length > 0
+            ) {
+              result +=
+                `- Possibilities: ${solution.partial.possibilities.length}\n`;
               // Show first few possibilities
               const maxShow = 3;
-              for (let i = 0; i < Math.min(maxShow, solution.partial.possibilities.length); i++) {
-                result += `  - \`${typeToString(solution.partial.possibilities[i])}\`\n`;
+              for (
+                let i = 0;
+                i < Math.min(maxShow, solution.partial.possibilities.length);
+                i++
+              ) {
+                result += `  - \`${
+                  typeToString(solution.partial.possibilities[i])
+                }\`\n`;
               }
               if (solution.partial.possibilities.length > maxShow) {
-                result += `  - ... and ${solution.partial.possibilities.length - maxShow} more\n`;
+                result += `  - ... and ${
+                  solution.partial.possibilities.length - maxShow
+                } more\n`;
               }
             }
-            result += "\n_Some type information is inferred, but not everything is known yet._";
+            result +=
+              "\n_Some type information is inferred, but not everything is known yet._";
           } else if (solution.state === "conflicted" && solution.conflicts) {
             result += "\n\n**⚠️ Type Conflict Detected:**\n";
             for (const conflict of solution.conflicts) {
-              const types = conflict.types.map((t: any) => typeToString(t)).join(" vs ");
+              const types = conflict.types.map((t: any) => typeToString(t))
+                .join(" vs ");
               result += `- Conflicting types: \`${types}\`\n`;
               result += `- Reason: ${conflict.reason}\n`;
             }
@@ -829,7 +932,7 @@ class WorkmanLanguageServer {
         }
       }
     }
-    
+
     return result;
   }
 
@@ -863,20 +966,22 @@ class WorkmanLanguageServer {
     if (type.kind !== "unknown") {
       return undefined;
     }
-    
+
     const prov = type.provenance;
     if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
       return (prov as any).id;
     } else if (prov.kind === "incomplete") {
       return (prov as any).nodeId;
-    } else if (prov.kind === "error_not_function" || prov.kind === "error_inconsistent") {
+    } else if (
+      prov.kind === "error_not_function" || prov.kind === "error_inconsistent"
+    ) {
       // Unwrap error provenance to get the underlying hole
       const calleeType = (prov as any).calleeType || (prov as any).actual;
       if (calleeType?.kind === "unknown") {
         return this.extractHoleIdFromType(calleeType);
       }
     }
-    
+
     return undefined;
   }
 
@@ -901,7 +1006,7 @@ class WorkmanLanguageServer {
       layer3,
     );
     let typeStr = formatScheme(substitutedScheme);
-    
+
     // Check if this binding has partial type information from Layer 3
     const holeId = this.extractHoleId(scheme);
     if (holeId !== undefined) {
@@ -923,7 +1028,7 @@ class WorkmanLanguageServer {
         typeStr = typeStr.replace(/\?\([^)]+\)/g, "?");
       }
     }
-    
+
     return typeStr;
   }
 
@@ -1046,10 +1151,12 @@ class WorkmanLanguageServer {
       let context = this.moduleContexts.get(uri);
       if (!context) {
         try {
+          const sourceOverrides = new Map([[entryPath, text]]);
           context = await this.buildModuleContext(
             entryPath,
             stdRoots,
             this.preludeModule,
+            sourceOverrides,
           );
           this.moduleContexts.set(uri, context);
         } catch (error) {
@@ -1064,7 +1171,12 @@ class WorkmanLanguageServer {
         const view = layer3.nodeViews.get(nodeId);
         if (view) {
           const coverage = layer3.matchCoverages.get(nodeId);
-          const rendered = this.renderNodeView(view, layer3, coverage);
+          const rendered = this.renderNodeView(
+            view,
+            layer3,
+            coverage,
+            context.adtEnv,
+          );
           if (rendered) {
             return {
               jsonrpc: "2.0",
@@ -1086,9 +1198,9 @@ class WorkmanLanguageServer {
         // Use Layer 3 partial types for accurate display
         const typeStr = this.formatSchemeWithPartials(scheme, layer3);
         this.log(`[LSP] Found type for ${word}: ${typeStr}`);
-        
+
         const hoverText = `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``;
-        
+
         return {
           jsonrpc: "2.0",
           id: message.id,
@@ -1125,14 +1237,18 @@ class WorkmanLanguageServer {
       let context = this.moduleContexts.get(uri);
       if (!context) {
         try {
+          const sourceOverrides = new Map([[entryPath, text]]);
           context = await this.buildModuleContext(
             entryPath,
             stdRoots,
             this.preludeModule,
+            sourceOverrides,
           );
           this.moduleContexts.set(uri, context);
         } catch (error) {
-          this.log(`[LSP] Failed to build module context for completion: ${error}`);
+          this.log(
+            `[LSP] Failed to build module context for completion: ${error}`,
+          );
           return { jsonrpc: "2.0", id: message.id, result: null };
         }
       }
@@ -1196,14 +1312,18 @@ class WorkmanLanguageServer {
       let context = this.moduleContexts.get(uri);
       if (!context) {
         try {
+          const sourceOverrides = new Map([[entryPath, text]]);
           context = await this.buildModuleContext(
             entryPath,
             stdRoots,
             this.preludeModule,
+            sourceOverrides,
           );
           this.moduleContexts.set(uri, context);
         } catch (error) {
-          this.log(`[LSP] Failed to build module context for inlay hints: ${error}`);
+          this.log(
+            `[LSP] Failed to build module context for inlay hints: ${error}`,
+          );
           return { jsonrpc: "2.0", id: message.id, result: [] };
         }
       }
@@ -1213,7 +1333,10 @@ class WorkmanLanguageServer {
           continue;
         }
         const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`\\blet\\s+(?:rec\\s+)?${escapedName}\\b`, "g");
+        const regex = new RegExp(
+          `\\blet\\s+(?:rec\\s+)?${escapedName}\\b`,
+          "g",
+        );
         let match: RegExpExecArray | null;
         while ((match = regex.exec(text)) !== null) {
           const endPos = match.index + match[0].length;
@@ -1300,14 +1423,45 @@ class WorkmanLanguageServer {
     return { word: text.substring(start, end), start, end };
   }
 
+  private ensureValidation(uri: string, text: string) {
+    // Clear any pending validation timer for this document
+    const existingTimer = this.validationTimers.get(uri);
+    if (existingTimer !== undefined) {
+      clearTimeout(existingTimer);
+    }
+
+    // Debounce validation by 50ms to avoid excessive work during rapid typing
+    const timer = setTimeout(() => {
+      this.validationTimers.delete(uri);
+      this.runValidation(uri, text);
+    }, 50);
+    this.validationTimers.set(uri, timer);
+  }
+
+  private async runValidation(uri: string, text: string) {
+    const existing = this.validationInProgress.get(uri);
+    if (existing) {
+      await existing;
+    }
+    const promise = this.validateDocument(uri, text);
+    this.validationInProgress.set(uri, promise);
+    try {
+      await promise;
+    } finally {
+      this.validationInProgress.delete(uri);
+    }
+  }
+
   private async buildModuleContext(
     entryPath: string,
     stdRoots: string[],
     preludeModule?: string,
+    sourceOverrides?: Map<string, string>,
   ): Promise<{
     env: Map<string, TypeScheme>;
     layer3: Layer3Result;
     program: MProgram;
+    adtEnv: Map<string, import("@workman/types.ts").TypeInfo>;
     entryPath: string;
   }> {
     const compileResult = await compileWorkmanGraph(entryPath, {
@@ -1315,6 +1469,7 @@ class WorkmanLanguageServer {
         stdRoots,
         preludeModule,
         skipEvaluation: true,
+        sourceOverrides,
       },
     });
 
@@ -1350,10 +1505,15 @@ class WorkmanLanguageServer {
     adtEnv: Map<string, import("@workman/types.ts").TypeInfo>,
   ): string | null {
     if (!type) return null;
-    if (type.kind !== "constructor" || type.name !== "Result" || type.args.length !== 2) return null;
+    if (
+      type.kind !== "constructor" || type.name !== "Result" ||
+      type.args.length !== 2
+    ) return null;
     const errArg = type.args[1];
     const ensureRow = (t: Type): import("@workman/types.ts").ErrorRowType => (
-      t.kind === "error_row" ? t : { kind: "error_row", cases: new Map(), tail: t }
+      t.kind === "error_row"
+        ? t
+        : { kind: "error_row", cases: new Map(), tail: t }
     );
     const row = ensureRow(errArg);
     const caseLabels = new Set<string>(Array.from(row.cases.keys()));
@@ -1364,7 +1524,10 @@ class WorkmanLanguageServer {
     for (const [adtName, info] of adtEnv.entries()) {
       let allCovered = true;
       for (const ctor of info.constructors) {
-        if (!caseLabels.has(ctor.name)) { allCovered = false; break; }
+        if (!caseLabels.has(ctor.name)) {
+          allCovered = false;
+          break;
+        }
       }
       if (allCovered) {
         fullAdts.add(adtName);
@@ -1380,10 +1543,25 @@ class WorkmanLanguageServer {
 
   private uriToFsPath(uri: string): string {
     try {
-      if (uri.startsWith("file:")) return fromFileUrl(uri);
-    } catch {}
-    // Fallback: assume it's a normal path
-    return uri;
+      if (uri.startsWith("file:")) {
+        const fsPath = fromFileUrl(uri);
+        // Normalize the path the same way the module loader does (resolveEntryPath)
+        const normalized = isAbsolute(fsPath) ? fsPath : resolve(fsPath);
+        return this.ensureWmExtension(normalized);
+      }
+    } catch {
+      // Ignore errors
+    }
+    // Fallback: assume it's a normal path and normalize it
+    const normalized = isAbsolute(uri) ? uri : resolve(uri);
+    return this.ensureWmExtension(normalized);
+  }
+
+  private ensureWmExtension(path: string): string {
+    if (path.endsWith(".wm")) {
+      return path;
+    }
+    return `${path}.wm`;
   }
 
   private computeStdRoots(entryPath: string): string[] {
@@ -1423,7 +1601,10 @@ class WorkmanLanguageServer {
     return arr.length > 0 ? arr : [join(dirname(entryPath), "std")];
   }
 
-  private findTopLevelLet(program: MProgram, name: string): MLetDeclaration | undefined {
+  private findTopLevelLet(
+    program: MProgram,
+    name: string,
+  ): MLetDeclaration | undefined {
     for (const decl of program.declarations ?? []) {
       if (decl.kind !== "let") continue;
       if (decl.name === name) {
@@ -1478,7 +1659,9 @@ class WorkmanLanguageServer {
       source = await Deno.readTextFile(preludePath);
     } catch (error) {
       this.log(
-        `[LSP] Failed to read prelude '${preludePath}': ${error instanceof Error ? error.message : error}'`,
+        `[LSP] Failed to read prelude '${preludePath}': ${
+          error instanceof Error ? error.message : error
+        }'`,
       );
       return emptyResult;
     }
@@ -1489,7 +1672,9 @@ class WorkmanLanguageServer {
       program = parseSurfaceProgram(tokens, source);
     } catch (error) {
       this.log(
-        `[LSP] Failed to parse prelude '${preludePath}': ${error instanceof Error ? error.message : error}'`,
+        `[LSP] Failed to parse prelude '${preludePath}': ${
+          error instanceof Error ? error.message : error
+        }'`,
       );
       return emptyResult;
     }
@@ -1557,13 +1742,6 @@ class WorkmanLanguageServer {
     }
 
     return null;
-  }
-
-  private ensureWmExtension(path: string): string {
-    if (path.endsWith(".wm")) {
-      return path;
-    }
-    return `${path}.wm`;
   }
 
   private estimateRangeFromMessage(text: string, msg: string) {

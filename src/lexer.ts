@@ -1,5 +1,18 @@
-import { Token, keywords, symbols, operatorChars, multiCharOperators } from "./token.ts";
+import {
+  keywords,
+  multiCharOperators,
+  operatorChars,
+  symbols,
+  Token,
+} from "./token.ts";
 import { unexpectedCharError, unterminatedStringError } from "./error.ts";
+import {
+  isAlpha as isAlphawm,
+  isAlphaNumeric as isAlphaNumericwm,
+  isDigit as isDigitwm,
+  isUppercase as isUppercasewm,
+  isWhitespace as isWhitespacewm,
+} from "../boot/src/lexer.mjs";
 
 export function lex(source: string, sourceName?: string): Token[] {
   const tokens: Token[] = [];
@@ -23,7 +36,12 @@ export function lex(source: string, sourceName?: string): Token[] {
         value += source[index];
         index++;
       }
-      tokens.push({ kind: "comment", value: value.trim(), start: commentStart, end: index });
+      tokens.push({
+        kind: "comment",
+        value: value.trim(),
+        start: commentStart,
+        end: index,
+      });
       continue;
     }
 
@@ -35,13 +53,13 @@ export function lex(source: string, sourceName?: string): Token[] {
       // - Previous non-whitespace token is not a number, identifier, or closing paren/bracket
       const canBeNegative = tokens.length === 0 || (() => {
         const lastToken = tokens[tokens.length - 1];
-        return lastToken.kind !== "number" && 
-               lastToken.kind !== "identifier" &&
-               lastToken.kind !== "constructor" &&
-               lastToken.value !== ")" &&
-               lastToken.value !== "]";
+        return lastToken.kind !== "number" &&
+          lastToken.kind !== "identifier" &&
+          lastToken.kind !== "constructor" &&
+          lastToken.value !== ")" &&
+          lastToken.value !== "]";
       })();
-      
+
       if (canBeNegative) {
         let value = char;
         index++;
@@ -113,7 +131,12 @@ export function lex(source: string, sourceName?: string): Token[] {
     // This handles cases like == which starts with = (a symbol)
     const operatorMatch = matchOperator(source, index);
     if (operatorMatch) {
-      tokens.push({ kind: "operator", value: operatorMatch.value, start, end: operatorMatch.end });
+      tokens.push({
+        kind: "operator",
+        value: operatorMatch.value,
+        start,
+        end: operatorMatch.end,
+      });
       index = operatorMatch.end;
       continue;
     }
@@ -121,7 +144,12 @@ export function lex(source: string, sourceName?: string): Token[] {
     // Try to match symbols
     const match = matchSymbol(source, index);
     if (match) {
-      tokens.push({ kind: "symbol", value: match.value, start, end: match.end });
+      tokens.push({
+        kind: "symbol",
+        value: match.value,
+        start,
+        end: match.end,
+      });
       index = match.end;
       continue;
     }
@@ -133,7 +161,10 @@ export function lex(source: string, sourceName?: string): Token[] {
   return tokens;
 }
 
-function matchSymbol(source: string, index: number): { value: string; end: number } | null {
+function matchSymbol(
+  source: string,
+  index: number,
+): { value: string; end: number } | null {
   for (const symbol of symbols) {
     const end = index + symbol.length;
     if (source.slice(index, end) === symbol) {
@@ -143,7 +174,10 @@ function matchSymbol(source: string, index: number): { value: string; end: numbe
   return null;
 }
 
-function matchOperator(source: string, index: number): { value: string; end: number } | null {
+function matchOperator(
+  source: string,
+  index: number,
+): { value: string; end: number } | null {
   // First try multi-character operators (sorted by length, longest first)
   for (const op of multiCharOperators) {
     const end = index + op.length;
@@ -151,7 +185,7 @@ function matchOperator(source: string, index: number): { value: string; end: num
       return { value: op, end };
     }
   }
-  
+
   // Then try single character operators (but not if they're also symbols)
   const char = source[index];
   if (operatorChars.has(char)) {
@@ -160,37 +194,45 @@ function matchOperator(source: string, index: number): { value: string; end: num
     if (symbols.includes(char)) {
       return null;
     }
-    
+
     let value = char;
     let end = index + 1;
-    
+
     return { value, end };
   }
-  
+
   return null;
 }
 
 function isWhitespace(char: string): boolean {
-  return char === " " || char === "\t" || char === "\n" || char === "\r";
+  return isWhitespacewm(char);
+  /* return char === " " || char === "\t" || char === "\n" || char === "\r"; */
 }
 
 function isDigit(char: string): boolean {
-  return char >= "0" && char <= "9";
+  return isDigitwm(char);
+  /* return char >= "0" && char <= "9"; */
 }
 
 function isAlpha(char: string): boolean {
-  return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z");
+  return isAlphawm(char);
+  /* return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z"); */
 }
 
 function isAlphaNumeric(char: string): boolean {
-  return isAlpha(char) || isDigit(char) || char === "'";
+  return isAlphaNumericwm(char);
+  /* return isAlpha(char) || isDigit(char) || char === "'"; */
 }
 
 function isUppercase(char: string): boolean {
-  return char >= "A" && char <= "Z";
+  return isUppercasewm(char);
+  /* return char >= "A" && char <= "Z"; */
 }
 
-function readCharLiteral(source: string, start: number): { value: string; nextIndex: number } {
+function readCharLiteral(
+  source: string,
+  start: number,
+): { value: string; nextIndex: number } {
   let index = start + 1;
   const length = source.length;
 
@@ -199,7 +241,7 @@ function readCharLiteral(source: string, start: number): { value: string; nextIn
   }
 
   const char = source[index];
-  
+
   // Handle escape sequences
   if (char === "\\") {
     if (index + 1 >= length) {
@@ -241,16 +283,19 @@ function readCharLiteral(source: string, start: number): { value: string; nextIn
   if (char === "\n" || char === "'") {
     throw unterminatedStringError(start, source);
   }
-  
+
   index++;
   if (index >= length || source[index] !== "'") {
     throw unterminatedStringError(start, source);
   }
-  
+
   return { value: char, nextIndex: index + 1 };
 }
 
-function readStringLiteral(source: string, start: number): { value: string; nextIndex: number } {
+function readStringLiteral(
+  source: string,
+  start: number,
+): { value: string; nextIndex: number } {
   let index = start + 1;
   let value = "";
   const length = source.length;

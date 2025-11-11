@@ -12,7 +12,7 @@ import { InferError } from "../../../src/error.ts";
 import type { ConstraintDiagnostic } from "../../../src/diagnostics.ts";
 import { typeToString } from "../../../src/types.ts";
 import type { Type } from "../../../src/types.ts";
-import type { SourceSpan, NodeId } from "../../../src/ast.ts";
+import type { NodeId, SourceSpan } from "../../../src/ast.ts";
 import type { MProgram } from "../../../src/ast_marked.ts";
 
 export interface WorkmanLoweringInput {
@@ -35,7 +35,7 @@ export function lowerAnalyzedModule(
   _options: WorkmanLoweringOptions = {},
 ): CoreModule {
   const { node, analysis } = input;
-  
+
   // Report type errors but don't block compilation (Hazel-style)
   const diagnostics = analysis.layer2.diagnostics;
   if (diagnostics.length > 0 && _options.showAllErrors) {
@@ -50,7 +50,7 @@ export function lowerAnalyzedModule(
   } else if (diagnostics.length > 0) {
     console.error(`\n⚠️  Type errors in ${node.path}:\n`);
   }
-  
+
   const program = analysis.layer2.remarkedProgram;
   return {
     path: node.path,
@@ -140,7 +140,11 @@ function collectSpans(program: MProgram): Map<NodeId, SourceSpan> {
   return spans;
 }
 
-function createDiagnosticError(diagnostic: ConstraintDiagnostic, span: SourceSpan | undefined, source?: string): InferError {
+function createDiagnosticError(
+  diagnostic: ConstraintDiagnostic,
+  span: SourceSpan | undefined,
+  source?: string,
+): InferError {
   const message = formatDiagnosticMessage(diagnostic);
   return new InferError(message, span, source);
 }
@@ -171,7 +175,11 @@ function simpleFormatType(type: Type): string {
     case "error_row":
       return typeToString(type);
     case "record":
-      return `{ ${Object.entries(type.fields).map(([k, v]) => `${k}: ${simpleFormatType(v)}`).join(", ")} }`;
+      return `{ ${
+        Object.entries(type.fields).map(([k, v]) =>
+          `${k}: ${simpleFormatType(v)}`
+        ).join(", ")
+      } }`;
     default:
       return "?";
   }
@@ -184,9 +192,13 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
       if (calleeType) {
         // For unknown types (especially incomplete JS imports), we don't know if it's a function
         if (calleeType.kind === "unknown") {
-          return `Calling value of unknown type ${simpleFormatType(calleeType)}`;
+          return `Calling value of unknown type ${
+            simpleFormatType(calleeType)
+          }`;
         }
-        return `Cannot call non-function value of type ${simpleFormatType(calleeType)}`;
+        return `Cannot call non-function value of type ${
+          simpleFormatType(calleeType)
+        }`;
       }
       return "Cannot call a non-function value";
     }
@@ -194,7 +206,9 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
       const expected = diagnostic.details?.expected;
       const actual = diagnostic.details?.actual;
       if (expected && actual) {
-        return `Type mismatch: expected ${simpleFormatType(expected as Type)}, but got ${simpleFormatType(actual as Type)}`;
+        return `Type mismatch: expected ${
+          simpleFormatType(expected as Type)
+        }, but got ${simpleFormatType(actual as Type)}`;
       }
       return "Type mismatch between incompatible types";
     }
@@ -202,7 +216,9 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
       return "Match arms have incompatible types";
     case "missing_field": {
       const field = diagnostic.details?.field;
-      return field ? `Record is missing field '${field}'` : "Record is missing a required field";
+      return field
+        ? `Record is missing field '${field}'`
+        : "Record is missing a required field";
     }
     case "not_record":
       return "Cannot project field from non-record type";
@@ -222,16 +238,45 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
       return "Boolean operation requires boolean type";
     case "free_variable": {
       const name = diagnostic.details?.name;
-      return name ? `Unknown identifier '${name}'` : "Reference to undefined variable";
+      return name
+        ? `Unknown identifier '${name}'`
+        : "Reference to undefined variable";
     }
     case "unsupported_expr":
       return "Unsupported expression type";
     case "duplicate_record_field": {
       const field = diagnostic.details?.field;
-      return field ? `Duplicate record field '${field}'` : "Duplicate field in record";
+      return field
+        ? `Duplicate record field '${field}'`
+        : "Duplicate field in record";
     }
-    case "non_exhaustive_match":
-      return "Match expression is not exhaustive - some cases are not handled";
+    case "non_exhaustive_match": {
+      const missing = diagnostic.details?.missingCases as string[] | undefined;
+      const scrutineeType = diagnostic.details?.scrutineeType as
+        | Type
+        | undefined;
+      let message = "Match expression is not exhaustive";
+
+      if (missing && missing.length > 0) {
+        message += ` - missing cases: ${missing.join(", ")}`;
+      } else {
+        message += " - some cases are not handled";
+      }
+
+      // Add helpful context for infectious Results
+      if (
+        scrutineeType?.kind === "constructor" && scrutineeType.name === "Result"
+      ) {
+        const errorType = scrutineeType.args[1];
+        const errorTypeStr = errorType ? simpleFormatType(errorType) : "?";
+        message +=
+          `\n\n  The scrutinee has type Result<?, ${errorTypeStr}> (infectious Result from an operation that can fail)`;
+        message +=
+          `\n  Handle both Ok and Err cases, or use a wildcard pattern`;
+      }
+
+      return message;
+    }
     case "all_errors_outside_result":
       return "`AllErrors` can only appear when matching a Result value";
     case "all_errors_requires_err":
@@ -250,7 +295,9 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
     }
     case "infectious_match_result_mismatch": {
       const row = diagnostic.details?.errorRow as Type | undefined;
-      const missing = diagnostic.details?.missingConstructors as string[] | undefined;
+      const missing = diagnostic.details?.missingConstructors as
+        | string[]
+        | undefined;
       const rowLabel = row ? ` for row ${simpleFormatType(row)}` : "";
       const missingLabel = missing && missing.length > 0
         ? `; missing constructors: ${missing.join(", ")}`

@@ -1,5 +1,6 @@
 import type { Token } from "./token.ts";
 import type { SourceSpan } from "./ast.ts";
+import { getLineAndColumn as getLineAndColumnwm } from "../boot/src/error.mjs";
 
 /**
  * Base error class for all Workman language errors.
@@ -233,7 +234,7 @@ function formatError(options: ErrorFormatOptions): string {
 }
 
 function getLineAndColumn(source: string, position: number): Location {
-  let line = 1;
+  /*   let line = 1;
   let column = 1;
   
   for (let i = 0; i < position && i < source.length; i++) {
@@ -244,8 +245,8 @@ function getLineAndColumn(source: string, position: number): Location {
       column++;
     }
   }
-  
-  return { line, column };
+  return { line, column }; */
+  return getLineAndColumnwm(source, position);
 }
 
 function getSourceContext(

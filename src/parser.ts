@@ -1,12 +1,16 @@
 import { Token } from "./token.ts";
-import { ParseError, expectedTokenError, unexpectedTokenError } from "./error.ts";
+import {
+  expectedTokenError,
+  ParseError,
+  unexpectedTokenError,
+} from "./error.ts";
 import { nextNodeId, resetNodeIds } from "./node_ids.ts";
 import type {
   Associativity,
   BlockExpr,
   BlockStatement,
-  Expr,
   ExportModifier,
+  Expr,
   ImportSpecifier,
   InfixDeclaration,
   LetDeclaration,
@@ -17,15 +21,15 @@ import type {
   NamedImport,
   NamespaceImport,
   Parameter,
-  RecordField,
   Program,
+  RecordField,
   TopLevel,
   TypeAliasMember,
   TypeDeclaration,
-  TypeExpr,
-  TypeRecordField,
   TypeErrorRowCase,
+  TypeExpr,
   TypeParameter,
+  TypeRecordField,
   TypeReexport,
 } from "./ast.ts";
 import type { Pattern, SourceSpan } from "./ast.ts";
@@ -36,14 +40,20 @@ export { ParseError } from "./error.ts";
 export type OperatorInfo = { precedence: number; associativity: Associativity };
 
 export function parseSurfaceProgram(
-  tokens: Token[], 
-  source?: string, 
+  tokens: Token[],
+  source?: string,
   preserveComments: boolean = false,
   initialOperators?: Map<string, OperatorInfo>,
-  initialPrefixOperators?: Set<string>
+  initialPrefixOperators?: Set<string>,
 ): Program {
   resetNodeIds(0); // Reset IDs before parsing
-  const parser = new SurfaceParser(tokens, source, preserveComments, initialOperators, initialPrefixOperators);
+  const parser = new SurfaceParser(
+    tokens,
+    source,
+    preserveComments,
+    initialOperators,
+    initialPrefixOperators,
+  );
   return parser.parseProgram();
 }
 
@@ -62,7 +72,7 @@ class SurfaceParser {
     private readonly source?: string,
     private readonly preserveComments: boolean = false,
     initialOperators?: Map<string, OperatorInfo>,
-    initialPrefixOperators?: Set<string>
+    initialPrefixOperators?: Set<string>,
   ) {
     // Start with default comparison operators (these are defined in std/core/int but need to be known at parse time)
     const defaultOperators = new Map<string, OperatorInfo>([
@@ -71,18 +81,21 @@ class SurfaceParser {
       ["<=", { precedence: 4, associativity: "none" }],
       [">=", { precedence: 4, associativity: "none" }],
     ]);
-    
-    this.operators = initialOperators ? new Map([...defaultOperators, ...initialOperators]) : defaultOperators;
-    this.prefixOperators = initialPrefixOperators ? new Set(initialPrefixOperators) : new Set();
+
+    this.operators = initialOperators
+      ? new Map([...defaultOperators, ...initialOperators])
+      : defaultOperators;
+    this.prefixOperators = initialPrefixOperators
+      ? new Set(initialPrefixOperators)
+      : new Set();
   }
 
   parseProgram(): Program {
-
     const imports: ModuleImport[] = [];
     const reexports: ModuleReexport[] = [];
     const declarations: TopLevel[] = [];
     let lastTokenEnd = 0;
-    
+
     while (!this.isEOF()) {
       // Check if there's a blank line before this declaration
       let hasBlankLineBefore = false;
@@ -93,15 +106,17 @@ class SurfaceParser {
         const newlineCount = (textBetween.match(/\n/g) || []).length;
         hasBlankLineBefore = newlineCount >= 2;
       }
-      
+
       // Collect any leading comments (only when preserving comments for formatter)
-      const leadingComments = this.preserveComments ? this.collectLeadingComments() : [];
-      
+      const leadingComments = this.preserveComments
+        ? this.collectLeadingComments()
+        : [];
+
       if (this.isEOF()) {
         break;
       }
-      
-      const val = this.peek(this.index)
+
+      const val = this.peek(this.index);
       //console.log(val, this.index);
       if (this.checkKeyword("from")) {
         imports.push(this.parseImportDeclaration());
@@ -125,9 +140,14 @@ class SurfaceParser {
         const semicolonToken = this.previous();
         lastTokenEnd = semicolonToken.end;
         // Check for trailing comment on the same line (only when preserving comments)
-        if (this.preserveComments && this.peek().kind === "comment" && this.source) {
+        if (
+          this.preserveComments && this.peek().kind === "comment" && this.source
+        ) {
           const commentToken = this.peek();
-          const textBetween = this.source.slice(semicolonToken.end, commentToken.start);
+          const textBetween = this.source.slice(
+            semicolonToken.end,
+            commentToken.start,
+          );
           // Only treat as trailing if there's no newline between semicolon and comment
           if (!textBetween.includes("\n")) {
             const lastDecl = declarations[declarations.length - 1];
@@ -152,7 +172,10 @@ class SurfaceParser {
     this.expectKeyword("import");
     const { specifiers, endToken } = this.parseImportClause();
     if (specifiers.length === 0) {
-      throw this.error("Import statement must include at least one specifier", this.peek());
+      throw this.error(
+        "Import statement must include at least one specifier",
+        this.peek(),
+      );
     }
     return {
       kind: "module_import",
@@ -163,7 +186,10 @@ class SurfaceParser {
     };
   }
 
-  private parseImportClause(): { specifiers: ImportSpecifier[]; endToken: Token } {
+  private parseImportClause(): {
+    specifiers: ImportSpecifier[];
+    endToken: Token;
+  } {
     if (this.matchSymbol("*")) {
       const starToken = this.previous();
       this.expectKeyword("as");
@@ -274,7 +300,9 @@ class SurfaceParser {
   }
 
   private parseTopLevel(): TopLevel {
-    const exportToken = this.matchKeyword("export") ? this.previous() : undefined;
+    const exportToken = this.matchKeyword("export")
+      ? this.previous()
+      : undefined;
     const token = this.peek();
     if (token.kind === "keyword") {
       switch (token.value) {
@@ -291,11 +319,17 @@ class SurfaceParser {
         case "prefix":
           return this.parsePrefixDeclaration(exportToken);
         default:
-          throw this.error(`Unexpected keyword '${token.value}' at top-level`, token);
+          throw this.error(
+            `Unexpected keyword '${token.value}' at top-level`,
+            token,
+          );
       }
     }
     if (exportToken) {
-      throw this.error("Expected 'let', 'type', 'infix', or 'prefix' after 'export'", token);
+      throw this.error(
+        "Expected 'let', 'type', 'infix', or 'prefix' after 'export'",
+        token,
+      );
     }
     throw this.error("Expected top-level declaration", token);
   }
@@ -332,26 +366,36 @@ class SurfaceParser {
     return firstBinding;
   }
 
-  private parseLetBinding(startPos: number, isRecursive: boolean): LetDeclaration {
+  private parseLetBinding(
+    startPos: number,
+    isRecursive: boolean,
+  ): LetDeclaration {
     const nameToken = this.expectIdentifier();
     const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
     this.expectSymbol("=");
     const initializer = this.parseExpression();
-    
+
     // Handle first-class match: match(x) { ... } desugars to (x) => { match(x) { ... } }
-    if (initializer.kind === "match") {
+    // Only apply this transformation when the scrutinee is a simple identifier or tuple of identifiers
+    if (
+      initializer.kind === "match" &&
+      this.isValidMatchFunctionScrutinee(initializer.scrutinee)
+    ) {
       const parameterSpecs = this.extractMatchParameters(initializer.scrutinee);
       const parameters = parameterSpecs.map((spec) =>
         this.createMatchParameter(spec)
       );
-      
+
       // Detect if the match expression is multi-line
       let isMultiLine = false;
       if (this.source) {
-        const matchText = this.source.slice(initializer.span.start, initializer.span.end);
+        const matchText = this.source.slice(
+          initializer.span.start,
+          initializer.span.end,
+        );
         isMultiLine = matchText.includes("\n");
       }
-      
+
       const body: BlockExpr = {
         kind: "block",
         statements: [],
@@ -372,10 +416,13 @@ class SurfaceParser {
         id: nextNodeId(),
       };
     }
-    
+
     if (initializer.kind === "block") {
       if (isRecursive) {
-        throw this.error("Recursive let declarations must use arrow syntax", this.previous());
+        throw this.error(
+          "Recursive let declarations must use arrow syntax",
+          this.previous(),
+        );
       }
       return {
         kind: "let",
@@ -405,7 +452,10 @@ class SurfaceParser {
     }
 
     if (isRecursive) {
-      throw this.error("Recursive let declarations must use arrow syntax", this.previous());
+      throw this.error(
+        "Recursive let declarations must use arrow syntax",
+        this.previous(),
+      );
     }
 
     const body: BlockExpr = {
@@ -455,6 +505,18 @@ class SurfaceParser {
     );
   }
 
+  private isValidMatchFunctionScrutinee(scrutinee: Expr): boolean {
+    if (scrutinee.kind === "identifier") {
+      return true;
+    }
+    if (scrutinee.kind === "tuple") {
+      return scrutinee.elements.every((element) =>
+        element.kind === "identifier"
+      );
+    }
+    return false;
+  }
+
   private createMatchParameter(spec: MatchParameterSpec): Parameter {
     const pattern: Pattern = {
       kind: "variable",
@@ -488,7 +550,9 @@ class SurfaceParser {
       do {
         const pattern = this.parsePattern();
         this.ensureValidParameterPattern(pattern);
-        const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
+        const annotation = this.matchSymbol(":")
+          ? this.parseTypeExpr()
+          : undefined;
         const spanEnd = annotation ? annotation.span.end : pattern.span.end;
         params.push({
           kind: "parameter",
@@ -523,7 +587,12 @@ class SurfaceParser {
   }
 
   private syntheticToken(span: SourceSpan): Token {
-    return { kind: "identifier", value: "<pattern>", start: span.start, end: span.end };
+    return {
+      kind: "identifier",
+      value: "<pattern>",
+      start: span.start,
+      end: span.end,
+    };
   }
 
   private parseBlockExpr(): BlockExpr {
@@ -560,15 +629,22 @@ class SurfaceParser {
 
     const close = this.expectSymbol("}");
     const span = this.spanFrom(open.start, close.end);
-    
+
     // Detect if block is multi-line by checking if there's a newline between { and }
     let isMultiLine = false;
     if (this.source) {
       const blockText = this.source.slice(open.start, close.end);
       isMultiLine = blockText.includes("\n");
     }
-    
-    return { kind: "block", statements, result, span, isMultiLine, id: nextNodeId() };
+
+    return {
+      kind: "block",
+      statements,
+      result,
+      span,
+      isMultiLine,
+      id: nextNodeId(),
+    };
   }
 
   private looksLikeRecordLiteral(): boolean {
@@ -685,34 +761,36 @@ class SurfaceParser {
 
   private parseInfixDeclaration(exportToken?: Token): InfixDeclaration {
     const infixToken = this.consume(); // infix, infixl, or infixr
-    const associativity: Associativity = 
-      infixToken.value === "infixl" ? "left" :
-      infixToken.value === "infixr" ? "right" : "none";
-    
+    const associativity: Associativity = infixToken.value === "infixl"
+      ? "left"
+      : infixToken.value === "infixr"
+      ? "right"
+      : "none";
+
     // Parse precedence (number)
     const precedenceToken = this.consume();
     if (precedenceToken.kind !== "number") {
       throw this.error("Expected precedence number", precedenceToken);
     }
     const precedence = Number(precedenceToken.value);
-    
+
     // Parse operator (can be operator or symbol like < >)
     const operatorToken = this.consume();
     if (operatorToken.kind !== "operator" && operatorToken.kind !== "symbol") {
       throw this.error("Expected operator", operatorToken);
     }
     const operator = operatorToken.value;
-    
+
     // Parse "="
     this.expectSymbol("=");
-    
+
     // Parse implementation function name
     const implToken = this.expectIdentifier();
     const implementation = implToken.value;
-    
+
     // Register the operator
     this.operators.set(operator, { precedence, associativity });
-    
+
     const declaration: InfixDeclaration = {
       kind: "infix",
       operator,
@@ -722,37 +800,39 @@ class SurfaceParser {
       span: this.spanFrom(infixToken.start, implToken.end),
       id: nextNodeId(),
     };
-    
+
     if (exportToken) {
       declaration.export = {
         kind: "export",
         span: this.createSpan(exportToken, exportToken),
       };
     }
-    
+
     return declaration;
   }
 
-  private parsePrefixDeclaration(exportToken?: Token): import("./ast.ts").PrefixDeclaration {
+  private parsePrefixDeclaration(
+    exportToken?: Token,
+  ): import("./ast.ts").PrefixDeclaration {
     const prefixToken = this.expectKeyword("prefix");
-    
+
     // Parse operator (can be operator or symbol like < >)
     const operatorToken = this.consume();
     if (operatorToken.kind !== "operator" && operatorToken.kind !== "symbol") {
       throw this.error("Expected operator", operatorToken);
     }
     const operator = operatorToken.value;
-    
+
     // Parse "="
     this.expectSymbol("=");
-    
+
     // Parse implementation function name
     const implToken = this.expectIdentifier();
     const implementation = implToken.value;
-    
+
     // Register the prefix operator
     this.prefixOperators.add(operator);
-    
+
     const declaration: import("./ast.ts").PrefixDeclaration = {
       kind: "prefix",
       operator,
@@ -760,14 +840,14 @@ class SurfaceParser {
       span: this.spanFrom(prefixToken.start, implToken.end),
       id: nextNodeId(),
     };
-    
+
     if (exportToken) {
       declaration.export = {
         kind: "export",
         span: this.createSpan(exportToken, exportToken),
       };
     }
-    
+
     return declaration;
   }
 
@@ -776,7 +856,11 @@ class SurfaceParser {
     if (!this.checkSymbol(">")) {
       do {
         const ident = this.expectTypeParamName();
-        params.push({ name: ident.value, span: this.createSpan(ident, ident), id: nextNodeId() });
+        params.push({
+          name: ident.value,
+          span: this.createSpan(ident, ident),
+          id: nextNodeId(),
+        });
       } while (this.matchSymbol(","));
     }
     this.expectSymbol(">");
@@ -803,7 +887,12 @@ class SurfaceParser {
         kind: "constructor",
         name: ctor.value,
         typeArgs,
-        span: this.spanFrom(ctor.start, typeArgs.length > 0 ? typeArgs[typeArgs.length - 1].span.end : ctor.end),
+        span: this.spanFrom(
+          ctor.start,
+          typeArgs.length > 0
+            ? typeArgs[typeArgs.length - 1].span.end
+            : ctor.end,
+        ),
         id: nextNodeId(),
       };
     }
@@ -847,7 +936,9 @@ class SurfaceParser {
     if (token.kind === "keyword" && token.value === "match") {
       const matchToken = this.expectKeyword("match");
       if (this.matchSymbol("{")) {
-        const { bundle, span } = this.parseMatchBlockFromOpenBrace(matchToken.start);
+        const { bundle, span } = this.parseMatchBlockFromOpenBrace(
+          matchToken.start,
+        );
         return {
           kind: "match_bundle_literal",
           bundle,
@@ -914,7 +1005,10 @@ class SurfaceParser {
           kind: "arrow",
           parameters: params,
           body,
-          span: this.spanFrom(params[0]?.span.start ?? this.previous().start, body.span.end),
+          span: this.spanFrom(
+            params[0]?.span.start ?? this.previous().start,
+            body.span.end,
+          ),
           id: nextNodeId(),
         };
       }
@@ -939,26 +1033,26 @@ class SurfaceParser {
 
   private parseBinaryExpression(minPrecedence: number = 0): Expr {
     let left = this.parseCallExpression();
-    
+
     while (true) {
       const token = this.peek();
       // Check if it's an operator, or a symbol that's registered as an operator (like < >)
       if (token.kind !== "operator" && token.kind !== "symbol") {
         break;
       }
-      
+
       const opInfo = this.operators.get(token.value);
       if (!opInfo || opInfo.precedence < minPrecedence) {
         break;
       }
-      
+
       const operator = this.consume().value;
-      const nextMinPrecedence = opInfo.associativity === "left" 
-        ? opInfo.precedence + 1 
+      const nextMinPrecedence = opInfo.associativity === "left"
+        ? opInfo.precedence + 1
         : opInfo.precedence;
-      
+
       const right = this.parseBinaryExpression(nextMinPrecedence);
-      
+
       left = {
         kind: "binary",
         operator,
@@ -968,7 +1062,7 @@ class SurfaceParser {
         id: nextNodeId(),
       };
     }
-    
+
     return left;
   }
 
@@ -1026,17 +1120,33 @@ class SurfaceParser {
     switch (token.kind) {
       case "identifier": {
         const ident = this.consume();
-        return { kind: "identifier", name: ident.value, span: this.createSpan(ident, ident), id: nextNodeId() } as Expr;
+        return {
+          kind: "identifier",
+          name: ident.value,
+          span: this.createSpan(ident, ident),
+          id: nextNodeId(),
+        } as Expr;
       }
       case "constructor": {
         const ctor = this.consume();
-        return { kind: "constructor", name: ctor.value, args: [], span: this.createSpan(ctor, ctor), id: nextNodeId() } as Expr;
+        return {
+          kind: "constructor",
+          name: ctor.value,
+          args: [],
+          span: this.createSpan(ctor, ctor),
+          id: nextNodeId(),
+        } as Expr;
       }
       case "number": {
         const num = this.consume();
         return {
           kind: "literal",
-          literal: { kind: "int", value: Number(num.value), span: this.createSpan(num, num), id: nextNodeId() },
+          literal: {
+            kind: "int",
+            value: Number(num.value),
+            span: this.createSpan(num, num),
+            id: nextNodeId(),
+          },
           span: this.createSpan(num, num),
           id: nextNodeId(),
         } as Expr;
@@ -1045,7 +1155,12 @@ class SurfaceParser {
         const ch = this.consume();
         return {
           kind: "literal",
-          literal: { kind: "char", value: ch.value, span: this.createSpan(ch, ch), id: nextNodeId() },
+          literal: {
+            kind: "char",
+            value: ch.value,
+            span: this.createSpan(ch, ch),
+            id: nextNodeId(),
+          },
           span: this.createSpan(ch, ch),
           id: nextNodeId(),
         } as Expr;
@@ -1054,7 +1169,12 @@ class SurfaceParser {
         const str = this.consume();
         return {
           kind: "literal",
-          literal: { kind: "string", value: str.value, span: this.createSpan(str, str), id: nextNodeId() },
+          literal: {
+            kind: "string",
+            value: str.value,
+            span: this.createSpan(str, str),
+            id: nextNodeId(),
+          },
           span: this.createSpan(str, str),
           id: nextNodeId(),
         } as Expr;
@@ -1063,7 +1183,12 @@ class SurfaceParser {
         const bool = this.consume();
         return {
           kind: "literal",
-          literal: { kind: "bool", value: bool.value === "true", span: this.createSpan(bool, bool), id: nextNodeId() },
+          literal: {
+            kind: "bool",
+            value: bool.value === "true",
+            span: this.createSpan(bool, bool),
+            id: nextNodeId(),
+          },
           span: this.createSpan(bool, bool),
           id: nextNodeId(),
         } as Expr;
@@ -1136,16 +1261,19 @@ class SurfaceParser {
       } as Expr;
     }
     if (elements.length === 1) {
-      return { ...elements[0], span: this.spanFrom(open.start, close.end) } as Expr;
+      return {
+        ...elements[0],
+        span: this.spanFrom(open.start, close.end),
+      } as Expr;
     }
-    
+
     // Detect if tuple is multi-line
     let isMultiLine = false;
     if (this.source) {
       const tupleText = this.source.slice(open.start, close.end);
       isMultiLine = tupleText.includes("\n");
     }
-    
+
     return {
       kind: "tuple",
       elements,
@@ -1208,7 +1336,9 @@ class SurfaceParser {
     if (token.kind === "constructor") {
       const ctor = this.consume();
       const typeArgs = this.matchSymbol("<") ? this.parseTypeArguments() : [];
-      const end = typeArgs.length > 0 ? typeArgs[typeArgs.length - 1].span.end : ctor.end;
+      const end = typeArgs.length > 0
+        ? typeArgs[typeArgs.length - 1].span.end
+        : ctor.end;
       return {
         kind: "type_ref",
         name: ctor.value,
@@ -1305,7 +1435,11 @@ class SurfaceParser {
     const open = this.expectSymbol("(");
     if (this.checkSymbol(")")) {
       const close = this.expectSymbol(")");
-      return { kind: "type_unit", span: this.spanFrom(open.start, close.end), id: nextNodeId() };
+      return {
+        kind: "type_unit",
+        span: this.spanFrom(open.start, close.end),
+        id: nextNodeId(),
+      };
     }
 
     const elements: TypeExpr[] = [];
@@ -1340,7 +1474,11 @@ class SurfaceParser {
     const token = this.peek();
     if (token.kind === "symbol" && token.value === "_") {
       const underscore = this.consume();
-      return { kind: "wildcard", span: this.createSpan(underscore, underscore), id: nextNodeId() };
+      return {
+        kind: "wildcard",
+        span: this.createSpan(underscore, underscore),
+        id: nextNodeId(),
+      };
     }
 
     if (
@@ -1348,12 +1486,21 @@ class SurfaceParser {
       token.value === "AllErrors"
     ) {
       const all = this.consume();
-      return { kind: "all_errors", span: this.createSpan(all, all), id: nextNodeId() };
+      return {
+        kind: "all_errors",
+        span: this.createSpan(all, all),
+        id: nextNodeId(),
+      };
     }
 
     if (token.kind === "identifier") {
       const ident = this.consume();
-      return { kind: "variable", name: ident.value, span: this.createSpan(ident, ident), id: nextNodeId() };
+      return {
+        kind: "variable",
+        name: ident.value,
+        span: this.createSpan(ident, ident),
+        id: nextNodeId(),
+      };
     }
 
     if (token.kind === "number") {
@@ -1424,7 +1571,12 @@ class SurfaceParser {
         const single = elements[0];
         return { ...single, span: this.spanFrom(open.start, close.end) };
       }
-      return { kind: "tuple", elements, span: this.spanFrom(open.start, close.end), id: nextNodeId() };
+      return {
+        kind: "tuple",
+        elements,
+        span: this.spanFrom(open.start, close.end),
+        id: nextNodeId(),
+      };
     }
 
     throw this.error("Expected pattern", token);
@@ -1435,7 +1587,9 @@ class SurfaceParser {
     return this.parseMatchBlockFromOpenBrace(open.start);
   }
 
-  private parseMatchBlockFromOpenBrace(start: number): { bundle: MatchBundle; span: SourceSpan } {
+  private parseMatchBlockFromOpenBrace(
+    start: number,
+  ): { bundle: MatchBundle; span: SourceSpan } {
     const openStart = start;
     const arms: MatchArm[] = [];
 
@@ -1445,7 +1599,9 @@ class SurfaceParser {
 
         if (entryStart.kind === "identifier") {
           const next = this.peek(1);
-          if (next.kind === "symbol" && (next.value === "," || next.value === "}")) {
+          if (
+            next.kind === "symbol" && (next.value === "," || next.value === "}")
+          ) {
             const identifier = this.expectIdentifier();
             const hasComma = this.matchSymbol(",");
             const endToken = hasComma ? this.previous() : identifier;
@@ -1468,12 +1624,15 @@ class SurfaceParser {
         const pattern = this.parsePattern();
         this.expectSymbol("=>");
         const body = this.parseExpression();
-        
+
         // Enforce that match arm bodies must be block expressions
         if (body.kind !== "block") {
-          throw this.error("Match arm body must be a block expression (use { })", this.previous());
+          throw this.error(
+            "Match arm body must be a block expression (use { })",
+            this.previous(),
+          );
         }
-        
+
         const hasComma = this.matchSymbol(",");
         const span = this.spanFrom(patternStart.start, body.span.end);
         arms.push({
@@ -1587,7 +1746,10 @@ class SurfaceParser {
     if (!this.preserveComments) {
       // Skip comments before peeking
       let tempIndex = this.index;
-      while (tempIndex < this.tokens.length && this.tokens[tempIndex].kind === "comment") {
+      while (
+        tempIndex < this.tokens.length &&
+        this.tokens[tempIndex].kind === "comment"
+      ) {
         tempIndex++;
       }
       const index = tempIndex + offset;
@@ -1599,7 +1761,7 @@ class SurfaceParser {
       }
       return this.tokens[index];
     }
-    
+
     // Original behavior when preserving comments
     const index = this.index + offset;
     if (index < 0) {
@@ -1628,24 +1790,30 @@ class SurfaceParser {
     while (this.peek().kind === "comment") {
       const commentToken = this.consume();
       const commentText = commentToken.value;
-      
+
       // Check if there's a blank line after this comment (before next token)
       let hasBlankLineAfter = false;
       if (this.source && this.peek().kind === "comment") {
         const nextToken = this.peek();
-        const textBetween = this.source.slice(commentToken.end, nextToken.start);
+        const textBetween = this.source.slice(
+          commentToken.end,
+          nextToken.start,
+        );
         // Count newlines - if 2 or more, there's a blank line
         const newlineCount = (textBetween.match(/\n/g) || []).length;
         hasBlankLineAfter = newlineCount >= 2;
       }
-      
+
       comments.push({ text: commentText, hasBlankLineAfter });
     }
     return comments;
   }
 
   private skipComments(): void {
-    while (this.index < this.tokens.length && this.tokens[this.index].kind === "comment") {
+    while (
+      this.index < this.tokens.length &&
+      this.tokens[this.index].kind === "comment"
+    ) {
       this.index++;
     }
   }

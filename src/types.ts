@@ -233,7 +233,9 @@ export function applySubstitution(type: Type, subst: Substitution): Type {
         }
         nextCases.set(label, applied);
       }
-      const nextTail = type.tail ? applySubstitution(type.tail, subst) : undefined;
+      const nextTail = type.tail
+        ? applySubstitution(type.tail, subst)
+        : undefined;
       if (!changed && nextTail === type.tail) {
         return type;
       }
@@ -374,10 +376,18 @@ export function generalize(
 }
 
 export function instantiate(scheme: TypeScheme): Type {
+  // Ensure fresh vars don't conflict with quantifiers
+  // Find the max quantifier ID and make sure nextTypeVarId is beyond it
+  const maxQuantifierId = Math.max(...scheme.quantifiers, nextTypeVarId - 1);
+  if (nextTypeVarId <= maxQuantifierId) {
+    nextTypeVarId = maxQuantifierId + 1;
+  }
+
   const subst: Substitution = new Map();
   for (const id of scheme.quantifiers) {
     subst.set(id, freshTypeVar());
   }
+
   return applySubstitution(scheme.type, subst);
 }
 
@@ -518,10 +528,28 @@ export function typeToString(type: Type): string {
       entries.sort(([a], [b]) => a.localeCompare(b));
       const rendered = entries.map(([label, payload]) =>
         payload ? `${label}(${typeToString(payload)})` : label
-      ).join(" | ");
-      const tail = type.tail ? ` | ${typeToString(type.tail)}` : "";
-      const contents = rendered.length > 0 ? rendered : "_";
-      return `<${contents}${tail}>`;
+      );
+
+      // Simplify display for common cases:
+      // 1. If no concrete cases and just a tail, show the tail directly
+      if (rendered.length === 0 && type.tail) {
+        return typeToString(type.tail);
+      }
+      // 2. If one concrete case with an open tail variable, hide the tail
+      if (rendered.length === 1 && type.tail?.kind === "var") {
+        return `<${rendered[0]}>`;
+      }
+
+      // Otherwise show full notation with tail
+      if (type.tail) {
+        const tailStr = typeToString(type.tail);
+        // Tail represents "all other potential errors" - prefix with _
+        rendered.push(`_${tailStr}`);
+      } else if (rendered.length === 0) {
+        // Empty error row
+        rendered.push("_");
+      }
+      return `<${rendered.join(" | ")}>`;
     }
     case "unknown":
       return provenanceToString(type.provenance);

@@ -3,11 +3,11 @@ import {
   BlockStatement,
   ConstructorAlias,
   Expr,
-  NodeId,
   InfixDeclaration,
   LetDeclaration,
   MatchArm,
   MatchBundleLiteralExpr,
+  NodeId,
   Parameter,
   Pattern,
   PrefixDeclaration,
@@ -19,6 +19,7 @@ import { lowerTupleParameters } from "../lower_tuple_params.ts";
 import { canonicalizeMatch } from "../passes/canonicalize_match.ts";
 import {
   applySubstitutionScheme,
+  cloneType,
   collapseResultType,
   ConstructorInfo,
   ErrorRowType,
@@ -32,7 +33,6 @@ import {
   TypeScheme,
   typeToString,
   unknownType,
-  cloneType,
 } from "../types.ts";
 import { formatScheme } from "../type_printer.ts";
 import type {
@@ -206,7 +206,7 @@ function inferLetDeclaration(
       decl.body,
       decl.annotation,
     );
-    
+
     // Zero-parameter arrow functions () => { ... } should have type Unit -> T
     // But block expressions { ... } and block let statements should NOT be wrapped
     if (decl.isArrowSyntax && decl.parameters.length === 0) {
@@ -216,7 +216,7 @@ function inferLetDeclaration(
         to: fnType,
       };
     }
-    
+
     const scheme = generalizeInContext(ctx, fnType);
     ctx.env.set(decl.name, scheme);
     if (
@@ -230,7 +230,12 @@ function inferLetDeclaration(
     }
     ctx.allBindings.set(decl.name, scheme); // Track in allBindings
     if (decl.annotation) {
-      recordAnnotationConstraint(ctx, decl.id, decl.annotation, decl.body.result ?? decl.body);
+      recordAnnotationConstraint(
+        ctx,
+        decl.id,
+        decl.annotation,
+        decl.body.result ?? decl.body,
+      );
     }
     return [{ name: decl.name, scheme }];
   }
@@ -290,7 +295,7 @@ function inferLetDeclaration(
   for (const binding of allBindings) {
     let inferredType = inferredTypes.get(binding.name)!;
     let resolvedType = applyCurrentSubst(ctx, inferredType);
-    
+
     // Zero-parameter arrow functions () => { ... } should have type Unit -> T
     // But block expressions { ... } and block let statements should NOT be wrapped
     if (binding.isArrowSyntax && binding.parameters.length === 0) {
@@ -300,7 +305,7 @@ function inferLetDeclaration(
         to: resolvedType,
       };
     }
-    
+
     const scheme = generalizeInContext(ctx, resolvedType);
     ctx.env.set(binding.name, scheme);
     ctx.allBindings.set(binding.name, scheme); // Track in allBindings
@@ -309,7 +314,12 @@ function inferLetDeclaration(
 
   for (const binding of allBindings) {
     if (binding.annotation) {
-      recordAnnotationConstraint(ctx, binding.id, binding.annotation, binding.body.result ?? binding.body);
+      recordAnnotationConstraint(
+        ctx,
+        binding.id,
+        binding.annotation,
+        binding.body.result ?? binding.body,
+      );
     }
   }
 
@@ -830,7 +840,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             fnType = applyCurrentSubst(ctx, resultType);
             continue;
           }
-          
+
           const failure = ctx.lastUnifyFailure;
           const calleeMarked = materializeExpr(ctx, expr.callee);
           const argsMarked = expr.arguments.map((argument) =>
@@ -967,25 +977,44 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           ? errorRowUnion(accumulatedErrors, leftResultInfo.error)
           : leftResultInfo.error;
       }
-      const resolvedRight = collapseResultType(applyCurrentSubst(ctx, rightType));
+      const resolvedRight = collapseResultType(
+        applyCurrentSubst(ctx, rightType),
+      );
       const rightResultInfo = flattenResultType(resolvedRight);
-      const rightArgType = rightResultInfo ? rightResultInfo.value : resolvedRight;
+      const rightArgType = rightResultInfo
+        ? rightResultInfo.value
+        : resolvedRight;
       if (rightResultInfo) {
         accumulatedErrors = accumulatedErrors
           ? errorRowUnion(accumulatedErrors, rightResultInfo.error)
           : rightResultInfo.error;
       }
       if (NUMERIC_BINARY_OPERATORS.has(expr.operator)) {
-        recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+        recordNumericConstraint(
+          ctx,
+          expr,
+          [expr.left, expr.right],
+          expr.operator,
+        );
       }
       if (COMPARISON_OPERATORS.has(expr.operator)) {
         if (ORDERING_COMPARISON_OPERATORS.has(expr.operator)) {
-          recordNumericConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+          recordNumericConstraint(
+            ctx,
+            expr,
+            [expr.left, expr.right],
+            expr.operator,
+          );
         }
         unify(ctx, resultType1, { kind: "bool" });
       }
       if (BOOLEAN_BINARY_OPERATORS.has(expr.operator)) {
-        recordBooleanConstraint(ctx, expr, [expr.left, expr.right], expr.operator);
+        recordBooleanConstraint(
+          ctx,
+          expr,
+          [expr.left, expr.right],
+          expr.operator,
+        );
       }
       if (
         !unify(ctx, fnType, {
@@ -1052,7 +1081,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // Apply the function to the operand
       const resultType = freshTypeVar();
-      const resolvedOperand = collapseResultType(applyCurrentSubst(ctx, operandType));
+      const resolvedOperand = collapseResultType(
+        applyCurrentSubst(ctx, operandType),
+      );
       const operandResultInfo = flattenResultType(resolvedOperand);
       const operandArgType = operandResultInfo
         ? operandResultInfo.value
@@ -1069,7 +1100,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         recordBooleanConstraint(ctx, expr, [expr.operand], expr.operator);
       }
       if (
-        !unify(ctx, fnType, { kind: "func", from: operandArgType, to: resultType })
+        !unify(ctx, fnType, {
+          kind: "func",
+          from: operandArgType,
+          to: resultType,
+        })
       ) {
         const failure = ctx.lastUnifyFailure;
         if (failure?.kind === "occurs_check") {
@@ -1715,6 +1750,6 @@ export function ensureExhaustive(
     .map((ctor) => ctor.name)
     .filter((name) => !seenForType.has(name));
   if (missing.length > 0) {
-    markNonExhaustive(ctx, expr, expr.span, missing);
+    markNonExhaustive(ctx, expr, expr.span, missing, resolved);
   }
 }

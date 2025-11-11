@@ -306,7 +306,19 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
     case "mark_inconsistent":
       // Type mismatch - lower the subject expression
       return lowerExpr(expr.subject, state);
+    case "hole":
+      // User hole - compile as a runtime error placeholder
+      return {
+        kind: "literal",
+        literal: { kind: "unit" },
+        type: resolveNodeType(state, expr.id, expr.type),
+      };
+    case "mark_unfillable_hole":
+      // Conflicted hole - lower the subject if available
+      return lowerExpr(expr.subject, state);
     case "mark_unsupported_expr":
+      // Non-exhaustive matches and other unsupported expressions
+      // These should ideally be caught earlier, but provide a graceful fallback
       throw new CoreLoweringError(
         `Unsupported expression kind: ${expr.exprKind}`,
         expr.id,

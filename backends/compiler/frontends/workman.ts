@@ -49,6 +49,7 @@ export async function compileWorkmanGraph(
     ...options.loader,
     skipEvaluation: options.loader?.skipEvaluation ?? true,
   };
+
   const analysisOptions = options.analysis ?? {};
   const loweringOptions = options.lowering ?? {};
 
@@ -175,7 +176,8 @@ function createJsImportScheme(
     quantifiers: [],
     type: unknownType({
       kind: "incomplete",
-      reason: `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
+      reason:
+        `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
     }),
   };
 }
