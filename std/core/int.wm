@@ -62,6 +62,16 @@ export let intGte = (left, right) => {
   }
 };
 
+-- Modulo operation
+export let intMod = (left, right) => {
+  intSub(left, intMul(intDiv(left, right), right))
+};
+
+-- Check if even
+export let intIsEven = (n) => {
+  intEq(intMod(n, 2), 0)
+};
+
 -- Arithmetic operators
 export infixl 6 + = intAdd;
 export infixl 6 - = intSub;

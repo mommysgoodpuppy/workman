@@ -267,3 +267,133 @@ export let intToString = (n) => {
     }
   }
 };
+
+-- Check if string starts with prefix
+export let rec strStartsWith = match(str, pre) {
+  (_, Empty) => { true },
+  (Empty, _) => { false },
+  (Link(c1, rest1), Link(c2, rest2)) => {
+    match(eq(c1, c2)) {
+      false => { false },
+      true => { strStartsWith(rest1, rest2) }
+    }
+  }
+};
+
+-- Check if string ends with suffix
+export let strEndsWith = (str, suffix) => {
+  let strLen = strLength(str);
+  let suffixLen = strLength(suffix);
+  match(cmpInt(suffixLen, strLen)) {
+    GT => { false },
+    _ => {
+      let start = sub(strLen, suffixLen);
+      strEq(strDrop(str, start), suffix)
+    }
+  }
+};
+
+-- Check if string contains substring
+let rec strContainsAt = match(haystack, needle, pos) {
+  (haystack, needle, pos) => {
+    match(strStartsWith(strDrop(haystack, pos), needle)) {
+      true => { true },
+      false => {
+        let nextPos = add(pos, 1);
+        match(cmpInt(nextPos, strLength(haystack))) {
+          GT => { false },
+          _ => { strContainsAt(haystack, needle, nextPos) }
+        }
+      }
+    }
+  }
+};
+
+export let strContains = (haystack, needle) => {
+  match(strIsEmpty(needle)) {
+    true => { true },
+    false => { strContainsAt(haystack, needle, 0) }
+  }
+};
+
+-- Split string by delimiter
+let rec strSplitHelper = match(str, delim, acc, current) {
+  (Empty, delim, acc, current) => {
+    -- End of string, add final part
+    match(strIsEmpty(current)) {
+      true => { acc },
+      false => { Link(current, acc) }
+    }
+  },
+  (Link(c, rest), delim, acc, current) => {
+    match(strStartsWith(Link(c, rest), delim)) {
+      true => {
+        -- Found delimiter, save current part and skip delimiter
+        let newAcc = Link(current, acc);
+        let afterDelim = strDrop(Link(c, rest), strLength(delim));
+        strSplitHelper(afterDelim, delim, newAcc, Empty)
+      },
+      false => {
+        -- Not delimiter, add char to current part
+        strSplitHelper(rest, delim, acc, Link(c, current))
+      }
+    }
+  }
+};
+
+export let strSplit = (str, delim) => {
+  let rec reverseList = match(list, acc) {
+    (Empty, acc) => { acc },
+    (Link(x, rest), acc) => { reverseList(rest, Link(x, acc)) }
+  };
+  let rec reverseAll = match(list) {
+    Empty => { Empty },
+    Link(x, rest) => { Link(reverseList(x, Empty), reverseAll(rest)) }
+  };
+  match(strIsEmpty(delim)) {
+    true => { Link(str, Empty) },
+    false => {
+      let parts = strSplitHelper(str, delim, Empty, Empty);
+      reverseAll(reverseList(parts, Empty))
+    }
+  }
+};
+
+-- Trim whitespace from start
+export let rec strTrimStart = match(s) {
+  Empty => { Empty },
+  Link(c, rest) => {
+    match(isWhitespace(c)) {
+      true => { strTrimStart(rest) },
+      false => { Link(c, rest) }
+    }
+  }
+};
+
+-- Trim whitespace from end
+export let strTrimEnd = (s) => {
+  let rec reverseList = match(list, acc) {
+    (Empty, acc) => { acc },
+    (Link(x, rest), acc) => { reverseList(rest, Link(x, acc)) }
+  };
+  let reversed = reverseList(s, Empty);
+  let trimmed = strTrimStart(reversed);
+  reverseList(trimmed, Empty)
+};
+
+-- Trim whitespace from both ends
+export let strTrim = (s) => {
+  strTrimEnd(strTrimStart(s))
+};
+
+-- Split string into lines
+export let strLines = (s) => {
+  strSplit(s, Link(charNewline(), Empty))
+};
+
+-- Join list of strings with separator
+export let rec strJoin = match(sep, strings) {
+  (sep, Empty) => { Empty },
+  (sep, Link(s, Empty)) => { s },
+  (sep, Link(s, rest)) => { strConcat(s, strConcat(sep, strJoin(sep, rest))) }
+};

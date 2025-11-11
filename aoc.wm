@@ -85,6 +85,7 @@ let parseMulAt = (chars, i) => {
     expectCharAt(chars, rightStep.next, charCloseParen, ExpectedCloseParen)
   )
 };
+
 -- Walk the memory, summing successful multiplications.
 let rec scan = (chars, i, acc) => {
   match(listAt(chars, i, NotMul)) {

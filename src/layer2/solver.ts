@@ -99,27 +99,43 @@ export function solveConstraints(input: SolveInput): SolverResult {
     nodeTypeById: input.nodeTypeById,
   };
 
-  for (const stub of input.constraintStubs) {
-    switch (stub.kind) {
-      case "call":
-        solveCallConstraint(state, stub);
-        break;
-      case "has_field":
-        solveHasFieldConstraint(state, stub);
-        break;
-      case "annotation":
-        solveAnnotationConstraint(state, stub);
-        break;
-      case "numeric":
-        solveNumericConstraint(state, stub);
-        break;
-      case "boolean":
-        solveBooleanConstraint(state, stub);
-        break;
-      case "branch_join":
-        solveBranchJoinConstraint(state, stub);
-        break;
+  // Solve constraints in phases to establish type information before
+  // checking numeric/boolean constraints that depend on it:
+  // 1. Annotations - explicit type information
+  // 2. Calls & field access - propagate types from function signatures
+  // 3. Numeric/boolean - check that operands are the right type
+  // 4. Branch joins - ensure branch consistency
+  const annotationStubs = input.constraintStubs.filter(s => s.kind === "annotation");
+  const callAndFieldStubs = input.constraintStubs.filter(s => s.kind === "call" || s.kind === "has_field");
+  const numericBooleanStubs = input.constraintStubs.filter(s => s.kind === "numeric" || s.kind === "boolean");
+  const branchStubs = input.constraintStubs.filter(s => s.kind === "branch_join");
+
+  // Phase 1: Annotations
+  for (const stub of annotationStubs) {
+    solveAnnotationConstraint(state, stub);
+  }
+
+  // Phase 2: Calls and field access
+  for (const stub of callAndFieldStubs) {
+    if (stub.kind === "call") {
+      solveCallConstraint(state, stub);
+    } else {
+      solveHasFieldConstraint(state, stub);
     }
+  }
+
+  // Phase 3: Numeric and boolean constraints
+  for (const stub of numericBooleanStubs) {
+    if (stub.kind === "numeric") {
+      solveNumericConstraint(state, stub);
+    } else {
+      solveBooleanConstraint(state, stub);
+    }
+  }
+
+  // Phase 4: Branch joins
+  for (const stub of branchStubs) {
+    solveBranchJoinConstraint(state, stub);
   }
 
   const resolvedNodeTypes = new Map<NodeId, Type>();
@@ -432,6 +448,12 @@ function solveNumericConstraint(state: SolverState, stub: ConstraintStub & { kin
     const operandType = applySubstitution(getTypeForNode(state, operand), currentSubst);
     const operandInfo = flattenResultType(operandType);
     const operandValue = operandInfo ? operandInfo.value : operandType;
+    
+    // Skip unknown types - they'll be constrained elsewhere or represent holes
+    if (operandValue.kind === "unknown") {
+      continue;
+    }
+    
     const unified = unifyTypes(operandValue, intType, currentSubst);
     if (!unified.success) {
       state.diagnostics.push({
@@ -449,28 +471,36 @@ function solveNumericConstraint(state: SolverState, stub: ConstraintStub & { kin
     }
   }
 
-  const resultType = getTypeForNode(state, stub.result);
-  const resultInfo = flattenResultType(applySubstitution(resultType, currentSubst));
-  let combinedErrors = accumulatedErrors;
-  if (resultInfo && resultInfo.error) {
-    combinedErrors = combinedErrors
-      ? errorRowUnion(combinedErrors, resultInfo.error)
-      : resultInfo.error;
-  }
-  const expectedResultType = combinedErrors
-    ? makeResultType(intType, combinedErrors)
-    : intType;
-  const unifiedResult = unifyTypes(resultType, expectedResultType, currentSubst);
-  if (!unifiedResult.success) {
-    state.diagnostics.push({
-      origin: stub.origin,
-      reason: "not_numeric",
-      details: { operand: stub.result },
-    });
-    return;
+  // For comparison operators (>, <, >=, <=), the result is Bool, not Int
+  // Only check result type for arithmetic operators (+, -, *, /)
+  const comparisonOperators = new Set([">", "<", ">=", "<=", "==", "!="]);
+  const isComparison = comparisonOperators.has(stub.operator);
+  
+  if (!isComparison) {
+    const resultType = getTypeForNode(state, stub.result);
+    const resultInfo = flattenResultType(applySubstitution(resultType, currentSubst));
+    let combinedErrors = accumulatedErrors;
+    if (resultInfo && resultInfo.error) {
+      combinedErrors = combinedErrors
+        ? errorRowUnion(combinedErrors, resultInfo.error)
+        : resultInfo.error;
+    }
+    const expectedResultType = combinedErrors
+      ? makeResultType(intType, combinedErrors)
+      : intType;
+    const unifiedResult = unifyTypes(resultType, expectedResultType, currentSubst);
+    if (!unifiedResult.success) {
+      state.diagnostics.push({
+        origin: stub.origin,
+        reason: "not_numeric",
+        details: { operand: stub.result },
+      });
+      return;
+    }
+    currentSubst = unifiedResult.subst;
   }
 
-  state.substitution = unifiedResult.subst;
+  state.substitution = currentSubst;
 }
 
 function solveBooleanConstraint(state: SolverState, stub: ConstraintStub & { kind: "boolean" }): void {
