@@ -1,15 +1,15 @@
 -- File Manager: A practical IO program in Workman
 -- Demonstrates file operations, string manipulation, and control flow
 
-from "./denoshim.js" import { 
+from "std/deno/fs" import { 
   readTextFile, 
   writeTextFile, 
-  fileExists,
+  exists,
   readDir,
-  log,
   cwd
 };
 
+from "std/deno/console" import { log };
 from "std/string" import { fromLiteral, intToString, strConcat };
 from "std/list" import { listMap, listLength };
 
@@ -25,7 +25,7 @@ export let readFile = (path) => {
 
 -- Check if a file exists
 export let checkFile = (path) => {
-  fileExists(path)
+  exists(path)
 };
 
 -- List files in a directory
@@ -65,8 +65,8 @@ export let main = () => {
   log(fromLiteral("=== Workman File Manager Demo ==="));
   log(fromLiteral(""));
   
-  -- Get current directory
-  let currentDir: List<Int> = cwd();
+  -- Get current directory (Result type, infection spreads)
+  let currentDir = cwd();
   log(strConcat(fromLiteral("Current directory: "), currentDir));
   log(fromLiteral(""));
   
@@ -89,13 +89,14 @@ export let main = () => {
   showTodos(todoFile);
   log(fromLiteral("---"));
   
-  -- Check if file exists
-  let exists = checkFile(todoFile);
+  -- Check if file exists (Result<Bool, FsError>)
+  let fileCheck = checkFile(todoFile);
   log(fromLiteral(""));
   log(strConcat(fromLiteral("File exists: "), 
-    match(exists) {
-      true => { fromLiteral("yes") },
-      false => { fromLiteral("no") }
+    match(fileCheck) {
+      Ok(true) => { fromLiteral("yes") },
+      Ok(false) => { fromLiteral("no") },
+      Err(_) => { fromLiteral("error checking file") }
     }
   ));
   
