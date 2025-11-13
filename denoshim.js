@@ -33,47 +33,147 @@ function jsToWorkmanString(str) {
   return result;
 }
 
-// File System Operations
-export async function readTextFile(path) {
-  const content = await Deno.readTextFile(workmanToJsString(path));
-  return jsToWorkmanString(content);
+// Helper to create Result types
+function Ok(value) {
+  return { tag: "Ok", type: "Result", _0: value };
 }
 
-export async function writeTextFile(path, contents) {
-  await Deno.writeTextFile(workmanToJsString(path), workmanToJsString(contents));
+function Err(error) {
+  return { tag: "Err", type: "Result", _0: error };
 }
 
-export async function appendTextFile(path, contents) {
-  await Deno.writeTextFile(workmanToJsString(path), workmanToJsString(contents), { append: true });
+// Helper to create FsError variants
+function NotFound() {
+  return { tag: "NotFound", type: "FsError" };
 }
 
-export async function fileExists(path) {
+function PermissionDenied() {
+  return { tag: "PermissionDenied", type: "FsError" };
+}
+
+function IoError() {
+  return { tag: "IoError", type: "FsError" };
+}
+
+// File System Operations (Synchronous versions for simplicity)
+export function readTextFile(path) {
   try {
-    await Deno.stat(workmanToJsString(path));
-    return true;
-  } catch {
-    return false;
+    const content = Deno.readTextFileSync(workmanToJsString(path));
+    return Ok(jsToWorkmanString(content));
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) {
+      return Err(NotFound());
+    } else if (e instanceof Deno.errors.PermissionDenied) {
+      return Err(PermissionDenied());
+    } else {
+      return Err(IoError());
+    }
   }
 }
 
-export async function readDir(path) {
-  const entries = [];
-  for await (const entry of Deno.readDir(workmanToJsString(path))) {
-    entries.push({
-      name: entry.name,
-      isFile: entry.isFile,
-      isDirectory: entry.isDirectory,
-    });
+export function writeTextFile(path, contents) {
+  try {
+    Deno.writeTextFileSync(workmanToJsString(path), workmanToJsString(contents));
+    return Ok({ tag: "Unit", type: "Unit" });
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) {
+      return Err(NotFound());
+    } else if (e instanceof Deno.errors.PermissionDenied) {
+      return Err(PermissionDenied());
+    } else {
+      return Err(IoError());
+    }
   }
-  return entries;
 }
 
-export async function mkdir(path) {
-  await Deno.mkdir(workmanToJsString(path), { recursive: true });
+export function appendTextFile(path, contents) {
+  try {
+    Deno.writeTextFileSync(workmanToJsString(path), workmanToJsString(contents), { append: true });
+    return Ok({ tag: "Unit", type: "Unit" });
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) {
+      return Err(NotFound());
+    } else if (e instanceof Deno.errors.PermissionDenied) {
+      return Err(PermissionDenied());
+    } else {
+      return Err(IoError());
+    }
+  }
 }
 
-export async function remove(path) {
-  await Deno.remove(workmanToJsString(path), { recursive: true });
+export function fileExists(path) {
+  try {
+    Deno.statSync(workmanToJsString(path));
+    return Ok(true);
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) {
+      return Ok(false);
+    } else {
+      return Err(IoError());
+    }
+  }
+}
+
+export function readDir(path) {
+  try {
+    const entries = [];
+    for (const entry of Deno.readDirSync(workmanToJsString(path))) {
+      entries.push({
+        tag: "DirEntry",
+        type: "Record",
+        name: jsToWorkmanString(entry.name),
+        isFile: entry.isFile,
+        isDirectory: entry.isDirectory,
+      });
+    }
+    // Convert to Workman List
+    let result = { tag: "Empty", type: "List" };
+    for (let i = entries.length - 1; i >= 0; i--) {
+      result = {
+        tag: "Link",
+        type: "List",
+        _0: entries[i],
+        _1: result,
+      };
+    }
+    return Ok(result);
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) {
+      return Err(NotFound());
+    } else if (e instanceof Deno.errors.PermissionDenied) {
+      return Err(PermissionDenied());
+    } else {
+      return Err(IoError());
+    }
+  }
+}
+
+export function mkdir(path) {
+  try {
+    Deno.mkdirSync(workmanToJsString(path), { recursive: true });
+    return Ok({ tag: "Unit", type: "Unit" });
+  } catch (e) {
+    if (e instanceof Deno.errors.PermissionDenied) {
+      return Err(PermissionDenied());
+    } else {
+      return Err(IoError());
+    }
+  }
+}
+
+export function remove(path) {
+  try {
+    Deno.removeSync(workmanToJsString(path), { recursive: true });
+    return Ok({ tag: "Unit", type: "Unit" });
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) {
+      return Err(NotFound());
+    } else if (e instanceof Deno.errors.PermissionDenied) {
+      return Err(PermissionDenied());
+    } else {
+      return Err(IoError());
+    }
+  }
 }
 
 // Console Operations
@@ -110,7 +210,11 @@ export function setEnv(key, value) {
 }
 
 export function cwd() {
-  return jsToWorkmanString(Deno.cwd());
+  try {
+    return Ok(jsToWorkmanString(Deno.cwd()));
+  } catch (e) {
+    return Err(IoError());
+  }
 }
 
 export function args() {

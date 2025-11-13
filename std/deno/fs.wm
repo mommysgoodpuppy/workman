@@ -1,0 +1,65 @@
+-- Deno File System API for Workman
+-- Wraps denoshim.js with proper types and error handling
+
+from "../../denoshim.js" import {
+  readTextFile as nativeReadTextFile,
+  writeTextFile as nativeWriteTextFile,
+  fileExists as nativeFileExists,
+  readDir as nativeReadDir,
+  mkdir as nativeMkdir,
+  remove as nativeRemove,
+  cwd as nativeCwd
+};
+
+from "std/result/core" import { Ok, Err };
+from "std/option/core" import { Some, None };
+
+-- File system error types
+export type FsError = 
+  | NotFound
+  | PermissionDenied
+  | AlreadyExists
+  | IoError;
+
+-- Read a text file
+-- readTextFile : String -> Result<String, FsError>
+export let readTextFile = (path) => {
+  nativeReadTextFile(path)
+};
+
+-- Write a text file
+-- writeTextFile : String -> String -> Result<Unit, FsError>
+export let writeTextFile = (path, contents) => {
+  nativeWriteTextFile(path, contents)
+};
+
+-- Check if a file or directory exists
+-- exists : String -> Result<Bool, FsError>
+export let exists = (path) => {
+  nativeFileExists(path)
+};
+
+-- Get current working directory
+-- cwd : Unit -> Result<String, FsError>
+export let cwd = () => {
+  nativeCwd()
+};
+
+-- Create a directory (recursive by default)
+-- mkdir : String -> Result<Unit, FsError>
+export let mkdir = (path) => {
+  nativeMkdir(path)
+};
+
+-- Remove a file or directory (recursive)
+-- remove : String -> Result<Unit, FsError>
+export let remove = (path) => {
+  nativeRemove(path)
+};
+
+-- Read directory contents
+-- Returns a list of entries with name, isFile, isDirectory fields
+-- readDir : String -> Result<List<{ name: String, isFile: Bool, isDirectory: Bool }>, FsError>
+export let readDir = (path) => {
+  nativeReadDir(path)
+};

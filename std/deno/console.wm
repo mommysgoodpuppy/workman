@@ -1,0 +1,23 @@
+-- Deno Console API for Workman
+-- Logging and output functions
+
+from "../../denoshim.js" import {
+  log as nativeLog,
+  error as nativeError,
+  warn as nativeWarn
+};
+
+-- Log a message to stdout
+export let log = (message) => {
+  nativeLog(message)
+};
+
+-- Log an error to stderr
+export let error = (message) => {
+  nativeError(message)
+};
+
+-- Log a warning
+export let warn = (message) => {
+  nativeWarn(message)
+};
