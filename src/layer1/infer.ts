@@ -98,10 +98,9 @@ import type {
   PatternInfo,
 } from "./infer_types.ts";
 
-// Re-exports commented out for Andromeda compatibility
-// export type { Context, InferOptions, InferResult } from "./context.ts";
-// export { InferError } from "../error.ts";
-// export { inferError } from "./context.ts";
+export type { Context, InferOptions, InferResult } from "./context.ts";
+export { InferError } from "../error.ts";
+export { inferError } from "./context.ts";
 
 const NUMERIC_BINARY_OPERATORS = new Set([
   "+",

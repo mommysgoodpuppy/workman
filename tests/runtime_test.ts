@@ -10,7 +10,6 @@ import {
   assertEquals,
   assertExists,
 } from "https://deno.land/std/assert/mod.ts";
-import { RuntimeError } from "../src/value.ts";
 
 function evaluateSource(source: string) {
   const tokens = lex(source);

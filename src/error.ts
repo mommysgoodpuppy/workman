@@ -8,10 +8,11 @@ import { getLineAndColumn as getLineAndColumnwm } from "../boot/src/error.mjs";
  */
 export abstract class WorkmanError extends Error {
   abstract readonly errorType: string;
-  
+
   constructor(message: string) {
     super(message);
-    this.name = this.constructor.name;
+    // Don't use this.constructor.name - causes issues in Nova
+    // this.name = this.constructor.name;
   }
 
   /**
@@ -44,7 +45,7 @@ export class LexError extends WorkmanError {
 
     const location = getLineAndColumn(src, this.position);
     const context = getSourceContext(src, this.position, 1);
-    
+
     return formatError({
       errorType: this.errorType,
       message: this.message,
@@ -75,8 +76,12 @@ export class ParseError extends WorkmanError {
     }
 
     const location = getLineAndColumn(src, this.token.start);
-    const context = getSourceContext(src, this.token.start, this.token.end - this.token.start);
-    
+    const context = getSourceContext(
+      src,
+      this.token.start,
+      this.token.end - this.token.start,
+    );
+
     return formatError({
       errorType: this.errorType,
       message: this.message,
@@ -108,8 +113,12 @@ export class InferError extends WorkmanError {
     }
 
     const location = getLineAndColumn(src, this.span.start);
-    const context = getSourceContext(src, this.span.start, this.span.end - this.span.start);
-    
+    const context = getSourceContext(
+      src,
+      this.span.start,
+      this.span.end - this.span.start,
+    );
+
     return formatError({
       errorType: this.errorType,
       message: this.message,
@@ -162,8 +171,12 @@ export class RuntimeError extends WorkmanError {
     }
 
     const location = getLineAndColumn(src, this.span.start);
-    const context = getSourceContext(src, this.span.start, this.span.end - this.span.start);
-    
+    const context = getSourceContext(
+      src,
+      this.span.start,
+      this.span.end - this.span.start,
+    );
+
     return formatError({
       errorType: this.errorType,
       message: this.message,
@@ -200,43 +213,44 @@ interface ErrorFormatOptions {
 
 function formatError(options: ErrorFormatOptions): string {
   const { errorType, message, location, context, hint } = options;
-  
-  let output = `${errorType} at line ${location.line}, column ${location.column}:\n`;
+
+  let output =
+    `${errorType} at line ${location.line}, column ${location.column}:\n`;
   output += `  ${message}\n`;
-  
+
   if (context) {
     output += "\n";
-    
+
     // Show lines before
     for (const line of context.beforeLines) {
       output += `  ${line}\n`;
     }
-    
+
     // Show error line
     output += `  ${context.errorLine}\n`;
-    
+
     // Show error indicator
     const padding = " ".repeat(context.startColumn + 2); // +2 for "  " prefix
     const underline = "^".repeat(Math.max(1, context.length));
     output += `${padding}${underline}\n`;
-    
+
     // Show lines after
     for (const line of context.afterLines) {
       output += `  ${line}\n`;
     }
   }
-  
+
   if (hint) {
     output += `\nHint: ${hint}`;
   }
-  
+
   return output;
 }
 
 function getLineAndColumn(source: string, position: number): Location {
   /*   let line = 1;
   let column = 1;
-  
+
   for (let i = 0; i < position && i < source.length; i++) {
     if (source[i] === "\n") {
       line++;
@@ -257,22 +271,22 @@ function getSourceContext(
   const lines = source.split("\n");
   const location = getLineAndColumn(source, start);
   const lineIndex = location.line - 1;
-  
+
   const beforeLines: string[] = [];
   const afterLines: string[] = [];
-  
+
   // Get 1 line before
   if (lineIndex > 0) {
     beforeLines.push(lines[lineIndex - 1]);
   }
-  
+
   const errorLine = lines[lineIndex] ?? "";
-  
+
   // Get 1 line after
   if (lineIndex + 1 < lines.length) {
     afterLines.push(lines[lineIndex + 1]);
   }
-  
+
   return {
     beforeLines,
     errorLine,
@@ -286,13 +300,18 @@ function getSourceContext(
 // Error Formatting Helpers
 // ============================================================================
 
-export function formatWorkmanError(error: unknown, sourceOverride?: string): string {
+export function formatWorkmanError(
+  error: unknown,
+  sourceOverride?: string,
+): string {
   if (error instanceof WorkmanError) {
     return error.format(sourceOverride);
   }
 
   if (error instanceof AggregateError) {
-    const header = error.message ? `${error.name}: ${error.message}` : error.name;
+    const header = error.message
+      ? `${error.name}: ${error.message}`
+      : error.name;
     if (error.errors.length === 0) {
       return header;
     }
@@ -336,7 +355,7 @@ function getParseErrorHint(message: string, token: Token): string | undefined {
       return "An identifier (variable name) is required here";
     }
   }
-  
+
   // Expected symbol
   if (message.includes("Expected symbol")) {
     const match = message.match(/Expected symbol '(.+?)'/);
@@ -353,7 +372,7 @@ function getParseErrorHint(message: string, token: Token): string | undefined {
       }
     }
   }
-  
+
   // Expected keyword
   if (message.includes("Expected keyword")) {
     const match = message.match(/Expected keyword '(.+?)'/);
@@ -362,12 +381,12 @@ function getParseErrorHint(message: string, token: Token): string | undefined {
       return `The '${expected}' keyword is required here`;
     }
   }
-  
+
   // Unexpected keyword
   if (message.includes("Unexpected keyword")) {
     return "This keyword cannot be used in this context";
   }
-  
+
   // Match errors
   if (message.includes("Match")) {
     if (message.includes("scrutinee")) {
@@ -377,7 +396,7 @@ function getParseErrorHint(message: string, token: Token): string | undefined {
       return "Match arm bodies must be wrapped in { }";
     }
   }
-  
+
   return undefined;
 }
 
@@ -386,37 +405,37 @@ function getTypeErrorHint(message: string): string | undefined {
   if (message.includes("Type mismatch") || message.includes("cannot unify")) {
     return "The types of these expressions are incompatible";
   }
-  
+
   // Unknown identifier
   if (message.includes("Unknown identifier")) {
     return "This variable is not defined in the current scope";
   }
-  
+
   // Unknown type
   if (message.includes("Unknown type")) {
     return "This type has not been defined or imported";
   }
-  
+
   // Non-exhaustive patterns
   if (message.includes("Non-exhaustive patterns")) {
     return "Add more match arms or use a wildcard pattern (_) to handle all cases";
   }
-  
+
   // Constructor not fully applied
   if (message.includes("not fully applied")) {
     return "This constructor or function needs more arguments";
   }
-  
+
   // Occurs check
   if (message.includes("Occurs check")) {
     return "This would create an infinite type";
   }
-  
+
   // Duplicate variable
   if (message.includes("Duplicate variable")) {
     return "Each variable can only be bound once in a pattern";
   }
-  
+
   return undefined;
 }
 
@@ -427,8 +446,18 @@ function getTypeErrorHint(message: string): string | undefined {
 /**
  * Create a lexer error for an unexpected character
  */
-export function unexpectedCharError(char: string, position: number, source?: string): LexError {
-  const displayChar = char === "\n" ? "\\n" : char === "\r" ? "\\r" : char === "\t" ? "\\t" : char;
+export function unexpectedCharError(
+  char: string,
+  position: number,
+  source?: string,
+): LexError {
+  const displayChar = char === "\n"
+    ? "\\n"
+    : char === "\r"
+    ? "\\r"
+    : char === "\t"
+    ? "\\t"
+    : char;
   return new LexError(
     `Unexpected character '${displayChar}'`,
     position,
@@ -439,7 +468,10 @@ export function unexpectedCharError(char: string, position: number, source?: str
 /**
  * Create a lexer error for an unterminated string
  */
-export function unterminatedStringError(position: number, source?: string): LexError {
+export function unterminatedStringError(
+  position: number,
+  source?: string,
+): LexError {
   return new LexError(
     "Unterminated string literal - missing closing quote",
     position,
@@ -455,10 +487,10 @@ export function expectedTokenError(
   token: Token,
   source?: string,
 ): ParseError {
-  const got = token.kind === "eof" 
-    ? "end of file" 
+  const got = token.kind === "eof"
+    ? "end of file"
     : `${token.kind} '${token.value}'`;
-  
+
   return new ParseError(
     `Expected ${expected}, but got ${got}`,
     token,

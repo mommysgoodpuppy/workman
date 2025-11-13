@@ -1,7 +1,6 @@
 import { fromFileUrl } from "std/path/mod.ts";
 import { assertEquals } from "https://deno.land/std/assert/mod.ts";
 import { runEntryPath } from "../src/module_loader.ts";
-import { runCompiledEntryPath } from "./test_prelude.ts";
 
 function fixturePath(relative: string): string {
   return fromFileUrl(new URL(`./fixtures/${relative}`, import.meta.url));

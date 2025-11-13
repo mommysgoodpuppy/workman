@@ -134,18 +134,24 @@ export async function loadModuleGraph(
   entryPath: string,
   options: ModuleLoaderOptions = {},
 ): Promise<ModuleGraph> {
+  //console.log("  [DEBUG] loadModuleGraph: starting");
   const normalizedEntry = resolveEntryPath(entryPath);
+  //console.log("  [DEBUG] loadModuleGraph: entry resolved to", normalizedEntry);
   const normalizedOptions = normalizeOptions(options);
+  //console.log("  [DEBUG] loadModuleGraph: options normalized");
 
   let preludePath: string | undefined;
   if (normalizedOptions.preludeModule) {
+    //console.log("  [DEBUG] loadModuleGraph: resolving prelude");
     preludePath = resolveModuleSpecifier(
       normalizedEntry,
       normalizedOptions.preludeModule,
       normalizedOptions,
     );
+    //console.log("  [DEBUG] loadModuleGraph: prelude resolved to", preludePath);
   }
 
+  //console.log("  [DEBUG] loadModuleGraph: creating context");
   const ctx: LoaderContext = {
     options: normalizedOptions,
     programCache: new Map(),
@@ -155,12 +161,16 @@ export async function loadModuleGraph(
     order: [],
     preludePath,
   };
+  //console.log("  [DEBUG] loadModuleGraph: context created");
 
   if (preludePath) {
+    //console.log("  [DEBUG] loadModuleGraph: visiting prelude");
     await visitModule(preludePath, ctx);
   }
 
+  //console.log("  [DEBUG] loadModuleGraph: visiting entry module");
   await visitModule(normalizedEntry, ctx);
+  //console.log("  [DEBUG] loadModuleGraph: done");
   return {
     entry: normalizedEntry,
     prelude: preludePath,
@@ -265,9 +275,18 @@ export async function loadModuleSummaries(
   graph: ModuleGraph;
   summaries: Map<string, ModuleSummary>;
 }> {
-  const graph = await loadModuleGraph(entryPath, options);
-  const { moduleSummaries } = await summarizeGraph(graph, options);
-  return { graph, summaries: moduleSummaries };
+  try {
+
+    //console.log("  [DEBUG] loadModuleSummaries: about to call loadModuleGraph");
+    const graph = await loadModuleGraph(entryPath, options);
+    //console.log("  [DEBUG] loadModuleSummaries: graph loaded");
+    const { moduleSummaries } = await summarizeGraph(graph, options);
+    //console.log("  [DEBUG] loadModuleSummaries: summaries created");
+    return { graph, summaries: moduleSummaries };
+  } catch (e) {
+    //console.log("  [DEBUG] Error in loadModuleSummaries:", e);
+    throw e;
+  }
 }
 
 export async function loadPreludeEnvironment(
@@ -600,6 +619,7 @@ function resolveEntryPath(path: string): string {
 }
 
 async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
+  //console.log("  [DEBUG] visitModule: starting for", path);
   const state = ctx.visitState.get(path);
   if (state === "visiting") {
     const cycle = [...ctx.stack, path];
@@ -609,6 +629,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     return;
   }
 
+  //console.log("  [DEBUG] visitModule: setting state to visiting");
   ctx.visitState.set(path, "visiting");
   ctx.stack.push(path);
   try {
@@ -619,7 +640,9 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     let reexports: ModuleReexportRecord[] = [];
 
     try {
+      //console.log("  [DEBUG] visitModule: about to loadProgram");
       program = await loadProgram(path, ctx);
+      //console.log("  [DEBUG] visitModule: program loaded");
       imports = resolveImports(path, program.imports, ctx);
       reexports = collectReexports(
         program.reexports,
@@ -628,6 +651,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
         ctx.preludePath,
       );
     } catch (error) {
+      //console.log("  [DEBUG] visitModule: error in loadProgram", error);
       // If parse failed, we'll need to parse with operators later
       // For now, just continue - we can't discover imports without parsing
       if (
@@ -760,15 +784,24 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
 }
 
 async function loadSource(path: string, ctx: LoaderContext): Promise<string> {
+  //console.log("  [DEBUG] loadSource: path=", path);
   // Check for in-memory override (e.g., from LSP)
   const override = ctx.options.sourceOverrides?.get(path);
   if (override !== undefined) {
+    //console.log("  [DEBUG] loadSource: using override");
     return override;
   }
 
+  //console.log("  [DEBUG] loadSource: checking if file exists");
+  const exists = existsSync(path);
+  //console.log("  [DEBUG] loadSource: exists=", exists);
+
   try {
-    return await IO.readTextFile(path);
+    //console.log("  [DEBUG] loadSource: about to call IO.readTextFile");
+    const result = await IO.readTextFile(path);
+    return result;
   } catch (error) {
+    //console.log("  [DEBUG] loadSource: caught error", error);
     if (isNotFoundError(error)) {
       throw moduleError(`Module not found: '${path}'`);
     }
@@ -786,14 +819,20 @@ async function loadProgram(
   operators?: Map<string, OperatorInfo>,
   prefixOperators?: Set<string>,
 ): Promise<Program> {
+  //console.log("  [DEBUG] loadProgram: starting for", path);
   const cached = ctx.programCache.get(path);
   if (cached) {
+    //console.log("  [DEBUG] loadProgram: returning cached");
     return cached;
   }
+  //console.log("  [DEBUG] loadProgram: loading source");
   const source = await loadSource(path, ctx);
+  //console.log("  [DEBUG] loadProgram: source loaded, length=", source.length);
   let program: Program;
   try {
+    //console.log("  [DEBUG] loadProgram: lexing");
     const tokens = lex(source, path);
+    //console.log("  [DEBUG] loadProgram: parsing, tokens=", tokens.length);
     program = parseSurfaceProgram(
       tokens,
       source,
@@ -801,7 +840,9 @@ async function loadProgram(
       operators,
       prefixOperators,
     );
+    //console.log("  [DEBUG] loadProgram: parsed successfully");
   } catch (error) {
+    //console.log("  [DEBUG] loadProgram: error during lex/parse", error);
     if (error instanceof ParseError || error instanceof LexError) {
       const formatted = error.format(source);
       throw moduleError(`${formatted}`, path);

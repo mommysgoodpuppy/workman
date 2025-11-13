@@ -1,9 +1,4 @@
-import type {
-  BlockExpr,
-  MatchBundle,
-  Parameter,
-  SourceSpan,
-} from "./ast.ts";
+import type { BlockExpr, MatchBundle, Parameter, SourceSpan } from "./ast.ts";
 
 export type RuntimeValue =
   | IntValue
@@ -136,7 +131,8 @@ export function hasBinding(env: Environment, name: string): boolean {
 export class RuntimeError extends Error {
   constructor(message: string, public readonly span?: SourceSpan) {
     super(message);
-    this.name = "RuntimeError";
+    // Don't set this.name - causes issues in Nova
+    // this.name = "RuntimeError";
   }
 }
 

@@ -10,3 +10,5 @@ tools/deno/
 src_bootstrapped/
 dist/
 vscodeExtension/out/
+andr/
+vscodeExtension/out/

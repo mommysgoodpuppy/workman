@@ -1,7 +1,7 @@
 import { loadModuleGraph } from "../src/module_loader.ts";
 import { analyzeProgram } from "../src/pipeline.ts";
 import { presentProgram } from "../src/layer3/mod.ts";
-import { cloneTypeScheme, cloneTypeInfo, TypeScheme, TypeInfo } from "../src/types.ts";
+import type { cloneTypeScheme, cloneTypeInfo, TypeScheme, TypeInfo } from "../src/types.ts";
 
 const entryPath = "tests/fixtures/compiler/result_infectious/main.wm";
 const stdRoots = ["std"];

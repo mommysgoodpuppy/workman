@@ -1,5 +1,5 @@
 import { lex } from "../src/lexer.ts";
-import { NodeId, Program } from "../src/ast.ts";
+import type { NodeId, Program } from "../src/ast.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { assertEquals } from "https://deno.land/std/assert/mod.ts";
 

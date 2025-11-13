@@ -1,8 +1,8 @@
 #!/usr/bin/env -S deno run --allow-read
 
 import { lex } from "../src/lexer.ts";
-import { ParseError, parseSurfaceProgram } from "../src/parser.ts";
-import { InferError, inferProgram } from "../src/layer1/infer.ts";
+import { parseSurfaceProgram } from "../src/parser.ts";
+import {inferProgram } from "../src/layer1/infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { evaluateProgram } from "../src/eval.ts";
 import { formatRuntimeValue } from "../src/value_printer.ts";
@@ -10,7 +10,9 @@ import type { TypeScheme } from "../src/types.ts";
 import type { RuntimeValue } from "../src/value.ts";
 import { loadModuleGraph, ModuleLoaderError } from "../src/module_loader.ts";
 import { cloneTypeScheme } from "../src/types.ts";
-import { resolve } from "std/path/mod.ts";
+import { resolve } from "../src/io.ts";
+import { InferError, ParseError } from "../src/error.ts";
+
 
 interface ReplContext {
   accumulatedSource: string;
@@ -41,9 +43,10 @@ class Repl {
 
   async start() {
     console.log("🗿 Workman REPL v1.0");
-    console.log("Run 'wm --help' to see CLI usage (wm <file.wm>, wm fmt, etc.)\n");
+    console.log(
+      "Run 'wm --help' to see CLI usage (wm <file.wm>, wm fmt, etc.)\n",
+    );
     console.log("Type :help for REPL commands, :quit to exit");
-    
 
     // Load prelude
     await this.loadPrelude();
@@ -140,7 +143,9 @@ class Repl {
         break;
 
       default:
-        console.log(`Unknown command: :${cmd}. Type :help for available commands.`);
+        console.log(
+          `Unknown command: :${cmd}. Type :help for available commands.`,
+        );
     }
 
     return true;
@@ -154,7 +159,7 @@ class Repl {
       this.evaluateInput(code);
     } else {
       this.context.multilineBuffer.push(input);
-      
+
       // Check if all brackets are now closed
       const fullCode = this.context.multilineBuffer.join("\n");
       if (!this.hasUnclosedBrackets(fullCode)) {
@@ -175,13 +180,13 @@ class Repl {
 
     for (let i = 0; i < input.length; i++) {
       const char = input[i];
-      
+
       if (escapeNext) {
         escapeNext = false;
         continue;
       }
 
-      if (char === '\\' && inString) {
+      if (char === "\\" && inString) {
         escapeNext = true;
         continue;
       }
@@ -194,22 +199,22 @@ class Repl {
       if (inString) continue;
 
       switch (char) {
-        case '{':
+        case "{":
           braceCount++;
           break;
-        case '}':
+        case "}":
           braceCount--;
           break;
-        case '(':
+        case "(":
           parenCount++;
           break;
-        case ')':
+        case ")":
           parenCount--;
           break;
-        case '[':
+        case "[":
           bracketCount++;
           break;
-        case ']':
+        case "]":
           bracketCount--;
           break;
       }
@@ -223,8 +228,8 @@ class Repl {
 
     try {
       // Create a complete program by combining accumulated source with new input
-      const fullSource = this.context.accumulatedSource 
-        ? this.context.accumulatedSource + "\n" + input 
+      const fullSource = this.context.accumulatedSource
+        ? this.context.accumulatedSource + "\n" + input
         : input;
 
       const tokens = lex(fullSource);
@@ -262,13 +267,14 @@ class Repl {
 
       // Show new bindings with inline type annotations
       const newBindings = inference.summaries.filter(
-        ({ name }) => !this.context.accumulatedSource.includes(`let ${name}`) ||
-          input.includes(`let ${name}`)
+        ({ name }) =>
+          !this.context.accumulatedSource.includes(`let ${name}`) ||
+          input.includes(`let ${name}`),
       );
 
       for (const { name, scheme } of newBindings) {
         const typeStr = formatScheme(scheme);
-        const value = evaluation.summaries.find(s => s.name === name)?.value;
+        const value = evaluation.summaries.find((s) => s.name === name)?.value;
         if (value) {
           const valueStr = formatRuntimeValue(value);
           console.log(`let ${name}: ${typeStr} = ${valueStr}`);
@@ -283,7 +289,10 @@ class Repl {
         hasOutput = true;
       }
 
-      if (!hasOutput && !input.trim().startsWith("type") && !input.trim().startsWith("let")) {
+      if (
+        !hasOutput && !input.trim().startsWith("type") &&
+        !input.trim().startsWith("let")
+      ) {
         // For expressions, evaluate and show result
         const exprResult = this.evaluateExpression(input);
         if (exprResult) {
@@ -293,7 +302,6 @@ class Repl {
 
       // Update accumulated source
       this.context.accumulatedSource = fullSource;
-
     } catch (error) {
       if (error instanceof ParseError || error instanceof InferError) {
         console.error(`Error: ${error.message}`);
@@ -305,10 +313,13 @@ class Repl {
     }
   }
 
-  private evaluateExpression(input: string): { type: string; value: string } | null {
+  private evaluateExpression(
+    input: string,
+  ): { type: string; value: string } | null {
     // For now, handle simple expressions by wrapping them in a let binding
     try {
-      const wrappedSource = this.context.accumulatedSource + "\nlet _repl_result = {" + input + "}";
+      const wrappedSource = this.context.accumulatedSource +
+        "\nlet _repl_result = {" + input + "}";
       const tokens = lex(wrappedSource);
       const program = parseSurfaceProgram(tokens);
       const inference = inferProgram(program, {
@@ -319,13 +330,17 @@ class Repl {
         initialBindings: this.context.preludeBindings,
       });
 
-      const resultType = inference.summaries.find(s => s.name === "_repl_result");
-      const resultValue = evaluation.summaries.find(s => s.name === "_repl_result");
+      const resultType = inference.summaries.find((s) =>
+        s.name === "_repl_result"
+      );
+      const resultValue = evaluation.summaries.find((s) =>
+        s.name === "_repl_result"
+      );
 
       if (resultType && resultValue) {
         return {
           type: formatScheme(resultType.scheme),
-          value: formatRuntimeValue(resultValue.value)
+          value: formatRuntimeValue(resultValue.value),
         };
       }
     } catch {
@@ -444,7 +459,10 @@ Examples:
 
         // Build initial environment from imports
         const initialEnv = new Map<string, TypeScheme>();
-        const initialAdtEnv = new Map<string, import("../src/types.ts").TypeInfo>();
+        const initialAdtEnv = new Map<
+          string,
+          import("../src/types.ts").TypeInfo
+        >();
         const initialBindings = new Map<string, RuntimeValue>();
 
         // Apply imports from dependencies
@@ -473,14 +491,17 @@ Examples:
           initialEnv,
           initialAdtEnv,
         });
-        
+
         const evaluation = evaluateProgram(node.program, {
           initialBindings,
         });
 
         // Collect exports
         const exportedValues = new Map<string, TypeScheme>();
-        const exportedTypes = new Map<string, import("../src/types.ts").TypeInfo>();
+        const exportedTypes = new Map<
+          string,
+          import("../src/types.ts").TypeInfo
+        >();
         const exportedRuntime = new Map<string, RuntimeValue>();
 
         for (const name of node.exportedValueNames) {
@@ -526,7 +547,10 @@ Examples:
         this.context.preludeBindings = preludeSummary.runtime;
       }
     } catch (error) {
-      if (error instanceof ModuleLoaderError || error instanceof ParseError || error instanceof InferError) {
+      if (
+        error instanceof ModuleLoaderError || error instanceof ParseError ||
+        error instanceof InferError
+      ) {
         console.error(`Warning: Failed to load prelude: ${error.message}`);
       } else {
         console.error(`Warning: Failed to load prelude: ${error}`);

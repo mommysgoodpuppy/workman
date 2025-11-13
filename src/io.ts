@@ -5,6 +5,25 @@
  * Automatically detects whether running on Deno or Andromeda and uses the appropriate APIs.
  */
 
+// Global type declarations for runtime detection
+declare const Bun: {
+  argv: string[];
+  file(path: string): {
+    text(): Promise<string>;
+    exists(): Promise<boolean>;
+  };
+  write(path: string, data: string): Promise<number>;
+  cwd(): string;
+  version: string;
+};
+
+declare const process: {
+  exit(code: number): never;
+  cwd(): string;
+};
+
+declare function require(module: string): unknown;
+
 // Define Andromeda API types
 interface AndromedaFileInfo {
   isFile: boolean;
@@ -38,6 +57,27 @@ interface AndromedaAPI {
 const isDeno = typeof Deno !== "undefined";
 const isAndromeda =
   typeof (globalThis as { Andromeda?: unknown }).Andromeda !== "undefined";
+const isBun = typeof Bun !== "undefined";
+
+// Cached Bun imports (to avoid repeated dynamic imports)
+let bunFSSync: typeof import("node:fs") | null = null;
+let bunOS: typeof import("node:os") | null = null;
+let bunPath: typeof import("node:path") | null = null;
+
+function getBunFSSync() {
+  if (!bunFSSync) bunFSSync = require("node:fs") as typeof import("node:fs");
+  return bunFSSync;
+}
+
+function getBunOS() {
+  if (!bunOS) bunOS = require("node:os") as typeof import("node:os");
+  return bunOS;
+}
+
+function getBunPath() {
+  if (!bunPath) bunPath = require("node:path") as typeof import("node:path");
+  return bunPath;
+}
 
 // Helper to access Andromeda API
 function getAndromeda(): AndromedaAPI {
@@ -194,12 +234,117 @@ const denoIO: IOApi = {
 };
 
 /**
+ * Bun implementation
+ */
+const bunIO: IOApi = {
+  args: isBun ? Bun.argv.slice(2) : [],
+  exit: (code: number) => {
+    if (isBun) process.exit(code);
+    throw new Error(`Process exit requested with code ${code}`);
+  },
+  cwd: () => {
+    if (isBun) return process.cwd();
+    throw new Error("cwd() not available");
+  },
+
+  readTextFile: async (path: string) => {
+    if (isBun) {
+      const file = Bun.file(path);
+      return await file.text();
+    }
+    throw new Error("readTextFile not implemented for current runtime");
+  },
+
+  writeTextFile: async (path: string, data: string) => {
+    if (isBun) {
+      await Bun.write(path, data);
+      return;
+    }
+    throw new Error("writeTextFile not implemented for current runtime");
+  },
+
+  stat: async (path: string) => {
+    if (isBun) {
+      const fs = getBunFSSync();
+      const info = fs.statSync(path);
+      return {
+        isFile: info.isFile(),
+        isDirectory: info.isDirectory(),
+        isSymlink: info.isSymbolicLink(),
+        size: info.size,
+        mtime: info.mtime,
+        atime: info.atime,
+        birthtime: info.birthtime,
+      };
+    }
+    throw new Error("stat not implemented for current runtime");
+  },
+
+  makeTempDir: async (options?: MakeTempDirOptions) => {
+    if (isBun) {
+      const fs = getBunFSSync();
+      const os = getBunOS();
+      const path = getBunPath();
+      const tmpDir = options?.dir || os.tmpdir();
+      const prefix = options?.prefix || "workman-";
+      const tempPath = fs.mkdtempSync(path.join(tmpDir, prefix));
+      return tempPath;
+    }
+    throw new Error("makeTempDir not implemented for current runtime");
+  },
+
+  remove: async (path: string, options?: RemoveOptions) => {
+    if (isBun) {
+      const fs = getBunFSSync();
+      fs.rmSync(path, { recursive: options?.recursive });
+      return;
+    }
+    throw new Error("remove not implemented for current runtime");
+  },
+
+  statSync: (path: string) => {
+    if (isBun) {
+      const fs = getBunFSSync();
+      const info = fs.statSync(path);
+      return {
+        isFile: info.isFile(),
+        isDirectory: info.isDirectory(),
+        isSymlink: info.isSymbolicLink(),
+        size: info.size,
+        mtime: info.mtime,
+        atime: info.atime,
+        birthtime: info.birthtime,
+      };
+    }
+    throw new Error("statSync not implemented for current runtime");
+  },
+
+  errors: {
+    NotFound: NotFoundError,
+  },
+
+  ensureDir: async (path: string) => {
+    if (isBun) {
+      const fs = getBunFSSync();
+      try {
+        fs.mkdirSync(path, { recursive: true });
+      } catch (e) {
+        const error = e as Error & { code?: string };
+        if (error.code !== "EEXIST") {
+          throw e;
+        }
+      }
+    } else {
+      throw new Error("ensureDir not implemented for current runtime");
+    }
+  },
+};
+
+/**
  * Andromeda implementation
  */
 const andromedaIO: IOApi = {
-  get args() {
-    return isAndromeda ? getAndromeda().args : [];
-  },
+  args: isAndromeda ? getAndromeda().args : [],
   exit: (code: number) => {
     if (isAndromeda) {
       // Andromeda doesn't have exit(), throw an error that will terminate
@@ -209,9 +354,16 @@ const andromedaIO: IOApi = {
   },
   cwd: () => {
     if (isAndromeda) {
-      // Andromeda doesn't have cwd(), polyfill by resolving "." to absolute path
-      // We can use import.meta.url to get the current module's URL and derive the directory
-      // Or just return "." as a fallback since most operations work with relative paths
+      // Andromeda doesn't have cwd() - we need to use a workaround
+      // Get current directory from environment or use a platform-specific default
+      const andromeda = getAndromeda();
+      // Try to get PWD environment variable (Unix) or CD (Windows)
+      const pwd = andromeda.env.get("PWD") || andromeda.env.get("CD");
+      if (pwd) {
+        return pwd;
+      }
+      // Fallback: assume we're running from the directory where the script is
+      // For bundled scripts, this will be "." which we'll handle specially in resolve()
       return ".";
     }
     throw new Error("cwd() not implemented for Andromeda");
@@ -323,7 +475,13 @@ const andromedaIO: IOApi = {
 /**
  * Export the appropriate IO implementation based on runtime
  */
-export const IO: IOApi = isDeno ? denoIO : isAndromeda ? andromedaIO : denoIO;
+export const IO: IOApi = isDeno
+  ? denoIO
+  : isBun
+  ? bunIO
+  : isAndromeda
+  ? andromedaIO
+  : denoIO;
 
 /**
  * Utility function to check if an error is a NotFound error
@@ -367,7 +525,11 @@ export function resolve(...paths: string[]): string {
   // If not absolute, resolve against cwd
   if (!isAbsolutePath) {
     const cwd = IO.cwd();
-    result = normalizePath(cwd + "/" + result);
+    // Special handling when cwd is "." (common in Andromeda)
+    if (cwd !== ".") {
+      result = normalizePath(cwd + "/" + result);
+    }
+    // For Andromeda, keep paths relative when cwd is "."
   }
 
   // Normalize . and ..
@@ -382,8 +544,13 @@ export function resolve(...paths: string[]): string {
     }
   }
 
-  // For absolute paths with drive letter or starting with /
+  // For absolute paths with drive letter
   if (/^[a-zA-Z]:/.test(result)) {
+    return resolved.join("/");
+  }
+
+  // For Andromeda-style relative paths (when cwd is ".")
+  if (IO.cwd() === "." && !result.startsWith("/")) {
     return resolved.join("/");
   }
 

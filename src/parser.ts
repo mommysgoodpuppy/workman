@@ -1738,7 +1738,6 @@ class SurfaceParser {
       throw this.error("Unexpected end of input", this.peek(-1));
     }
     const index = this.index++;
-    //console.log("CONSUME at", index, this.tokens[index])
     return this.tokens[index];
   }
 

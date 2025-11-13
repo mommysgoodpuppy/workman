@@ -4,12 +4,10 @@ import { inferProgram, type InferResult } from "../src/layer1/infer.ts";
 import { analyzeProgram } from "../src/pipeline.ts";
 import { lowerTupleParameters } from "../src/lower_tuple_params.ts";
 import { formatScheme } from "../src/type_printer.ts";
-import { NodeId, Program } from "../src/ast.ts";
+import type { NodeId, Program } from "../src/ast.ts";
 import {
   assertEquals,
   assertExists,
-  assertFalse,
-  assertObjectMatch,
 } from "https://deno.land/std/assert/mod.ts";
 import { assert } from "https://deno.land/std/assert/mod.ts";
 import { freshPreludeTypeEnv } from "./test_prelude.ts";

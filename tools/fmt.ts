@@ -1,12 +1,11 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write
 
 import { lex } from "../src/lexer.ts";
-import { ParseError, parseSurfaceProgram } from "../src/parser.ts";
-import { LexError, WorkmanError } from "../src/error.ts";
+import { parseSurfaceProgram } from "../src/parser.ts";
+import { WorkmanError } from "../src/error.ts";
 import type {
   BlockExpr,
   BlockStatement,
-  Declaration,
   Expr,
   ImportSpecifier,
   LetDeclaration,

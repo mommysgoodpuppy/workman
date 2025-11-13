@@ -8,6 +8,23 @@
   },
   "tasks": {
     "run": "deno run --allow-read src/main.ts",
-    "test": "deno test -A --no-check tests"
+    "test": "deno test -A --no-check tests",
+    "test-nova": "deno bundle -o wm_minimal.js ./wm_minimal.ts && andromeda run ./wm_minimal.js"
+  },
+  "lint": {
+    "rules": {
+      "include": [
+        "verbatim-module-syntax"
+      ],
+      "exclude": [
+        "no-explicit-any",
+        "no-empty",
+        "no-fallthrough",
+        "require-await",
+        "no-import-prefix",
+        "no-case-declarations",
+        "prefer-const"
+      ]
+    }
   }
 }

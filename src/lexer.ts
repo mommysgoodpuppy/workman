@@ -6,6 +6,7 @@ import {
   type Token,
 } from "./token.ts";
 import { unexpectedCharError, unterminatedStringError } from "./error.ts";
+/* Bootstrapped lexer helpers - commented out to avoid circular dependencies in bundled code
 import {
   isAlpha as isAlphawm,
   isAlphaNumeric as isAlphaNumericwm,
@@ -13,6 +14,7 @@ import {
   isUppercase as isUppercasewm,
   isWhitespace as isWhitespacewm,
 } from "../boot/src/lexer.mjs";
+*/
 
 export function lex(source: string, sourceName?: string): Token[] {
   const tokens: Token[] = [];
@@ -205,28 +207,30 @@ function matchOperator(
 }
 
 function isWhitespace(char: string): boolean {
-  return isWhitespacewm(char);
-  /* return char === " " || char === "\t" || char === "\n" || char === "\r"; */
+  /* return isWhitespacewm(char); */
+  return char === " " || char === "\t" || char === "\n" || char === "\r";
 }
 
 function isDigit(char: string): boolean {
-  return isDigitwm(char);
-  /* return char >= "0" && char <= "9"; */
+  /* return isDigitwm(char); */
+  return char >= "0" && char <= "9";
 }
 
 function isAlpha(char: string): boolean {
-  return isAlphawm(char);
-  /* return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z"); */
+  /* return isAlphawm(char); */
+  return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z");
 }
 
 function isAlphaNumeric(char: string): boolean {
-  return isAlphaNumericwm(char);
-  /* return isAlpha(char) || isDigit(char) || char === "'"; */
+  /* return isAlphaNumericwm(char); */
+  // Don't call isAlpha to avoid potential issues - inline the check
+  return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") ||
+    (char >= "0" && char <= "9") || char === "'";
 }
 
 function isUppercase(char: string): boolean {
-  return isUppercasewm(char);
-  /* return char >= "A" && char <= "Z"; */
+  /* return isUppercasewm(char); */
+  return char >= "A" && char <= "Z";
 }
 
 function readCharLiteral(

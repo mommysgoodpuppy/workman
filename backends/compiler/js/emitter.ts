@@ -893,6 +893,7 @@ function indent(text: string): string {
 export class CoreLoweringError extends Error {
   constructor(message: string, public readonly nodeId?: number) {
     super(message);
-    this.name = "CoreLoweringError";
+    // Don't set this.name - causes issues in Nova
+    // this.name = "CoreLoweringError";
   }
 }
