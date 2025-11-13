@@ -1,4 +1,8 @@
-import { provenanceToString, type Type, type TypeScheme } from "./types.ts";
+import {
+  provenanceToString,
+  type Type,
+  type TypeScheme,
+} from "./types.ts";
 
 interface PrintContext {
   names: Map<number, string>;
@@ -30,18 +34,23 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       if (type.args.length === 0) {
         return type.name;
       }
-      const args = type.args.map((arg) => formatType(arg, context, 2)).join(", ");
+      const args = type.args.map((arg) => formatType(arg, context, 2)).join(
+        ", ",
+      );
       return `${type.name}<${args}>`;
     }
     case "tuple": {
-      const elements = type.elements.map((el) => formatType(el, context, 0)).join(", ");
+      const elements = type.elements.map((el) => formatType(el, context, 0))
+        .join(", ");
       return `(${elements})`;
     }
     case "record": {
       const entries = Array.from(type.fields.entries());
       entries.sort(([a], [b]) => a.localeCompare(b));
       const fields = entries
-        .map(([name, fieldType]) => `${name}: ${formatType(fieldType, context, 0)}`)
+        .map(([name, fieldType]) =>
+          `${name}: ${formatType(fieldType, context, 0)}`
+        )
         .join(", ");
       return `{ ${fields} }`;
     }

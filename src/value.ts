@@ -1,4 +1,9 @@
-import type { BlockExpr, MatchBundle, Parameter, SourceSpan } from "./ast.ts";
+import type {
+  BlockExpr,
+  MatchBundle,
+  Parameter,
+  SourceSpan,
+} from "@workman/ast.ts";
 
 export type RuntimeValue =
   | IntValue
@@ -76,18 +81,28 @@ export interface Environment {
   readonly bindings: Map<string, RuntimeValue>;
 }
 
-export function createEnvironment(parent: Environment | null = null): Environment {
+export function createEnvironment(
+  parent: Environment | null = null,
+): Environment {
   return {
     parent,
     bindings: new Map(),
   };
 }
 
-export function bindValue(env: Environment, name: string, value: RuntimeValue): void {
+export function bindValue(
+  env: Environment,
+  name: string,
+  value: RuntimeValue,
+): void {
   env.bindings.set(name, value);
 }
 
-export function updateValue(env: Environment, name: string, value: RuntimeValue): boolean {
+export function updateValue(
+  env: Environment,
+  name: string,
+  value: RuntimeValue,
+): boolean {
   if (env.bindings.has(name)) {
     env.bindings.set(name, value);
     return true;

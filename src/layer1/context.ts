@@ -26,10 +26,6 @@ import type {
   MTypeExpr,
   MTypeExprMark,
 } from "../ast_marked.ts";
-import type {
-  MatchBranchesResult,
-  MatchErrorRowCoverage,
-} from "./infermatch.ts";
 import {
   applySubstitution,
   applySubstitutionScheme,
@@ -60,6 +56,14 @@ import type {
   ConstraintDiagnostic,
   ConstraintDiagnosticReason,
 } from "../diagnostics.ts";
+import type { MatchBranchesResult } from "./infer_types.ts";
+import type {
+  HoleId,
+  HoleOrigin,
+  HoleOriginKind,
+  UnknownCategory,
+} from "./context_types.ts";
+export type { HoleId, HoleOrigin, HoleOriginKind, UnknownCategory };
 
 export interface Context {
   env: TypeEnv;
@@ -128,22 +132,6 @@ export function createContext(options: InferOptions = {}): Context {
     layer1Diagnostics: [],
   };
 }
-
-export type HoleId = NodeId;
-
-export type HoleOriginKind = "expr" | "pattern" | "type_expr" | "top_level";
-
-export interface HoleOrigin {
-  kind: HoleOriginKind;
-  nodeId: NodeId;
-  span: SourceSpan;
-}
-
-export type UnknownCategory =
-  | "free"
-  | "local_conflict"
-  | "incomplete"
-  | "internal";
 
 export interface UnknownInfo {
   id: HoleId;

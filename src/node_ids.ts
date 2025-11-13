@@ -1,4 +1,4 @@
-import type { NodeId } from "./ast.ts";
+import type { NodeId } from "@workman/ast.ts";
 
 let nextId = 0;
 

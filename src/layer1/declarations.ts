@@ -10,17 +10,7 @@ import type {
   MMarkTypeDeclInvalidMember,
 } from "../ast_marked.ts";
 import {
-  applySubstitution,
-  cloneType,
-  type ConstructorInfo,
-  freshTypeVar,
-  type Type,
-  type TypeScheme,
-  unknownType,
-} from "../types.ts";
-import {
   expectFunctionType,
-  type inferError,
   lookupEnv,
   markInternal,
   markTypeDeclDuplicate,
@@ -29,6 +19,15 @@ import {
   markTypeExprUnknown,
   markTypeExprUnsupported,
 } from "./context.ts";
+import {
+  applySubstitution,
+  cloneType,
+  type ConstructorInfo,
+  freshTypeVar,
+  type Type,
+  type TypeScheme,
+  unknownType,
+} from "../types.ts";
 
 type TypeScope = Map<string, Type>;
 

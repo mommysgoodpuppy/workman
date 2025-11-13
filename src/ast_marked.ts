@@ -414,8 +414,14 @@ export interface MMarkTypeExprUnsupported extends MNodeBase {
   type: Type;
 }
 
-export type MTopLevelMark = MMarkTypeDeclDuplicate | MMarkTypeDeclInvalidMember | MMarkInternal;
-export type MTypeExprMark = MMarkTypeExprUnknown | MMarkTypeExprArity | MMarkTypeExprUnsupported;
+export type MTopLevelMark =
+  | MMarkTypeDeclDuplicate
+  | MMarkTypeDeclInvalidMember
+  | MMarkInternal;
+export type MTypeExprMark =
+  | MMarkTypeExprUnknown
+  | MMarkTypeExprArity
+  | MMarkTypeExprUnsupported;
 
 export type MTopLevel =
   | MLetDeclaration
@@ -430,7 +436,9 @@ export interface MProgram {
   declarations: MTopLevel[];
 }
 
-export function isMarkedExpression(expr: MExpr): expr is MMarkExpr | MTypeExprMark {
+export function isMarkedExpression(
+  expr: MExpr,
+): expr is MMarkExpr | MTypeExprMark {
   switch (expr.kind) {
     case "mark_free_var":
     case "mark_not_function":

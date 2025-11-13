@@ -1,11 +1,11 @@
-import { lex } from "./lexer.ts";
-import { ParseError, parseSurfaceProgram } from "./parser.ts";
-import { InferError } from "./layer1/infer.ts";
-import { formatScheme } from "./type_printer.ts";
-import { evaluateProgram } from "./eval.ts";
-import { formatRuntimeValue } from "./value_printer.ts";
-import { analyzeProgram } from "./pipeline.ts";
-import { IO } from "./io.ts";
+import { lex } from "@workman/lexer.ts";
+import { ParseError, parseSurfaceProgram } from "@workman/parser.ts";
+import { InferError } from "@workman/layer1/infer.ts";
+import { formatScheme } from "@workman/type_printer.ts";
+import { evaluateProgram } from "@workman/eval.ts";
+import { formatRuntimeValue } from "@workman/value_printer.ts";
+import { analyzeProgram } from "@workman/pipeline.ts";
+import { IO } from "@workman/io.ts";
 
 export interface RunOptions {
   sourceName?: string;

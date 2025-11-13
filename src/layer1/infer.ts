@@ -1,11 +1,10 @@
 import type {
   BlockExpr,
   BlockStatement,
-  ConstructorAlias,
   Expr,
   InfixDeclaration,
   LetDeclaration,
-  MatchArm,
+  MatchBundle,
   MatchBundleLiteralExpr,
   NodeId,
   Parameter,
@@ -20,23 +19,21 @@ import { canonicalizeMatch } from "../passes/canonicalize_match.ts";
 import {
   applySubstitutionScheme,
   cloneType,
+  cloneTypeScheme,
   collapseCarrier,
   collapseResultType,
-  type ConstructorInfo,
   errorLabel,
   type ErrorRowType,
-  type errorRowUnion,
   flattenResultType,
+  freeTypeVars,
   freshTypeVar,
-  type hasCarrierDomain,
+  instantiate,
   isHoleType,
   joinCarrier,
-  type makeResultType,
   type Provenance,
   splitCarrier,
   type Type,
   type TypeEnv,
-  type TypeEnvADT,
   type TypeScheme,
   typeToString,
   unionCarrierStates,
@@ -56,6 +53,7 @@ import {
   createContext,
   createUnknownAndRegister,
   emitConstraintFlow,
+  emitConstraintRewrite,
   emitConstraintSource,
   expectFunctionType,
   generalizeInContext,
@@ -76,6 +74,7 @@ import {
   markUnsupportedExpr,
   recordAnnotationConstraint,
   recordBooleanConstraint,
+  recordBranchJoinConstraint,
   recordCallConstraint,
   recordHasFieldConstraint,
   recordNumericConstraint,
@@ -91,14 +90,13 @@ import {
   resetTypeParamsCache,
 } from "./declarations.ts";
 import { materializeExpr, materializeMarkedLet } from "./materialize.ts";
-import { type getExprTypeOrUnknown, unknownFromReason } from "./infer_utils.ts";
-
-import type { MatchBundle } from "../ast.ts";
-import {
-  emitConstraintRewrite,
-  recordBranchJoinConstraint,
-} from "./context.ts";
-import { cloneTypeScheme, freeTypeVars, instantiate } from "../types.ts";
+import { unknownFromReason } from "./infer_utils.ts";
+import type {
+  ErrorRowCoverage,
+  MatchBranchesResult,
+  MatchErrorRowCoverage,
+  PatternInfo,
+} from "./infer_types.ts";
 
 // Re-exports commented out for Andromeda compatibility
 // export type { Context, InferOptions, InferResult } from "./context.ts";
@@ -1313,23 +1311,6 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
   }
 }
 
-interface ErrorRowCoverage {
-  constructors: Set<string>;
-  coversTail: boolean;
-}
-
-type PatternCoverage =
-  | { kind: "wildcard" }
-  | {
-    kind: "constructor";
-    typeName: string;
-    ctor: string;
-    errorRow?: ErrorRowCoverage;
-  }
-  | { kind: "bool"; value: boolean }
-  | { kind: "none" }
-  | { kind: "all_errors" };
-
 export function inferProgram(
   program: Program,
   options: InferOptions = {},
@@ -1463,13 +1444,6 @@ export function inferProgram(
     marksVersion: 1,
     layer1Diagnostics: ctx.layer1Diagnostics,
   };
-}
-
-export interface PatternInfo {
-  type: Type;
-  bindings: Map<string, Type>;
-  coverage: PatternCoverage;
-  marked: MPattern;
 }
 
 export function inferPattern(
@@ -1916,21 +1890,6 @@ export function ensureExhaustive(
   if (missing.length > 0) {
     markNonExhaustive(ctx, expr, expr.span, missing, resolved);
   }
-}
-
-export interface MatchBranchesResult {
-  type: Type;
-  patternInfos: PatternInfo[];
-  bodyTypes: Type[];
-  errorRowCoverage?: MatchErrorRowCoverage;
-  dischargesResult?: boolean;
-}
-
-export interface MatchErrorRowCoverage {
-  errorRow: ErrorRowType;
-  coveredConstructors: Set<string>;
-  coversTail: boolean;
-  missingConstructors: string[];
 }
 
 export function inferMatchExpression(

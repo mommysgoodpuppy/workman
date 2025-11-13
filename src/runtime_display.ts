@@ -1,4 +1,4 @@
-import type { CoreModule } from "../backends/compiler/ir/core.ts";
+import type { CoreModule } from "@workman/backends/compiler/ir/core.ts";
 
 export interface CompiledValueSummary {
   readonly name: string;
@@ -96,7 +96,9 @@ export function formatCompiledValue(
   if (Array.isArray(value)) {
     if (seen.has(value)) return "<cyclic>";
     seen.add(value);
-    return `[${value.map((item) => formatCompiledValue(item, seen)).join(", ")}]`;
+    return `[${
+      value.map((item) => formatCompiledValue(item, seen)).join(", ")
+    }]`;
   }
   if (valueType === "object") {
     if (seen.has(value)) return "<cyclic>";
@@ -111,7 +113,9 @@ export function formatCompiledValue(
     }
 
     const entries = Object.entries(obj)
-      .map(([key, entryValue]) => `${key}: ${formatCompiledValue(entryValue, seen)}`);
+      .map(([key, entryValue]) =>
+        `${key}: ${formatCompiledValue(entryValue, seen)}`
+      );
     return `{ ${entries.join(", ")} }`;
   }
 
@@ -135,7 +139,8 @@ function formatList(
   const visited = new Set<unknown>();
 
   while (
-    typeof current === "object" && current !== null && isLinkNode(current as Record<string, unknown>)
+    typeof current === "object" && current !== null &&
+    isLinkNode(current as Record<string, unknown>)
   ) {
     if (visited.has(current)) return "[<cyclic>]";
     visited.add(current);
@@ -145,7 +150,8 @@ function formatList(
   }
 
   if (
-    typeof current === "object" && current !== null && isEmptyNode(current as Record<string, unknown>)
+    typeof current === "object" && current !== null &&
+    isEmptyNode(current as Record<string, unknown>)
   ) {
     return `[${elements.join(", ")}]`;
   }
@@ -182,6 +188,8 @@ function formatTaggedValue(
     return String(value["tag"]);
   }
 
-  const parts = fieldNames.map((name) => formatCompiledValue(value[name], seen));
+  const parts = fieldNames.map((name) =>
+    formatCompiledValue(value[name], seen)
+  );
   return `${value["tag"]}(${parts.join(", ")})`;
 }

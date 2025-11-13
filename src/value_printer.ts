@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "./value.ts";
+import type { RuntimeValue } from "@workman/value.ts";
 
 export function formatRuntimeValue(value: RuntimeValue): string {
   switch (value.kind) {
@@ -35,7 +35,9 @@ function formatTuple(tuple: Extract<RuntimeValue, { kind: "tuple" }>): string {
   return `(${items})`;
 }
 
-function formatRecord(record: Extract<RuntimeValue, { kind: "record" }>): string {
+function formatRecord(
+  record: Extract<RuntimeValue, { kind: "record" }>,
+): string {
   if (record.fields.size === 0) {
     return "{ }";
   }

@@ -810,13 +810,20 @@ function applyMatchBundle(
   );
 }
 
-function expandMatchArms(env: Environment, arms: MatchArm[]): MatchPatternArm[] {
+function expandMatchArms(
+  env: Environment,
+  arms: MatchArm[],
+): MatchPatternArm[] {
   const result: MatchPatternArm[] = [];
   for (const arm of arms) {
     if (arm.kind === "match_bundle_reference") {
       const referenced = lookupValue(env, arm.name);
       if (referenced.kind !== "native" || !referenced.matchBundleInfo) {
-        throw new RuntimeError(`'${arm.name}' is not a match bundle`, arm.span, currentSource);
+        throw new RuntimeError(
+          `'${arm.name}' is not a match bundle`,
+          arm.span,
+          currentSource,
+        );
       }
       const { bundle, env: bundleEnv } = referenced.matchBundleInfo;
       const expanded = expandMatchArms(bundleEnv, bundle.arms);

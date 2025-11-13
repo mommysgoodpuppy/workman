@@ -1,14 +1,14 @@
-import { toFileUrl } from "./io.ts";
-import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
-import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
-import { formatScheme } from "./type_printer.ts";
+import { toFileUrl } from "@workman/io.ts";
+import { compileWorkmanGraph } from "@workman/backends/compiler/frontends/workman.ts";
+import { emitModuleGraph } from "@workman/backends/compiler/js/graph_emitter.ts";
+import { formatScheme } from "@workman/type_printer.ts";
 import {
   collectCompiledValues,
   invokeMainIfPresent,
-} from "./runtime_display.ts";
-import { ParseError } from "./parser.ts";
-import { InferError } from "./layer1/infer.ts";
-import { IO } from "./io.ts";
+} from "@workman/runtime_display.ts";
+import { ParseError } from "@workman/parser.ts";
+import { InferError } from "@workman/layer1/infer.ts";
+import { IO } from "@workman/io.ts";
 
 if (import.meta.main) {
   if (IO.args.length === 0) {

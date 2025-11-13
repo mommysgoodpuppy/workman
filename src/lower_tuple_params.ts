@@ -36,7 +36,11 @@ function lowerLetDeclaration(decl: LetDeclaration, ctx: LoweringContext): void {
 
 function lowerLetBinding(binding: LetDeclaration, ctx: LoweringContext): void {
   lowerBlockExpr(binding.body, ctx);
-  const lowered = lowerFunctionParameters(binding.parameters, binding.body, ctx);
+  const lowered = lowerFunctionParameters(
+    binding.parameters,
+    binding.body,
+    ctx,
+  );
   binding.parameters = lowered.parameters;
   binding.body = lowered.body;
 }
@@ -137,7 +141,10 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
   }
 }
 
-function lowerArrowFunction(expr: ArrowFunctionExpr, ctx: LoweringContext): void {
+function lowerArrowFunction(
+  expr: ArrowFunctionExpr,
+  ctx: LoweringContext,
+): void {
   lowerBlockExpr(expr.body, ctx);
   const lowered = lowerFunctionParameters(expr.parameters, expr.body, ctx);
   expr.parameters = lowered.parameters;
@@ -183,7 +190,12 @@ function lowerFunctionParameters(
     }
     const originalPattern = param.pattern;
     const targetName = freshParamName(ctx);
-    param.pattern = { kind: "variable", name: targetName, span: param.pattern.span, id: nextNodeId() };
+    param.pattern = {
+      kind: "variable",
+      name: targetName,
+      span: param.pattern.span,
+      id: nextNodeId(),
+    };
     param.name = targetName;
     currentBody = wrapWithMatch(originalPattern, targetName, currentBody);
   }
@@ -191,7 +203,11 @@ function lowerFunctionParameters(
   return { parameters, body: currentBody };
 }
 
-function wrapWithMatch(pattern: Pattern, tempName: string, body: BlockExpr): BlockExpr {
+function wrapWithMatch(
+  pattern: Pattern,
+  tempName: string,
+  body: BlockExpr,
+): BlockExpr {
   const scrutineeSpan = pattern.span;
   const scrutinee = {
     kind: "identifier" as const,
