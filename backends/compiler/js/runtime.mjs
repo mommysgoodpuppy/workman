@@ -61,6 +61,7 @@ export function callInfectious(target, ...args) {
   }
   let callable = calleeInfo.value;
   let infected = calleeInfo.infected;
+  let infectiousTypeName = null; // Track which infectious type is propagating
   const handledParams = callable?.[HANDLED_RESULT_PARAMS];
 
   const processedArgs = new Array(args.length);
@@ -75,6 +76,10 @@ export function callInfectious(target, ...args) {
     }
     if (argInfo.infected) {
       infected = true;
+      // Remember the infectious type name from the first infected argument
+      if (!infectiousTypeName && args[i]?.type) {
+        infectiousTypeName = args[i].type;
+      }
     }
     processedArgs[i] = argInfo.value;
   }
@@ -84,10 +89,23 @@ export function callInfectious(target, ...args) {
   }
 
   const result = callable(...processedArgs);
-  if (!infected) {
+  
+  // Always check if result is already infectious, regardless of input infection
+  if (result && typeof result === "object" && 
+      typeof result.type === "string" && 
+      typeof result.tag === "string" &&
+      INFECTIOUS_TYPE_REGISTRY.has(result.type)) {
+    // Result is already an infectious type, return as-is
     return result;
   }
-  return wrapResultValue(result);
+  
+  // If inputs were infected, wrap the plain result
+  if (infected) {
+    return wrapResultValue(result, infectiousTypeName);
+  }
+  
+  // No infection, return plain result
+  return result;
 }
 
 export function recordGetInfectious(target, field) {
@@ -108,7 +126,9 @@ export function recordGetInfectious(target, field) {
   if (!targetInfo.infected) {
     return fieldValue;
   }
-  return wrapResultValue(fieldValue);
+  // Get the infectious type name from the original target
+  const infectiousTypeName = target?.type;
+  return wrapResultValue(fieldValue, infectiousTypeName);
 }
 
 const NONE_VALUE = Object.freeze({ tag: "None", type: "Option" });
@@ -192,30 +212,71 @@ export function markResultHandler(fn, handledParams) {
   return fn;
 }
 
+// Registry of infectious type metadata
+// Maps type name -> { valueConstructor, effectConstructors }
+const INFECTIOUS_TYPE_REGISTRY = new Map();
+
+// Register infectious type metadata (called by generated code)
+export function registerInfectiousType(typeName, valueConstructor, effectConstructors) {
+  INFECTIOUS_TYPE_REGISTRY.set(typeName, {
+    valueConstructor,
+    effectConstructors: new Set(effectConstructors),
+  });
+}
+
 function unwrapResultForCall(value) {
-  if (isResultData(value)) {
-    if (value.tag === "Err") {
-      return { value, infected: true, shortCircuit: value };
-    }
-    if (value.tag === "Ok") {
-      const payload = Object.prototype.hasOwnProperty.call(value, "_0")
-        ? value._0
-        : undefined;
-      return { value: payload, infected: true };
-    }
+  if (!value || typeof value !== "object") {
+    return { value, infected: false };
   }
+  if (typeof value.type !== "string" || typeof value.tag !== "string") {
+    return { value, infected: false };
+  }
+  
+  const metadata = INFECTIOUS_TYPE_REGISTRY.get(value.type);
+  if (!metadata) {
+    // Not a registered infectious type
+    return { value, infected: false };
+  }
+  
+  // Check if this is an effect constructor (short-circuit)
+  if (metadata.effectConstructors.has(value.tag)) {
+    return { value, infected: true, shortCircuit: value };
+  }
+  
+  // Check if this is the value constructor (extract payload)
+  if (value.tag === metadata.valueConstructor) {
+    const payload = Object.prototype.hasOwnProperty.call(value, "_0")
+      ? value._0
+      : undefined;
+    return { value: payload, infected: true };
+  }
+  
+  // Unknown constructor for this infectious type - treat as non-infectious
   return { value, infected: false };
 }
 
-export function wrapResultValue(value) {
-  if (isResultData(value)) {
+export function wrapResultValue(value, infectiousTypeName) {
+  // If already an infectious type, return as-is
+  if (value && typeof value === "object" && 
+      typeof value.type === "string" && 
+      typeof value.tag === "string" &&
+      INFECTIOUS_TYPE_REGISTRY.has(value.type)) {
     return value;
   }
-  return { tag: "Ok", type: "Result", _0: value };
-}
-
-function isResultData(value) {
-  return value && typeof value === "object" &&
-    value.type === "Result" &&
-    (value.tag === "Ok" || value.tag === "Err");
+  
+  // Wrap plain values using the infectious type's value constructor
+  // When a function with clean return type is called with infectious arguments,
+  // the result must be wrapped to maintain the infectious context
+  if (infectiousTypeName && INFECTIOUS_TYPE_REGISTRY.has(infectiousTypeName)) {
+    const metadata = INFECTIOUS_TYPE_REGISTRY.get(infectiousTypeName);
+    return {
+      tag: metadata.valueConstructor,
+      type: infectiousTypeName,
+      _0: value
+    };
+  }
+  
+  // Fallback: if no infectious type specified, return unwrapped
+  // This shouldn't happen in correct code
+  return value;
 }

@@ -319,7 +319,9 @@ class SurfaceParser {
         case "prefix":
           return this.parsePrefixDeclaration(exportToken);
         case "infectious":
-          return this.parseInfectiousDeclaration(exportToken);
+          // Check if this is "infectious <domain> type" (combined syntax)
+          // or standalone "infectious <domain> <TypeName>" (old syntax)
+          return this.parseInfectiousOrTypeDeclaration(exportToken);
         default:
           throw this.error(
             `Unexpected keyword '${token.value}' at top-level`,
@@ -853,16 +855,51 @@ class SurfaceParser {
     return declaration;
   }
 
-  private parseInfectiousDeclaration(
+  private parseInfectiousOrTypeDeclaration(
     exportToken?: Token,
-  ): import("./ast.ts").InfectiousDeclaration {
+  ): import("./ast.ts").TopLevel {
     const infectiousToken = this.expectKeyword("infectious");
 
     // Parse domain name (identifier)
     const domainToken = this.expectIdentifier();
     const domain = domainToken.value;
 
-    // Parse type name (constructor)
+    // Check if next token is "type" (combined syntax)
+    if (this.matchKeyword("type")) {
+      // Combined syntax: infectious <domain> type <Name> = ...
+      const typeToken = this.previous();
+      const nameToken = this.expectTypeName();
+      const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
+      this.expectSymbol("=");
+      const members = this.parseTypeAliasMembers();
+      const endToken = this.previous();
+      
+      const infectiousModifier: import("./ast.ts").InfectiousModifier = {
+        kind: "infectious",
+        domain,
+        span: this.spanFrom(infectiousToken.start, domainToken.end),
+      };
+      
+      const declaration: import("./ast.ts").TypeDeclaration = {
+        kind: "type",
+        name: nameToken.value,
+        typeParams,
+        members,
+        infectious: infectiousModifier,
+        span: this.spanFrom(infectiousToken.start, endToken.end),
+        id: nextNodeId(),
+      };
+      
+      if (exportToken) {
+        declaration.export = {
+          kind: "export",
+          span: this.createSpan(exportToken, exportToken),
+        };
+      }
+      return declaration;
+    }
+
+    // Old standalone syntax: infectious <domain> <TypeName><T, E>
     const typeNameToken = this.expectTypeName();
     const typeName = typeNameToken.value;
 
@@ -931,6 +968,27 @@ class SurfaceParser {
   }
 
   private parseTypeAliasMember(): TypeAliasMember {
+    // Check for @value or @effect annotation
+    let annotation: import("./ast.ts").ConstructorAnnotation | undefined;
+    const startToken = this.peek();
+    
+    if (this.matchSymbol("@")) {
+      const annotToken = this.peek();
+      if (annotToken.kind === "identifier") {
+        if (annotToken.value === "value") {
+          annotation = "value";
+          this.consume();
+        } else if (annotToken.value === "effect") {
+          annotation = "effect";
+          this.consume();
+        } else {
+          this.error(`Expected 'value' or 'effect' after @, got '${annotToken.value}'`);
+        }
+      } else {
+        this.error(`Expected annotation name after @`);
+      }
+    }
+    
     const token = this.peek();
     if (token.kind === "constructor") {
       const ctor = this.consume();
@@ -939,8 +997,9 @@ class SurfaceParser {
         kind: "constructor",
         name: ctor.value,
         typeArgs,
+        annotation,
         span: this.spanFrom(
-          ctor.start,
+          startToken.start,
           typeArgs.length > 0
             ? typeArgs[typeArgs.length - 1].span.end
             : ctor.end,

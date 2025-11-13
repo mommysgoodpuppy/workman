@@ -56,6 +56,7 @@ export const symbols = [
   "<",
   ">",
   "_",
+  "@", // For constructor annotations (@value, @effect)
 ];
 
 // Operator symbols that can be used in custom infix operators

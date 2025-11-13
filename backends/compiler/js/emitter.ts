@@ -15,7 +15,7 @@ import type {
   CoreTypeConstructor,
   CoreTypeDeclaration,
 } from "../ir/core.ts";
-import { flattenResultType } from "../../../src/types.ts";
+import { flattenResultType, isCarrierType } from "../../../src/types.ts";
 
 interface NameState {
   used: Set<string>;
@@ -187,7 +187,12 @@ function emitImports(
         ctx.options.extension ?? ".js",
       );
     }
-    lines.push(`import { ${specifiers.join(", ")} } from "${importPath}";`);
+    if (specifiers.length === 0) {
+      // Side-effect import (no specifiers)
+      lines.push(`import "${importPath}";`);
+    } else {
+      lines.push(`import { ${specifiers.join(", ")} } from "${importPath}";`);
+    }
   }
 
   return lines;
@@ -238,8 +243,18 @@ function emitTypeDeclarations(
 ): string[] {
   const lines: string[] = [];
   for (const decl of declarations) {
+    // Emit constructors
     for (const ctor of decl.constructors) {
       lines.push(...emitConstructor(decl, ctor, ctx));
+    }
+    
+    // Emit infectious type registration if this is an infectious type
+    if (decl.infectious && decl.infectious.valueConstructor && decl.infectious.effectConstructors) {
+      const registerFn = resolveVar("registerInfectiousType", ctx);
+      const effectCtorsArray = `[${decl.infectious.effectConstructors.map(c => `"${c}"`).join(", ")}]`;
+      lines.push(
+        `${registerFn}("${decl.name}", "${decl.infectious.valueConstructor}", ${effectCtorsArray});`
+      );
     }
   }
   return lines;
@@ -515,8 +530,14 @@ function hasResultConstructorPattern(pattern: CorePattern): boolean {
 }
 
 function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
-  const resultInfo = flattenResultType(expr.type);
-  if (!resultInfo) {
+  // Check if the result, callee, or any argument has an infectious type
+  const resultIsInfectious = isCarrierType(expr.type);
+  const calleeIsInfectious = isCarrierType(expr.callee.type);
+  const anyArgIsInfectious = expr.args.some((arg) => isCarrierType(arg.type));
+  
+  const needsInfectiousCall = resultIsInfectious || calleeIsInfectious || anyArgIsInfectious;
+  
+  if (!needsInfectiousCall) {
     const callee = emitExpr(expr.callee, ctx);
     const args = expr.args.map((arg) => emitExpr(arg, ctx));
     return `(${callee})(${args.join(", ")})`;
@@ -727,6 +748,10 @@ function emitExprWithScope(
 
 function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
   const emitArg = (index: number) => emitExpr(args[index], ctx);
+  
+  // Check if any argument has an infectious type
+  const hasInfectiousArg = args.some(arg => isCarrierType(arg.type));
+  
   switch (op) {
     case "int_add":
       return `(${emitArg(0)} + ${emitArg(1)})`;
@@ -737,19 +762,53 @@ function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
     case "int_div":
       return `Math.trunc(${emitArg(0)} / ${emitArg(1)})`;
     case "int_eq":
+      if (hasInfectiousArg) {
+        const eq = resolveVar("eq", ctx);
+        const callInf = resolveVar("callInfectious", ctx);
+        return `${callInf}(${eq}, ${emitArg(0)}, ${emitArg(1)})`;
+      }
       return `(${emitArg(0)} === ${emitArg(1)})`;
     case "int_ne":
+      if (hasInfectiousArg) {
+        const neq = resolveVar("neq", ctx);
+        const callInf = resolveVar("callInfectious", ctx);
+        return `${callInf}(${neq}, ${emitArg(0)}, ${emitArg(1)})`;
+      }
       return `(${emitArg(0)} !== ${emitArg(1)})`;
     case "int_lt":
+      if (hasInfectiousArg) {
+        const lt = resolveVar("lt", ctx);
+        const callInf = resolveVar("callInfectious", ctx);
+        return `${callInf}(${lt}, ${emitArg(0)}, ${emitArg(1)})`;
+      }
       return `(${emitArg(0)} < ${emitArg(1)})`;
     case "int_le":
+      if (hasInfectiousArg) {
+        const lte = resolveVar("lte", ctx);
+        const callInf = resolveVar("callInfectious", ctx);
+        return `${callInf}(${lte}, ${emitArg(0)}, ${emitArg(1)})`;
+      }
       return `(${emitArg(0)} <= ${emitArg(1)})`;
     case "int_gt":
+      if (hasInfectiousArg) {
+        const gt = resolveVar("gt", ctx);
+        const callInf = resolveVar("callInfectious", ctx);
+        return `${callInf}(${gt}, ${emitArg(0)}, ${emitArg(1)})`;
+      }
       return `(${emitArg(0)} > ${emitArg(1)})`;
     case "int_ge":
+      if (hasInfectiousArg) {
+        const gte = resolveVar("gte", ctx);
+        const callInf = resolveVar("callInfectious", ctx);
+        return `${callInf}(${gte}, ${emitArg(0)}, ${emitArg(1)})`;
+      }
       return `(${emitArg(0)} >= ${emitArg(1)})`;
     case "int_cmp": {
       const cmp = resolveVar("nativeCmpInt", ctx);
+      if (hasInfectiousArg) {
+        const callInf = resolveVar("callInfectious", ctx);
+        return `${callInf}(${cmp}, ${emitArg(0)}, ${emitArg(1)})`;
+      }
       return `${cmp}(${emitArg(0)}, ${emitArg(1)})`;
     }
     case "bool_and":
@@ -759,6 +818,11 @@ function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
     case "bool_not":
       return `(!${emitArg(0)})`;
     case "char_eq":
+      if (hasInfectiousArg) {
+        const charEq = resolveVar("charEq", ctx);
+        const callInf = resolveVar("callInfectious", ctx);
+        return `${callInf}(${charEq}, ${emitArg(0)}, ${emitArg(1)})`;
+      }
       return `(${emitArg(0)} === ${emitArg(1)})`;
     case "string_length":
       return `${emitArg(0)}.length`;
@@ -775,8 +839,13 @@ function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
         throw new Error("record_get expects string literal field");
       }
       const fieldName = JSON.stringify(field.literal.value);
-      const fn = resolveVar("recordGetInfectious", ctx);
-      return `${fn}(${target}, ${fieldName})`;
+      // Only use infectious accessor if target is actually infectious
+      if (isCarrierType(args[0].type)) {
+        const fn = resolveVar("recordGetInfectious", ctx);
+        return `${fn}(${target}, ${fieldName})`;
+      }
+      // Regular property access for non-infectious types
+      return `(${target})[${fieldName}]`;
     }
     default:
       throw new CoreLoweringError(

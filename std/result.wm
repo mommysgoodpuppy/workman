@@ -1,27 +1,27 @@
-from "std/result/core" import { Ok, Err };
-export from "std/result/core" type Result(..);
+from "std/result/core" import { IOk, IErr };
+export from "std/result/core" type IResult(..);
 
 export let map = match(f, result) {
-  (f, Ok(value)) => { Ok(f(value)) },
-  (_, Err(error)) => { Err(error) }
+  (f, IOk(value)) => { IOk(f(value)) },
+  (_, IErr(error)) => { IErr(error) }
 };
 
 export let mapError = match(f, result) {
-  (f, Ok(value)) => { Ok(value) },
-  (f, Err(error)) => { Err(f(error)) }
+  (f, IOk(value)) => { IOk(value) },
+  (f, IErr(error)) => { IErr(f(error)) }
 };
 
 export let andThen = match(f, result) {
-  (f, Ok(value)) => { f(value) },
-  (_, Err(error)) => { Err(error) }
+  (f, IOk(value)) => { f(value) },
+  (_, IErr(error)) => { IErr(error) }
 };
 
 export let withDefault = match(defaultValue, result) {
-  (defaultValue, Ok(value)) => { value },
-  (defaultValue, Err(_)) => { defaultValue }
+  (defaultValue, IOk(value)) => { value },
+  (defaultValue, IErr(_)) => { defaultValue }
 };
 
 export let fold = match(onErr, onOk, result) {
-  (onErr, onOk, Ok(value)) => { onOk(value) },
-  (onErr, onOk, Err(error)) => { onErr(error) }
+  (onErr, onOk, IOk(value)) => { onOk(value) },
+  (onErr, onOk, IErr(error)) => { onErr(error) }
 };

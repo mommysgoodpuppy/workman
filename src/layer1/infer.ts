@@ -309,12 +309,81 @@ function refineInfectiousConstructor(
   return refinedType ?? type;
 }
 
+function registerInfectiousTypeDeclaration(
+  ctx: Context,
+  decl: import("../ast.ts").TypeDeclaration,
+) {
+  // New combined syntax: infectious error type IResult<T, E> = @value IOk<T> | @effect IErr<E>;
+  if (!decl.infectious) return;
+
+  const domain = decl.infectious.domain;
+  const typeName = decl.name;
+
+  // Extract constructor annotations from the type declaration
+  const valueCtors = decl.members.filter(
+    (m): m is import("../ast.ts").ConstructorAlias => 
+      m.kind === "constructor" && m.annotation === "value"
+  );
+  const effectCtors = decl.members.filter(
+    (m): m is import("../ast.ts").ConstructorAlias => 
+      m.kind === "constructor" && m.annotation === "effect"
+  );
+
+  const valueConstructor = valueCtors.length > 0 ? valueCtors[0].name : undefined;
+  const effectConstructors = effectCtors.length > 0 ? effectCtors.map(c => c.name) : undefined;
+
+  // Create and register the carrier
+  createAndRegisterCarrier(ctx, domain, typeName, valueConstructor, effectConstructors);
+}
+
 function registerInfectiousDeclaration(
   ctx: Context,
   decl: import("../ast.ts").InfectiousDeclaration,
+  program: import("../ast.ts").Program,
+) {
+  // Old standalone syntax: infectious error IResult<T, E>; (separate from type declaration)
+  const { domain, typeName, valueParam, stateParam } = decl;
+
+  // Find the corresponding type declaration to extract constructor annotations
+  const typeDecl = program.declarations.find(
+    (d): d is import("../ast.ts").TypeDeclaration => 
+      d.kind === "type" && d.name === typeName
+  );
+
+  let valueConstructor: string | undefined;
+  let effectConstructors: string[] | undefined;
+
+  if (typeDecl) {
+    // Extract constructor annotations
+    const valueCtors = typeDecl.members.filter(
+      (m): m is import("../ast.ts").ConstructorAlias => 
+        m.kind === "constructor" && m.annotation === "value"
+    );
+    const effectCtors = typeDecl.members.filter(
+      (m): m is import("../ast.ts").ConstructorAlias => 
+        m.kind === "constructor" && m.annotation === "effect"
+    );
+
+    if (valueCtors.length > 0) {
+      valueConstructor = valueCtors[0].name;
+    }
+    if (effectCtors.length > 0) {
+      effectConstructors = effectCtors.map(c => c.name);
+    }
+  }
+
+  // Create and register the carrier
+  createAndRegisterCarrier(ctx, domain, typeName, valueConstructor, effectConstructors);
+}
+
+function createAndRegisterCarrier(
+  ctx: Context,
+  domain: string,
+  typeName: string,
+  valueConstructor: string | undefined,
+  effectConstructors: string[] | undefined,
 ) {
   // Register the infectious type as a carrier in the type system
-  const { domain, typeName, valueParam, stateParam } = decl;
 
   // Create carrier operations for this infectious type
   const carrier: CarrierOperations = {
@@ -367,6 +436,10 @@ function registerInfectiousDeclaration(
     unionStates: (left: Type, right: Type): Type => {
       return errorRowUnion(left, right);
     },
+
+    // Store constructor metadata for runtime
+    valueConstructor,
+    effectConstructors,
   };
 
   // Register the carrier for this domain
@@ -1511,8 +1584,12 @@ export function inferProgram(
   // Pass 0: Collect infectious declarations (before type registration)
   for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "infectious") {
+      // Old standalone syntax: infectious error IResult<T, E>;
       infectiousTypes.set(decl.typeName, decl);
-      registerInfectiousDeclaration(ctx, decl);
+      registerInfectiousDeclaration(ctx, decl, canonicalProgram);
+    } else if (decl.kind === "type" && decl.infectious) {
+      // New combined syntax: infectious error type IResult<T, E> = ...
+      registerInfectiousTypeDeclaration(ctx, decl);
     }
   }
 

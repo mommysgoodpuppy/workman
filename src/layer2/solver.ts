@@ -30,6 +30,7 @@ import {
   flattenResultType,
   type flattenTaintedType,
   formatLabel,
+  type GenericCarrierInfo,
   getProvenance,
   type Identity,
   isHoleType,
@@ -400,9 +401,11 @@ function solveHasFieldConstraint(
   const target = getTypeForNode(state, stub.target);
   const result = getTypeForNode(state, stub.result);
   const resolvedTarget = applySubstitution(target, state.substitution);
-  const targetResultInfo = flattenResultType(resolvedTarget);
-  const targetValue = targetResultInfo
-    ? applySubstitution(targetResultInfo.value, state.substitution)
+  
+  // Use generic carrier splitting instead of Result-specific flattening
+  const targetCarrierInfo = splitCarrier(resolvedTarget);
+  const targetValue = targetCarrierInfo
+    ? applySubstitution(targetCarrierInfo.value, state.substitution)
     : resolvedTarget;
   const projectedValue = stub.projectedValueType
     ? applySubstitution(stub.projectedValueType, state.substitution)
@@ -414,7 +417,7 @@ function solveHasFieldConstraint(
       stub,
       targetValue,
       result,
-      targetResultInfo?.error ?? null,
+      targetCarrierInfo,
       projectedValue,
     );
     return;
@@ -436,7 +439,7 @@ function solveHasFieldConstraint(
         stub,
         recordType,
         result,
-        targetResultInfo?.error ?? null,
+        targetCarrierInfo,
         projectedValue,
       );
       return;
@@ -457,7 +460,7 @@ function projectFieldFromRecord(
   stub: ConstraintStub & { kind: "has_field" },
   recordType: Extract<Type, { kind: "record" }>,
   result: Type,
-  carriedError: ErrorRowType | null,
+  targetCarrierInfo: GenericCarrierInfo | null,
   projectedValue?: Type | null,
 ): void {
   const fieldType = recordType.fields.get(stub.field);
@@ -470,9 +473,11 @@ function projectFieldFromRecord(
     return;
   }
   const resolvedFieldType = applySubstitution(fieldType, state.substitution);
-  const fieldResultInfo = flattenResultType(resolvedFieldType);
-  const projectedValueType = fieldResultInfo
-    ? applySubstitution(fieldResultInfo.value, state.substitution)
+  
+  // Use generic carrier splitting for the field type
+  const fieldCarrierInfo = splitCarrier(resolvedFieldType);
+  const projectedValueType = fieldCarrierInfo
+    ? applySubstitution(fieldCarrierInfo.value, state.substitution)
     : resolvedFieldType;
   const valueTarget = projectedValue ?? projectedValueType;
   if (projectedValue) {
@@ -487,16 +492,53 @@ function projectFieldFromRecord(
     }
     state.substitution = unifyValue.subst;
   }
-  let combinedError = carriedError;
-  if (fieldResultInfo) {
-    combinedError = combinedError
-      ? errorRowUnion(combinedError, fieldResultInfo.error)
-      : fieldResultInfo.error;
-  }
+  
+  // Combine carrier states if both target and field have carriers
+  let finalType: Type;
   const finalValue = applySubstitution(valueTarget, state.substitution);
-  const finalType = combinedError
-    ? makeResultType(cloneType(finalValue), combinedError)
-    : finalValue;
+  
+  if (targetCarrierInfo && fieldCarrierInfo) {
+    // Both have carriers - need to combine states
+    // For now, use the target's carrier domain and combine states
+    // TODO: Handle cross-domain carrier combinations properly
+    if (targetCarrierInfo.domain === fieldCarrierInfo.domain) {
+      // Same domain - combine states based on domain type
+      if (targetCarrierInfo.domain === "error") {
+        // Error domain: union the error rows
+        const targetError = targetCarrierInfo.state as ErrorRowType;
+        const fieldError = fieldCarrierInfo.state as ErrorRowType;
+        const combinedError = errorRowUnion(targetError, fieldError);
+        finalType = makeResultType(cloneType(finalValue), combinedError);
+      } else if (targetCarrierInfo.domain === "taint") {
+        // Taint domain: union the taint rows
+        const targetTaint = targetCarrierInfo.state as TaintRowType;
+        const fieldTaint = fieldCarrierInfo.state as TaintRowType;
+        const combinedTaint = taintRowUnion(targetTaint, fieldTaint);
+        const joined = joinCarrier(targetCarrierInfo.domain, finalValue, combinedTaint);
+        finalType = joined ?? finalValue;
+      } else {
+        // Unknown domain: just use target's carrier
+        const joined = joinCarrier(targetCarrierInfo.domain, finalValue, targetCarrierInfo.state);
+        finalType = joined ?? finalValue;
+      }
+    } else {
+      // Different domains - use target's carrier
+      const joined = joinCarrier(targetCarrierInfo.domain, finalValue, targetCarrierInfo.state);
+      finalType = joined ?? finalValue;
+    }
+  } else if (targetCarrierInfo) {
+    // Only target has carrier - propagate it
+    const joined = joinCarrier(targetCarrierInfo.domain, finalValue, targetCarrierInfo.state);
+    finalType = joined ?? finalValue;
+  } else if (fieldCarrierInfo) {
+    // Only field has carrier - propagate it
+    const joined = joinCarrier(fieldCarrierInfo.domain, finalValue, fieldCarrierInfo.state);
+    finalType = joined ?? finalValue;
+  } else {
+    // No carriers
+    finalType = finalValue;
+  }
+  
   const unified = unifyTypes(finalType, result, state.substitution);
   if (unified.success) {
     state.substitution = unified.subst;
@@ -526,15 +568,19 @@ function solveNumericConstraint(
 ): void {
   const intType: Type = { kind: "int" };
   let currentSubst = state.substitution;
-  let accumulatedErrors: ErrorRowType | null = null;
+  
+  // Track accumulated carriers per domain
+  const accumulatedCarriers = new Map<string, { domain: string; state: Type }>();
 
   for (const operand of stub.operands) {
     const operandType = applySubstitution(
       getTypeForNode(state, operand),
       currentSubst,
     );
-    const operandInfo = flattenResultType(operandType);
-    const operandValue = operandInfo ? operandInfo.value : operandType;
+    
+    // Use generic carrier splitting
+    const operandCarrierInfo = splitCarrier(operandType);
+    const operandValue = operandCarrierInfo ? operandCarrierInfo.value : operandType;
 
     // Skip hole types - they'll be constrained elsewhere or represent holes
     if (isHoleType(operandValue)) {
@@ -551,10 +597,38 @@ function solveNumericConstraint(
       return;
     }
     currentSubst = unified.subst;
-    if (operandInfo) {
-      accumulatedErrors = accumulatedErrors
-        ? errorRowUnion(accumulatedErrors, operandInfo.error)
-        : operandInfo.error;
+    
+    // Accumulate carrier states by domain
+    if (operandCarrierInfo) {
+      const existing = accumulatedCarriers.get(operandCarrierInfo.domain);
+      if (existing) {
+        // Combine states for the same domain
+        if (operandCarrierInfo.domain === "error") {
+          const combinedError = errorRowUnion(
+            existing.state as ErrorRowType,
+            operandCarrierInfo.state as ErrorRowType
+          );
+          accumulatedCarriers.set(operandCarrierInfo.domain, {
+            domain: operandCarrierInfo.domain,
+            state: combinedError,
+          });
+        } else if (operandCarrierInfo.domain === "taint") {
+          const combinedTaint = taintRowUnion(
+            existing.state as TaintRowType,
+            operandCarrierInfo.state as TaintRowType
+          );
+          accumulatedCarriers.set(operandCarrierInfo.domain, {
+            domain: operandCarrierInfo.domain,
+            state: combinedTaint,
+          });
+        }
+        // For other domains, keep the first one (or implement domain-specific logic)
+      } else {
+        accumulatedCarriers.set(operandCarrierInfo.domain, {
+          domain: operandCarrierInfo.domain,
+          state: operandCarrierInfo.state,
+        });
+      }
     }
   }
 
@@ -565,18 +639,49 @@ function solveNumericConstraint(
 
   if (!isComparison) {
     const resultType = getTypeForNode(state, stub.result);
-    const resultInfo = flattenResultType(
-      applySubstitution(resultType, currentSubst),
-    );
-    let combinedErrors = accumulatedErrors;
-    if (resultInfo && resultInfo.error) {
-      combinedErrors = combinedErrors
-        ? errorRowUnion(combinedErrors, resultInfo.error)
-        : resultInfo.error;
+    const resolvedResultType = applySubstitution(resultType, currentSubst);
+    const resultCarrierInfo = splitCarrier(resolvedResultType);
+    
+    // Merge result's carriers with accumulated carriers
+    if (resultCarrierInfo) {
+      const existing = accumulatedCarriers.get(resultCarrierInfo.domain);
+      if (existing) {
+        if (resultCarrierInfo.domain === "error") {
+          const combinedError = errorRowUnion(
+            existing.state as ErrorRowType,
+            resultCarrierInfo.state as ErrorRowType
+          );
+          accumulatedCarriers.set(resultCarrierInfo.domain, {
+            domain: resultCarrierInfo.domain,
+            state: combinedError,
+          });
+        } else if (resultCarrierInfo.domain === "taint") {
+          const combinedTaint = taintRowUnion(
+            existing.state as TaintRowType,
+            resultCarrierInfo.state as TaintRowType
+          );
+          accumulatedCarriers.set(resultCarrierInfo.domain, {
+            domain: resultCarrierInfo.domain,
+            state: combinedTaint,
+          });
+        }
+      } else {
+        accumulatedCarriers.set(resultCarrierInfo.domain, {
+          domain: resultCarrierInfo.domain,
+          state: resultCarrierInfo.state,
+        });
+      }
     }
-    const expectedResultType = combinedErrors
-      ? makeResultType(intType, combinedErrors)
-      : intType;
+    
+    // Build expected result type with all accumulated carriers
+    let expectedResultType: Type = intType;
+    for (const [_domain, carrier] of accumulatedCarriers.entries()) {
+      const joined = joinCarrier(carrier.domain, expectedResultType, carrier.state);
+      if (joined) {
+        expectedResultType = joined;
+      }
+    }
+    
     const unifiedResult = unifyTypes(
       resultType,
       expectedResultType,
@@ -602,15 +707,20 @@ function solveBooleanConstraint(
 ): void {
   const boolType: Type = { kind: "bool" };
   let currentSubst = state.substitution;
-  let accumulatedErrors: ErrorRowType | null = null;
+  
+  // Track accumulated carriers per domain
+  const accumulatedCarriers = new Map<string, { domain: string; state: Type }>();
 
   for (const operand of stub.operands) {
     const operandType = applySubstitution(
       getTypeForNode(state, operand),
       currentSubst,
     );
-    const operandInfo = flattenResultType(operandType);
-    const operandValue = operandInfo ? operandInfo.value : operandType;
+    
+    // Use generic carrier splitting
+    const operandCarrierInfo = splitCarrier(operandType);
+    const operandValue = operandCarrierInfo ? operandCarrierInfo.value : operandType;
+    
     const unified = unifyTypes(operandValue, boolType, currentSubst);
     if (!unified.success) {
       state.diagnostics.push({
@@ -621,26 +731,85 @@ function solveBooleanConstraint(
       return;
     }
     currentSubst = unified.subst;
-    if (operandInfo) {
-      accumulatedErrors = accumulatedErrors
-        ? errorRowUnion(accumulatedErrors, operandInfo.error)
-        : operandInfo.error;
+    
+    // Accumulate carrier states by domain
+    if (operandCarrierInfo) {
+      const existing = accumulatedCarriers.get(operandCarrierInfo.domain);
+      if (existing) {
+        // Combine states for the same domain
+        if (operandCarrierInfo.domain === "error") {
+          const combinedError = errorRowUnion(
+            existing.state as ErrorRowType,
+            operandCarrierInfo.state as ErrorRowType
+          );
+          accumulatedCarriers.set(operandCarrierInfo.domain, {
+            domain: operandCarrierInfo.domain,
+            state: combinedError,
+          });
+        } else if (operandCarrierInfo.domain === "taint") {
+          const combinedTaint = taintRowUnion(
+            existing.state as TaintRowType,
+            operandCarrierInfo.state as TaintRowType
+          );
+          accumulatedCarriers.set(operandCarrierInfo.domain, {
+            domain: operandCarrierInfo.domain,
+            state: combinedTaint,
+          });
+        }
+        // For other domains, keep the first one (or implement domain-specific logic)
+      } else {
+        accumulatedCarriers.set(operandCarrierInfo.domain, {
+          domain: operandCarrierInfo.domain,
+          state: operandCarrierInfo.state,
+        });
+      }
     }
   }
 
   const resultType = getTypeForNode(state, stub.result);
-  const resultInfo = flattenResultType(
-    applySubstitution(resultType, currentSubst),
-  );
-  let combinedErrors = accumulatedErrors;
-  if (resultInfo && resultInfo.error) {
-    combinedErrors = combinedErrors
-      ? errorRowUnion(combinedErrors, resultInfo.error)
-      : resultInfo.error;
+  const resolvedResultType = applySubstitution(resultType, currentSubst);
+  const resultCarrierInfo = splitCarrier(resolvedResultType);
+  
+  // Merge result's carriers with accumulated carriers
+  if (resultCarrierInfo) {
+    const existing = accumulatedCarriers.get(resultCarrierInfo.domain);
+    if (existing) {
+      if (resultCarrierInfo.domain === "error") {
+        const combinedError = errorRowUnion(
+          existing.state as ErrorRowType,
+          resultCarrierInfo.state as ErrorRowType
+        );
+        accumulatedCarriers.set(resultCarrierInfo.domain, {
+          domain: resultCarrierInfo.domain,
+          state: combinedError,
+        });
+      } else if (resultCarrierInfo.domain === "taint") {
+        const combinedTaint = taintRowUnion(
+          existing.state as TaintRowType,
+          resultCarrierInfo.state as TaintRowType
+        );
+        accumulatedCarriers.set(resultCarrierInfo.domain, {
+          domain: resultCarrierInfo.domain,
+          state: combinedTaint,
+        });
+      }
+    } else {
+      accumulatedCarriers.set(resultCarrierInfo.domain, {
+        domain: resultCarrierInfo.domain,
+        state: resultCarrierInfo.state,
+      });
+    }
   }
-  const expectedResultType = combinedErrors
-    ? makeResultType(boolType, combinedErrors)
-    : boolType;
+  
+  // Build expected result type with all accumulated carriers
+  let expectedResultType: Type = boolType;
+  for (const [_domain, carrier] of accumulatedCarriers.entries()) {
+    const joined = joinCarrier(carrier.domain, expectedResultType, carrier.state);
+    if (joined) {
+      expectedResultType = joined;
+    }
+  }
+  
   const unifiedResult = unifyTypes(
     resultType,
     expectedResultType,

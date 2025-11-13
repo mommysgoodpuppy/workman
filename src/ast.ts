@@ -273,10 +273,13 @@ export interface TypeErrorRowExpr extends NodeBase {
 
 export type TypeAliasMember = ConstructorAlias | TypeAliasExprMember;
 
+export type ConstructorAnnotation = "value" | "effect";
+
 export interface ConstructorAlias extends NodeBase {
   kind: "constructor";
   name: string;
   typeArgs: TypeExpr[];
+  annotation?: ConstructorAnnotation; // @value or @effect for infectious types
 }
 
 export interface TypeAliasExprMember extends NodeBase {
@@ -293,12 +296,19 @@ export interface CommentBlock {
   hasBlankLineAfter?: boolean; // True if there's a blank line after this comment
 }
 
+export interface InfectiousModifier {
+  kind: "infectious";
+  domain: string; // e.g., "error", "taint"
+  span: SourceSpan;
+}
+
 export interface TypeDeclaration extends NodeBase {
   kind: "type";
   name: string;
   typeParams: TypeParameter[];
   members: TypeAliasMember[];
   declarationKind?: "record";
+  infectious?: InfectiousModifier; // Optional infectious modifier
   export?: ExportModifier;
   leadingComments?: CommentBlock[];
   trailingComment?: string;

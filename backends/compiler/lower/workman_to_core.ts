@@ -66,17 +66,35 @@ function isStdModule(path: string): boolean {
 }
 
 function convertImports(node: ModuleNode): CoreImport[] {
-  if (node.imports.length === 0) {
-    return [];
+  const imports: CoreImport[] = [];
+  
+  // Add explicit imports from source
+  for (const record of node.imports) {
+    imports.push({
+      source: record.sourcePath,
+      specifiers: record.specifiers.map((specifier) => ({
+        kind: "value" as const,
+        imported: specifier.imported,
+        local: specifier.local,
+      })),
+    });
   }
-  return node.imports.map((record) => ({
-    source: record.sourcePath,
-    specifiers: record.specifiers.map((specifier) => ({
-      kind: "value" as const,
-      imported: specifier.imported,
-      local: specifier.local,
-    })),
-  }));
+  
+  // Add side-effect imports for type re-exports
+  // When a module re-exports types (e.g., prelude re-exporting IResult),
+  // we need to import the source module to ensure infectious type registrations run
+  for (const reexport of node.reexports) {
+    // Only add if not already imported
+    const alreadyImported = imports.some(imp => imp.source === reexport.sourcePath);
+    if (!alreadyImported) {
+      imports.push({
+        source: reexport.sourcePath,
+        specifiers: [], // Side-effect import (no specifiers)
+      });
+    }
+  }
+  
+  return imports;
 }
 
 function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
@@ -92,10 +110,31 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
         exported: Boolean(topLevel.export),
       });
     }
+    
+    // Extract infectious metadata if present
+    let infectious: CoreTypeDeclaration["infectious"] = undefined;
+    if (topLevel.infectious) {
+      const valueCtors = topLevel.members.filter(
+        (m): m is import("../../../src/ast.ts").ConstructorAlias =>
+          m.kind === "constructor" && m.annotation === "value"
+      );
+      const effectCtors = topLevel.members.filter(
+        (m): m is import("../../../src/ast.ts").ConstructorAlias =>
+          m.kind === "constructor" && m.annotation === "effect"
+      );
+      
+      infectious = {
+        domain: topLevel.infectious.domain,
+        valueConstructor: valueCtors.length > 0 ? valueCtors[0].name : undefined,
+        effectConstructors: effectCtors.length > 0 ? effectCtors.map(c => c.name) : undefined,
+      };
+    }
+    
     decls.push({
       name: topLevel.name,
       constructors,
       exported: Boolean(topLevel.export),
+      infectious,
     });
   }
   return decls;

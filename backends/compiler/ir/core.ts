@@ -215,6 +215,11 @@ export interface CoreTypeDeclaration {
   readonly constructors: readonly CoreTypeConstructor[];
   readonly exported: boolean;
   readonly origin?: NodeId;
+  readonly infectious?: {
+    readonly domain: string;
+    readonly valueConstructor?: string;
+    readonly effectConstructors?: readonly string[];
+  };
 }
 
 export type CoreImportSpecifier = {

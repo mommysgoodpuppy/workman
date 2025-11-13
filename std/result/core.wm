@@ -1,1 +1,6 @@
-export type Result<T, E> = Ok<T> | Err<E>;
+
+-- Define the IResult type with its constructors IOk and IErr
+-- @value marks the constructor that carries the value (extracts payload)
+-- @effect marks constructors that carry effects (short-circuit)
+export infectious error type IResult<T, E> = @value IOk<T> | @effect IErr<E>;
+

@@ -236,6 +236,10 @@ export interface CarrierOperations {
   collapse: (type: Type) => Type;
   // Union two state types: E1 ∪ E2 → E3
   unionStates: (left: Type, right: Type) => Type;
+  // Runtime metadata: which constructor carries the value
+  valueConstructor?: string; // e.g., "IOk"
+  // Runtime metadata: which constructors carry effects
+  effectConstructors?: string[]; // e.g., ["IErr"]
 }
 
 // Registry of carrier types by domain - supports multiple carriers per domain
@@ -257,6 +261,30 @@ export function getCarrier(domain: string, type: Type): CarrierOperations | unde
     }
   }
   return undefined;
+}
+
+// Get constructor metadata for a type name (used by compiler)
+export function getConstructorMetadata(typeName: string): { valueConstructor: string; effectConstructors: string[] } | null {
+  for (const carriers of CARRIER_REGISTRY.values()) {
+    for (const ops of carriers) {
+      // Check if this carrier matches the type name
+      if (ops.valueConstructor && ops.effectConstructors) {
+        // Try to match by checking a dummy type
+        const dummyType: Type = {
+          kind: "constructor",
+          name: typeName,
+          args: [],
+        };
+        if (ops.is(dummyType)) {
+          return {
+            valueConstructor: ops.valueConstructor,
+            effectConstructors: ops.effectConstructors,
+          };
+        }
+      }
+    }
+  }
+  return null;
 }
 
 export function findCarrierDomain(type: Type): string | null {

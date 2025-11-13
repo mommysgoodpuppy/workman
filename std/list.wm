@@ -1,6 +1,6 @@
 from "std/list/core" import { Empty, Link };
 from "std/core/int" import { intAdd, intSub, intCompare };
-from "std/result/core" import { Ok, Err };
+from "std/result/core" import { IOk, IErr };
 from "std/core/ordering" import { LT, EQ, GT };
 from "std/option/core" import { Some, None };
 
@@ -47,8 +47,8 @@ export let listSlice = (list, start, end) => {
 };
 
 export let rec listAt = match(list, index, error) {
-  (Empty, _, error) => { Err(error) },
-  (Link(x, _), 0, _) => { Ok(x) },
+  (Empty, _, error) => { IErr(error) },
+  (Link(x, _), 0, _) => { IOk(x) },
   (Link(_, rest), index, error) => { listAt(rest, intSub(index, 1), error) }
 };
 
