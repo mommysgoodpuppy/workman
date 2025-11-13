@@ -1,5 +1,5 @@
-from "std/result" import { map, Ok };
+from "std/result" import { map };
 
 export let selfApply = () => {
-  map(map, Ok(1))
+  map(map, IOk(1))
 };

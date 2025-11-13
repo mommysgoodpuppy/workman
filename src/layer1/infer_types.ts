@@ -29,7 +29,7 @@ export interface PatternInfo {
 }
 
 export interface MatchErrorRowCoverage {
-  errorRow: ErrorRowType;
+  errorRow: Type; // Can be error_row or type variable during inference
   coveredConstructors: Set<string>;
   coversTail: boolean;
   missingConstructors: string[];

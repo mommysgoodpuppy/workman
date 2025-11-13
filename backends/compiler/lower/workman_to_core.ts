@@ -1,4 +1,4 @@
-import type { ModuleNode } from "../../../src/module_loader.ts";
+import type { ModuleNode, ModuleSummary } from "../../../src/module_loader.ts";
 import type { AnalysisResult } from "../../../src/pipeline.ts";
 import type {
   CoreExport,
@@ -18,6 +18,7 @@ import type { MProgram } from "../../../src/ast_marked.ts";
 export interface WorkmanLoweringInput {
   readonly node: ModuleNode;
   readonly analysis: AnalysisResult;
+  readonly summary?: ModuleSummary;
 }
 
 export interface WorkmanLoweringOptions {
@@ -54,10 +55,10 @@ export function lowerAnalyzedModule(
   const program = analysis.layer2.remarkedProgram;
   return {
     path: node.path,
-    imports: convertImports(node),
+    imports: convertImports(node, input.summary),
     typeDeclarations: extractTypeDeclarations(node),
     values: lowerProgramToValues(program, analysis.layer2.resolvedNodeTypes),
-    exports: convertExports(node),
+    exports: convertExports(node, input.summary),
   };
 }
 
@@ -65,7 +66,7 @@ function isStdModule(path: string): boolean {
   return path.includes("\\std\\") || path.includes("/std/");
 }
 
-function convertImports(node: ModuleNode): CoreImport[] {
+function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[] {
   const imports: CoreImport[] = [];
   
   // Add explicit imports from source
@@ -80,17 +81,76 @@ function convertImports(node: ModuleNode): CoreImport[] {
     });
   }
   
-  // Add side-effect imports for type re-exports
+  // Add imports for type re-exports with constructors
   // When a module re-exports types (e.g., prelude re-exporting IResult),
-  // we need to import the source module to ensure infectious type registrations run
-  for (const reexport of node.reexports) {
-    // Only add if not already imported
-    const alreadyImported = imports.some(imp => imp.source === reexport.sourcePath);
-    if (!alreadyImported) {
-      imports.push({
-        source: reexport.sourcePath,
-        specifiers: [], // Side-effect import (no specifiers)
-      });
+  // we need to import the constructors if they're being re-exported
+  if (summary) {
+    for (const reexport of node.reexports) {
+      // Check if this re-export has constructors that need to be imported
+      const constructorsToImport: string[] = [];
+      
+      for (const typeExport of reexport.typeExports) {
+        if (typeExport.exportConstructors) {
+          const typeInfo = summary.exports.types.get(typeExport.name);
+          if (typeInfo) {
+            for (const ctor of typeInfo.constructors) {
+              if (summary.exports.values.has(ctor.name)) {
+                constructorsToImport.push(ctor.name);
+              }
+            }
+          }
+        }
+      }
+      
+      // Find existing import for this source or create new one
+      let existingImport = imports.find(imp => imp.source === reexport.sourcePath);
+      if (existingImport) {
+        // Add constructor specifiers to existing import (but avoid duplicates)
+        const existingNames = new Set(existingImport.specifiers.map(s => s.imported));
+        const newSpecifiers = constructorsToImport
+          .filter(name => !existingNames.has(name))
+          .map(name => ({
+            kind: "value" as const,
+            imported: name,
+            local: name,
+          }));
+        if (newSpecifiers.length > 0) {
+          existingImport = {
+            source: existingImport.source,
+            specifiers: [...existingImport.specifiers, ...newSpecifiers],
+          };
+          // Replace in array
+          const index = imports.findIndex(imp => imp.source === reexport.sourcePath);
+          imports[index] = existingImport;
+        }
+      } else if (constructorsToImport.length > 0) {
+        // Create new import with constructor specifiers
+        imports.push({
+          source: reexport.sourcePath,
+          specifiers: constructorsToImport.map(name => ({
+            kind: "value" as const,
+            imported: name,
+            local: name,
+          })),
+        });
+      } else {
+        // Side-effect import only (for infectious type registration)
+        imports.push({
+          source: reexport.sourcePath,
+          specifiers: [],
+        });
+      }
+    }
+  } else {
+    // Fallback: side-effect imports for re-exports without summary
+    for (const reexport of node.reexports) {
+      const alreadyImported = imports.some(imp => imp.source === reexport.sourcePath);
+      if (!alreadyImported) {
+        imports.push({
+          source: reexport.sourcePath,
+          specifiers: [],
+        });
+      }
     }
   }
   
@@ -140,8 +200,10 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
   return decls;
 }
 
-function convertExports(node: ModuleNode): CoreExport[] {
+function convertExports(node: ModuleNode, summary?: ModuleSummary): CoreExport[] {
   const exports: CoreExport[] = [];
+  
+  // Export regular values
   for (const valueName of node.exportedValueNames) {
     exports.push({
       kind: "value",
@@ -149,6 +211,8 @@ function convertExports(node: ModuleNode): CoreExport[] {
       exported: valueName,
     });
   }
+  
+  // Export types
   for (const typeName of node.exportedTypeNames) {
     exports.push({
       kind: "type",
@@ -156,6 +220,31 @@ function convertExports(node: ModuleNode): CoreExport[] {
       exported: typeName,
     });
   }
+  
+  // Export constructors from re-exported types
+  // When a module re-exports a type with constructors (e.g., std/option re-exporting Option with Some/None),
+  // we need to also export the constructors themselves
+  if (summary) {
+    // Check all types in the summary exports (not just node.exportedTypeNames, which doesn't include re-exports)
+    for (const [typeName, typeInfo] of summary.exports.types.entries()) {
+      for (const ctor of typeInfo.constructors) {
+        // Check if this constructor is actually exported in the summary
+        if (summary.exports.values.has(ctor.name)) {
+          // Only add if not already exported as a regular value
+          const alreadyExported = node.exportedValueNames.includes(ctor.name);
+          if (!alreadyExported) {
+            exports.push({
+              kind: "constructor",
+              typeName,
+              ctor: ctor.name,
+              exported: ctor.name,
+            });
+          }
+        }
+      }
+    }
+  }
+  
   return exports;
 }
 

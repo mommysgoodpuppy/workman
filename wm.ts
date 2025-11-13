@@ -1,6 +1,11 @@
 import { lex } from "./src/lexer.ts";
 import { parseSurfaceProgram } from "./src/parser.ts";
-import { type InferError, LexError, ParseError, WorkmanError } from "./src/error.ts";
+import {
+  type InferError,
+  LexError,
+  ParseError,
+  WorkmanError,
+} from "./src/error.ts";
 import { formatScheme } from "./src/type_printer.ts";
 import { evaluateProgram } from "./src/eval.ts";
 import { formatRuntimeValue } from "./src/value_printer.ts";
@@ -476,11 +481,9 @@ REPL Commands:
         return { line, col };
       };
 
-      console.log("\n=== Expression Types ===\n");
-
       for (const { nodeId, view, span } of nodeViewsWithSpans) {
         const startPos = offsetToLineCol(span.start);
-        const endPos = offsetToLineCol(span.end);
+        const _endPos = offsetToLineCol(span.end);
         const excerpt = source.substring(span.start, span.end);
 
         // finalType is a PartialType: { kind: "unknown" | "concrete", type?: Type }

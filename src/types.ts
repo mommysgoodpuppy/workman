@@ -113,7 +113,16 @@ function mergeErrorRowTails(
 ): Type | null | undefined {
   if (!left) return right;
   if (!right) return left;
-  // Prefer the left tail for now; more advanced unification happens at call sites.
+  // If one side is still a type variable, prefer the concrete tail from the other side.
+  const leftIsVar = left.kind === "var";
+  const rightIsVar = right.kind === "var";
+  if (leftIsVar && !rightIsVar) {
+    return right;
+  }
+  if (rightIsVar && !leftIsVar) {
+    return left;
+  }
+  // Fall back to left; downstream unification will reconcile any remaining differences.
   return left;
 }
 
@@ -251,7 +260,10 @@ export function registerCarrier(domain: string, ops: CarrierOperations): void {
   CARRIER_REGISTRY.set(domain, existing);
 }
 
-export function getCarrier(domain: string, type: Type): CarrierOperations | undefined {
+export function getCarrier(
+  domain: string,
+  type: Type,
+): CarrierOperations | undefined {
   const carriers = CARRIER_REGISTRY.get(domain);
   if (!carriers) return undefined;
   // Find the first carrier that matches this type
@@ -264,7 +276,9 @@ export function getCarrier(domain: string, type: Type): CarrierOperations | unde
 }
 
 // Get constructor metadata for a type name (used by compiler)
-export function getConstructorMetadata(typeName: string): { valueConstructor: string; effectConstructors: string[] } | null {
+export function getConstructorMetadata(
+  typeName: string,
+): { valueConstructor: string; effectConstructors: string[] } | null {
   for (const carriers of CARRIER_REGISTRY.values()) {
     for (const ops of carriers) {
       // Check if this carrier matches the type name
@@ -372,59 +386,6 @@ export function unionCarrierStates(
 // ============================================================================
 // Result<T, E> Carrier (Error Domain)
 // ============================================================================
-
-// Result carrier operations (refactored from hardcoded functions)
-const ResultCarrier: CarrierOperations = {
-  is: (type: Type): boolean => {
-    return type.kind === "constructor" && type.name === "Result" &&
-      type.args.length === 2;
-  },
-
-  split: (type: Type): CarrierInfo | null => {
-    if (!ResultCarrier.is(type)) {
-      return null;
-    }
-    const resultType = type as Extract<Type, { kind: "constructor" }>;
-    const value = resultType.args[0];
-    const errorRow = ensureRow(resultType.args[1]);
-
-    // Handle nested Results by flattening
-    const inner = ResultCarrier.split(value);
-    if (!inner) {
-      return { value, state: errorRow };
-    }
-    return {
-      value: inner.value,
-      state: errorRowUnion(inner.state, errorRow),
-    };
-  },
-
-  join: (value: Type, state: Type): Type => {
-    const errorRow = ensureRow(state);
-    return {
-      kind: "constructor",
-      name: "Result",
-      args: [value, errorRow],
-    };
-  },
-
-  collapse: (type: Type): Type => {
-    const info = ResultCarrier.split(type);
-    if (!info) {
-      return type;
-    }
-    const collapsedValue = ResultCarrier.collapse(info.value);
-    return ResultCarrier.join(collapsedValue, info.state);
-  },
-
-  unionStates: (left: Type, right: Type): Type => {
-    return errorRowUnion(left, right);
-  },
-};
-
-// Register Result carrier for error domain
-// DISABLED: The std library now uses IResult exclusively
-// registerCarrier("error", ResultCarrier);
 
 // ============================================================================
 // Tainted<T, TaintRow> Carrier (Taint Domain)
@@ -705,27 +666,45 @@ export function getProvenance(type: Type): Provenance | null {
 
 export interface ResultTypeInfo {
   value: Type;
-  error: ErrorRowType;
+  error: Type; // Can be error_row or type variable during inference
 }
 
 export function isResultType(type: Type): boolean {
-  return ResultCarrier.is(type);
+  return hasCarrierDomain(type, "error");
 }
 
 export function flattenResultType(type: Type): ResultTypeInfo | null {
-  const info = ResultCarrier.split(type);
-  if (!info) return null;
-  // Convert state back to error for API compatibility
-  return { value: info.value, error: info.state as ErrorRowType };
+  const info = splitCarrier(type);
+  if (!info || info.domain !== "error") return null;
+  // During inference, the state might be a type variable that will become an error_row
+  // So we don't require state.kind === "error_row" here
+  return { value: info.value, error: info.state };
 }
 
 export function makeResultType(value: Type, error?: Type): Type {
   const errorRow = error ? ensureRow(error) : createErrorRow();
-  return ResultCarrier.join(value, errorRow);
+  const carrier = getCarrier("error", {
+    kind: "constructor",
+    name: "Result",
+    args: [value, errorRow],
+  });
+  if (carrier) {
+    return carrier.join(value, errorRow);
+  }
+  // Fallback for backward compatibility
+  return {
+    kind: "constructor",
+    name: "Result",
+    args: [value, errorRow],
+  };
 }
 
 export function collapseResultType(type: Type): Type {
-  return ResultCarrier.collapse(type);
+  const carrier = getCarrier("error", type);
+  if (carrier) {
+    return carrier.collapse(type);
+  }
+  return type;
 }
 
 // ============================================================================
@@ -1121,7 +1100,7 @@ export function typeToString(type: Type): string {
       // if (rendered.length === 0 && type.tail) {
       //   return typeToString(type.tail);
       // }
-      
+
       // 2. If one concrete case with an open tail variable, hide the tail
       if (rendered.length === 1 && type.tail?.kind === "var") {
         return `<${rendered[0]}>`;

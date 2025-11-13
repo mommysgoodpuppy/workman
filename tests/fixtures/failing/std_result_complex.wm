@@ -16,7 +16,7 @@ let strErr = (e) => {
 };
 
 export let pipeline = () => {
-  let start: IResult<Int, String> = IOk(10);
+  let start = IOk(10);
   let mapped = map(inc, start);
   let chained = andThen(doubleIfOdd, mapped);
   withDefault(0, chained)

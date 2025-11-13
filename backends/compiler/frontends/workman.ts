@@ -77,8 +77,9 @@ export async function compileWorkmanGraph(
         preludePath,
       ),
     );
+    const summary = summaries.get(path);
     const core = lowerAnalyzedModule(
-      { node, analysis },
+      { node, analysis, summary },
       loweringOptions,
     );
     moduleArtifacts.set(path, { node, analysis, core });
