@@ -737,7 +737,28 @@ REPL Commands:
           if (diag.span && source) {
             const lines = source.split("\n");
             const line = lines[diag.span.start] || "";
-            errorMessage += `\nType Error: ${diag.reason}\n`;
+            let message = `Type Error: ${diag.reason}`;
+
+            // Add detailed type information for type mismatches
+            if (diag.details && typeof diag.details === "object") {
+              const details = diag.details as Record<string, unknown>;
+              if (
+                diag.reason === "type_mismatch" && details.left && details.right
+              ) {
+                const leftType = formatScheme({
+                  quantifiers: [],
+                  type: details.left as Type,
+                });
+                const rightType = formatScheme({
+                  quantifiers: [],
+                  type: details.right as Type,
+                });
+                message +=
+                  `\n    Expected: ${rightType}\n    Found: ${leftType}`;
+              }
+            }
+
+            errorMessage += `\n${message}\n`;
             errorMessage += `  ${line}\n`;
           } else {
             errorMessage += `\nType Error: ${diag.reason}\n`;
