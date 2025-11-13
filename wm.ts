@@ -448,7 +448,7 @@ REPL Commands:
     if ((skipEvaluation || debugMode) && !showErrorsOnly) {
       const layer3 = artifact.analysis.layer3;
       const source = await IO.readTextFile(filePath);
-      const lines = source.split("\n");
+      const _lines = source.split("\n");
 
       // Collect all node views with their spans
       const nodeViewsWithSpans: Array<
@@ -521,6 +521,45 @@ REPL Commands:
 
         console.log(`Line ${startPos.line + 1}:${startPos.col}: ${excerpt}`);
         console.log(`  → ${typeStr}${annotation}`);
+
+        // Show infection information for this node
+        if (artifact.analysis.layer3.constraintFlow) {
+          const flow = artifact.analysis.layer3.constraintFlow;
+          const nodeLabels = flow.labels.get(nodeId);
+          const incomingEdges = new Set<number>();
+
+          // Find incoming edges
+          for (const [fromId, toIds] of flow.edges.entries()) {
+            if (toIds.has(nodeId)) {
+              incomingEdges.add(fromId);
+            }
+          }
+
+          if (nodeLabels || incomingEdges.size > 0) {
+            const infectionInfo: string[] = [];
+
+            // Show incoming flow
+            if (incomingEdges.size > 0) {
+              const incomingList = Array.from(incomingEdges).map((id) => {
+                const span = artifact.analysis.layer3.spanIndex.get(id);
+                return span ? `line ${span.start + 1}` : `node ${id}`;
+              }).join(", ");
+              infectionInfo.push(`infected from: ${incomingList}`);
+            }
+
+            // Show labels on this node
+            if (nodeLabels) {
+              for (const [domain, labelStr] of nodeLabels.entries()) {
+                infectionInfo.push(`${domain}: ${labelStr}`);
+              }
+            }
+
+            if (infectionInfo.length > 0) {
+              console.log(`  🦠 ${infectionInfo.join("; ")}`);
+            }
+          }
+        }
+
         const coverage = layer3.matchCoverages.get(nodeId);
         if (coverage) {
           const rowStr = formatScheme({ quantifiers: [], type: coverage.row });

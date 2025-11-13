@@ -35,6 +35,7 @@ import {
   composeSubstitution,
   type ConstraintLabel,
   type ErrorRowType,
+  ensureRow,
   errorRowUnion,
   generalize,
   getProvenance,
@@ -908,6 +909,16 @@ export function markTypeExprArity(
   return mark;
 }
 
+function coerceToErrorRow(state: Type): ErrorRowType | null {
+  if (state.kind === "error_row") {
+    return state;
+  }
+  if (state.kind === "var") {
+    return null;
+  }
+  return ensureRow(state);
+}
+
 export function markNonExhaustive(
   ctx: Context,
   expr: Expr,
@@ -979,14 +990,23 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
     // If so, unify their value and state components instead of requiring exact name match
     const leftCarrier = splitCarrier(left);
     const rightCarrier = splitCarrier(right);
-    
-    if (leftCarrier && rightCarrier && leftCarrier.domain === rightCarrier.domain) {
+
+    if (
+      leftCarrier && rightCarrier && leftCarrier.domain === rightCarrier.domain
+    ) {
       // Both are carriers in the same domain - unify value and state
       const valueUnify = unifyTypes(leftCarrier.value, rightCarrier.value, subst);
       if (!valueUnify.success) return valueUnify;
+      if (leftCarrier.domain === "error") {
+        const leftStateRow = coerceToErrorRow(leftCarrier.state);
+        const rightStateRow = coerceToErrorRow(rightCarrier.state);
+        if (leftStateRow && rightStateRow) {
+          return unifyErrorRowTypes(leftStateRow, rightStateRow, valueUnify.subst);
+        }
+      }
       return unifyTypes(leftCarrier.state, rightCarrier.state, valueUnify.subst);
     }
-    
+
     // Normal constructor unification - require exact name match
     if (left.name !== right.name || left.args.length !== right.args.length) {
       return {
@@ -1064,48 +1084,54 @@ function unifyErrorRowTypes(
 ): UnifyResult {
   // Error domain uses UNION semantics, not exact match
   // Per INFECTION_REFACTOR_PLAN_V3.md: "Errors compose via union"
-  
+
   // Apply current substitution to both sides
   const resolvedLeft = applySubstitution(left, subst) as ErrorRowType;
   const resolvedRight = applySubstitution(right, subst) as ErrorRowType;
-  
+
   // If they're structurally equal, we're done
   if (errorRowsEqual(resolvedLeft, resolvedRight)) {
     return { success: true, subst };
   }
-  
+
   // Check if either is a type variable tail - if so, bind it to the other side
   if (resolvedLeft.cases.size === 0 && resolvedLeft.tail?.kind === "var") {
     // Left is just a type variable - bind it to the right side (not the union!)
     // Binding to the union would create an occurs check failure
     return bindVar(resolvedLeft.tail.id, resolvedRight, subst);
   }
-  
+
   if (resolvedRight.cases.size === 0 && resolvedRight.tail?.kind === "var") {
     // Right is just a type variable - bind it to the left side (not the union!)
     return bindVar(resolvedRight.tail.id, resolvedLeft, subst);
   }
-  
+
   // Both have concrete cases - create a fresh type variable and bind it to the union
   // This allows the union to be represented in the type system
   const unionRow = errorRowUnion(resolvedLeft, resolvedRight);
-  
+
   // If both tails are the same type variable, bind it to the union
-  if (resolvedLeft.tail?.kind === "var" && resolvedRight.tail?.kind === "var" &&
-      resolvedLeft.tail.id === resolvedRight.tail.id) {
+  if (
+    resolvedLeft.tail?.kind === "var" && resolvedRight.tail?.kind === "var" &&
+    resolvedLeft.tail.id === resolvedRight.tail.id
+  ) {
     // Same tail variable - the union will have the same tail
     return { success: true, subst };
   }
-  
+
   // Different tails or one has no tail - try to unify tails
   let current = subst;
   if (resolvedLeft.tail && resolvedRight.tail) {
-    const tailUnify = unifyTypes(resolvedLeft.tail, resolvedRight.tail, current);
+    const tailUnify = unifyTypes(
+      resolvedLeft.tail,
+      resolvedRight.tail,
+      current,
+    );
     if (tailUnify.success) {
       current = tailUnify.subst;
     }
   }
-  
+
   // Error rows always unify - they compose via union
   // The union is implicit - it will be computed when needed
   return { success: true, subst: current };

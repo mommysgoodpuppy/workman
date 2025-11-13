@@ -14,6 +14,7 @@ import type {
   PartialType as Layer2PartialType,
   SolverResult,
 } from "../layer2/mod.ts";
+import { formatLabel } from "../types.ts";
 import type { NodeId } from "../ast.ts";
 import type { Type } from "../types.ts";
 import { cloneType, getProvenance, isHoleType, unknownType } from "../types.ts";
@@ -73,6 +74,7 @@ export interface Layer3Result {
   spanIndex: Map<NodeId, SourceSpan>;
   matchCoverages: Map<NodeId, MatchCoverageView>;
   summaries: TypeSummary[];
+  constraintFlow?: ConstraintFlowView;
 }
 
 export interface MatchCoverageView {
@@ -81,6 +83,12 @@ export interface MatchCoverageView {
   coversTail: boolean;
   missingConstructors: string[];
   dischargesResult: boolean;
+}
+
+export interface ConstraintFlowView {
+  labels: Map<NodeId, Map<string, string>>; // domain -> formatted label
+  edges: Map<NodeId, Set<NodeId>>; // from -> to
+  sources: Map<NodeId, string[]>; // node -> list of source descriptions
 }
 
 export function presentProgram(layer2: SolverResult): Layer3Result {
@@ -104,6 +112,10 @@ export function presentProgram(layer2: SolverResult): Layer3Result {
     spanIndex,
   );
 
+  const constraintFlowView = layer2.constraintFlow
+    ? buildConstraintFlowView(layer2.constraintFlow)
+    : undefined;
+
   return {
     nodeViews,
     diagnostics: {
@@ -115,6 +127,7 @@ export function presentProgram(layer2: SolverResult): Layer3Result {
     spanIndex,
     matchCoverages: coverageInfo.coverages,
     summaries: layer2.summaries,
+    constraintFlow: constraintFlowView,
   };
 }
 
@@ -569,4 +582,33 @@ function traverse(
       traverse(value, spans, seen);
     }
   }
+}
+
+function buildConstraintFlowView(flow: any): ConstraintFlowView {
+  const labels = new Map<NodeId, Map<string, string>>();
+  const sources = new Map<NodeId, string[]>();
+
+  // Convert labels to display format
+  for (const [nodeId, domainMap] of flow.labels.entries()) {
+    const displayMap = new Map<string, string>();
+    for (const [domain, label] of domainMap.entries()) {
+      displayMap.set(domain, formatLabel(label));
+    }
+    labels.set(nodeId, displayMap);
+
+    // Build source descriptions
+    const sourceDescs: string[] = [];
+    for (const [domain, label] of domainMap.entries()) {
+      sourceDescs.push(`${domain}: ${formatLabel(label)}`);
+    }
+    if (sourceDescs.length > 0) {
+      sources.set(nodeId, sourceDescs);
+    }
+  }
+
+  return {
+    labels,
+    edges: flow.edges,
+    sources,
+  };
 }
