@@ -1,11 +1,7 @@
-import { dirname, extname, isAbsolute, join, resolve } from "std/path/mod.ts";
+import { dirname, extname, isAbsolute, join, resolve } from "./io.ts";
 import { lex } from "./lexer.ts";
-import {
-  type OperatorInfo,
-  ParseError,
-  parseSurfaceProgram,
-} from "./parser.ts";
-import { LexError, ModuleError } from "./error.ts";
+import { type OperatorInfo, parseSurfaceProgram } from "./parser.ts";
+import { InferError, LexError, ModuleError, ParseError } from "./error.ts";
 import type {
   ImportSpecifier,
   LetDeclaration,
@@ -16,12 +12,13 @@ import type {
 } from "./ast.ts";
 import type { TypeInfo, TypeScheme } from "./types.ts";
 import { cloneTypeInfo, cloneTypeScheme, unknownType } from "./types.ts";
-import { InferError, inferProgram } from "./layer1/infer.ts";
+import { inferProgram } from "./layer1/infer.ts";
 import { evaluateProgram } from "./eval.ts";
 import type { RuntimeValue } from "./value.ts";
 import { lookupValue } from "./value.ts";
 import { formatScheme } from "./type_printer.ts";
 import { formatRuntimeValue } from "./value_printer.ts";
+import { IO, isNotFoundError } from "./io.ts";
 
 export interface ModuleLoaderOptions {
   stdRoots?: string[];
@@ -123,12 +120,14 @@ function sameModulePath(a?: string, b?: string): boolean {
 
 function isStdCoreModule(path: string): boolean {
   const normalized = path.replaceAll("\\", "/");
-  if (normalized.includes("/std/core/")) {
-    return true;
-  }
-  return normalized.endsWith("/std/list/core.wm") ||
+  return normalized.includes("/std/core/") ||
+    normalized.includes("std/core/") || // For relative paths
+    normalized.endsWith("/std/list/core.wm") ||
+    normalized.endsWith("std/list/core.wm") ||
     normalized.endsWith("/std/option/core.wm") ||
-    normalized.endsWith("/std/result/core.wm");
+    normalized.endsWith("std/option/core.wm") ||
+    normalized.endsWith("/std/result/core.wm") ||
+    normalized.endsWith("std/result/core.wm");
 }
 
 export async function loadModuleGraph(
@@ -768,9 +767,9 @@ async function loadSource(path: string, ctx: LoaderContext): Promise<string> {
   }
 
   try {
-    return await Deno.readTextFile(path);
+    return await IO.readTextFile(path);
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
+    if (isNotFoundError(error)) {
       throw moduleError(`Module not found: '${path}'`);
     }
     throw moduleError(
@@ -1017,10 +1016,10 @@ function detectModuleKind(path: string): ModuleSourceKind {
 
 function existsSync(path: string): boolean {
   try {
-    Deno.statSync(path);
+    IO.statSync(path);
     return true;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
+    if (isNotFoundError(error)) {
       return false;
     }
     throw error;

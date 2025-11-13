@@ -1,4 +1,4 @@
-import {
+import type {
   BlockExpr,
   BlockStatement,
   ConstructorAlias,
@@ -22,22 +22,22 @@ import {
   cloneType,
   collapseCarrier,
   collapseResultType,
-  ConstructorInfo,
+  type ConstructorInfo,
   errorLabel,
-  ErrorRowType,
-  errorRowUnion,
+  type ErrorRowType,
+  type errorRowUnion,
   flattenResultType,
   freshTypeVar,
-  hasCarrierDomain,
+  type hasCarrierDomain,
   isHoleType,
   joinCarrier,
-  makeResultType,
+  type makeResultType,
   type Provenance,
   splitCarrier,
-  Type,
-  TypeEnv,
-  TypeEnvADT,
-  TypeScheme,
+  type Type,
+  type TypeEnv,
+  type TypeEnvADT,
+  type TypeScheme,
   typeToString,
   unionCarrierStates,
   unknownType,
@@ -52,7 +52,7 @@ import type {
 } from "../ast_marked.ts";
 import {
   applyCurrentSubst,
-  Context,
+  type Context,
   createContext,
   createUnknownAndRegister,
   emitConstraintFlow,
@@ -63,8 +63,8 @@ import {
   holeOriginFromExpr,
   holeOriginFromPattern,
   inferError,
-  InferOptions,
-  InferResult,
+  type InferOptions,
+  type InferResult,
   instantiateAndApply,
   literalType,
   lookupEnv,
@@ -90,16 +90,20 @@ import {
   registerTypeName,
   resetTypeParamsCache,
 } from "./declarations.ts";
-import {
-  inferMatchBundleLiteral,
-  inferMatchExpression,
-  inferMatchFunction,
-} from "./infermatch.ts";
 import { materializeExpr, materializeMarkedLet } from "./materialize.ts";
+import { type getExprTypeOrUnknown, unknownFromReason } from "./infer_utils.ts";
 
-export type { Context, InferOptions, InferResult } from "./context.ts";
-export { InferError } from "../error.ts";
-export { inferError } from "./context.ts";
+import type { MatchBundle } from "../ast.ts";
+import {
+  emitConstraintRewrite,
+  recordBranchJoinConstraint,
+} from "./context.ts";
+import { cloneTypeScheme, freeTypeVars, instantiate } from "../types.ts";
+
+// Re-exports commented out for Andromeda compatibility
+// export type { Context, InferOptions, InferResult } from "./context.ts";
+// export { InferError } from "../error.ts";
+// export { inferError } from "./context.ts";
 
 const NUMERIC_BINARY_OPERATORS = new Set([
   "+",
@@ -1342,6 +1346,7 @@ export function inferProgram(
   const summaries: { name: string; scheme: TypeScheme }[] = [];
   const markedDeclarations: MTopLevel[] = [];
   const successfulTypeDecls = new Set<TypeDeclaration>();
+  const skippedTypeDecls = new Set<TypeDeclaration>(); // Types from initialAdtEnv
 
   // Clear the type params cache for this program
   resetTypeParamsCache();
@@ -1353,6 +1358,12 @@ export function inferProgram(
   // Pass 1: Register all type names (allows forward references)
   for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "type") {
+      // Skip if already in adtEnv (from initialAdtEnv)
+      if (ctx.adtEnv.has(decl.name)) {
+        // Already registered via initialAdtEnv, skip both passes
+        skippedTypeDecls.add(decl);
+        continue;
+      }
       const result = registerTypeName(ctx, decl);
       if (!result.success) {
         markedDeclarations.push(result.mark);
@@ -1368,7 +1379,10 @@ export function inferProgram(
 
   // Pass 2: Register constructors (now all type names are known)
   for (const decl of canonicalProgram.declarations) {
-    if (decl.kind === "type" && successfulTypeDecls.has(decl)) {
+    if (
+      decl.kind === "type" && successfulTypeDecls.has(decl) &&
+      !skippedTypeDecls.has(decl)
+    ) {
       const result = registerTypeConstructors(ctx, decl);
       if (!result.success) {
         markedDeclarations.push(result.mark);
@@ -1449,18 +1463,6 @@ export function inferProgram(
     marksVersion: 1,
     layer1Diagnostics: ctx.layer1Diagnostics,
   };
-}
-
-export function getExprTypeOrUnknown(
-  ctx: Context,
-  expr: Expr,
-  reason: string,
-): Type {
-  return ctx.nodeTypes.get(expr) ?? unknownFromReason(reason);
-}
-
-export function unknownFromReason(reason: string): Type {
-  return unknownType({ kind: "incomplete", reason });
 }
 
 export interface PatternInfo {
@@ -1914,4 +1916,421 @@ export function ensureExhaustive(
   if (missing.length > 0) {
     markNonExhaustive(ctx, expr, expr.span, missing, resolved);
   }
+}
+
+export interface MatchBranchesResult {
+  type: Type;
+  patternInfos: PatternInfo[];
+  bodyTypes: Type[];
+  errorRowCoverage?: MatchErrorRowCoverage;
+  dischargesResult?: boolean;
+}
+
+export interface MatchErrorRowCoverage {
+  errorRow: ErrorRowType;
+  coveredConstructors: Set<string>;
+  coversTail: boolean;
+  missingConstructors: string[];
+}
+
+export function inferMatchExpression(
+  ctx: Context,
+  expr: Expr,
+  scrutinee: Expr,
+  bundle: MatchBundle,
+): Type {
+  const scrutineeType = inferExpr(ctx, scrutinee);
+  const result = inferMatchBranches(
+    ctx,
+    expr,
+    scrutineeType,
+    bundle,
+    true,
+    scrutinee,
+  );
+  return result.type;
+}
+
+export function inferMatchFunction(
+  ctx: Context,
+  expr: Expr,
+  parameters: Expr[],
+  bundle: MatchBundle,
+): Type {
+  if (parameters.length !== 1) {
+    markUnsupportedExpr(ctx, expr, "match_fn_arity");
+    return unknownType({ kind: "incomplete", reason: "match_fn_arity" });
+  }
+  const parameterType = inferExpr(ctx, parameters[0]);
+  const { type: resultType } = inferMatchBranches(
+    ctx,
+    expr,
+    parameterType,
+    bundle,
+    true,
+    parameters[0],
+  );
+  return {
+    kind: "func",
+    from: applyCurrentSubst(ctx, parameterType),
+    to: applyCurrentSubst(ctx, resultType),
+  };
+}
+
+export function inferMatchBundleLiteral(
+  ctx: Context,
+  expr: MatchBundleLiteralExpr,
+): Type {
+  const param = freshTypeVar();
+  const { type: result } = inferMatchBranches(
+    ctx,
+    expr,
+    param,
+    expr.bundle,
+    false,
+  );
+  return {
+    kind: "func",
+    from: applyCurrentSubst(ctx, param),
+    to: applyCurrentSubst(ctx, result),
+  };
+}
+
+type MatchBranchKind = "ok" | "err" | "all_errors" | "other";
+
+export function inferMatchBranches(
+  ctx: Context,
+  expr: Expr,
+  scrutineeType: Type,
+  bundle: MatchBundle,
+  exhaustive: boolean = true,
+  scrutineeExpr?: Expr,
+): MatchBranchesResult {
+  let resultType: Type | null = null;
+  const coverageMap = new Map<string, Set<string>>();
+  const booleanCoverage = new Set<"true" | "false">();
+  let hasWildcard = false;
+  let hasAllErrors = false;
+  let hasErrConstructor = false;
+  const handledErrorConstructors = new Set<string>();
+  const patternInfos: PatternInfo[] = [];
+  const bodyTypes: Type[] = [];
+  const branchBodies: Expr[] = [];
+  let errorRowCoverage: MatchErrorRowCoverage | undefined;
+  const branchMetadata: { kind: MatchBranchKind; type: Type }[] = [];
+  let dischargedResult = false;
+
+  for (const arm of bundle.arms) {
+    if (arm.kind === "match_bundle_reference") {
+      const existingScheme = ctx.env.get(arm.name);
+      const scheme = existingScheme
+        ? cloneTypeScheme(existingScheme)
+        : undefined;
+      if (!scheme) {
+        markUnsupportedExpr(ctx, expr, "match_bundle_reference");
+        hasWildcard = true;
+        continue;
+      }
+      let instantiated = instantiate(scheme);
+      instantiated = applyCurrentSubst(ctx, instantiated);
+      if (instantiated.kind === "func" && scheme.quantifiers.length > 0) {
+        // Instantiate result with fresh variables so it can specialize per use.
+        const freshResult = freshTypeVar();
+        unify(ctx, instantiated.to, freshResult);
+        instantiated = {
+          kind: "func",
+          from: instantiated.from,
+          to: freshResult,
+        };
+      }
+      const resultVar = freshTypeVar();
+      // Ensure the referenced bundle accepts the current scrutinee type exactly
+      unify(ctx, instantiated, {
+        kind: "func",
+        from: applyCurrentSubst(ctx, scrutineeType),
+        to: resultVar,
+      });
+      const bodyType = applyCurrentSubst(ctx, resultVar);
+      if (!resultType) {
+        resultType = bodyType;
+      } else {
+        unify(ctx, resultType, bodyType);
+        resultType = applyCurrentSubst(ctx, resultType);
+      }
+      // Referenced bundles cover their own cases; treat as wildcard for exhaustiveness.
+      hasWildcard = true;
+      continue;
+    }
+
+    const expected = applyCurrentSubst(ctx, scrutineeType);
+    const patternInfo = inferPattern(ctx, arm.pattern, expected);
+    patternInfos.push(patternInfo);
+    if (arm.kind === "match_pattern") {
+      branchBodies.push(arm.body);
+    }
+    const branchKind = classifyBranchKind(patternInfo);
+    if (patternInfo.coverage.kind === "wildcard") {
+      hasWildcard = true;
+    } else if (patternInfo.coverage.kind === "all_errors") {
+      hasAllErrors = true;
+      handledErrorConstructors.add("_");
+      if (
+        expected.kind === "constructor" &&
+        expected.name === "Result"
+      ) {
+        const set = coverageMap.get(expected.name) ?? new Set<string>();
+        set.add("Err");
+        coverageMap.set(expected.name, set);
+      }
+    } else if (patternInfo.coverage.kind === "constructor") {
+      if (
+        patternInfo.coverage.typeName === "Result" &&
+        patternInfo.coverage.ctor === "Err"
+      ) {
+        hasErrConstructor = true;
+        const errorRow = patternInfo.coverage.errorRow;
+        if (errorRow) {
+          for (const ctor of errorRow.constructors) {
+            handledErrorConstructors.add(ctor);
+          }
+          if (errorRow.coversTail) {
+            handledErrorConstructors.add("_");
+          }
+        }
+      }
+      const key = patternInfo.coverage.typeName;
+      const set = coverageMap.get(key) ?? new Set<string>();
+      set.add(patternInfo.coverage.ctor);
+      coverageMap.set(key, set);
+    } else if (patternInfo.coverage.kind === "bool") {
+      booleanCoverage.add(patternInfo.coverage.value ? "true" : "false");
+    }
+
+    const bodyType = withScopedEnv(ctx, () => {
+      for (const [name, type] of patternInfo.bindings.entries()) {
+        ctx.env.set(name, {
+          quantifiers: [],
+          type: applyCurrentSubst(ctx, type),
+        });
+      }
+      if (
+        ctx.source?.includes(
+          "Runtime value printer for Workman using std library",
+        ) &&
+        resultType
+      ) {
+        console.log(
+          "[debug] expected result before arm",
+          arm.pattern.kind === "constructor"
+            ? arm.pattern.name
+            : arm.pattern.kind,
+          ":",
+          typeToString(applyCurrentSubst(ctx, resultType)),
+        );
+      }
+      return inferExpr(ctx, arm.body);
+    });
+    const resolvedBodyType = applyCurrentSubst(ctx, bodyType);
+    bodyTypes.push(resolvedBodyType);
+    branchMetadata.push({ kind: branchKind, type: resolvedBodyType });
+
+    if (!resultType) {
+      resultType = bodyType;
+    } else {
+      unify(ctx, resultType, bodyType);
+      resultType = applyCurrentSubst(ctx, resultType);
+    }
+  }
+
+  const resolvedScrutinee = applyCurrentSubst(ctx, scrutineeType);
+  const okBranchesReturnResult = branchMetadata.some((branch) =>
+    branch.kind === "ok" && flattenResultType(branch.type) !== null
+  );
+  const errBranchesReturnResult = branchMetadata.some((branch) =>
+    (branch.kind === "err" || branch.kind === "all_errors") &&
+    flattenResultType(branch.type) !== null
+  );
+  const preventsDischarge = okBranchesReturnResult || errBranchesReturnResult;
+
+  if (exhaustive) {
+    if (
+      hasAllErrors &&
+      resolvedScrutinee.kind === "constructor" &&
+      resolvedScrutinee.name === "Result"
+    ) {
+      const set = coverageMap.get(resolvedScrutinee.name) ?? new Set<string>();
+      set.add("Err");
+      coverageMap.set(resolvedScrutinee.name, set);
+    }
+    ensureExhaustive(
+      ctx,
+      expr,
+      resolvedScrutinee,
+      hasWildcard,
+      coverageMap,
+      booleanCoverage,
+    );
+  }
+
+  if (!resultType) {
+    resultType = freshTypeVar();
+  }
+
+  let resolvedResult = applyCurrentSubst(ctx, resultType);
+  const scrutineeInfo = flattenResultType(resolvedScrutinee);
+
+  const dischargeErrorRow = () => {
+    const currentInfo = flattenResultType(resolvedResult);
+    if (currentInfo) {
+      resolvedResult = applyCurrentSubst(
+        ctx,
+        collapseResultType(currentInfo.value),
+      );
+    }
+  };
+
+  const snapshotErrorCoverage = (
+    row: ErrorRowType,
+    missing: string[],
+  ) => {
+    errorRowCoverage = {
+      errorRow: row,
+      coveredConstructors: new Set(handledErrorConstructors),
+      coversTail: handledErrorConstructors.has("_"),
+      missingConstructors: missing,
+    };
+  };
+
+  if (hasAllErrors) {
+    if (!scrutineeInfo) {
+      ctx.layer1Diagnostics.push({
+        origin: expr.id,
+        reason: "all_errors_outside_result",
+      });
+    } else if (preventsDischarge) {
+      snapshotErrorCoverage(scrutineeInfo.error, []);
+    } else {
+      dischargedResult = true;
+      dischargeErrorRow();
+      snapshotErrorCoverage(scrutineeInfo.error, []);
+
+      // PHASE 2.3: Emit constraint rewrite (parallel to existing eager discharge)
+      // Emit rewrite for Ok branches to remove error labels
+      for (let i = 0; i < bundle.arms.length; i++) {
+        const arm = bundle.arms[i];
+        const branchKind = branchMetadata[i]?.kind;
+        if (arm.kind === "match_pattern" && branchKind === "ok") {
+          // Ok branch: remove error constraints
+          emitConstraintRewrite(
+            ctx,
+            arm.body.id,
+            [errorLabel(scrutineeInfo.error)], // remove
+            [], // add (nothing)
+          );
+        }
+      }
+    }
+  } else if (scrutineeInfo && hasErrConstructor) {
+    const missingConstructors = findMissingErrorConstructors(
+      scrutineeInfo.error,
+      handledErrorConstructors,
+    );
+    if (missingConstructors.length === 0) {
+      if (preventsDischarge) {
+        snapshotErrorCoverage(scrutineeInfo.error, []);
+      } else {
+        dischargedResult = true;
+        dischargeErrorRow();
+        snapshotErrorCoverage(scrutineeInfo.error, []);
+
+        // PHASE 2.3: Emit constraint rewrite (parallel to existing eager discharge)
+        // Emit rewrite for Ok branches to remove error labels
+        for (let i = 0; i < bundle.arms.length; i++) {
+          const arm = bundle.arms[i];
+          const branchKind = branchMetadata[i]?.kind;
+          if (arm.kind === "match_pattern" && branchKind === "ok") {
+            // Ok branch: remove error constraints
+            emitConstraintRewrite(
+              ctx,
+              arm.body.id,
+              [errorLabel(scrutineeInfo.error)], // remove
+              [], // add (nothing)
+            );
+          }
+        }
+      }
+    } else {
+      ctx.layer1Diagnostics.push({
+        origin: expr.id,
+        reason: "error_row_partial_coverage",
+        details: { constructors: missingConstructors },
+      });
+      snapshotErrorCoverage(scrutineeInfo.error, missingConstructors);
+    }
+  }
+  if (branchBodies.length > 0 && scrutineeExpr) {
+    recordBranchJoinConstraint(
+      ctx,
+      expr,
+      branchBodies,
+      scrutineeExpr,
+      {
+        dischargesResult: dischargedResult,
+        errorRowCoverage,
+      },
+    );
+  }
+
+  const resultVars = freeTypeVars(resolvedResult);
+  const scrutineeVars = freeTypeVars(resolvedScrutinee);
+  for (const id of resultVars) {
+    if (!scrutineeVars.has(id)) {
+      ctx.nonGeneralizable.add(id);
+    }
+  }
+
+  const result: MatchBranchesResult = {
+    type: resolvedResult,
+    patternInfos,
+    bodyTypes,
+    errorRowCoverage,
+    dischargesResult: dischargedResult,
+  };
+  ctx.matchResults.set(bundle, result);
+  return result;
+}
+
+function findMissingErrorConstructors(
+  errorRow: ErrorRowType,
+  covered: Set<string>,
+): string[] {
+  if (covered.has("_")) {
+    return [];
+  }
+  const missing: string[] = [];
+  for (const label of errorRow.cases.keys()) {
+    if (!covered.has(label)) {
+      missing.push(label);
+    }
+  }
+  if (errorRow.tail) {
+    missing.push("_");
+  }
+  return missing;
+}
+
+function classifyBranchKind(info: PatternInfo): MatchBranchKind {
+  const coverage = info.coverage;
+  if (coverage.kind === "all_errors") {
+    return "all_errors";
+  }
+  if (coverage.kind === "constructor" && coverage.typeName === "Result") {
+    if (coverage.ctor === "Ok") {
+      return "ok";
+    }
+    if (coverage.ctor === "Err") {
+      return "err";
+    }
+  }
+  return "other";
 }

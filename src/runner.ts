@@ -1,10 +1,11 @@
 import { lex } from "./lexer.ts";
-import { parseSurfaceProgram, ParseError } from "./parser.ts";
+import { ParseError, parseSurfaceProgram } from "./parser.ts";
 import { InferError } from "./layer1/infer.ts";
 import { formatScheme } from "./type_printer.ts";
 import { evaluateProgram } from "./eval.ts";
 import { formatRuntimeValue } from "./value_printer.ts";
 import { analyzeProgram } from "./pipeline.ts";
+import { IO } from "./io.ts";
 
 export interface RunOptions {
   sourceName?: string;
@@ -66,12 +67,12 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
 }
 
 if (import.meta.main) {
-  const path = Deno.args[0];
+  const path = IO.args[0];
   if (!path) {
     console.error("Usage: deno task run <file>");
-    Deno.exit(1);
+    IO.exit(1);
   }
-  const source = await Deno.readTextFile(path);
+  const source = await IO.readTextFile(path);
   try {
     const result = runFile(source, { sourceName: path });
 
@@ -83,7 +84,8 @@ if (import.meta.main) {
       console.log("(no top-level let bindings)");
     }
 
-    const hasRuntimeInfo = result.runtimeLogs.length > 0 || result.values.length > 0;
+    const hasRuntimeInfo = result.runtimeLogs.length > 0 ||
+      result.values.length > 0;
     if (hasRuntimeInfo) {
       console.log("");
       for (const entry of result.runtimeLogs) {
@@ -98,6 +100,6 @@ if (import.meta.main) {
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
-    Deno.exit(1);
+    IO.exit(1);
   }
 }

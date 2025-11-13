@@ -3,16 +3,16 @@ export type {
   ConstraintDiagnosticReason,
 } from "../diagnostics.ts";
 
-import {
+import type {
   MBlockExpr,
-  type MBlockStatement,
+  MBlockStatement,
   MExpr,
   MLetDeclaration,
-  type MMatchArm,
+  MMatchArm,
   MMatchBundle,
   MParameter,
   MPattern,
-  type MProgram,
+  MProgram,
 } from "../ast_marked.ts";
 import type {
   ConstraintStub,
@@ -23,20 +23,20 @@ import type {
 import {
   applySubstitution,
   cloneType,
-  ConstraintLabel,
+  type ConstraintLabel,
   errorLabel,
   type ErrorRowType,
   errorRowUnion,
   flattenResultType,
-  flattenTaintedType,
+  type flattenTaintedType,
   formatLabel,
   getProvenance,
-  Identity,
+  type Identity,
   isHoleType,
   makeResultType,
-  makeTaintedType,
+  type makeTaintedType,
   occursInType,
-  sameIdentity,
+  type sameIdentity,
   type Substitution,
   taintLabel,
   type TaintRowType,

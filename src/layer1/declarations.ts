@@ -1,25 +1,33 @@
-import type { ConstructorAlias, TypeAliasExprMember, TypeDeclaration, TypeExpr } from "../ast.ts";
+import type {
+  ConstructorAlias,
+  TypeAliasExprMember,
+  TypeDeclaration,
+  TypeExpr,
+} from "../ast.ts";
 import type { Context } from "./context.ts";
-import { MMarkTypeDeclDuplicate, MMarkTypeDeclInvalidMember } from "../ast_marked.ts";
+import type {
+  MMarkTypeDeclDuplicate,
+  MMarkTypeDeclInvalidMember,
+} from "../ast_marked.ts";
 import {
-  ConstructorInfo,
-  Type,
-  TypeScheme,
   applySubstitution,
   cloneType,
+  type ConstructorInfo,
   freshTypeVar,
+  type Type,
+  type TypeScheme,
   unknownType,
 } from "../types.ts";
 import {
-  inferError,
-  lookupEnv,
   expectFunctionType,
+  type inferError,
+  lookupEnv,
+  markInternal,
   markTypeDeclDuplicate,
   markTypeDeclInvalidMember,
-  markTypeExprUnknown,
   markTypeExprArity,
+  markTypeExprUnknown,
   markTypeExprUnsupported,
-  markInternal,
 } from "./context.ts";
 
 type TypeScope = Map<string, Type>;
@@ -36,9 +44,15 @@ export function resetTypeParamsCache(): void {
   typeParamsCache.clear();
 }
 
-export type RegisterTypeResult = { success: true } | { success: false; mark: MMarkTypeDeclDuplicate };
+export type RegisterTypeResult = { success: true } | {
+  success: false;
+  mark: MMarkTypeDeclDuplicate;
+};
 
-export function registerTypeName(ctx: Context, decl: TypeDeclaration): RegisterTypeResult {
+export function registerTypeName(
+  ctx: Context,
+  decl: TypeDeclaration,
+): RegisterTypeResult {
   if (ctx.adtEnv.has(decl.name)) {
     return { success: false, mark: markTypeDeclDuplicate(ctx, decl) };
   }
@@ -60,22 +74,34 @@ export function registerTypeName(ctx: Context, decl: TypeDeclaration): RegisterT
   return { success: true };
 }
 
-export type RegisterConstructorsResult = { success: true } | { success: false; mark: MMarkTypeDeclInvalidMember };
+export type RegisterConstructorsResult = { success: true } | {
+  success: false;
+  mark: MMarkTypeDeclInvalidMember;
+};
 
-export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): RegisterConstructorsResult {
+export function registerTypeConstructors(
+  ctx: Context,
+  decl: TypeDeclaration,
+): RegisterConstructorsResult {
   if (isAliasTypeDeclaration(decl)) {
     return registerTypeAlias(ctx, decl);
   }
   const adtInfo = ctx.adtEnv.get(decl.name);
   if (!adtInfo) {
     // This should not happen if registerTypeName was called first, but handle gracefully
-    return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0] || decl) };
+    return {
+      success: false,
+      mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0] || decl),
+    };
   }
 
   const parameterTypes = typeParamsCache.get(decl.name);
   if (!parameterTypes) {
     // This should not happen if registerTypeName was called first, but handle gracefully
-    return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0] || decl) };
+    return {
+      success: false,
+      mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0] || decl),
+    };
   }
 
   const typeScope: TypeScope = new Map();
@@ -96,7 +122,10 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
       for (const name of stagedEnvEntries) {
         ctx.env.delete(name);
       }
-      return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
+      return {
+        success: false,
+        mark: markTypeDeclInvalidMember(ctx, decl, member),
+      };
     }
 
     if (seenConstructorNames.has(member.name)) {
@@ -105,7 +134,10 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
       for (const name of stagedEnvEntries) {
         ctx.env.delete(name);
       }
-      return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
+      return {
+        success: false,
+        mark: markTypeDeclInvalidMember(ctx, decl, member),
+      };
     }
     seenConstructorNames.add(member.name);
 
@@ -118,16 +150,29 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
       for (const name of stagedEnvEntries) {
         ctx.env.delete(name);
       }
-      return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
+      return {
+        success: false,
+        mark: markTypeDeclInvalidMember(ctx, decl, member),
+      };
     }
 
-    const info = buildConstructorInfo(ctx, decl.name, parameterTypes, member, typeScope);
+    const info = buildConstructorInfo(
+      ctx,
+      decl.name,
+      parameterTypes,
+      member,
+      typeScope,
+    );
 
     // Shape validation: ensure the scheme returns the ADT constructor
     let currentType = info.scheme.type;
     let isValidFunction = true;
     while (currentType.kind === "func") {
-      const expectResult = expectFunctionType(ctx, currentType, `Constructor ${member.name}`);
+      const expectResult = expectFunctionType(
+        ctx,
+        currentType,
+        `Constructor ${member.name}`,
+      );
       if (!expectResult.success) {
         isValidFunction = false;
         break;
@@ -135,7 +180,8 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
       currentType = expectResult.to;
     }
     // After unwrapping all functions, it should be the ADT constructor
-    const returnsAdt = currentType.kind === "constructor" && currentType.name === decl.name;
+    const returnsAdt = currentType.kind === "constructor" &&
+      currentType.name === decl.name;
     if (!isValidFunction || !returnsAdt) {
       // Purge on failure
       ctx.adtEnv.delete(decl.name);
@@ -143,7 +189,10 @@ export function registerTypeConstructors(ctx: Context, decl: TypeDeclaration): R
       for (const name of stagedEnvEntries) {
         ctx.env.delete(name);
       }
-      return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, member) };
+      return {
+        success: false,
+        mark: markTypeDeclInvalidMember(ctx, decl, member),
+      };
     }
 
     stagedConstructors.push(info);
@@ -166,7 +215,10 @@ function registerTypeAlias(
   const adtInfo = ctx.adtEnv.get(decl.name);
   const parameterTypes = typeParamsCache.get(decl.name);
   if (!adtInfo || !parameterTypes) {
-    return { success: false, mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0]) };
+    return {
+      success: false,
+      mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0]),
+    };
   }
 
   const typeScope: TypeScope = new Map();
@@ -174,7 +226,9 @@ function registerTypeAlias(
     typeScope.set(param.name, parameterTypes[index]);
   });
 
-  const aliasType = convertTypeExpr(ctx, decl.members[0].type, typeScope, { allowNewVariables: false });
+  const aliasType = convertTypeExpr(ctx, decl.members[0].type, typeScope, {
+    allowNewVariables: false,
+  });
   adtInfo.alias = cloneType(aliasType);
   adtInfo.constructors = [];
   adtInfo.isAlias = true;
@@ -198,9 +252,16 @@ export function convertTypeExpr(
         return existing;
       }
       if (!options.allowNewVariables) {
-        const mark = markTypeExprUnknown(ctx, typeExpr, `Unknown type variable '${typeExpr.name}'`);
+        const mark = markTypeExprUnknown(
+          ctx,
+          typeExpr,
+          `Unknown type variable '${typeExpr.name}'`,
+        );
         ctx.typeExprMarks.set(typeExpr, mark);
-        return unknownType({ kind: "error_type_expr_unknown", name: typeExpr.name });
+        return unknownType({
+          kind: "error_type_expr_unknown",
+          name: typeExpr.name,
+        });
       }
       const fresh = freshTypeVar();
       scope.set(typeExpr.name, fresh);
@@ -210,7 +271,11 @@ export function convertTypeExpr(
       if (typeExpr.parameters.length === 0) {
         const mark = markTypeExprArity(ctx, typeExpr, 1, 0);
         ctx.typeExprMarks.set(typeExpr, mark);
-        return unknownType({ kind: "error_type_expr_arity", expected: 1, actual: 0 });
+        return unknownType({
+          kind: "error_type_expr_arity",
+          expected: 1,
+          actual: 0,
+        });
       }
       const result = convertTypeExpr(ctx, typeExpr.result, scope, options);
       return typeExpr.parameters.reduceRight<Type>((acc, param) => {
@@ -230,37 +295,82 @@ export function convertTypeExpr(
       switch (typeExpr.name) {
         case "Int":
           if (typeExpr.typeArgs.length > 0) {
-            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            const mark = markTypeExprArity(
+              ctx,
+              typeExpr,
+              0,
+              typeExpr.typeArgs.length,
+            );
             ctx.typeExprMarks.set(typeExpr, mark);
-            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
+            return unknownType({
+              kind: "error_type_expr_arity",
+              expected: 0,
+              actual: typeExpr.typeArgs.length,
+            });
           }
           return { kind: "int" };
         case "Bool":
           if (typeExpr.typeArgs.length > 0) {
-            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            const mark = markTypeExprArity(
+              ctx,
+              typeExpr,
+              0,
+              typeExpr.typeArgs.length,
+            );
             ctx.typeExprMarks.set(typeExpr, mark);
-            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
+            return unknownType({
+              kind: "error_type_expr_arity",
+              expected: 0,
+              actual: typeExpr.typeArgs.length,
+            });
           }
           return { kind: "bool" };
         case "Char":
           if (typeExpr.typeArgs.length > 0) {
-            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            const mark = markTypeExprArity(
+              ctx,
+              typeExpr,
+              0,
+              typeExpr.typeArgs.length,
+            );
             ctx.typeExprMarks.set(typeExpr, mark);
-            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
+            return unknownType({
+              kind: "error_type_expr_arity",
+              expected: 0,
+              actual: typeExpr.typeArgs.length,
+            });
           }
           return { kind: "char" };
         case "Unit":
           if (typeExpr.typeArgs.length > 0) {
-            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            const mark = markTypeExprArity(
+              ctx,
+              typeExpr,
+              0,
+              typeExpr.typeArgs.length,
+            );
             ctx.typeExprMarks.set(typeExpr, mark);
-            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
+            return unknownType({
+              kind: "error_type_expr_arity",
+              expected: 0,
+              actual: typeExpr.typeArgs.length,
+            });
           }
           return { kind: "unit" };
         case "String":
           if (typeExpr.typeArgs.length > 0) {
-            const mark = markTypeExprArity(ctx, typeExpr, 0, typeExpr.typeArgs.length);
+            const mark = markTypeExprArity(
+              ctx,
+              typeExpr,
+              0,
+              typeExpr.typeArgs.length,
+            );
             ctx.typeExprMarks.set(typeExpr, mark);
-            return unknownType({ kind: "error_type_expr_arity", expected: 0, actual: typeExpr.typeArgs.length });
+            return unknownType({
+              kind: "error_type_expr_arity",
+              expected: 0,
+              actual: typeExpr.typeArgs.length,
+            });
           }
           return { kind: "string" };
       }
@@ -269,7 +379,12 @@ export function convertTypeExpr(
 
       if (typeInfo?.alias) {
         if (typeInfo.parameters.length !== typeExpr.typeArgs.length) {
-          const mark = markTypeExprArity(ctx, typeExpr, typeInfo.parameters.length, typeExpr.typeArgs.length);
+          const mark = markTypeExprArity(
+            ctx,
+            typeExpr,
+            typeInfo.parameters.length,
+            typeExpr.typeArgs.length,
+          );
           ctx.typeExprMarks.set(typeExpr, mark);
           return unknownType({
             kind: "error_type_expr_arity",
@@ -277,7 +392,9 @@ export function convertTypeExpr(
             actual: typeExpr.typeArgs.length,
           });
         }
-        const aliasArgs = typeExpr.typeArgs.map((arg) => convertTypeExpr(ctx, arg, scope, options));
+        const aliasArgs = typeExpr.typeArgs.map((arg) =>
+          convertTypeExpr(ctx, arg, scope, options)
+        );
         if (aliasArgs.length === 0) {
           return cloneType(typeInfo.alias);
         }
@@ -291,9 +408,18 @@ export function convertTypeExpr(
       if (typeExpr.typeArgs.length === 0) {
         if (typeInfo) {
           if (typeInfo.parameters.length > 0) {
-            const mark = markTypeExprArity(ctx, typeExpr, typeInfo.parameters.length, 0);
+            const mark = markTypeExprArity(
+              ctx,
+              typeExpr,
+              typeInfo.parameters.length,
+              0,
+            );
             ctx.typeExprMarks.set(typeExpr, mark);
-            return unknownType({ kind: "error_type_expr_arity", expected: typeInfo.parameters.length, actual: 0 });
+            return unknownType({
+              kind: "error_type_expr_arity",
+              expected: typeInfo.parameters.length,
+              actual: 0,
+            });
           }
           return {
             kind: "constructor",
@@ -306,24 +432,49 @@ export function convertTypeExpr(
           scope.set(typeExpr.name, fresh);
           return fresh;
         }
-        const mark = markTypeExprUnknown(ctx, typeExpr, `Unknown type constructor '${typeExpr.name}'`);
+        const mark = markTypeExprUnknown(
+          ctx,
+          typeExpr,
+          `Unknown type constructor '${typeExpr.name}'`,
+        );
         ctx.typeExprMarks.set(typeExpr, mark);
-        return unknownType({ kind: "error_type_expr_unknown", name: typeExpr.name });
+        return unknownType({
+          kind: "error_type_expr_unknown",
+          name: typeExpr.name,
+        });
       }
 
       if (!typeInfo) {
-        const mark = markTypeExprUnknown(ctx, typeExpr, `Unknown type constructor '${typeExpr.name}'`);
+        const mark = markTypeExprUnknown(
+          ctx,
+          typeExpr,
+          `Unknown type constructor '${typeExpr.name}'`,
+        );
         ctx.typeExprMarks.set(typeExpr, mark);
-        return unknownType({ kind: "error_type_expr_unknown", name: typeExpr.name });
+        return unknownType({
+          kind: "error_type_expr_unknown",
+          name: typeExpr.name,
+        });
       }
 
       if (typeInfo.parameters.length !== typeExpr.typeArgs.length) {
-        const mark = markTypeExprArity(ctx, typeExpr, typeInfo.parameters.length, typeExpr.typeArgs.length);
+        const mark = markTypeExprArity(
+          ctx,
+          typeExpr,
+          typeInfo.parameters.length,
+          typeExpr.typeArgs.length,
+        );
         ctx.typeExprMarks.set(typeExpr, mark);
-        return unknownType({ kind: "error_type_expr_arity", expected: typeInfo.parameters.length, actual: typeExpr.typeArgs.length });
+        return unknownType({
+          kind: "error_type_expr_arity",
+          expected: typeInfo.parameters.length,
+          actual: typeExpr.typeArgs.length,
+        });
       }
 
-      const args = typeExpr.typeArgs.map((arg) => convertTypeExpr(ctx, arg, scope, options));
+      const args = typeExpr.typeArgs.map((arg) =>
+        convertTypeExpr(ctx, arg, scope, options)
+      );
       return {
         kind: "constructor",
         name: typeExpr.name,
@@ -333,7 +484,9 @@ export function convertTypeExpr(
     case "type_tuple": {
       return {
         kind: "tuple",
-        elements: typeExpr.elements.map((el) => convertTypeExpr(ctx, el, scope, options)),
+        elements: typeExpr.elements.map((el) =>
+          convertTypeExpr(ctx, el, scope, options)
+        ),
       };
     }
     case "type_record": {
@@ -379,7 +532,7 @@ export function registerPrelude(ctx: Context): void {
   registerIntBinaryPrimitive(ctx, "nativeDiv");
   registerPrintPrimitive(ctx, "nativePrint");
   registerStrFromLiteralPrimitive(ctx, "nativeStrFromLiteral");
-  
+
   // Minimal dual representation String API (only conversions)
   registerStringFromLiteralPrimitive(ctx, "nativeStringFromLiteral");
   registerStringToListPrimitive(ctx, "nativeStringToList");
@@ -394,7 +547,9 @@ function buildConstructorInfo(
   scope: TypeScope,
 ): ConstructorInfo {
   const ctorResult = makeDataConstructor(typeName, parameterTypes);
-  const args = ctor.typeArgs.map((arg) => convertTypeExpr(ctx, arg, scope, { allowNewVariables: false }));
+  const args = ctor.typeArgs.map((arg) =>
+    convertTypeExpr(ctx, arg, scope, { allowNewVariables: false })
+  );
   const ctorType = args.reduceRight<Type>((acc, argType) => ({
     kind: "func",
     from: argType,
@@ -425,7 +580,11 @@ function makeDataConstructor(name: string, parameters: Type[]): Type {
   };
 }
 
-function registerCmpIntPrimitive(ctx: Context, name: string, aliasOf?: string): void {
+function registerCmpIntPrimitive(
+  ctx: Context,
+  name: string,
+  aliasOf?: string,
+): void {
   const scheme: TypeScheme = {
     quantifiers: [],
     type: {
@@ -441,7 +600,11 @@ function registerCmpIntPrimitive(ctx: Context, name: string, aliasOf?: string): 
   bindTypeAlias(ctx, name, scheme, aliasOf);
 }
 
-function registerCharEqPrimitive(ctx: Context, name: string, aliasOf?: string): void {
+function registerCharEqPrimitive(
+  ctx: Context,
+  name: string,
+  aliasOf?: string,
+): void {
   const scheme: TypeScheme = {
     quantifiers: [],
     type: {
@@ -457,7 +620,11 @@ function registerCharEqPrimitive(ctx: Context, name: string, aliasOf?: string): 
   bindTypeAlias(ctx, name, scheme, aliasOf);
 }
 
-function registerIntBinaryPrimitive(ctx: Context, name: string, aliasOf?: string): void {
+function registerIntBinaryPrimitive(
+  ctx: Context,
+  name: string,
+  aliasOf?: string,
+): void {
   const scheme: TypeScheme = {
     quantifiers: [],
     type: {
@@ -473,7 +640,11 @@ function registerIntBinaryPrimitive(ctx: Context, name: string, aliasOf?: string
   bindTypeAlias(ctx, name, scheme, aliasOf);
 }
 
-function registerPrintPrimitive(ctx: Context, name: string, aliasOf?: string): void {
+function registerPrintPrimitive(
+  ctx: Context,
+  name: string,
+  aliasOf?: string,
+): void {
   const typeVar = freshTypeVar();
   if (typeVar.kind !== "var") {
     markInternal(ctx, "fresh_type_var_not_var");
@@ -511,7 +682,12 @@ function registerStrFromLiteralPrimitive(ctx: Context, name: string): void {
   ctx.env.set(name, scheme);
 }
 
-function bindTypeAlias(ctx: Context, name: string, scheme: TypeScheme, aliasOf?: string): void {
+function bindTypeAlias(
+  ctx: Context,
+  name: string,
+  scheme: TypeScheme,
+  aliasOf?: string,
+): void {
   if (aliasOf && ctx.env.has(name)) {
     return;
   }
@@ -566,4 +742,3 @@ function registerListToStringPrimitive(ctx: Context, name: string): void {
   };
   ctx.env.set(name, scheme);
 }
-

@@ -2,11 +2,11 @@ import {
   common,
   dirname,
   extname,
+  IO,
   join,
   relative,
   resolve,
-} from "std/path/mod.ts";
-import { ensureDir } from "std/fs/mod.ts";
+} from "../../../src/io.ts";
 
 import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
 import { emitModule } from "./emitter.ts";
@@ -41,7 +41,9 @@ export async function emitModuleGraph(
     commonRoot = resolve(".");
   }
   const preludePath = graph.prelude;
-  const preludeModule = preludePath ? graph.modules.get(preludePath) : undefined;
+  const preludeModule = preludePath
+    ? graph.modules.get(preludePath)
+    : undefined;
   const preludeValueExports = preludeModule
     ? preludeModule.exports
       .filter((exp) => exp.kind === "value")
@@ -65,7 +67,10 @@ export async function emitModuleGraph(
       outDir,
       extension,
     );
-    const runtimeSpecifier = makeModuleSpecifier(outputPath, join(outDir, runtimeFileName));
+    const runtimeSpecifier = makeModuleSpecifier(
+      outputPath,
+      join(outDir, runtimeFileName),
+    );
     const shouldInjectPrelude = Boolean(
       preludeModule &&
         preludeOutputPath &&
@@ -82,7 +87,9 @@ export async function emitModuleGraph(
       extension,
       runtimeModule: runtimeSpecifier,
       baseDir: dirname(outputPath),
-      forcedValueExports: module.path === entryModule.path ? forcedEntryExports : undefined,
+      forcedValueExports: module.path === entryModule.path
+        ? forcedEntryExports
+        : undefined,
       preludeModule: preludeImport,
     });
     await writeTextFile(outputPath, code);
@@ -90,14 +97,16 @@ export async function emitModuleGraph(
   }
 
   const runtimeTargetPath = join(outDir, runtimeFileName);
-  const runtimeCode = await Deno.readTextFile(runtimeSourcePath);
+  const runtimeCode = await IO.readTextFile(runtimeSourcePath);
   await writeTextFile(runtimeTargetPath, runtimeCode);
 
   return {
     moduleFiles,
     runtimePath: runtimeTargetPath,
     entryPath: moduleFiles.get(entryModule.path) ?? (() => {
-      throw new Error(`Entry module '${entryModule.path}' missing from output map`);
+      throw new Error(
+        `Entry module '${entryModule.path}' missing from output map`,
+      );
     })(),
   };
 }
@@ -126,17 +135,23 @@ function makeModuleSpecifier(fromPath: string, toPath: string): string {
 }
 
 async function writeTextFile(path: string, contents: string): Promise<void> {
-  await ensureDir(dirname(path));
-  await Deno.writeTextFile(path, contents);
+  await IO.ensureDir(dirname(path));
+  await IO.writeTextFile(path, contents);
 }
 
 function normalizeSlashes(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
-function shouldModuleImportPrelude(modulePath: string, preludePath?: string): boolean {
+function shouldModuleImportPrelude(
+  modulePath: string,
+  preludePath?: string,
+): boolean {
   if (!preludePath) return false;
-  if (normalizeSlashes(modulePath).toLowerCase() === normalizeSlashes(preludePath).toLowerCase()) {
+  if (
+    normalizeSlashes(modulePath).toLowerCase() ===
+      normalizeSlashes(preludePath).toLowerCase()
+  ) {
     return false;
   }
   return !isStdCoreModule(modulePath);

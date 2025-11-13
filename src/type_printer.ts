@@ -1,4 +1,4 @@
-import { provenanceToString, Type, TypeScheme } from "./types.ts";
+import { provenanceToString, type Type, type TypeScheme } from "./types.ts";
 
 interface PrintContext {
   names: Map<number, string>;

@@ -4,7 +4,7 @@ import {
   isAbsolute,
   relative,
   toFileUrl,
-} from "std/path/mod.ts";
+} from "../../../src/io.ts";
 import type {
   CoreExpr,
   CoreMatchCase,

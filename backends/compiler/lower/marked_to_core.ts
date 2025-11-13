@@ -16,17 +16,17 @@ import type {
   MUnaryExpr,
 } from "../../../src/ast_marked.ts";
 import { cloneType, type Type, unknownType } from "../../../src/types.ts";
-import {
-  type CoreDataExpr,
-  type CoreExpr,
-  type CoreLetExpr,
-  type CoreLetRecExpr,
-  type CoreLiteral,
-  type CoreLiteralExpr,
-  type CoreMatchCase,
-  type CorePattern,
-  type CorePrimOp,
-  type CoreValueBinding,
+import type {
+  CoreDataExpr,
+  CoreExpr,
+  CoreLetExpr,
+  CoreLetRecExpr,
+  CoreLiteral,
+  CoreLiteralExpr,
+  CoreMatchCase,
+  CorePattern,
+  CorePrimOp,
+  CoreValueBinding,
 } from "../ir/core.ts";
 
 export class CoreLoweringError extends Error {

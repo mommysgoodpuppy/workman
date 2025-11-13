@@ -1,4 +1,4 @@
-import {
+import type {
   BlockExpr,
   BlockStatement,
   Expr,
@@ -25,16 +25,16 @@ import type {
   MPattern,
   MTypeExpr,
 } from "../ast_marked.ts";
-import { Type } from "../types.ts";
+import type { Type } from "../types.ts";
 import {
-  Context,
+  type Context,
   holeOriginFromExpr,
   holeOriginFromPattern,
   literalType,
   registerHoleForType,
 } from "./context.ts";
 import { convertTypeExpr } from "./declarations.ts";
-import { getExprTypeOrUnknown, unknownFromReason } from "./infer.ts";
+import { getExprTypeOrUnknown, unknownFromReason } from "./infer_utils.ts";
 
 export function materializeMatchBundle(
   ctx: Context,

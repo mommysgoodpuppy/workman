@@ -1,20 +1,24 @@
-import { toFileUrl } from "std/path/mod.ts";
+import { toFileUrl } from "./io.ts";
 import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
 import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import { formatScheme } from "./type_printer.ts";
-import { collectCompiledValues, invokeMainIfPresent } from "./runtime_display.ts";
+import {
+  collectCompiledValues,
+  invokeMainIfPresent,
+} from "./runtime_display.ts";
 import { ParseError } from "./parser.ts";
 import { InferError } from "./layer1/infer.ts";
+import { IO } from "./io.ts";
 
 if (import.meta.main) {
-  if (Deno.args.length === 0) {
+  if (IO.args.length === 0) {
     console.error("Usage: workman <file.wm> [...file.wm]");
-    Deno.exit(1);
+    IO.exit(1);
   }
 
   let hadError = false;
 
-  for (const path of Deno.args) {
+  for (const path of IO.args) {
     if (!path.endsWith(".wm")) {
       console.error(`Skipping '${path}': expected a .wm source file.`);
       hadError = true;
@@ -23,9 +27,13 @@ if (import.meta.main) {
 
     let source: string;
     try {
-      source = await Deno.readTextFile(path);
+      source = await IO.readTextFile(path);
     } catch (error) {
-      console.error(`Failed to read '${path}': ${error instanceof Error ? error.message : String(error)}`);
+      console.error(
+        `Failed to read '${path}': ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       hadError = true;
       continue;
     }
@@ -38,10 +46,14 @@ if (import.meta.main) {
       const artifact = compileResult.modules.get(entryKey);
       const coreModule = compileResult.coreGraph.modules.get(entryKey);
       if (!artifact || !coreModule) {
-        throw new Error(`Failed to locate entry module artifacts for '${entryKey}'`);
+        throw new Error(
+          `Failed to locate entry module artifacts for '${entryKey}'`,
+        );
       }
 
-      const typeSummaries = artifact.analysis.layer1.summaries.map(({ name, scheme }) => ({
+      const typeSummaries = artifact.analysis.layer1.summaries.map((
+        { name, scheme },
+      ) => ({
         name,
         type: formatScheme(scheme),
       }));
@@ -57,22 +69,27 @@ if (import.meta.main) {
 
       console.log("\n## Runtime");
 
-      const tempDir = await Deno.makeTempDir({ prefix: "workman-cli-" });
+      const tempDir = await IO.makeTempDir({ prefix: "workman-cli-" });
       let runtimeValues: { name: string; value: string }[] = [];
       try {
         const emitResult = await emitModuleGraph(compileResult.coreGraph, {
           outDir: tempDir,
         });
         const moduleUrl = toFileUrl(emitResult.entryPath).href;
-        const moduleExports = await import(moduleUrl) as Record<string, unknown>;
-        const forcedValueNames = coreModule.values.map((binding) => binding.name);
+        const moduleExports = await import(moduleUrl) as Record<
+          string,
+          unknown
+        >;
+        const forcedValueNames = coreModule.values.map((binding) =>
+          binding.name
+        );
         await invokeMainIfPresent(moduleExports);
         runtimeValues = collectCompiledValues(moduleExports, coreModule, {
           forcedValueNames,
         });
       } finally {
         try {
-          await Deno.remove(tempDir, { recursive: true });
+          await IO.remove(tempDir, { recursive: true });
         } catch {
           // Ignore cleanup errors; directory may have already been removed.
         }
@@ -89,22 +106,34 @@ if (import.meta.main) {
     } catch (error) {
       hadError = true;
       if (error instanceof ParseError) {
-        const { line, column } = positionToLineColumn(source, error.token.start);
-        console.error(`Parse error (${path}:${line}:${column}): ${error.message}`);
+        const { line, column } = positionToLineColumn(
+          source,
+          error.token.start,
+        );
+        console.error(
+          `Parse error (${path}:${line}:${column}): ${error.message}`,
+        );
       } else if (error instanceof InferError) {
         console.error(`Type error in '${path}': ${error.message}`);
       } else {
-        console.error(`Unexpected error in '${path}': ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `Unexpected error in '${path}': ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
     }
   }
 
   if (hadError) {
-    Deno.exit(1);
+    IO.exit(1);
   }
 }
 
-function positionToLineColumn(text: string, index: number): { line: number; column: number } {
+function positionToLineColumn(
+  text: string,
+  index: number,
+): { line: number; column: number } {
   let line = 1;
   let column = 1;
   for (let i = 0; i < index && i < text.length; i++) {

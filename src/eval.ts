@@ -23,18 +23,18 @@ import type {
 import { lowerTupleParameters } from "./lower_tuple_params.ts";
 import {
   bindValue,
-  BoolValue,
-  ClosureValue,
+  type BoolValue,
+  type ClosureValue,
   createEnvironment,
-  DataValue,
-  Environment,
+  type DataValue,
+  type Environment,
   hasBinding,
-  IntValue,
+  type IntValue,
   lookupValue,
-  NativeFunctionValue,
-  RuntimeValue,
+  type NativeFunctionValue,
+  type RuntimeValue,
   UNIT_VALUE,
-  updateValue,
+  type updateValue,
 } from "./value.ts";
 import { RuntimeError } from "./error.ts";
 import { formatRuntimeValue } from "./value_printer.ts";

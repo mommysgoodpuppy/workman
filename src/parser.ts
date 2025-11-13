@@ -1,7 +1,7 @@
-import { Token } from "./token.ts";
+import type { Token } from "./token.ts";
 import {
   expectedTokenError,
-  ParseError,
+  type ParseError,
   unexpectedTokenError,
 } from "./error.ts";
 import { nextNodeId, resetNodeIds } from "./node_ids.ts";
@@ -35,7 +35,7 @@ import type {
 import type { Pattern, SourceSpan } from "./ast.ts";
 
 // Re-export ParseError from error module
-export { ParseError } from "./error.ts";
+//export { ParseError } from "./error.ts";
 
 export type OperatorInfo = { precedence: number; associativity: Associativity };
 

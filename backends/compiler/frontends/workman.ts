@@ -10,7 +10,7 @@ import {
   analyzeAndPresent,
   type PresentationResult,
 } from "../../../src/pipeline.ts";
-import { type CoreModule, type CoreModuleGraph } from "../ir/core.ts";
+import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
 import {
   lowerAnalyzedModule,
   type WorkmanLoweringOptions,

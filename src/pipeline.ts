@@ -1,14 +1,12 @@
 import type { Program } from "./ast.ts";
-import { inferProgram, type InferOptions, type InferResult } from "./layer1/infer.ts";
+import { inferProgram } from "./layer1/infer.ts";
+import type { InferOptions, InferResult } from "./layer1/context.ts";
 import {
   solveConstraints,
   type SolveInput,
   type SolverResult,
 } from "./layer2/mod.ts";
-import {
-  presentProgram,
-  type Layer3Result,
-} from "./layer3/mod.ts";
+import { type Layer3Result, presentProgram } from "./layer3/mod.ts";
 
 export interface AnalysisResult {
   layer1: InferResult;
@@ -18,7 +16,10 @@ export interface AnalysisResult {
 export interface AnalysisOptions extends InferOptions {
 }
 
-export function analyzeProgram(program: Program, options: AnalysisOptions = {}): AnalysisResult {
+export function analyzeProgram(
+  program: Program,
+  options: AnalysisOptions = {},
+): AnalysisResult {
   const layer1 = inferProgram(program, options);
   const solveInput: SolveInput = {
     markedProgram: layer1.markedProgram,

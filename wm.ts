@@ -1,7 +1,6 @@
 import { lex } from "./src/lexer.ts";
-import { ParseError, parseSurfaceProgram } from "./src/parser.ts";
-import { InferError } from "./src/layer1/infer.ts";
-import { LexError, WorkmanError } from "./src/error.ts";
+import { parseSurfaceProgram } from "./src/parser.ts";
+import { type InferError, LexError, ParseError, WorkmanError } from "./src/error.ts";
 import { formatScheme } from "./src/type_printer.ts";
 import { evaluateProgram } from "./src/eval.ts";
 import { formatRuntimeValue } from "./src/value_printer.ts";
@@ -10,7 +9,7 @@ import type { Type, TypeScheme } from "./src/types.ts";
 import type { RuntimeValue } from "./src/value.ts";
 import { startRepl } from "./tools/repl.ts";
 import { runFormatter } from "./tools/fmt.ts";
-import { relative, resolve, toFileUrl } from "std/path/mod.ts";
+import { IO, relative, resolve, toFileUrl } from "./src/io.ts";
 import { compileWorkmanGraph } from "./backends/compiler/frontends/workman.ts";
 import { emitModuleGraph } from "./backends/compiler/js/graph_emitter.ts";
 import {
@@ -302,8 +301,8 @@ async function compileToDirectory(
   console.log(
     `Emitted ${emitResult.moduleFiles.size} module(s) to ${resolvedOutDir}`,
   );
-  const entryRelative = relative(Deno.cwd(), emitResult.entryPath);
-  const runtimeRelative = relative(Deno.cwd(), emitResult.runtimePath);
+  const entryRelative = relative(IO.cwd(), emitResult.entryPath);
+  const runtimeRelative = relative(IO.cwd(), emitResult.runtimePath);
   console.log(`Entry module: ${entryRelative}`);
   console.log(`Runtime module: ${runtimeRelative}`);
 }
@@ -311,7 +310,7 @@ async function compileToDirectory(
 if (import.meta.main) {
   let debugMode = false;
   const args: string[] = [];
-  for (const arg of Deno.args) {
+  for (const arg of IO.args) {
     if (arg === "--debug") {
       debugMode = true;
       continue;
@@ -323,7 +322,7 @@ if (import.meta.main) {
   if (args.length === 0) {
     // Start REPL mode
     await startRepl();
-    Deno.exit(0);
+    IO.exit(0);
   }
 
   if (args[0] === "--help" || args[0] === "-h") {
@@ -358,13 +357,13 @@ REPL Commands:
   :env                  Show all defined bindings
   :type <id>            Show type of an identifier
 `);
-    Deno.exit(0);
+    IO.exit(0);
   }
 
   if (args[0] === "fmt") {
     // Format files
     await runFormatter(args.slice(1));
-    Deno.exit(0);
+    IO.exit(0);
   }
 
   if (args[0] === "compile") {
@@ -377,9 +376,9 @@ REPL Commands:
       } else {
         console.error(error instanceof Error ? error.message : String(error));
       }
-      Deno.exit(1);
+      IO.exit(1);
     }
-    Deno.exit(0);
+    IO.exit(0);
   }
 
   let filePath: string;
@@ -391,7 +390,7 @@ REPL Commands:
       console.error(
         "Usage: wm [fmt|type|err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)",
       );
-      Deno.exit(1);
+      IO.exit(1);
     }
     filePath = args[1];
     skipEvaluation = true;
@@ -400,7 +399,7 @@ REPL Commands:
       console.error(
         "Usage: wm [fmt|type|err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)",
       );
-      Deno.exit(1);
+      IO.exit(1);
     }
     filePath = args[1];
     showErrorsOnly = true;
@@ -410,14 +409,14 @@ REPL Commands:
       console.error(
         "Usage: wm [fmt|type|err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)",
       );
-      Deno.exit(1);
+      IO.exit(1);
     }
     filePath = args[0];
   }
 
   if (!filePath.endsWith(".wm")) {
     console.error("Expected a .wm file");
-    Deno.exit(1);
+    IO.exit(1);
   }
 
   try {
@@ -443,7 +442,7 @@ REPL Commands:
     // Show all expression types from Layer 3 (like the LSP does)
     if ((skipEvaluation || debugMode) && !showErrorsOnly) {
       const layer3 = artifact.analysis.layer3;
-      const source = await Deno.readTextFile(filePath);
+      const source = await IO.readTextFile(filePath);
       const lines = source.split("\n");
 
       // Collect all node views with their spans
@@ -632,7 +631,7 @@ REPL Commands:
     // Check for errors in err mode
     if (showErrorsOnly) {
       const layer3 = artifact.analysis.layer3;
-      const source = await Deno.readTextFile(filePath);
+      const source = await IO.readTextFile(filePath);
       const hasDiagnostics = layer3.diagnostics.solver.length > 0 ||
         layer3.diagnostics.conflicts.length > 0;
 
@@ -664,15 +663,15 @@ REPL Commands:
 
         if (errorMessage) {
           console.error(errorMessage.trim());
-          Deno.exit(1);
+          IO.exit(1);
         }
       }
       // If no errors, exit successfully with no output
-      Deno.exit(0);
+      IO.exit(0);
     }
 
     if (!skipEvaluation) {
-      const tempDir = await Deno.makeTempDir({ prefix: "workman-cli-" });
+      const tempDir = await IO.makeTempDir({ prefix: "workman-cli-" });
       try {
         const emitResult = await emitModuleGraph(compileResult.coreGraph, {
           outDir: tempDir,
@@ -697,7 +696,7 @@ REPL Commands:
         }
       } finally {
         try {
-          await Deno.remove(tempDir, { recursive: true });
+          await IO.remove(tempDir, { recursive: true });
         } catch {
           // ignore cleanup errors
         }
@@ -709,6 +708,6 @@ REPL Commands:
     } else {
       console.error(error instanceof Error ? error.message : error);
     }
-    Deno.exit(1);
+    IO.exit(1);
   }
 }

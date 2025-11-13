@@ -7,12 +7,12 @@ import type {
   MPattern,
   MProgram,
 } from "../ast_marked.ts";
-import {
-  type ConstraintConflict,
-  type ConstraintDiagnostic,
-  type HoleSolution,
-  type PartialType as Layer2PartialType,
-  type SolverResult,
+import type {
+  ConstraintConflict,
+  ConstraintDiagnostic,
+  HoleSolution,
+  PartialType as Layer2PartialType,
+  SolverResult,
 } from "../layer2/mod.ts";
 import type { NodeId } from "../ast.ts";
 import type { Type } from "../types.ts";

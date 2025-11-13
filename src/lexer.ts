@@ -3,7 +3,7 @@ import {
   multiCharOperators,
   operatorChars,
   symbols,
-  Token,
+  type Token,
 } from "./token.ts";
 import { unexpectedCharError, unterminatedStringError } from "./error.ts";
 import {
