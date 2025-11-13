@@ -2,6 +2,7 @@ import { Expr, MatchBundle, MatchBundleLiteralExpr } from "../ast.ts";
 import { Context, ensureExhaustive, inferExpr, inferPattern } from "./infer.ts";
 import {
   applyCurrentSubst,
+  emitConstraintRewrite,
   markUnsupportedExpr,
   recordBranchJoinConstraint,
   unify,
@@ -10,6 +11,7 @@ import {
 import {
   cloneTypeScheme,
   collapseResultType,
+  errorLabel,
   ErrorRowType,
   flattenResultType,
   freeTypeVars,
@@ -316,6 +318,22 @@ export function inferMatchBranches(
       dischargedResult = true;
       dischargeErrorRow();
       snapshotErrorCoverage(scrutineeInfo.error, []);
+
+      // PHASE 2.3: Emit constraint rewrite (parallel to existing eager discharge)
+      // Emit rewrite for Ok branches to remove error labels
+      for (let i = 0; i < bundle.arms.length; i++) {
+        const arm = bundle.arms[i];
+        const branchKind = branchMetadata[i]?.kind;
+        if (arm.kind === "match_pattern" && branchKind === "ok") {
+          // Ok branch: remove error constraints
+          emitConstraintRewrite(
+            ctx,
+            arm.body.id,
+            [errorLabel(scrutineeInfo.error)], // remove
+            [], // add (nothing)
+          );
+        }
+      }
     }
   } else if (scrutineeInfo && hasErrConstructor) {
     const missingConstructors = findMissingErrorConstructors(
@@ -329,6 +347,22 @@ export function inferMatchBranches(
         dischargedResult = true;
         dischargeErrorRow();
         snapshotErrorCoverage(scrutineeInfo.error, []);
+
+        // PHASE 2.3: Emit constraint rewrite (parallel to existing eager discharge)
+        // Emit rewrite for Ok branches to remove error labels
+        for (let i = 0; i < bundle.arms.length; i++) {
+          const arm = bundle.arms[i];
+          const branchKind = branchMetadata[i]?.kind;
+          if (arm.kind === "match_pattern" && branchKind === "ok") {
+            // Ok branch: remove error constraints
+            emitConstraintRewrite(
+              ctx,
+              arm.body.id,
+              [errorLabel(scrutineeInfo.error)], // remove
+              [], // add (nothing)
+            );
+          }
+        }
       }
     } else {
       ctx.layer1Diagnostics.push({

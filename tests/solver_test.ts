@@ -6,6 +6,7 @@ import {
   type SolveInput,
 } from "../src/layer2/mod.ts";
 import type { Type } from "../src/types.ts";
+import { unknownType } from "../src/types.ts";
 import type {
   ConstraintStub,
   HoleId,
@@ -487,10 +488,7 @@ Deno.test("solver detects conflicts when unknown has incompatible constraints", 
     },
   ];
   const nodeTypeById: Map<NodeId, Type> = new Map([
-    [holeId, {
-      kind: "unknown",
-      provenance: { kind: "expr_hole", id: holeId },
-    }],
+    [holeId, unknownType({ kind: "expr_hole", id: holeId })],
     [2, { kind: "int" }],
     [4, { kind: "bool" }],
   ]);
@@ -522,10 +520,7 @@ Deno.test("solver builds partial solution when constraints are compatible", () =
     },
   ];
   const nodeTypeById: Map<NodeId, Type> = new Map([
-    [holeId, {
-      kind: "unknown",
-      provenance: { kind: "expr_hole", id: holeId },
-    }],
+    [holeId, unknownType({ kind: "expr_hole", id: holeId })],
     [3, { kind: "int" }],
     [4, { kind: "int" }],
   ]);
@@ -565,10 +560,7 @@ Deno.test("solver marks hole as conflicted when solution state is conflicted", (
     },
   ];
   const nodeTypeById: Map<NodeId, Type> = new Map([
-    [holeId, {
-      kind: "unknown",
-      provenance: { kind: "expr_hole", id: holeId },
-    }],
+    [holeId, unknownType({ kind: "expr_hole", id: holeId })],
     [2, { kind: "int" }],
     [3, { kind: "int" }],
     [5, { kind: "bool" }],

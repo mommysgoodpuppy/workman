@@ -20,7 +20,13 @@ import { formatScheme } from "@workman/type_printer.ts";
 import { ModuleLoaderError } from "@workman/module_loader.ts";
 import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
 import { resolve } from "std/path/resolve.ts";
-import { Type, TypeScheme, typeToString } from "@workman/types.ts";
+import {
+  getProvenance,
+  isHoleType,
+  Type,
+  TypeScheme,
+  typeToString,
+} from "@workman/types.ts";
 import {
   type ConstraintDiagnosticWithSpan,
   findNodeAtOffset,
@@ -962,23 +968,26 @@ class WorkmanLanguageServer {
    * Extract hole ID from a Type object.
    * This handles error provenances that wrap the actual hole.
    */
-  private extractHoleIdFromType(type: any): number | undefined {
-    if (type.kind !== "unknown") {
+  private extractHoleIdFromType(type: Type): number | undefined {
+    if (!isHoleType(type)) {
       return undefined;
     }
 
-    const prov = type.provenance;
+    const prov = getProvenance(type);
+    if (!prov) return undefined;
+
     if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
-      return (prov as any).id;
+      return (prov as Record<string, unknown>).id as number;
     } else if (prov.kind === "incomplete") {
-      return (prov as any).nodeId;
+      return (prov as Record<string, unknown>).nodeId as number;
     } else if (
       prov.kind === "error_not_function" || prov.kind === "error_inconsistent"
     ) {
       // Unwrap error provenance to get the underlying hole
-      const calleeType = (prov as any).calleeType || (prov as any).actual;
-      if (calleeType?.kind === "unknown") {
-        return this.extractHoleIdFromType(calleeType);
+      const calleeType = (prov as Record<string, unknown>).calleeType ||
+        (prov as Record<string, unknown>).actual;
+      if (calleeType && isHoleType(calleeType as Type)) {
+        return this.extractHoleIdFromType(calleeType as Type);
       }
     }
 
@@ -1099,11 +1108,12 @@ class WorkmanLanguageServer {
         }
         return { kind: "record", fields };
       }
-      case "unknown": {
-        const resolved = this.resolveUnknownType(type, layer3);
-        return resolved ?? type;
-      }
       default:
+        // Handle holes via carrier check
+        if (isHoleType(type)) {
+          const resolved = this.resolveUnknownType(type, layer3);
+          return resolved ?? type;
+        }
         return type;
     }
   }
@@ -1112,12 +1122,14 @@ class WorkmanLanguageServer {
     type: Type,
     layer3: Layer3Result,
   ): Type | null {
-    if (type.kind !== "unknown") {
+    if (!isHoleType(type)) {
       return type;
     }
-    const prov = type.provenance;
-    if (prov.kind === "error_inconsistent") {
-      const expected = (prov as any).expected;
+    const prov = getProvenance(type);
+    if (prov?.kind === "error_inconsistent") {
+      const expected = (prov as Record<string, unknown>).expected as
+        | Type
+        | undefined;
       if (expected) {
         return this.substituteTypeWithLayer3(expected, layer3);
       }

@@ -20,18 +20,26 @@ import { canonicalizeMatch } from "../passes/canonicalize_match.ts";
 import {
   applySubstitutionScheme,
   cloneType,
+  collapseCarrier,
   collapseResultType,
   ConstructorInfo,
+  errorLabel,
   ErrorRowType,
   errorRowUnion,
   flattenResultType,
   freshTypeVar,
+  hasCarrierDomain,
+  isHoleType,
+  joinCarrier,
   makeResultType,
+  type Provenance,
+  splitCarrier,
   Type,
   TypeEnv,
   TypeEnvADT,
   TypeScheme,
   typeToString,
+  unionCarrierStates,
   unknownType,
 } from "../types.ts";
 import { formatScheme } from "../type_printer.ts";
@@ -47,8 +55,11 @@ import {
   Context,
   createContext,
   createUnknownAndRegister,
+  emitConstraintFlow,
+  emitConstraintSource,
   expectFunctionType,
   generalizeInContext,
+  type HoleOrigin,
   holeOriginFromExpr,
   holeOriginFromPattern,
   inferError,
@@ -139,7 +150,7 @@ function expectParameterName(param: Parameter): string {
 
 function recordExprType(ctx: Context, expr: Expr, type: Type): Type {
   const resolved = applyCurrentSubst(ctx, type);
-  if (resolved.kind === "unknown") {
+  if (isHoleType(resolved)) {
     registerHoleForType(ctx, holeOriginFromExpr(expr), resolved);
   }
   ctx.nodeTypes.set(expr, resolved);
@@ -518,25 +529,30 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         );
       }
       const instantiated = instantiateAndApply(ctx, scheme);
-      if (instantiated.kind === "unknown") {
+      if (isHoleType(instantiated)) {
         registerHoleForType(ctx, holeOriginFromExpr(expr), instantiated);
       }
       return recordExprType(ctx, expr, instantiated);
     }
-    case "literal":
+    case "literal": {
       const litType = literalType(expr.literal);
-      if (
-        litType.kind === "unknown" &&
-        litType.provenance.kind === "incomplete" &&
-        litType.provenance.reason === "literal.unsupported"
-      ) {
-        const mark = markUnsupportedExpr(ctx, expr, "literal");
-        return recordExprType(ctx, expr, mark.type);
+      // Check if it's an incomplete hole for unsupported literal
+      const holeInfo = isHoleType(litType) ? splitCarrier(litType) : null;
+      if (holeInfo) {
+        // Check if it's the specific "literal.unsupported" reason
+        for (const label of (holeInfo.state as any).cases?.keys() || []) {
+          if (label.includes("literal.unsupported")) {
+            const mark = markUnsupportedExpr(ctx, expr, "literal");
+            return recordExprType(ctx, expr, mark.type);
+          }
+        }
       }
       return recordExprType(ctx, expr, litType);
+    }
     case "hole": {
       // Explicit hole expression - create unknown type with expr_hole provenance
       const origin: HoleOrigin = {
+        kind: "expr",
         nodeId: expr.id,
         span: expr.span,
       };
@@ -641,13 +657,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
     }
     case "record_projection": {
       const targetType = inferExpr(ctx, expr.target);
-      const resolvedTarget = collapseResultType(
+      const resolvedTarget = collapseCarrier(
         applyCurrentSubst(ctx, targetType),
       );
-      const targetResultInfo = flattenResultType(resolvedTarget);
+      const targetCarrierInfo = splitCarrier(resolvedTarget);
       const projectedValueType = freshTypeVar();
-      const projectionType = targetResultInfo
-        ? makeResultType(cloneType(projectedValueType), targetResultInfo.error)
+      const projectionType = targetCarrierInfo
+        ? (joinCarrier(
+          targetCarrierInfo.domain,
+          cloneType(projectedValueType),
+          targetCarrierInfo.state,
+        ) ?? projectedValueType)
         : projectedValueType;
       recordHasFieldConstraint(
         ctx,
@@ -667,12 +687,18 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
     }
     case "call": {
       const rawCalleeType = inferExpr(ctx, expr.callee);
-      let fnType = collapseResultType(applyCurrentSubst(ctx, rawCalleeType));
-      let accumulatedErrors: ErrorRowType | null = null;
-      const calleeResultInfo = flattenResultType(fnType);
-      if (calleeResultInfo) {
-        accumulatedErrors = calleeResultInfo.error;
-        fnType = calleeResultInfo.value;
+      let fnType = collapseCarrier(applyCurrentSubst(ctx, rawCalleeType));
+
+      // Track accumulated states per domain (generic for any carrier)
+      const accumulatedStates = new Map<string, Type>();
+
+      const calleeCarrierInfo = splitCarrier(fnType);
+      if (calleeCarrierInfo) {
+        accumulatedStates.set(
+          calleeCarrierInfo.domain,
+          calleeCarrierInfo.state,
+        );
+        fnType = calleeCarrierInfo.value;
       }
 
       // Handle zero-argument calls: f() should unify with Unit -> T
@@ -693,10 +719,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
         if (!unifySucceeded) {
           const resolvedFn = applyCurrentSubst(ctx, fnType);
-          if (
-            resolvedFn.kind === "unknown" &&
-            resolvedFn.provenance.kind === "incomplete"
-          ) {
+          // Check if it's an incomplete hole
+          if (isHoleType(resolvedFn)) {
             fnType = applyCurrentSubst(ctx, resultType);
             return recordExprType(ctx, expr, fnType);
           }
@@ -713,16 +737,27 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           }
         }
         fnType = applyCurrentSubst(ctx, resultType);
-        let finalType = collapseResultType(fnType);
-        if (accumulatedErrors) {
-          const flattened = flattenResultType(finalType);
-          if (flattened) {
-            const merged = errorRowUnion(flattened.error, accumulatedErrors);
-            finalType = makeResultType(flattened.value, merged);
+        let finalType = collapseCarrier(fnType);
+
+        // Reconstruct carrier types with accumulated states (generic for all domains)
+        for (const [domain, state] of accumulatedStates.entries()) {
+          const flattened = splitCarrier(finalType);
+          if (flattened && flattened.domain === domain) {
+            // Merge states if finalType already has this domain's state
+            const mergedState = unionCarrierStates(
+              domain,
+              flattened.state,
+              state,
+            );
+            if (mergedState) {
+              finalType = joinCarrier(domain, flattened.value, mergedState) ??
+                finalType;
+            }
           } else {
-            finalType = makeResultType(finalType, accumulatedErrors);
+            // Wrap with carrier if finalType doesn't have this domain
+            finalType = joinCarrier(domain, finalType, state) ?? finalType;
           }
-          finalType = collapseResultType(finalType);
+          finalType = collapseCarrier(finalType);
         }
         return recordExprType(ctx, expr, finalType);
       }
@@ -740,7 +775,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         registerHoleForType(
           ctx,
           holeOriginFromExpr(argExpr),
-          collapseResultType(applyCurrentSubst(ctx, argType)),
+          collapseCarrier(applyCurrentSubst(ctx, argType)),
         );
         registerHoleForType(ctx, holeOriginFromExpr(expr), resultType);
         const calleeIdentifierName = expr.callee.kind === "identifier"
@@ -774,37 +809,47 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           }); */
         }
         fnType = applyCurrentSubst(ctx, fnType);
-        const resolvedArg = collapseResultType(applyCurrentSubst(ctx, argType));
-        const argResultInfo = flattenResultType(resolvedArg);
-        const argBareValueType = argResultInfo
-          ? argResultInfo.value
+        const resolvedArg = collapseCarrier(applyCurrentSubst(ctx, argType));
+        const argCarrierInfo = splitCarrier(resolvedArg);
+        const argBareValueType = argCarrierInfo
+          ? argCarrierInfo.value
           : resolvedArg;
 
         const expectedParamType = fnType.kind === "func"
           ? applyCurrentSubst(ctx, fnType.from)
           : undefined;
-        const expectsResult = expectedParamType
-          ? flattenResultType(expectedParamType) !== null
+        const expectsCarrier = expectedParamType
+          ? splitCarrier(expectedParamType) !== null
           : false;
 
         let argumentValueType = resolvedArg;
-        let argumentErrorRow: ErrorRowType | undefined;
-        if (!expectsResult && argResultInfo) {
+        if (!expectsCarrier && argCarrierInfo) {
           argumentValueType = argBareValueType;
-          argumentErrorRow = argResultInfo.error;
-          accumulatedErrors = accumulatedErrors
-            ? errorRowUnion(accumulatedErrors, argResultInfo.error)
-            : argResultInfo.error;
+          // Accumulate carrier state using generic union
+          const domain = argCarrierInfo.domain;
+          const existingState = accumulatedStates.get(domain);
+          if (existingState) {
+            const merged = unionCarrierStates(
+              domain,
+              existingState,
+              argCarrierInfo.state,
+            );
+            if (merged) {
+              accumulatedStates.set(domain, merged);
+            }
+          } else {
+            accumulatedStates.set(domain, argCarrierInfo.state);
+          }
         }
 
         // Try to pass the preferred argument shape through. If that fails and
-        // the argument is a Result, fall back to infectious semantics by unwrapping.
+        // the argument is a carrier, fall back to infectious semantics by unwrapping.
         let unifySucceeded = unify(ctx, fnType, {
           kind: "func",
           from: argumentValueType,
           to: resultType,
         });
-        if (!unifySucceeded && argResultInfo && expectsResult) {
+        if (!unifySucceeded && argCarrierInfo && expectsCarrier) {
           const fallbackSucceeded = unify(ctx, fnType, {
             kind: "func",
             from: argBareValueType,
@@ -812,10 +857,21 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           });
           if (fallbackSucceeded) {
             argumentValueType = argBareValueType;
-            argumentErrorRow = argResultInfo.error;
-            accumulatedErrors = accumulatedErrors
-              ? errorRowUnion(accumulatedErrors, argResultInfo.error)
-              : argResultInfo.error;
+            // Accumulate carrier state using generic union
+            const domain = argCarrierInfo.domain;
+            const existingState = accumulatedStates.get(domain);
+            if (existingState) {
+              const merged = unionCarrierStates(
+                domain,
+                existingState,
+                argCarrierInfo.state,
+              );
+              if (merged) {
+                accumulatedStates.set(domain, merged);
+              }
+            } else {
+              accumulatedStates.set(domain, argCarrierInfo.state);
+            }
             unifySucceeded = true;
           }
         }
@@ -829,14 +885,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           resultType,
           index,
           argumentValueType,
-          argumentErrorRow,
         );
         if (!unifySucceeded) {
           const resolvedFn = applyCurrentSubst(ctx, fnType);
-          if (
-            resolvedFn.kind === "unknown" &&
-            resolvedFn.provenance.kind === "incomplete"
-          ) {
+          // Check if it's an incomplete hole
+          if (isHoleType(resolvedFn)) {
             fnType = applyCurrentSubst(ctx, resultType);
             continue;
           }
@@ -890,17 +943,57 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
         fnType = applyCurrentSubst(ctx, resultType);
       }
-      let callType = collapseResultType(applyCurrentSubst(ctx, fnType));
-      if (accumulatedErrors) {
-        const flattened = flattenResultType(callType);
-        if (flattened) {
-          const merged = errorRowUnion(flattened.error, accumulatedErrors);
-          callType = makeResultType(flattened.value, merged);
+      let callType = collapseCarrier(applyCurrentSubst(ctx, fnType));
+
+      // Reconstruct carrier types with accumulated states (generic for all domains)
+      for (const [domain, state] of accumulatedStates.entries()) {
+        const flattened = splitCarrier(callType);
+        if (flattened && flattened.domain === domain) {
+          // Merge states if callType already has this domain's state
+          const mergedState = unionCarrierStates(
+            domain,
+            flattened.state,
+            state,
+          );
+          if (mergedState) {
+            callType = joinCarrier(domain, flattened.value, mergedState) ??
+              callType;
+          }
         } else {
-          callType = makeResultType(callType, accumulatedErrors);
+          // Wrap with carrier if callType doesn't have this domain
+          callType = joinCarrier(domain, callType, state) ?? callType;
         }
-        callType = collapseResultType(callType);
+        callType = collapseCarrier(callType);
       }
+
+      // PHASE 2: Emit constraint stubs (generic for any carrier domain)
+      const finalCarrierInfo = splitCarrier(callType);
+      if (finalCarrierInfo) {
+        // Emit constraint source with the carrier's state
+        if (
+          finalCarrierInfo.domain === "error" &&
+          finalCarrierInfo.state.kind === "error_row"
+        ) {
+          emitConstraintSource(
+            ctx,
+            expr.id,
+            errorLabel(finalCarrierInfo.state),
+          );
+        }
+        // TODO: Add taintLabel when taint domain is fully implemented
+        // if (finalCarrierInfo.domain === "taint" && finalCarrierInfo.state.kind === "error_row") {
+        //   emitConstraintSource(ctx, expr.id, taintLabel(finalCarrierInfo.state));
+        // }
+
+        // Emit flow constraints from callee and arguments to result
+        // NOTE: Following the plan's "selective optimization" - only emit explicit
+        // flow edges for call sites. Other expressions use implicit propagation via types.
+        emitConstraintFlow(ctx, expr.callee.id, expr.id);
+        for (const arg of expr.arguments) {
+          emitConstraintFlow(ctx, arg.id, expr.id);
+        }
+      }
+
       if (
         ctx.source?.includes(
           "Runtime value printer for Workman using std library",
@@ -959,35 +1052,65 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         return recordExprType(ctx, expr, mark.type);
       }
       const opType = instantiateAndApply(ctx, scheme);
-      let fnType = collapseResultType(applyCurrentSubst(ctx, opType));
-      let accumulatedErrors: ErrorRowType | null = null;
-      const calleeResultInfo = flattenResultType(fnType);
-      if (calleeResultInfo) {
-        accumulatedErrors = calleeResultInfo.error;
-        fnType = calleeResultInfo.value;
+      let fnType = collapseCarrier(applyCurrentSubst(ctx, opType));
+
+      // Track accumulated states per domain (generic for any carrier)
+      const accumulatedStates = new Map<string, Type>();
+
+      const calleeCarrierInfo = splitCarrier(fnType);
+      if (calleeCarrierInfo) {
+        accumulatedStates.set(
+          calleeCarrierInfo.domain,
+          calleeCarrierInfo.state,
+        );
+        fnType = calleeCarrierInfo.value;
       }
 
       // Apply the function to both arguments
       const resultType1 = freshTypeVar();
-      const resolvedLeft = collapseResultType(applyCurrentSubst(ctx, leftType));
-      const leftResultInfo = flattenResultType(resolvedLeft);
-      const leftArgType = leftResultInfo ? leftResultInfo.value : resolvedLeft;
-      if (leftResultInfo) {
-        accumulatedErrors = accumulatedErrors
-          ? errorRowUnion(accumulatedErrors, leftResultInfo.error)
-          : leftResultInfo.error;
+      const resolvedLeft = collapseCarrier(applyCurrentSubst(ctx, leftType));
+      const leftCarrierInfo = splitCarrier(resolvedLeft);
+      const leftArgType = leftCarrierInfo
+        ? leftCarrierInfo.value
+        : resolvedLeft;
+      if (leftCarrierInfo) {
+        const domain = leftCarrierInfo.domain;
+        const existingState = accumulatedStates.get(domain);
+        if (existingState) {
+          const merged = unionCarrierStates(
+            domain,
+            existingState,
+            leftCarrierInfo.state,
+          );
+          if (merged) {
+            accumulatedStates.set(domain, merged);
+          }
+        } else {
+          accumulatedStates.set(domain, leftCarrierInfo.state);
+        }
       }
-      const resolvedRight = collapseResultType(
+      const resolvedRight = collapseCarrier(
         applyCurrentSubst(ctx, rightType),
       );
-      const rightResultInfo = flattenResultType(resolvedRight);
-      const rightArgType = rightResultInfo
-        ? rightResultInfo.value
+      const rightCarrierInfo = splitCarrier(resolvedRight);
+      const rightArgType = rightCarrierInfo
+        ? rightCarrierInfo.value
         : resolvedRight;
-      if (rightResultInfo) {
-        accumulatedErrors = accumulatedErrors
-          ? errorRowUnion(accumulatedErrors, rightResultInfo.error)
-          : rightResultInfo.error;
+      if (rightCarrierInfo) {
+        const domain = rightCarrierInfo.domain;
+        const existingState = accumulatedStates.get(domain);
+        if (existingState) {
+          const merged = unionCarrierStates(
+            domain,
+            existingState,
+            rightCarrierInfo.state,
+          );
+          if (merged) {
+            accumulatedStates.set(domain, merged);
+          }
+        } else {
+          accumulatedStates.set(domain, rightCarrierInfo.state);
+        }
       }
       if (NUMERIC_BINARY_OPERATORS.has(expr.operator)) {
         recordNumericConstraint(
@@ -1045,16 +1168,27 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         return recordExprType(ctx, expr, mark.type);
       }
 
-      let callType = collapseResultType(applyCurrentSubst(ctx, resultType1));
-      if (accumulatedErrors) {
-        const flattened = flattenResultType(callType);
-        if (flattened) {
-          const merged = errorRowUnion(flattened.error, accumulatedErrors);
-          callType = makeResultType(flattened.value, merged);
+      let callType = collapseCarrier(applyCurrentSubst(ctx, resultType1));
+
+      // Reconstruct carrier types with accumulated states (generic for all domains)
+      for (const [domain, state] of accumulatedStates.entries()) {
+        const flattened = splitCarrier(callType);
+        if (flattened && flattened.domain === domain) {
+          // Merge states if callType already has this domain's state
+          const mergedState = unionCarrierStates(
+            domain,
+            flattened.state,
+            state,
+          );
+          if (mergedState) {
+            callType = joinCarrier(domain, flattened.value, mergedState) ??
+              callType;
+          }
         } else {
-          callType = makeResultType(callType, accumulatedErrors);
+          // Wrap with carrier if callType doesn't have this domain
+          callType = joinCarrier(domain, callType, state) ?? callType;
         }
-        callType = collapseResultType(callType);
+        callType = collapseCarrier(callType);
       }
       return recordExprType(ctx, expr, callType);
     }
@@ -1071,27 +1205,44 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         return recordExprType(ctx, expr, mark.type);
       }
       const opType = instantiateAndApply(ctx, scheme);
-      let fnType = collapseResultType(applyCurrentSubst(ctx, opType));
-      let accumulatedErrors: ErrorRowType | null = null;
-      const calleeResultInfo = flattenResultType(fnType);
-      if (calleeResultInfo) {
-        accumulatedErrors = calleeResultInfo.error;
-        fnType = calleeResultInfo.value;
+      let fnType = collapseCarrier(applyCurrentSubst(ctx, opType));
+
+      // Track accumulated states per domain (generic for any carrier)
+      const accumulatedStates = new Map<string, Type>();
+
+      const calleeCarrierInfo = splitCarrier(fnType);
+      if (calleeCarrierInfo) {
+        accumulatedStates.set(
+          calleeCarrierInfo.domain,
+          calleeCarrierInfo.state,
+        );
+        fnType = calleeCarrierInfo.value;
       }
 
       // Apply the function to the operand
       const resultType = freshTypeVar();
-      const resolvedOperand = collapseResultType(
+      const resolvedOperand = collapseCarrier(
         applyCurrentSubst(ctx, operandType),
       );
-      const operandResultInfo = flattenResultType(resolvedOperand);
-      const operandArgType = operandResultInfo
-        ? operandResultInfo.value
+      const operandCarrierInfo = splitCarrier(resolvedOperand);
+      const operandArgType = operandCarrierInfo
+        ? operandCarrierInfo.value
         : resolvedOperand;
-      if (operandResultInfo) {
-        accumulatedErrors = accumulatedErrors
-          ? errorRowUnion(accumulatedErrors, operandResultInfo.error)
-          : operandResultInfo.error;
+      if (operandCarrierInfo) {
+        const domain = operandCarrierInfo.domain;
+        const existingState = accumulatedStates.get(domain);
+        if (existingState) {
+          const merged = unionCarrierStates(
+            domain,
+            existingState,
+            operandCarrierInfo.state,
+          );
+          if (merged) {
+            accumulatedStates.set(domain, merged);
+          }
+        } else {
+          accumulatedStates.set(domain, operandCarrierInfo.state);
+        }
       }
       if (NUMERIC_UNARY_OPERATORS.has(expr.operator)) {
         recordNumericConstraint(ctx, expr, [expr.operand], expr.operator);
@@ -1128,16 +1279,27 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         return recordExprType(ctx, expr, mark.type);
       }
 
-      let callType = collapseResultType(applyCurrentSubst(ctx, resultType));
-      if (accumulatedErrors) {
-        const flattened = flattenResultType(callType);
-        if (flattened) {
-          const merged = errorRowUnion(flattened.error, accumulatedErrors);
-          callType = makeResultType(flattened.value, merged);
+      let callType = collapseCarrier(applyCurrentSubst(ctx, resultType));
+
+      // Reconstruct carrier types with accumulated states (generic for all domains)
+      for (const [domain, state] of accumulatedStates.entries()) {
+        const flattened = splitCarrier(callType);
+        if (flattened && flattened.domain === domain) {
+          // Merge states if callType already has this domain's state
+          const mergedState = unionCarrierStates(
+            domain,
+            flattened.state,
+            state,
+          );
+          if (mergedState) {
+            callType = joinCarrier(domain, flattened.value, mergedState) ??
+              callType;
+          }
         } else {
-          callType = makeResultType(callType, accumulatedErrors);
+          // Wrap with carrier if callType doesn't have this domain
+          callType = joinCarrier(domain, callType, state) ?? callType;
         }
-        callType = collapseResultType(callType);
+        callType = collapseCarrier(callType);
       }
       return recordExprType(ctx, expr, callType);
     }

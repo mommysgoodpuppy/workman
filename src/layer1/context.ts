@@ -37,9 +37,13 @@ import {
   cloneTypeInfo,
   cloneTypeScheme,
   composeSubstitution,
+  ConstraintLabel,
   ErrorRowType,
   generalize,
+  getProvenance,
+  Identity,
   instantiate,
+  isHoleType,
   occursInType,
   Provenance,
   resetTypeVarCounter,
@@ -166,7 +170,6 @@ export type ConstraintStub =
     resultType: Type;
     index: number;
     argumentValueType?: Type;
-    argumentErrorRow?: ErrorRowType;
   }
   | {
     kind: "branch_join";
@@ -205,7 +208,30 @@ export type ConstraintStub =
     operator: string;
     operands: NodeId[];
     result: NodeId;
+  }
+  // NEW: Constraint flow primitives (Phase 1: Unified Constraint Model)
+  | {
+    kind: "constraint_source";
+    node: NodeId;
+    label: ConstraintLabel;
+  }
+  | {
+    kind: "constraint_flow";
+    from: NodeId;
+    to: NodeId;
+  }
+  | {
+    kind: "constraint_rewrite";
+    node: NodeId;
+    remove: ConstraintLabel[];
+    add: ConstraintLabel[];
+  }
+  | {
+    kind: "constraint_alias";
+    id1: Identity;
+    id2: Identity;
   };
+// NOTE: constraint_merge is NOT needed - branch_join already handles merge semantics
 
 export function recordCallConstraint(
   ctx: Context,
@@ -216,7 +242,6 @@ export function recordCallConstraint(
   resultType: Type,
   index: number,
   argumentValueType: Type,
-  argumentErrorRow?: ErrorRowType,
 ): void {
   ctx.constraintStubs.push({
     kind: "call",
@@ -227,9 +252,6 @@ export function recordCallConstraint(
     resultType,
     index,
     argumentValueType: cloneType(argumentValueType),
-    argumentErrorRow: argumentErrorRow
-      ? cloneType(argumentErrorRow) as ErrorRowType
-      : undefined,
   });
 }
 
@@ -336,6 +358,64 @@ export function recordBooleanConstraint(
   });
 }
 
+// ============================================================================
+// Constraint Flow Emit Functions (Phase 1: Unified Constraint Model)
+// ============================================================================
+
+export function emitConstraintSource(
+  ctx: Context,
+  node: NodeId,
+  label: ConstraintLabel,
+): void {
+  ctx.constraintStubs.push({
+    kind: "constraint_source",
+    node,
+    label,
+  });
+}
+
+export function emitConstraintFlow(
+  ctx: Context,
+  from: NodeId,
+  to: NodeId,
+): void {
+  ctx.constraintStubs.push({
+    kind: "constraint_flow",
+    from,
+    to,
+  });
+}
+
+export function emitConstraintRewrite(
+  ctx: Context,
+  node: NodeId,
+  remove: ConstraintLabel[],
+  add: ConstraintLabel[],
+): void {
+  ctx.constraintStubs.push({
+    kind: "constraint_rewrite",
+    node,
+    remove,
+    add,
+  });
+}
+
+export function emitConstraintAlias(
+  ctx: Context,
+  id1: Identity,
+  id2: Identity,
+): void {
+  ctx.constraintStubs.push({
+    kind: "constraint_alias",
+    id1,
+    id2,
+  });
+}
+
+// ============================================================================
+// End of Constraint Flow Emit Functions
+// ============================================================================
+
 export function holeOriginFromExpr(expr: Expr): HoleOrigin {
   return {
     kind: "expr",
@@ -383,24 +463,27 @@ export function registerHoleForType(
   category?: UnknownCategory,
   relatedNodes: NodeId[] = [],
 ): void {
-  if (type.kind !== "unknown") {
+  if (!isHoleType(type)) {
     if (ctx.holes.has(origin.nodeId)) {
       ctx.holes.delete(origin.nodeId);
     }
     return;
   }
 
+  const provenance = getProvenance(type);
+  if (!provenance) return;
+
   if (
-    type.provenance.kind === "incomplete" &&
-    typeof (type.provenance as any).nodeId !== "number"
+    provenance.kind === "incomplete" &&
+    typeof (provenance as Record<string, unknown>).nodeId !== "number"
   ) {
-    (type.provenance as any).nodeId = origin.nodeId;
+    (provenance as Record<string, unknown>).nodeId = origin.nodeId;
   }
 
-  const resolvedCategory = category ?? categoryFromProvenance(type.provenance);
+  const resolvedCategory = category ?? categoryFromProvenance(provenance);
   ctx.holes.set(origin.nodeId, {
     id: origin.nodeId,
-    provenance: type.provenance,
+    provenance: provenance,
     category: resolvedCategory,
     relatedNodes,
     origin,
@@ -508,11 +591,17 @@ export function expectFunctionType(
 ): ExpectFunctionResult {
   const resolved = applyCurrentSubst(ctx, type);
 
-  // Gradual typing: unknown types can be functions
-  // Create fresh unknowns for parameter and return types
-  if (resolved.kind === "unknown") {
-    const fromType = createFreshUnknown(ctx);
-    const toType = createFreshUnknown(ctx);
+  // Gradual typing: hole types can be treated as functions
+  // Create fresh holes for parameter and return types
+  if (isHoleType(resolved)) {
+    const fromType = unknownType({
+      kind: "incomplete",
+      reason: "function_param",
+    });
+    const toType = unknownType({
+      kind: "incomplete",
+      reason: "function_return",
+    });
     return { success: true, from: fromType, to: toType };
   }
 
@@ -586,13 +675,14 @@ export function markNotFunction(
 ): MMarkNotFunction {
   const origin = holeOriginFromExpr(expr);
 
-  // If the callee is already an incomplete unknown (e.g., JS import),
+  // If the callee is already an incomplete hole (e.g., JS import),
   // preserve that provenance instead of wrapping it in error_not_function
   let resultType: Type;
+  const calleeProvenance = getProvenance(calleeType);
   if (
-    calleeType.kind === "unknown" && calleeType.provenance.kind === "incomplete"
+    isHoleType(calleeType) && calleeProvenance?.kind === "incomplete"
   ) {
-    const provenance = { ...calleeType.provenance } as Record<string, unknown>;
+    const provenance = { ...calleeProvenance } as Record<string, unknown>;
     delete provenance.nodeId;
     resultType = createUnknownAndRegister(
       ctx,
@@ -620,12 +710,13 @@ export function markNotFunction(
   ctx.marks.set(expr, mark);
 
   // Only record a diagnostic if it's actually an error (not just incomplete type info)
-  // For unknowns (JS imports, explicit holes), this is expected gradual typing behavior
+  // For holes (JS imports, explicit holes), this is expected gradual typing behavior
+  const calleeProvenance2 = getProvenance(calleeType);
   if (
-    !(calleeType.kind === "unknown" &&
-      (calleeType.provenance.kind === "incomplete" ||
-        calleeType.provenance.kind === "expr_hole" ||
-        calleeType.provenance.kind === "user_hole"))
+    !(isHoleType(calleeType) &&
+      (calleeProvenance2?.kind === "incomplete" ||
+        calleeProvenance2?.kind === "expr_hole" ||
+        calleeProvenance2?.kind === "user_hole"))
   ) {
     recordLayer1Diagnostic(ctx, expr.id, "not_function", { calleeType });
   }
@@ -688,15 +779,17 @@ export function markInconsistent(
   ctx.marks.set(expr, mark);
 
   // Only record diagnostic if this is a real type error, not gradual typing
-  // Unknowns (holes, JS imports) are allowed to mismatch - Layer 2 will handle conflicts
-  const isGradualTyping = (expected.kind === "unknown" &&
-    (expected.provenance.kind === "incomplete" ||
-      expected.provenance.kind === "expr_hole" ||
-      expected.provenance.kind === "user_hole")) ||
-    (actual.kind === "unknown" &&
-      (actual.provenance.kind === "incomplete" ||
-        actual.provenance.kind === "expr_hole" ||
-        actual.provenance.kind === "user_hole"));
+  // Holes (holes, JS imports) are allowed to mismatch - Layer 2 will handle conflicts
+  const expectedProvenance = getProvenance(expected);
+  const actualProvenance = getProvenance(actual);
+  const isGradualTyping = (isHoleType(expected) &&
+    (expectedProvenance?.kind === "incomplete" ||
+      expectedProvenance?.kind === "expr_hole" ||
+      expectedProvenance?.kind === "user_hole")) ||
+    (isHoleType(actual) &&
+      (actualProvenance?.kind === "incomplete" ||
+        actualProvenance?.kind === "expr_hole" ||
+        actualProvenance?.kind === "user_hole"));
 
   if (!isGradualTyping) {
     recordLayer1Diagnostic(ctx, expr.id, "type_mismatch", { expected, actual });

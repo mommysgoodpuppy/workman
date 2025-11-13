@@ -10,7 +10,7 @@ import type {
 import { lowerProgramToValues } from "./marked_to_core.ts";
 import { InferError } from "../../../src/error.ts";
 import type { ConstraintDiagnostic } from "../../../src/diagnostics.ts";
-import { typeToString } from "../../../src/types.ts";
+import { isHoleType, typeToString } from "../../../src/types.ts";
 import type { Type } from "../../../src/types.ts";
 import type { NodeId, SourceSpan } from "../../../src/ast.ts";
 import type { MProgram } from "../../../src/ast_marked.ts";
@@ -170,8 +170,6 @@ function simpleFormatType(type: Type): string {
       return "Char";
     case "string":
       return "String";
-    case "unknown":
-      return "?";
     case "error_row":
       return typeToString(type);
     case "record":
@@ -190,8 +188,8 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
     case "not_function": {
       const calleeType = diagnostic.details?.calleeType as Type | undefined;
       if (calleeType) {
-        // For unknown types (especially incomplete JS imports), we don't know if it's a function
-        if (calleeType.kind === "unknown") {
+        // For hole types (especially incomplete JS imports), we don't know if it's a function
+        if (isHoleType(calleeType)) {
           return `Calling value of unknown type ${
             simpleFormatType(calleeType)
           }`;

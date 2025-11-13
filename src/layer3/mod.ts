@@ -16,7 +16,7 @@ import {
 } from "../layer2/mod.ts";
 import type { NodeId } from "../ast.ts";
 import type { Type } from "../types.ts";
-import { cloneType } from "../types.ts";
+import { cloneType, getProvenance, isHoleType, unknownType } from "../types.ts";
 
 export interface PartialType {
   kind: "unknown" | "concrete";
@@ -128,8 +128,8 @@ function buildNodeViews(
     // First try to get solution for this node directly
     let solution = solutions.get(nodeId);
 
-    // If not found and this is an unknown type, extract the underlying hole ID
-    if (!solution && type.kind === "unknown") {
+    // If not found and this is a hole type, extract the underlying hole ID
+    if (!solution && isHoleType(type)) {
       const holeId = extractHoleIdFromType(type);
       if (holeId !== undefined && holeId !== nodeId) {
         solution = solutions.get(holeId);
@@ -147,26 +147,29 @@ function buildNodeViews(
 }
 
 /**
- * Extract the actual hole ID from an unknown type's provenance.
+ * Extract the actual hole ID from a hole type's provenance.
  * This handles error provenances that wrap the underlying hole.
  */
 function extractHoleIdFromType(type: Type): NodeId | undefined {
-  if (type.kind !== "unknown") {
+  if (!isHoleType(type)) {
     return undefined;
   }
 
-  const prov = type.provenance;
+  const prov = getProvenance(type);
+  if (!prov) return undefined;
+
   if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
-    return (prov as any).id;
+    return (prov as Record<string, unknown>).id as NodeId;
   } else if (prov.kind === "incomplete") {
-    return (prov as any).nodeId;
+    return (prov as Record<string, unknown>).nodeId as NodeId;
   } else if (
     prov.kind === "error_not_function" || prov.kind === "error_inconsistent"
   ) {
     // Unwrap error provenance to get the underlying hole
-    const innerType = (prov as any).calleeType || (prov as any).actual;
-    if (innerType?.kind === "unknown") {
-      return extractHoleIdFromType(innerType);
+    const innerType = (prov as Record<string, unknown>).calleeType ||
+      (prov as Record<string, unknown>).actual;
+    if (innerType && isHoleType(innerType as Type)) {
+      return extractHoleIdFromType(innerType as Type);
     }
   }
 
@@ -184,19 +187,18 @@ function attachSpansToDiagnostics(
 }
 
 function typeToPartial(type: Type, solution?: HoleSolution): PartialType {
-  if (type.kind === "unknown") {
+  if (isHoleType(type)) {
     // If the underlying hole is conflicted, replace the error provenance
     if (solution?.state === "conflicted") {
-      const conflictedType: Type = {
-        kind: "unknown",
-        provenance: {
-          kind: "error_unfillable_hole",
-          holeId: solution.provenance.kind === "expr_hole"
-            ? (solution.provenance as any).id
-            : 0,
-          conflicts: solution.conflicts || [],
-        },
-      };
+      const prov = solution.provenance.provenance;
+      const holeId = prov.kind === "expr_hole"
+        ? (prov as Record<string, unknown>).id as number
+        : 0;
+      const conflictedType = unknownType({
+        kind: "error_unfillable_hole",
+        holeId,
+        conflicts: solution.conflicts || [],
+      });
       return { kind: "unknown", type: conflictedType };
     }
 
@@ -283,8 +285,6 @@ function typeToString(type: Type): string {
       }
       return `<${parts.join(" | ")}>`;
     }
-    case "unknown":
-      return "?";
     default:
       return "unknown";
   }

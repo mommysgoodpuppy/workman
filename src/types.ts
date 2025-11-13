@@ -24,8 +24,9 @@ export type Type =
   | { kind: "int" }
   | { kind: "bool" }
   | { kind: "char" }
-  | { kind: "string" }
-  | { kind: "unknown"; provenance: Provenance };
+  | { kind: "string" };
+// REMOVED: | { kind: "unknown"; provenance: Provenance };
+// Holes are now modeled as Hole<T, HoleRow> carrier type
 
 export interface TypeScheme {
   quantifiers: number[];
@@ -51,8 +52,10 @@ export function createErrorRow(
   };
 }
 
-export function ensureErrorRow(type: Type): ErrorRowType {
-  if (isErrorRow(type)) {
+// Internal helper: converts any type to a row type (used by carriers)
+// If already a row, return as-is; otherwise wrap as tail
+function ensureRow(type: Type): ErrorRowType {
+  if (type.kind === "error_row") {
     return type;
   }
   return {
@@ -63,8 +66,8 @@ export function ensureErrorRow(type: Type): ErrorRowType {
 }
 
 export function errorRowUnion(left: Type, right: Type): ErrorRowType {
-  const lhs = ensureErrorRow(left);
-  const rhs = ensureErrorRow(right);
+  const lhs = ensureRow(left);
+  const rhs = ensureRow(right);
   const merged = new Map<string, Type | null>();
   for (const [label, payload] of lhs.cases.entries()) {
     merged.set(label, payload ? cloneType(payload) : null);
@@ -86,54 +89,6 @@ export function errorRowUnion(left: Type, right: Type): ErrorRowType {
   };
 }
 
-export interface ResultTypeInfo {
-  value: Type;
-  error: ErrorRowType;
-}
-
-export function isResultType(type: Type): type is {
-  kind: "constructor";
-  name: "Result";
-  args: [Type, Type];
-} {
-  return type.kind === "constructor" && type.name === "Result" &&
-    type.args.length === 2;
-}
-
-export function makeResultType(value: Type, error?: Type): Type {
-  const errorRow = error ? ensureErrorRow(error) : createErrorRow();
-  return {
-    kind: "constructor",
-    name: "Result",
-    args: [value, errorRow],
-  };
-}
-
-export function flattenResultType(type: Type): ResultTypeInfo | null {
-  if (!isResultType(type)) {
-    return null;
-  }
-  const value = type.args[0];
-  const errorRow = ensureErrorRow(type.args[1]);
-  const inner = flattenResultType(value);
-  if (!inner) {
-    return { value, error: errorRow };
-  }
-  return {
-    value: inner.value,
-    error: errorRowUnion(inner.error, errorRow),
-  };
-}
-
-export function collapseResultType(type: Type): Type {
-  const info = flattenResultType(type);
-  if (!info) {
-    return type;
-  }
-  const collapsedValue = collapseResultType(info.value);
-  return makeResultType(collapsedValue, info.error);
-}
-
 function mergeErrorRowTails(
   left?: Type | null,
   right?: Type | null,
@@ -143,6 +98,577 @@ function mergeErrorRowTails(
   // Prefer the left tail for now; more advanced unification happens at call sites.
   return left;
 }
+
+// ============================================================================
+// Constraint System Types (Phase 1: Unified Constraint Model)
+// ============================================================================
+
+// Identity tracking for resources, borrows, and type holes
+export type Identity =
+  | { kind: "resource"; id: number } // ψ - file handle, allocation, etc.
+  | { kind: "borrow"; id: number } // κ - borrow token
+  | { kind: "hole"; id: number }; // α - type hole (reuses type var IDs)
+
+let nextResourceId = 0;
+let nextBorrowId = 0;
+
+export function freshResource(): Identity {
+  return { kind: "resource", id: nextResourceId++ };
+}
+
+export function freshBorrow(): Identity {
+  return { kind: "borrow", id: nextBorrowId++ };
+}
+
+// Constraint labels - domain-specific constraint states
+// NOTE: Each node has AT MOST ONE constraint label per domain (per-domain singleton invariant)
+// Multiple sources for the same domain are merged using domain-specific rules
+export type ConstraintLabel =
+  // Error domain - reuses existing ErrorRowType structure
+  | { domain: "error"; row: ErrorRowType }
+  // Taint domain - uses same row structure as errors (parallel domain)
+  | { domain: "taint"; row: TaintRowType }
+  // Memory domain - capability tracking (future: Phase 5)
+  | { domain: "mem"; label: string; identity: Identity }
+  // Hole domain - type hole tracking (integration with existing hole system)
+  | { domain: "hole"; identity: Identity; provenance: Provenance };
+
+// Helper constructors for constraint labels
+export function errorLabel(row: ErrorRowType): ConstraintLabel {
+  return { domain: "error", row };
+}
+
+export function taintLabel(row: TaintRowType): ConstraintLabel {
+  return { domain: "taint", row };
+}
+
+export function memLabel(label: string, identity: Identity): ConstraintLabel {
+  return { domain: "mem", label, identity };
+}
+
+export function holeLabel(
+  identity: Identity,
+  provenance: Provenance,
+): ConstraintLabel {
+  return { domain: "hole", identity, provenance };
+}
+
+// Helper: check if two identities are the same
+export function sameIdentity(id1: Identity, id2: Identity): boolean {
+  return id1.kind === id2.kind && id1.id === id2.id;
+}
+
+// Helper: format identity for display
+export function formatIdentity(id: Identity): string {
+  switch (id.kind) {
+    case "resource":
+      return `ψ${id.id}`;
+    case "borrow":
+      return `κ${id.id}`;
+    case "hole":
+      return `α${id.id}`;
+  }
+}
+
+// Helper: format label for display
+export function formatLabel(label: ConstraintLabel): string {
+  switch (label.domain) {
+    case "error":
+      // For error domain, we could format the row constructors
+      return `error:<${Array.from(label.row.cases.keys()).join("|")}>`;
+    case "taint":
+      // For taint domain, format the taint constructors
+      return `taint:<${Array.from(label.row.cases.keys()).join("|")}>`;
+    case "mem":
+      return `${label.label}[${formatIdentity(label.identity)}]`;
+    case "hole":
+      return `Unknown[${formatIdentity(label.identity)}]`;
+  }
+}
+
+// ============================================================================
+// End of Constraint System Types
+// ============================================================================
+
+// ============================================================================
+// Generic Carrier Type System (Infectious Types)
+// ============================================================================
+//
+// Carrier types "carry" constraint information at the value level.
+// Examples: Result<T, E>, Option<T>, Tainted<T>
+//
+// This generalizes the hardcoded Result-specific code to work with any
+// infectious type domain.
+
+export interface CarrierInfo {
+  // The "clean" value type (e.g., T from Result<T, E>)
+  value: Type;
+  // The constraint state type (e.g., E from Result<T, E>)
+  state: Type;
+}
+
+export interface CarrierOperations {
+  // Check if a type is this carrier
+  is: (type: Type) => boolean;
+  // Split carrier into value and state: Result<T, E> → {value: T, state: E}
+  split: (type: Type) => CarrierInfo | null;
+  // Join value and state into carrier: T + E → Result<T, E>
+  join: (value: Type, state: Type) => Type;
+  // Remove carrier wrapper: Result<T, E> → T (strips state)
+  collapse: (type: Type) => Type;
+  // Union two state types: E1 ∪ E2 → E3
+  unionStates: (left: Type, right: Type) => Type;
+}
+
+// Registry of carrier types by domain
+const CARRIER_REGISTRY = new Map<string, CarrierOperations>();
+
+export function registerCarrier(domain: string, ops: CarrierOperations): void {
+  CARRIER_REGISTRY.set(domain, ops);
+}
+
+export function getCarrier(domain: string): CarrierOperations | undefined {
+  return CARRIER_REGISTRY.get(domain);
+}
+
+export function findCarrierDomain(type: Type): string | null {
+  for (const [domain, ops] of CARRIER_REGISTRY.entries()) {
+    if (ops.is(type)) {
+      return domain;
+    }
+  }
+  return null;
+}
+
+// Generic carrier operations (work with any registered carrier)
+export interface GenericCarrierInfo {
+  domain: string;
+  value: Type;
+  state: Type;
+}
+
+// Split any carrier type into domain + value + state
+export function splitCarrier(type: Type): GenericCarrierInfo | null {
+  const domain = findCarrierDomain(type);
+  if (!domain) return null;
+
+  const ops = getCarrier(domain);
+  if (!ops) return null;
+
+  const info = ops.split(type);
+  if (!info) return null;
+
+  return {
+    domain,
+    value: info.value,
+    state: info.state,
+  };
+}
+
+// Join value and state into appropriate carrier for domain
+export function joinCarrier(
+  domain: string,
+  value: Type,
+  state: Type,
+): Type | null {
+  const ops = getCarrier(domain);
+  if (!ops) return null;
+  return ops.join(value, state);
+}
+
+// Collapse any carrier type (remove wrapper, keep state)
+export function collapseCarrier(type: Type): Type {
+  const domain = findCarrierDomain(type);
+  if (!domain) return type;
+
+  const ops = getCarrier(domain);
+  if (!ops) return type;
+
+  return ops.collapse(type);
+}
+
+// Check if a type is ANY carrier type
+export function isCarrierType(type: Type): boolean {
+  return findCarrierDomain(type) !== null;
+}
+
+// Check if a type has a specific carrier domain
+export function hasCarrierDomain(type: Type, domain: string): boolean {
+  return findCarrierDomain(type) === domain;
+}
+
+// Union two carrier states using domain-specific logic
+export function unionCarrierStates(
+  domain: string,
+  left: Type,
+  right: Type,
+): Type | null {
+  const ops = getCarrier(domain);
+  if (!ops) return null;
+  return ops.unionStates(left, right);
+}
+
+// ============================================================================
+// Result<T, E> Carrier (Error Domain)
+// ============================================================================
+
+// Result carrier operations (refactored from hardcoded functions)
+const ResultCarrier: CarrierOperations = {
+  is: (type: Type): boolean => {
+    return type.kind === "constructor" && type.name === "Result" &&
+      type.args.length === 2;
+  },
+
+  split: (type: Type): CarrierInfo | null => {
+    if (!ResultCarrier.is(type)) {
+      return null;
+    }
+    const resultType = type as Extract<Type, { kind: "constructor" }>;
+    const value = resultType.args[0];
+    const errorRow = ensureRow(resultType.args[1]);
+
+    // Handle nested Results by flattening
+    const inner = ResultCarrier.split(value);
+    if (!inner) {
+      return { value, state: errorRow };
+    }
+    return {
+      value: inner.value,
+      state: errorRowUnion(inner.state, errorRow),
+    };
+  },
+
+  join: (value: Type, state: Type): Type => {
+    const errorRow = ensureRow(state);
+    return {
+      kind: "constructor",
+      name: "Result",
+      args: [value, errorRow],
+    };
+  },
+
+  collapse: (type: Type): Type => {
+    const info = ResultCarrier.split(type);
+    if (!info) {
+      return type;
+    }
+    const collapsedValue = ResultCarrier.collapse(info.value);
+    return ResultCarrier.join(collapsedValue, info.state);
+  },
+
+  unionStates: (left: Type, right: Type): Type => {
+    return errorRowUnion(left, right);
+  },
+};
+
+// Register Result carrier for error domain
+registerCarrier("error", ResultCarrier);
+
+// ============================================================================
+// Tainted<T, TaintRow> Carrier (Taint Domain)
+// ============================================================================
+
+// Taint row type - identical structure to error row
+export type TaintRowType = Extract<Type, { kind: "error_row" }>;
+
+export function isTaintRow(type: Type): type is TaintRowType {
+  return type.kind === "error_row";
+}
+
+export function createTaintRow(
+  entries: Iterable<[string, Type | null]> = [],
+  tail?: Type | null,
+): TaintRowType {
+  return {
+    kind: "error_row",
+    cases: new Map(entries),
+    tail,
+  };
+}
+
+// Note: ensureTaintRow removed - use internal ensureRow() instead
+
+export function taintRowUnion(left: Type, right: Type): TaintRowType {
+  const lhs = ensureRow(left);
+  const rhs = ensureRow(right);
+  const merged = new Map<string, Type | null>();
+  for (const [label, payload] of lhs.cases.entries()) {
+    merged.set(label, payload ? cloneType(payload) : null);
+  }
+  for (const [label, payload] of rhs.cases.entries()) {
+    if (!merged.has(label)) {
+      merged.set(label, payload ? cloneType(payload) : null);
+      continue;
+    }
+    const existing = merged.get(label);
+    if (!existing && payload) {
+      merged.set(label, cloneType(payload));
+    }
+  }
+  return {
+    kind: "error_row",
+    cases: merged,
+    tail: lhs.tail || rhs.tail,
+  };
+}
+
+// Tainted carrier operations (parallel to Result)
+const TaintedCarrier: CarrierOperations = {
+  is: (type: Type): boolean => {
+    return type.kind === "constructor" && type.name === "Tainted" &&
+      type.args.length === 2;
+  },
+
+  split: (type: Type): CarrierInfo | null => {
+    if (!TaintedCarrier.is(type)) {
+      return null;
+    }
+    const taintedType = type as Extract<Type, { kind: "constructor" }>;
+    const value = taintedType.args[0];
+    const taintRow = ensureRow(taintedType.args[1]);
+
+    // Handle nested Tainted by flattening
+    const inner = TaintedCarrier.split(value);
+    if (!inner) {
+      return { value, state: taintRow };
+    }
+    return {
+      value: inner.value,
+      state: taintRowUnion(inner.state, taintRow),
+    };
+  },
+
+  join: (value: Type, state: Type): Type => {
+    const taintRow = ensureRow(state);
+    return {
+      kind: "constructor",
+      name: "Tainted",
+      args: [value, taintRow],
+    };
+  },
+
+  collapse: (type: Type): Type => {
+    const info = TaintedCarrier.split(type);
+    if (!info) {
+      return type;
+    }
+    const collapsedValue = TaintedCarrier.collapse(info.value);
+    return TaintedCarrier.join(collapsedValue, info.state);
+  },
+
+  unionStates: (left: Type, right: Type): Type => {
+    return taintRowUnion(left, right);
+  },
+};
+
+// Register Tainted carrier for taint domain
+registerCarrier("taint", TaintedCarrier);
+
+// ============================================================================
+// Public API for Tainted type
+// ============================================================================
+
+export interface TaintedTypeInfo {
+  value: Type;
+  taint: TaintRowType;
+}
+
+export function isTaintedType(type: Type): boolean {
+  return TaintedCarrier.is(type);
+}
+
+export function flattenTaintedType(type: Type): TaintedTypeInfo | null {
+  const info = TaintedCarrier.split(type);
+  if (!info) return null;
+  return { value: info.value, taint: info.state as TaintRowType };
+}
+
+export function makeTaintedType(value: Type, taint?: Type): Type {
+  const taintRow = taint ? ensureRow(taint) : createTaintRow();
+  return TaintedCarrier.join(value, taintRow);
+}
+
+export function collapseTaintedType(type: Type): Type {
+  return TaintedCarrier.collapse(type);
+}
+
+// ============================================================================
+// Hole<T, HoleRow> Carrier (Hole Domain)
+// ============================================================================
+// Represents incomplete/unknown types that propagate through expressions.
+// Instead of using { kind: "unknown", provenance }, we model this as
+// Hole<T, HoleRow> where T is the "best guess" type and HoleRow tracks
+// reasons for incompleteness.
+
+// HoleRow uses the same error_row structure but with provenance labels
+export type HoleRowType = ErrorRowType;
+
+export function createHoleRow(
+  cases?: Map<string, Type | null>,
+  tail?: Type | null,
+): HoleRowType {
+  return {
+    kind: "error_row",
+    cases: cases ?? new Map(),
+    tail,
+  };
+}
+
+export function holeRowUnion(left: Type, right: Type): HoleRowType {
+  const lhs = ensureRow(left);
+  const rhs = ensureRow(right);
+  const merged = new Map<string, Type | null>();
+  for (const [label, payload] of lhs.cases.entries()) {
+    merged.set(label, payload ? cloneType(payload) : null);
+  }
+  for (const [label, payload] of rhs.cases.entries()) {
+    if (!merged.has(label)) {
+      merged.set(label, payload ? cloneType(payload) : null);
+      continue;
+    }
+    const existing = merged.get(label);
+    if (!existing && payload) {
+      merged.set(label, cloneType(payload));
+    }
+  }
+  return {
+    kind: "error_row",
+    cases: merged,
+    tail: mergeErrorRowTails(lhs.tail, rhs.tail),
+  };
+}
+
+const HoleCarrier: CarrierOperations = {
+  is: (type: Type): boolean => {
+    return type.kind === "constructor" && type.name === "Hole" &&
+      type.args.length === 2;
+  },
+
+  split: (type: Type): CarrierInfo | null => {
+    if (!HoleCarrier.is(type)) {
+      return null;
+    }
+    const holeType = type as Extract<Type, { kind: "constructor" }>;
+    const value = holeType.args[0];
+    const holeRow = ensureRow(holeType.args[1]);
+
+    // Handle nested Holes by flattening
+    const inner = HoleCarrier.split(value);
+    if (!inner) {
+      return { value, state: holeRow };
+    }
+    return {
+      value: inner.value,
+      state: holeRowUnion(inner.state, holeRow),
+    };
+  },
+
+  join: (value: Type, state: Type): Type => {
+    const holeRow = ensureRow(state);
+    return {
+      kind: "constructor",
+      name: "Hole",
+      args: [value, holeRow],
+    };
+  },
+
+  collapse: (type: Type): Type => {
+    const info = HoleCarrier.split(type);
+    if (!info) {
+      return type;
+    }
+    const collapsedValue = HoleCarrier.collapse(info.value);
+    return HoleCarrier.join(collapsedValue, info.state);
+  },
+
+  unionStates: (left: Type, right: Type): Type => {
+    return holeRowUnion(left, right);
+  },
+};
+
+// Register Hole carrier for hole domain
+registerCarrier("hole", HoleCarrier);
+
+// ============================================================================
+// Public API for Hole type
+// ============================================================================
+
+export interface HoleTypeInfo {
+  value: Type;
+  holeRow: HoleRowType;
+}
+
+export function isHoleType(type: Type): boolean {
+  return HoleCarrier.is(type);
+}
+
+export function flattenHoleType(type: Type): HoleTypeInfo | null {
+  const info = HoleCarrier.split(type);
+  if (!info) return null;
+  return { value: info.value, holeRow: info.state as HoleRowType };
+}
+
+export function makeHoleType(value: Type, holeRow?: Type): Type {
+  const row = holeRow ? ensureRow(holeRow) : createHoleRow();
+  return HoleCarrier.join(value, row);
+}
+
+export function collapseHoleType(type: Type): Type {
+  return HoleCarrier.collapse(type);
+}
+
+// Helper: Extract provenance from hole type
+export function getProvenance(type: Type): Provenance | null {
+  const holeInfo = flattenHoleType(type);
+  if (!holeInfo) return null;
+  // Extract provenance from hole row labels (JSON-encoded)
+  for (const label of holeInfo.holeRow.cases.keys()) {
+    if (label.startsWith("hole:")) {
+      try {
+        return JSON.parse(label.substring(5)) as Provenance;
+      } catch {
+        // If parsing fails, return incomplete provenance
+        return { kind: "incomplete", reason: "invalid_provenance" };
+      }
+    }
+  }
+  // If no hole: prefix found, return a default
+  return { kind: "incomplete", reason: "no_provenance" };
+}
+
+// ============================================================================
+// Backward Compatibility: Keep old Result functions as wrappers
+// ============================================================================
+// These are now thin wrappers around the generic carrier system
+
+export interface ResultTypeInfo {
+  value: Type;
+  error: ErrorRowType;
+}
+
+export function isResultType(type: Type): boolean {
+  return ResultCarrier.is(type);
+}
+
+export function flattenResultType(type: Type): ResultTypeInfo | null {
+  const info = ResultCarrier.split(type);
+  if (!info) return null;
+  // Convert state back to error for API compatibility
+  return { value: info.value, error: info.state as ErrorRowType };
+}
+
+export function makeResultType(value: Type, error?: Type): Type {
+  const errorRow = error ? ensureRow(error) : createErrorRow();
+  return ResultCarrier.join(value, errorRow);
+}
+
+export function collapseResultType(type: Type): Type {
+  return ResultCarrier.collapse(type);
+}
+
+// ============================================================================
+// End of Carrier Type System
+// ============================================================================
 
 let nextTypeVarId = 0;
 
@@ -155,7 +681,15 @@ export function freshTypeVar(): Type {
 }
 
 export function unknownType(provenance: Provenance): Type {
-  return { kind: "unknown", provenance };
+  // NEW: Model unknown types as Hole<α, provenance>
+  // Instead of { kind: "unknown", provenance }, use Hole carrier
+  // Store provenance as JSON-encoded label for recovery
+  const provenanceLabel = `hole:${JSON.stringify(provenance)}`;
+  const holeRow = createHoleRow(
+    new Map([[provenanceLabel, null]]),
+  );
+  const valueVar = freshTypeVar(); // The "best guess" type
+  return makeHoleType(valueVar, holeRow);
 }
 
 export function applySubstitution(type: Type, subst: Substitution): Type {
@@ -245,8 +779,6 @@ export function applySubstitution(type: Type, subst: Substitution): Type {
         tail: nextTail,
       };
     }
-    case "unknown":
-      return type;
     default:
       return type;
   }
@@ -310,8 +842,6 @@ export function occursInType(id: number, type: Type): boolean {
         }
       }
       return type.tail ? occursInType(id, type.tail) : false;
-    case "unknown":
-      return false;
     default:
       return false;
   }
@@ -342,8 +872,6 @@ export function freeTypeVars(type: Type): Set<number> {
       const tailSet = type.tail ? [freeTypeVars(type.tail)] : [];
       return unionMany([...caseSets, ...tailSet]);
     }
-    case "unknown":
-      return new Set();
     default:
       return new Set();
   }
@@ -451,11 +979,6 @@ export function cloneType(type: Type): Type {
         tail: type.tail ? cloneType(type.tail) : undefined,
       };
     }
-    case "unknown":
-      return {
-        kind: "unknown",
-        provenance: cloneProvenance(type.provenance),
-      };
     case "unit":
       return { kind: "unit" };
     case "int":
@@ -551,8 +1074,6 @@ export function typeToString(type: Type): string {
       }
       return `<${rendered.join(" | ")}>`;
     }
-    case "unknown":
-      return provenanceToString(type.provenance);
     default: {
       const _exhaustive: never = type;
       return _exhaustive;

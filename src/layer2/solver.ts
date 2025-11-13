@@ -23,12 +23,24 @@ import type {
 import {
   applySubstitution,
   cloneType,
+  ConstraintLabel,
+  errorLabel,
   type ErrorRowType,
   errorRowUnion,
   flattenResultType,
+  flattenTaintedType,
+  formatLabel,
+  getProvenance,
+  Identity,
+  isHoleType,
   makeResultType,
+  makeTaintedType,
   occursInType,
+  sameIdentity,
   type Substitution,
+  taintLabel,
+  type TaintRowType,
+  taintRowUnion,
   type Type,
   unknownType,
 } from "../types.ts";
@@ -37,6 +49,8 @@ import type {
   ConstraintDiagnosticReason,
 } from "../diagnostics.ts";
 import type { NodeId } from "../ast.ts";
+import { areIncompatible, conflictMessage } from "./conflict_rules.ts";
+import { BOUNDARY_RULES } from "./boundary_rules.ts";
 
 export interface ConstraintConflict {
   holeId: HoleId;
@@ -158,12 +172,34 @@ export function solveConstraints(input: SolveInput): SolverResult {
     resolvedNodeTypes.set(nodeId, cloneType(resolved));
   }
 
-  enforceInfectiousMetadata(
+  // PHASE 5: NEW Constraint Propagation System (parallel to existing)
+  // Build constraint flow graph
+  const constraintFlow = buildConstraintFlow(input.constraintStubs);
+
+  // Propagate constraints using single-pass algorithm
+  propagateConstraints(constraintFlow, input.constraintStubs);
+
+  // Detect conflicts (multi-domain)
+  detectConstraintConflicts(constraintFlow, state.diagnostics);
+
+  // Check return boundaries
+  checkReturnBoundaries(
+    constraintFlow,
+    resolvedNodeTypes,
+    input.markedProgram,
+    state.diagnostics,
+  );
+
+  // Additional checking for annotations and matches (backward compatibility with test expectations)
+  checkInfectiousAnnotations(
     input.constraintStubs,
+    constraintFlow,
     resolvedNodeTypes,
     input.nodeTypeById,
     state.diagnostics,
   );
+
+  // Phase 8: Old system removed - new constraint system fully handles infectious types
 
   // Detect conflicts in unknown types
   const conflicts = detectConflicts(
@@ -196,7 +232,7 @@ export function solveConstraints(input: SolveInput): SolverResult {
         conflicts: holeConflicts,
         provenance: info,
       });
-    } else if (!nodeType || nodeType.kind === "unknown") {
+    } else if (!nodeType || isHoleType(nodeType)) {
       // Try to build partial solution
       const partial = buildPartialSolution(
         holeId,
@@ -256,20 +292,17 @@ function transformTypeWithSolutions(
   type: Type,
   solutions: Map<HoleId, HoleSolution>,
 ): Type {
-  if (type.kind === "unknown") {
+  if (isHoleType(type)) {
     const holeId = extractHoleIdFromType(type);
     if (holeId !== undefined) {
       const solution = solutions.get(holeId);
       if (solution?.state === "conflicted") {
         // Replace with unfillable_hole marker (constraint conflict)
-        return {
-          kind: "unknown",
-          provenance: {
-            kind: "error_unfillable_hole",
-            holeId,
-            conflicts: solution.conflicts || [],
-          },
-        };
+        return unknownType({
+          kind: "error_unfillable_hole",
+          holeId,
+          conflicts: solution.conflicts || [],
+        });
       } else if (solution?.state === "partial" && solution.partial?.known) {
         // Use the partial type
         return solution.partial.known;
@@ -348,7 +381,6 @@ function solveCallConstraint(
 
   const extraDetails = {
     argumentIndex: stub.index,
-    argumentErrorRow: stub.argumentErrorRow,
   };
   registerUnifyFailure(state, stub.origin, unified.reason, extraDetails);
 }
@@ -380,7 +412,7 @@ function solveHasFieldConstraint(
     return;
   }
 
-  if (targetValue.kind === "var" || targetValue.kind === "unknown") {
+  if (targetValue.kind === "var" || isHoleType(targetValue)) {
     const fields = new Map<string, Type>();
     fields.set(stub.field, projectedValue ?? result);
     const recordType: Type = { kind: "record", fields };
@@ -496,8 +528,8 @@ function solveNumericConstraint(
     const operandInfo = flattenResultType(operandType);
     const operandValue = operandInfo ? operandInfo.value : operandType;
 
-    // Skip unknown types - they'll be constrained elsewhere or represent holes
-    if (operandValue.kind === "unknown") {
+    // Skip hole types - they'll be constrained elsewhere or represent holes
+    if (isHoleType(operandValue)) {
       continue;
     }
 
@@ -716,10 +748,10 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
     return { success: true, subst };
   }
 
-  if (resolvedLeft.kind === "unknown") {
+  if (isHoleType(resolvedLeft)) {
     return { success: true, subst };
   }
-  if (resolvedRight.kind === "unknown") {
+  if (isHoleType(resolvedRight)) {
     return { success: true, subst };
   }
 
@@ -922,8 +954,6 @@ function typesEqual(a: Type, b: Type): boolean {
       }
       return typesEqual(a.tail, b.tail);
     }
-    case "unknown":
-      return b.kind === "unknown" && a.provenance === b.provenance;
     default:
       return true;
   }
@@ -1141,39 +1171,284 @@ function remarkType(
   if (!replacement) {
     return;
   }
-  if (node.type.kind === "unknown" && replacement.kind !== "unknown") {
+  if (isHoleType(node.type) && !isHoleType(replacement)) {
     node.type = replacement;
   }
 }
 
-function enforceInfectiousMetadata(
+// ============================================================================
+// Phase 3: Constraint Flow Graph (Unified Constraint Model)
+// ============================================================================
+
+// Constraint flow graph representation
+interface ConstraintFlow {
+  // Which labels are on which nodes
+  // IMPORTANT: Per-domain singleton - each node has at most one label per domain
+  labels: Map<NodeId, Map<string, ConstraintLabel>>; // domain → label
+
+  // Flow edges (from → to)
+  edges: Map<NodeId, Set<NodeId>>;
+
+  // Rewrites to apply at each node
+  rewrites: Map<NodeId, { remove: ConstraintLabel[]; add: ConstraintLabel[] }>;
+
+  // Alias equivalence classes (union-find) - future use for memory domain
+  aliases: Map<number, number>; // Simple parent-pointer structure
+}
+
+function buildConstraintFlow(stubs: ConstraintStub[]): ConstraintFlow {
+  const flow: ConstraintFlow = {
+    labels: new Map(),
+    edges: new Map(),
+    rewrites: new Map(),
+    aliases: new Map(),
+  };
+
+  // Phase 1: Collect sources
+  for (const stub of stubs) {
+    if (stub.kind === "constraint_source") {
+      const domainMap = flow.labels.get(stub.node) ?? new Map();
+
+      // Per-domain singleton: merge if already exists
+      const existing = domainMap.get(stub.label.domain);
+      if (existing && stub.label.domain === "error") {
+        // Error domain: union rows
+        const merged = errorRowUnion(existing.row, stub.label.row);
+        domainMap.set("error", errorLabel(merged));
+      } else if (existing && stub.label.domain === "taint") {
+        // Taint domain: union rows (same as error)
+        const merged = taintRowUnion(existing.row, stub.label.row);
+        domainMap.set("taint", taintLabel(merged));
+      } else {
+        domainMap.set(stub.label.domain, stub.label);
+      }
+
+      flow.labels.set(stub.node, domainMap);
+    }
+  }
+
+  // Phase 2: Collect flow edges
+  for (const stub of stubs) {
+    if (stub.kind === "constraint_flow") {
+      const existing = flow.edges.get(stub.from) ?? new Set();
+      existing.add(stub.to);
+      flow.edges.set(stub.from, existing);
+    }
+  }
+
+  // Phase 3: Collect rewrites
+  for (const stub of stubs) {
+    if (stub.kind === "constraint_rewrite") {
+      flow.rewrites.set(stub.node, {
+        remove: stub.remove,
+        add: stub.add,
+      });
+    }
+  }
+
+  // Phase 4: Build alias map (simple union-find) - future use
+  for (const stub of stubs) {
+    if (stub.kind === "constraint_alias") {
+      // Simple implementation: just record pairs
+      // More sophisticated union-find would be needed for complex cases
+      const id1 = identityToNumber(stub.id1);
+      const id2 = identityToNumber(stub.id2);
+      flow.aliases.set(id1, id2);
+    }
+  }
+
+  return flow;
+}
+
+// Helper: convert Identity to a comparable number
+function identityToNumber(id: Identity): number {
+  switch (id.kind) {
+    case "resource":
+      return id.id;
+    case "borrow":
+      return 1000000 + id.id; // Offset to avoid collision
+    case "hole":
+      return 2000000 + id.id; // Offset to avoid collision
+  }
+}
+
+function propagateConstraints(
+  flow: ConstraintFlow,
   stubs: ConstraintStub[],
+): void {
+  // CRITICAL: Process stubs in creation order (follows inference traversal)
+  // This gives parent-before-child ordering for nested matches
+
+  for (const stub of stubs) {
+    if (stub.kind === "constraint_source") {
+      // Labels already added during buildConstraintFlow
+      // Nothing to do here
+    } else if (stub.kind === "constraint_flow") {
+      // Propagate from source to target
+      const fromLabels = flow.labels.get(stub.from);
+      if (!fromLabels) continue;
+
+      const toLabels = flow.labels.get(stub.to) ?? new Map();
+
+      for (const [domain, label] of fromLabels.entries()) {
+        const existing = toLabels.get(domain);
+        if (existing && domain === "error") {
+          // Error domain: union rows
+          if (existing.domain === "error" && label.domain === "error") {
+            const merged = errorRowUnion(existing.row, label.row);
+            toLabels.set("error", errorLabel(merged));
+          }
+        } else if (existing && domain === "taint") {
+          // Taint domain: union rows (same as error)
+          if (existing.domain === "taint" && label.domain === "taint") {
+            const merged = taintRowUnion(existing.row, label.row);
+            toLabels.set("taint", taintLabel(merged));
+          }
+        } else if (!existing) {
+          toLabels.set(domain, label);
+        }
+        // Other domains: handle in their conflict rules
+      }
+      flow.labels.set(stub.to, toLabels);
+    } else if (stub.kind === "constraint_rewrite") {
+      // Apply rewrite DURING propagation (critical for nested matches)
+      const labels = flow.labels.get(stub.node);
+      if (!labels) continue;
+
+      for (const removeLabel of stub.remove) {
+        labels.delete(removeLabel.domain); // Remove by domain
+      }
+      for (const addLabel of stub.add) {
+        labels.set(addLabel.domain, addLabel);
+      }
+    } else if (stub.kind === "branch_join") {
+      // Union labels from all branches
+      const merged = new Map<string, ConstraintLabel>();
+
+      for (const branchId of stub.branches) {
+        const branchLabels = flow.labels.get(branchId);
+        if (!branchLabels) continue;
+
+        for (const [domain, label] of branchLabels.entries()) {
+          const existing = merged.get(domain);
+          if (existing && domain === "error") {
+            // Error domain: union rows
+            if (existing.domain === "error" && label.domain === "error") {
+              const unionRow = errorRowUnion(existing.row, label.row);
+              merged.set("error", errorLabel(unionRow));
+            }
+          } else if (existing && domain === "taint") {
+            // Taint domain: union rows (same as error)
+            if (existing.domain === "taint" && label.domain === "taint") {
+              const unionRow = taintRowUnion(existing.row, label.row);
+              merged.set("taint", taintLabel(unionRow));
+            }
+          } else if (!existing) {
+            merged.set(domain, label);
+          }
+          // Other domains: conflict checking happens later
+        }
+      }
+      flow.labels.set(stub.origin, merged);
+    }
+  }
+}
+
+function detectConstraintConflicts(
+  flow: ConstraintFlow,
+  diagnostics: ConstraintDiagnostic[],
+): void {
+  // Check conflicts at every node
+  for (const [node, domainLabels] of flow.labels.entries()) {
+    // Convert Map<string, ConstraintLabel> to array for pairwise checking
+    const labelArray = Array.from(domainLabels.values());
+
+    // Check pairs within each node
+    for (let i = 0; i < labelArray.length; i++) {
+      for (let j = i + 1; j < labelArray.length; j++) {
+        const label1 = labelArray[i];
+        const label2 = labelArray[j];
+
+        if (areIncompatible(label1, label2)) {
+          diagnostics.push({
+            origin: node,
+            reason: "incompatible_constraints" as ConstraintDiagnosticReason,
+            details: {
+              label1: formatLabel(label1),
+              label2: formatLabel(label2),
+              message: conflictMessage(label1, label2),
+            },
+          });
+        }
+      }
+    }
+  }
+}
+
+function checkReturnBoundaries(
+  flow: ConstraintFlow,
+  resolved: Map<NodeId, Type>,
+  program: MProgram,
+  diagnostics: ConstraintDiagnostic[],
+): void {
+  // Walk all function declarations (top-level and nested)
+  function checkFunction(decl: MLetDeclaration) {
+    // Return position is body.result or body itself
+    const returnNodeId = decl.body.result?.id ?? decl.body.id;
+    const labels = flow.labels.get(returnNodeId);
+    const returnType = resolved.get(returnNodeId);
+
+    if (!labels || !returnType) return;
+
+    // Check each domain's boundary rules
+    for (const [_domain, rule] of BOUNDARY_RULES.entries()) {
+      // Convert Map<string, ConstraintLabel> to Set<ConstraintLabel> for rules
+      const labelSet = new Set(labels.values());
+      const error = rule.check(labelSet, returnType);
+      if (error) {
+        diagnostics.push({
+          origin: returnNodeId,
+          reason: "boundary_violation" as ConstraintDiagnosticReason,
+          details: {
+            domain: _domain,
+            message: error,
+            functionName: decl.name, // Include function name in error
+          },
+        });
+      }
+    }
+
+    // Recursively check nested functions
+    if (decl.body.kind === "block") {
+      for (const stmt of decl.body.statements) {
+        if (stmt.kind === "let_statement") {
+          checkFunction(stmt.declaration);
+        }
+      }
+    }
+  }
+
+  // Check all top-level declarations
+  for (const topLevel of program.declarations) {
+    if (topLevel.kind === "let") {
+      checkFunction(topLevel);
+    }
+  }
+}
+
+// ============================================================================
+// Infectious Annotation Checking (Backward Compatibility)
+// ============================================================================
+// This function provides the same error messages as the old enforceInfectiousMetadata
+// for annotation and match mismatches, ensuring backward compatibility with tests.
+
+function checkInfectiousAnnotations(
+  stubs: ConstraintStub[],
+  flow: ConstraintFlow,
   resolved: Map<NodeId, Type>,
   original: Map<NodeId, Type>,
   diagnostics: ConstraintDiagnostic[],
 ): void {
-  const infectiousCalls = new Map<NodeId, ErrorRowType>();
-  const dischargedMatches = new Map<NodeId, ErrorRowCoverageStub | undefined>();
-
-  for (const stub of stubs) {
-    if (stub.kind === "call" && stub.argumentErrorRow) {
-      const existing = infectiousCalls.get(stub.result);
-      if (existing) {
-        infectiousCalls.set(
-          stub.result,
-          errorRowUnion(existing, stub.argumentErrorRow),
-        );
-      } else {
-        infectiousCalls.set(
-          stub.result,
-          cloneType(stub.argumentErrorRow) as ErrorRowType,
-        );
-      }
-    } else if (stub.kind === "branch_join" && stub.dischargesResult) {
-      dischargedMatches.set(stub.origin, stub.errorRowCoverage);
-    }
-  }
-
   const getNodeType = (nodeId: NodeId): Type | undefined => {
     return resolved.get(nodeId) ?? original.get(nodeId);
   };
@@ -1181,14 +1456,22 @@ function enforceInfectiousMetadata(
   const flaggedCalls = new Set<NodeId>();
   const flaggedMatches = new Set<NodeId>();
 
-  const reportInfectiousValue = (
-    nodeId: NodeId,
-    row?: ErrorRowType,
-  ) => {
+  const reportInfectiousCall = (nodeId: NodeId) => {
     if (flaggedCalls.has(nodeId)) {
       return;
     }
     flaggedCalls.add(nodeId);
+
+    // Get error row from constraint labels
+    const labels = flow.labels.get(nodeId);
+    let row: ErrorRowType | undefined;
+    if (labels) {
+      const errorLabel = labels.get("error");
+      if (errorLabel && errorLabel.domain === "error") {
+        row = errorLabel.row;
+      }
+    }
+
     diagnostics.push({
       origin: nodeId,
       reason: "infectious_call_result_mismatch",
@@ -1196,37 +1479,12 @@ function enforceInfectiousMetadata(
     });
   };
 
-  const flagCallNode = (nodeId: NodeId, force = false) => {
-    const nodeType = getNodeType(nodeId);
-    if (!force) {
-      if (!nodeType) {
-        return;
-      }
-      if (flattenResultType(nodeType)) {
-        return;
-      }
-    }
-    const row = infectiousCalls.get(nodeId) ??
-      (nodeType ? flattenResultType(nodeType)?.error : undefined);
-    if (!row) {
+  const reportInfectiousMatch = (
+    nodeId: NodeId,
+    coverage?: ErrorRowCoverageStub,
+  ) => {
+    if (flaggedMatches.has(nodeId)) {
       return;
-    }
-    reportInfectiousValue(nodeId, row);
-  };
-
-  const flagMatchNode = (nodeId: NodeId, force = false) => {
-    const coverage = dischargedMatches.get(nodeId);
-    if (!coverage || flaggedMatches.has(nodeId)) {
-      return;
-    }
-    if (!force) {
-      const nodeType = getNodeType(nodeId);
-      if (!nodeType) {
-        return;
-      }
-      if (!flattenResultType(nodeType)) {
-        return;
-      }
     }
     flaggedMatches.add(nodeId);
     diagnostics.push({
@@ -1239,53 +1497,69 @@ function enforceInfectiousMetadata(
     });
   };
 
-  for (const nodeId of infectiousCalls.keys()) {
-    flagCallNode(nodeId);
-  }
-  for (const nodeId of dischargedMatches.keys()) {
-    flagMatchNode(nodeId);
-  }
+  // Build map of discharged matches
+  const dischargedMatches = new Map<NodeId, ErrorRowCoverageStub | undefined>();
 
   for (const stub of stubs) {
-    switch (stub.kind) {
-      case "annotation": {
-        const annotationType = stub.annotationType ??
-          getNodeType(stub.annotation) ??
-          getNodeType(stub.origin);
-        if (!annotationType) {
-          break;
+    // Track matches that claim to discharge
+    if (stub.kind === "branch_join" && stub.dischargesResult) {
+      dischargedMatches.set(stub.origin, stub.errorRowCoverage);
+    }
+  }
+
+  // Check annotations
+  for (const stub of stubs) {
+    if (stub.kind === "annotation") {
+      const annotationType = stub.annotationType ??
+        getNodeType(stub.annotation) ??
+        getNodeType(stub.origin);
+      if (!annotationType) {
+        continue;
+      }
+
+      const annotationResultInfo = flattenResultType(annotationType);
+      if (!annotationResultInfo) {
+        // Annotation expects non-Result type
+        // Check if value has error constraints
+        const valueLabels = flow.labels.get(stub.value);
+        if (valueLabels?.has("error")) {
+          reportInfectiousCall(stub.value);
         }
-        const annotationResultInfo = flattenResultType(annotationType);
-        if (!annotationResultInfo) {
+
+        // Check if it's a discharged match
+        if (dischargedMatches.has(stub.value)) {
+          reportInfectiousMatch(stub.value, dischargedMatches.get(stub.value));
+        }
+      } else {
+        // Annotation expects Result type
+        // Check if value is a discharged match (shouldn't be Result anymore)
+        if (dischargedMatches.has(stub.value)) {
           const valueType = getNodeType(stub.value);
-          const valueResultInfo = valueType
-            ? flattenResultType(valueType)
-            : undefined;
-          const originalValueType = original.get(stub.value);
-          const originalValueInfo = originalValueType
-            ? flattenResultType(originalValueType)
-            : undefined;
-          if (valueResultInfo) {
-            reportInfectiousValue(stub.value, valueResultInfo.error);
-          } else if (originalValueInfo) {
-            reportInfectiousValue(stub.value, originalValueInfo.error);
-          } else {
-            flagCallNode(stub.value, true);
+          // If the value type is NOT a Result but annotation expects Result,
+          // then the match discharged when it shouldn't have
+          if (valueType && !flattenResultType(valueType)) {
+            reportInfectiousMatch(
+              stub.value,
+              dischargedMatches.get(stub.value),
+            );
           }
-        } else if (dischargedMatches.has(stub.value)) {
-          flagMatchNode(stub.value, true);
         }
-        break;
       }
-      case "has_field": {
-        flagCallNode(stub.target);
-        break;
-      }
-      default:
-        break;
     }
   }
 }
+
+// ============================================================================
+// End of Constraint Flow Graph
+// ============================================================================
+// Old System Removed - Replaced by Unified Constraint System
+// The old enforceInfectiousMetadata function has been removed.
+// All infectious type checking is now handled by:
+// - buildConstraintFlow()
+// - propagateConstraints()
+// - detectConstraintConflicts()
+// - checkReturnBoundaries()
+// ============================================================================
 
 function detectConflicts(
   holes: Map<HoleId, UnknownInfo>,
@@ -1363,7 +1637,7 @@ function getReferencedHoles(
 
   const checkType = (nodeId: NodeId) => {
     const type = resolvedTypes.get(nodeId);
-    if (type?.kind === "unknown") {
+    if (type && isHoleType(type)) {
       // Extract the actual hole ID from the provenance
       const holeId = extractHoleIdFromType(type);
       if (holeId !== undefined && !seen.has(holeId)) {
@@ -1408,22 +1682,25 @@ function getReferencedHoles(
  * This handles error provenances that wrap the underlying hole.
  */
 function extractHoleIdFromType(type: Type): HoleId | undefined {
-  if (type.kind !== "unknown") {
+  if (!isHoleType(type)) {
     return undefined;
   }
 
-  const prov = type.provenance;
+  const prov = getProvenance(type);
+  if (!prov) return undefined;
+
   if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
-    return (prov as any).id;
+    return (prov as Record<string, unknown>).id as HoleId;
   } else if (prov.kind === "incomplete") {
-    return (prov as any).nodeId;
+    return (prov as Record<string, unknown>).nodeId as HoleId;
   } else if (
     prov.kind === "error_not_function" || prov.kind === "error_inconsistent"
   ) {
     // Unwrap error provenance to get the underlying hole
-    const innerType = (prov as any).calleeType || (prov as any).actual;
-    if (innerType?.kind === "unknown") {
-      return extractHoleIdFromType(innerType);
+    const innerType = (prov as Record<string, unknown>).calleeType ||
+      (prov as Record<string, unknown>).actual;
+    if (innerType && isHoleType(innerType as Type)) {
+      return extractHoleIdFromType(innerType as Type);
     }
   }
 
@@ -1439,7 +1716,7 @@ function extractConstrainedTypes(
 
   const nodeContainsHole = (nodeId: NodeId): boolean => {
     const type = resolvedTypes.get(nodeId);
-    if (type?.kind === "unknown") {
+    if (type && isHoleType(type)) {
       return extractHoleIdFromType(type) === holeId;
     }
     return false;
@@ -1462,7 +1739,7 @@ function extractConstrainedTypes(
       if (nodeContainsHole(constraint.value)) {
         const annotationType = constraint.annotationType ??
           resolvedTypes.get(constraint.annotation);
-        if (annotationType && annotationType.kind !== "unknown") {
+        if (annotationType && !isHoleType(annotationType)) {
           types.push(annotationType);
         }
       }

@@ -5,7 +5,7 @@ import { LexError, WorkmanError } from "./src/error.ts";
 import { formatScheme } from "./src/type_printer.ts";
 import { evaluateProgram } from "./src/eval.ts";
 import { formatRuntimeValue } from "./src/value_printer.ts";
-import { cloneType } from "./src/types.ts";
+import { cloneType, getProvenance, isHoleType } from "./src/types.ts";
 import type { Type, TypeScheme } from "./src/types.ts";
 import type { RuntimeValue } from "./src/value.ts";
 import { startRepl } from "./tools/repl.ts";
@@ -43,20 +43,21 @@ export interface ValueSummary {
 }
 
 function holeIdFromUnknown(type: Type): number | undefined {
-  const prov = (type as any).provenance;
+  const prov = getProvenance(type);
   if (!prov) return undefined;
   if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
-    return prov.id;
+    return (prov as Record<string, unknown>).id as number;
   }
   if (prov.kind === "incomplete") {
-    return prov.nodeId;
+    return (prov as Record<string, unknown>).nodeId as number;
   }
   if (
     prov.kind === "error_not_function" || prov.kind === "error_inconsistent"
   ) {
-    const inner = prov.calleeType ?? prov.actual;
-    if (inner?.kind === "unknown") {
-      return holeIdFromUnknown(inner);
+    const inner = (prov as Record<string, unknown>).calleeType ??
+      (prov as Record<string, unknown>).actual;
+    if (inner && isHoleType(inner as Type)) {
+      return holeIdFromUnknown(inner as Type);
     }
   }
   return undefined;
@@ -95,26 +96,33 @@ function substituteHoleSolutionsInType(
       }
       return { kind: "record", fields: updated };
     }
-    case "unknown": {
-      const holeId = holeIdFromUnknown(type);
-      if (holeId !== undefined) {
-        const solution = layer3.holeSolutions.get(holeId);
-        if (solution?.state === "partial" && solution.partial?.known) {
-          return substituteHoleSolutionsInType(solution.partial.known, layer3);
-        }
-        if (solution?.state === "conflicted" && solution.conflicts?.length) {
-          return type;
-        }
-      }
-      if (type.provenance.kind === "error_inconsistent") {
-        const expected = (type.provenance as any).expected;
-        if (expected) {
-          return substituteHoleSolutionsInType(expected, layer3);
-        }
-      }
-      return type;
-    }
     default:
+      // Handle holes via carrier check (no longer a separate kind)
+      if (isHoleType(type)) {
+        const holeId = holeIdFromUnknown(type);
+        if (holeId !== undefined) {
+          const solution = layer3.holeSolutions.get(holeId);
+          if (solution?.state === "partial" && solution.partial?.known) {
+            return substituteHoleSolutionsInType(
+              solution.partial.known,
+              layer3,
+            );
+          }
+          if (solution?.state === "conflicted" && solution.conflicts?.length) {
+            return type;
+          }
+        }
+        const prov = getProvenance(type);
+        if (prov?.kind === "error_inconsistent") {
+          const expected = (prov as Record<string, unknown>).expected as
+            | Type
+            | undefined;
+          if (expected) {
+            return substituteHoleSolutionsInType(expected, layer3);
+          }
+        }
+        return type;
+      }
       return type;
   }
 }
@@ -140,29 +148,8 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
       // Check if this binding has partial type information from Layer 2
       // Extract the actual hole ID, which might be wrapped in error provenances
       let holeId: number | undefined;
-      if (entry.scheme.type.kind === "unknown") {
-        const prov = entry.scheme.type.provenance;
-        if (prov.kind === "expr_hole" || prov.kind === "user_hole") {
-          holeId = (prov as any).id;
-        } else if (prov.kind === "incomplete") {
-          holeId = (prov as any).nodeId;
-        } else if (
-          prov.kind === "error_not_function" ||
-          prov.kind === "error_inconsistent"
-        ) {
-          // Unwrap error provenance to get the underlying hole
-          const calleeType = (prov as any).calleeType || (prov as any).actual;
-          if (calleeType?.kind === "unknown") {
-            const innerProv = calleeType.provenance;
-            if (
-              innerProv.kind === "expr_hole" || innerProv.kind === "user_hole"
-            ) {
-              holeId = (innerProv as any).id;
-            } else if (innerProv.kind === "incomplete") {
-              holeId = (innerProv as any).nodeId;
-            }
-          }
-        }
+      if (isHoleType(entry.scheme.type)) {
+        holeId = holeIdFromUnknown(entry.scheme.type);
       }
 
       if (holeId !== undefined) {
