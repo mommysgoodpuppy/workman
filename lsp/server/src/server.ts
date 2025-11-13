@@ -8,25 +8,23 @@
 // Redirect console.log to stderr to prevent polluting LSP stdout with debug messages
 console.log = console.error;
 
-import { lex } from "@workman/lexer.ts";
+import { lex } from "../../../src/lexer.ts";
 import {
   type OperatorInfo,
-  ParseError,
   parseSurfaceProgram,
-} from "@workman/parser.ts";
-import { InferError } from "@workman/layer1/infer.ts";
-import { LexError, WorkmanError } from "@workman/error.ts";
-import { formatScheme } from "@workman/type_printer.ts";
-import { ModuleLoaderError } from "@workman/module_loader.ts";
+} from "../../../src//parser.ts";
+import { LexError, ParseError, type WorkmanError } from "../../../src//error.ts";
+import { formatScheme } from "../../../src//type_printer.ts";
+import { ModuleLoaderError } from "../../../src//module_loader.ts";
 import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
 import { resolve } from "std/path/resolve.ts";
 import {
   getProvenance,
   isHoleType,
-  Type,
-  TypeScheme,
+  type Type,
+  type TypeScheme,
   typeToString,
-} from "@workman/types.ts";
+} from "../../../src//types.ts";
 import {
   type ConstraintDiagnosticWithSpan,
   findNodeAtOffset,
@@ -35,11 +33,12 @@ import {
   type MatchCoverageView,
   type NodeView,
   type PartialType,
-} from "@workman/layer3/mod.ts";
+} from "../../../src//layer3/mod.ts";
 import {
   compileWorkmanGraph,
 } from "../../../backends/compiler/frontends/workman.ts";
-import type { MLetDeclaration, MProgram } from "@workman/ast_marked.ts";
+import type { MLetDeclaration, MProgram } from "../../../src//ast_marked.ts";
+
 
 interface LSPMessage {
   jsonrpc: string;
@@ -68,7 +67,7 @@ class WorkmanLanguageServer {
       env: Map<string, TypeScheme>;
       layer3: Layer3Result;
       program: MProgram;
-      adtEnv: Map<string, import("@workman/types.ts").TypeInfo>;
+      adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>;
       entryPath: string;
     }
   >();
@@ -822,7 +821,7 @@ class WorkmanLanguageServer {
     view: NodeView,
     layer3: Layer3Result,
     coverage?: MatchCoverageView,
-    adtEnv?: Map<string, import("@workman/types.ts").TypeInfo>,
+    adtEnv?: Map<string, import("../../../src//types.ts").TypeInfo>,
   ): string | null {
     const typeStr = this.partialTypeToString(view.finalType, layer3);
     if (!typeStr) {
@@ -1473,7 +1472,7 @@ class WorkmanLanguageServer {
     env: Map<string, TypeScheme>;
     layer3: Layer3Result;
     program: MProgram;
-    adtEnv: Map<string, import("@workman/types.ts").TypeInfo>;
+    adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>;
     entryPath: string;
   }> {
     const compileResult = await compileWorkmanGraph(entryPath, {
@@ -1514,7 +1513,7 @@ class WorkmanLanguageServer {
 
   private summarizeErrorRowFromType(
     type: Type | undefined,
-    adtEnv: Map<string, import("@workman/types.ts").TypeInfo>,
+    adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>,
   ): string | null {
     if (!type) return null;
     if (
@@ -1522,7 +1521,7 @@ class WorkmanLanguageServer {
       type.args.length !== 2
     ) return null;
     const errArg = type.args[1];
-    const ensureRow = (t: Type): import("@workman/types.ts").ErrorRowType => (
+    const ensureRow = (t: Type): import("../../../src//types.ts").ErrorRowType => (
       t.kind === "error_row"
         ? t
         : { kind: "error_row", cases: new Map(), tail: t }
