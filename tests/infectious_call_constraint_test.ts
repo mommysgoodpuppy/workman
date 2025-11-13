@@ -27,8 +27,8 @@ Deno.test("call constraint captures infectious error rows", () => {
 
     let parseMaybe = (flag) => {
       match(flag) {
-        true => { Ok(1) },
-        false => { Err(Missing) }
+        true => { IOk(1) },
+        false => { IErr(Missing) }
       }
     };
 

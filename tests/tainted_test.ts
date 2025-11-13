@@ -25,10 +25,10 @@ Deno.test("Tainted type propagates through expressions", () => {
   const source = `
     type TaintSrc = UserInput | FileRead;
     
-    type Tainted t taint = Pure of t | Impure of taint;
+    infectious error type Tainted<T, E> = @value Clean<T> | @effect Dirty<E>;
 
     let getUserInput = () => {
-      Impure(UserInput)
+      Dirty(UserInput)
     };
 
     let addOne = (x) => {
@@ -43,33 +43,28 @@ Deno.test("Tainted type propagates through expressions", () => {
 
   const result = analyzeSource(source);
 
-  // Check that taint constraint sources exist
-  const taintSources = result.layer1.constraintStubs.filter((stub) =>
-    stub.kind === "constraint_source" && stub.label.domain === "taint"
-  );
-
-  // Should have taint propagation
+  // User-defined infectious type should propagate without errors
   assertEquals(
-    taintSources.length > 0,
-    true,
-    "Should have taint constraint sources",
+    result.layer2.diagnostics.length,
+    0,
+    "User-defined infectious type should propagate through expressions",
   );
 });
 
-Deno.test("Pattern matching on Tainted discharges taint", () => {
+Deno.test("Pattern matching on Tainted discharges infection", () => {
   const source = `
     type TaintSrc = UserInput;
     
-    type Tainted t taint = Pure of t | Impure of taint;
+    infectious error type Tainted<T, E> = @value Clean<T> | @effect Dirty<E>;
 
     let getUserInput = () => {
-      Impure(UserInput)
+      Dirty(UserInput)
     };
 
     let sanitize = (tainted) => {
       match(tainted) {
-        Pure(x) => { x },
-        Impure(t) => { 0 }
+        Clean(x) => { x },
+        Dirty(UserInput) => { 0 }
       }
     };
 
@@ -81,26 +76,63 @@ Deno.test("Pattern matching on Tainted discharges taint", () => {
 
   const result = analyzeSource(source);
 
-  // Check that constraint_rewrite stubs were emitted for pattern match
-  const rewriteStubs = result.layer1.constraintStubs.filter((stub) =>
-    stub.kind === "constraint_rewrite"
-  );
-
+  // Pattern matching should discharge infection
+  if (result.layer2.diagnostics.length > 0) {
+    console.error("Unexpected diagnostics:", result.layer2.diagnostics);
+  }
   assertEquals(
-    rewriteStubs.length > 0,
-    true,
-    "Should have rewrite stubs for pattern matching",
+    result.layer2.diagnostics.length,
+    0,
+    "Pattern matching should discharge user-defined infection",
   );
 });
 
-Deno.test("Undischarged taint causes boundary violation", () => {
+Deno.test("BUG: Wildcard pattern in user-defined infectious type fails", () => {
+  const source = `
+    type TaintSrc = UserInput | FileRead;
+    
+    infectious error type Tainted<T, E> = @value Clean<T> | @effect Dirty<E>;
+
+    let getUserInput = () => {
+      Dirty(UserInput)
+    };
+
+    let sanitize = (tainted) => {
+      match(tainted) {
+        Clean(x) => { x },
+        Dirty(_) => { 0 }
+      }
+    };
+
+    let run = () => {
+      let input = getUserInput();
+      sanitize(input)
+    };
+  `;
+
+  const result = analyzeSource(source);
+
+  // BUG: This should work like IErr(_) does, but currently fails with type_mismatch
+  // When fixed, this test should pass (0 diagnostics)
+  // Currently: 1 diagnostic (type_mismatch on error_row vs constructor)
+  if (result.layer2.diagnostics.length > 0) {
+    console.log("BUG CONFIRMED - wildcard pattern fails:", result.layer2.diagnostics[0].reason);
+  }
+  assertEquals(
+    result.layer2.diagnostics.length,
+    0,
+    "BUG: Wildcard pattern should work like IErr(_) does",
+  );
+});
+
+Deno.test("Undischarged Tainted causes boundary violation", () => {
   const source = `
     type TaintSrc = UserInput;
     
-    type Tainted t taint = Pure of t | Impure of taint;
+    infectious error type Tainted<T, E> = @value Clean<T> | @effect Dirty<E>;
 
     let getUserInput = () => {
-      Impure(UserInput)
+      Dirty(UserInput)
     };
 
     let unsafeRun : Int = {
@@ -110,11 +142,10 @@ Deno.test("Undischarged taint causes boundary violation", () => {
 
   const result = analyzeSource(source);
 
-  // Should have some kind of diagnostic for undischarged taint
-  // This might manifest as a type mismatch or infectious diagnostic
+  // Should have diagnostic for undischarged infection at type boundary
   assertEquals(
     result.layer2.diagnostics.length > 0,
     true,
-    "Should have diagnostics for undischarged taint",
+    "Should have diagnostics for undischarged user-defined infection",
   );
 });

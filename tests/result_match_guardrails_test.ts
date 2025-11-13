@@ -25,10 +25,10 @@ function inferSource(source: string) {
 Deno.test("Result matches returning Result simply remain infectious", () => {
   const source = `
     type ParseError = Bad;
-    let handle = (value: Result<Int, <Bad>>) => {
+    let handle = (value: IResult<Int, <Bad>>) => {
       match(value) {
-        Ok(x) => { Ok(x) },
-        Err(_) => { Err(Bad) }
+        IOk(x) => { IOk(x) },
+        IErr(_) => { IErr(Bad) }
       }
     };
   `;
@@ -42,7 +42,7 @@ Deno.test("Result matches returning Result simply remain infectious", () => {
     throw new Error("expected handle summary");
   }
   const typeStr = formatScheme(binding.scheme);
-  if (!typeStr.includes("Result<Int")) {
-    throw new Error(`expected handle to return a Result, got ${typeStr}`);
+  if (!typeStr.includes("IResult<Int")) {
+    throw new Error(`expected handle to return a IResult, got ${typeStr}`);
   }
 });

@@ -1,4 +1,4 @@
-from "std/result/core" import { Ok, Err };
+from "std/result/core" import { IOk, IErr };
 from "std/result" import { map, mapError, andThen, withDefault, fold };
 
 let inc = (n) => {
@@ -6,8 +6,8 @@ let inc = (n) => {
 };
 let doubleIfOdd = (n) => {
   match(cmpInt(sub(n, mul(div(n, 2), 2)), 0)) {
-    EQ => { Err("even") },
-    _ => { Ok(add(n, n)) }
+    EQ => { IErr("even") },
+    _ => { IOk(add(n, n)) }
   }
 };
 
@@ -16,14 +16,14 @@ let strErr = (e) => {
 };
 
 export let pipeline = () => {
-  let start: Result<Int, String> = Ok(10);
+  let start: IResult<Int, String> = IOk(10);
   let mapped = map(inc, start);
   let chained = andThen(doubleIfOdd, mapped);
   withDefault(0, chained)
 };
 
 export let foldBoth = () => {
-  let start = Err("boom");
+  let start = IErr("boom");
   fold(
     (e) => {
       0

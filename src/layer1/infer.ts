@@ -471,15 +471,6 @@ function inferLetDeclaration(
 
     const scheme = generalizeInContext(ctx, fnType);
     ctx.env.set(decl.name, scheme);
-    if (
-      decl.name === "zero" || decl.name === "describeNumber" ||
-      decl.name === "grouped"
-    ) {
-      console.log(`[debug] scheme ${decl.name}`, {
-        quantifiers: scheme.quantifiers,
-        type: formatScheme(applySubstitutionScheme(scheme, ctx.subst)),
-      });
-    }
     ctx.allBindings.set(decl.name, scheme); // Track in allBindings
     if (decl.annotation) {
       recordAnnotationConstraint(
@@ -1596,15 +1587,11 @@ export function inferProgram(
   // Pass 1: Register all type names (allows forward references)
   for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "type") {
-      // Skip if already in adtEnv (from initialAdtEnv)
-      if (ctx.adtEnv.has(decl.name)) {
-        // Already registered via initialAdtEnv, skip both passes
-        skippedTypeDecls.add(decl);
-        continue;
-      }
       const result = registerTypeName(ctx, decl);
       if (!result.success) {
+        // Duplicate detected - mark it and skip further processing
         markedDeclarations.push(result.mark);
+        skippedTypeDecls.add(decl);
       } else {
         successfulTypeDecls.add(decl);
       }

@@ -484,8 +484,8 @@ let bad: Int<Int> = () => {
 
 Deno.test("infer handles duplicate type declarations with mark", () => {
   const source = `
-type Option = None;
-type Option = Some;
+type MyType = First;
+type MyType = Second;
 `;
   const { program, context } = parseProgramWithPrelude(source);
   const result = inferProgramWithPrelude(program, context);
@@ -498,8 +498,8 @@ type Option = Some;
   if (mark?.kind !== "mark_type_decl_duplicate") {
     throw new Error("expected mark_type_decl_duplicate");
   }
-  assertEquals(mark.declaration.name, "Option");
-  assertEquals(mark.duplicate.name, "Option");
+  assertEquals(mark.declaration.name, "MyType");
+  assertEquals(mark.duplicate.name, "MyType");
 });
 
 Deno.test("lowering preserves and allocates node IDs correctly", () => {

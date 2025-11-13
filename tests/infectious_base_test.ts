@@ -33,19 +33,18 @@ function expectNoDiagnostics(source: string) {
   );
 }
 
-Deno.test("first-class match bundle discharges AllErrors infection", () => {
+Deno.test("first-class match bundle discharges infection with IErr(_)", () => {
   const source = `
     type ParseError = Missing | Other;
 
     let parseMaybe = match(flag) {
-      true => { Ok(1) },
-      false => { Err(Missing) }
+      true => { IOk(1) },
+      false => { IErr(Missing) }
     };
 
     let handler = match(result) {
-      Ok(value) => { value },
-      Err(_) => { 0 },
-      AllErrors => { 0 }
+      IOk(value) => { value },
+      IErr(_) => { 0 }
     };
 
     let forced = handler(parseMaybe(true)) + 1;
@@ -53,13 +52,13 @@ Deno.test("first-class match bundle discharges AllErrors infection", () => {
   expectNoDiagnostics(source);
 });
 
-Deno.test("helper function using AllErrors stops infection", () => {
+Deno.test("helper function using IErr(_) stops infection", () => {
   const source = `
     type ParseError = Missing | Other;
 
     let parseMaybe = match(flag) {
-      true => { Ok(1) },
-      false => { Err(Missing) }
+      true => { IOk(1) },
+      false => { IErr(Missing) }
     };
 
     let addOne = (value) => {
@@ -68,9 +67,8 @@ Deno.test("helper function using AllErrors stops infection", () => {
 
     let check = (result) => {
       match(result) {
-        Ok(value) => { value },
-        Err(_) => { 0 },
-        AllErrors => { 0 }
+        IOk(value) => { value },
+        IErr(_) => { 0 }
       }
     };
 
@@ -79,20 +77,19 @@ Deno.test("helper function using AllErrors stops infection", () => {
   expectNoDiagnostics(source);
 });
 
-Deno.test("factory returning AllErrors handler stays infectious-free", () => {
+Deno.test("factory returning IErr(_) handler stays infectious-free", () => {
   const source = `
     type ParseError = Missing | Other;
 
     let parseMaybe = match(flag) {
-      true => { Ok(1) },
-      false => { Err(Missing) }
+      true => { IOk(1) },
+      false => { IErr(Missing) }
     };
 
     let makeChecker = () => {
       match(result) => {
-        Ok(value) => { value },
-        Err(_) => { 0 },
-        AllErrors => { 0 }
+        IOk(value) => { value },
+        IErr(_) => { 0 }
       }
     };
 

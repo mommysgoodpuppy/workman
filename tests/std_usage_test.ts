@@ -74,6 +74,6 @@ Deno.test({
   assertEquals(values.get("foldErr"), "4");
   assertEquals(types.get("mapChain"), "Unit -> Int");
   assertEquals(values.get("mapChain"), "16");
-  assertEquals(types.get("remapError"), "Unit -> Result<T, Int>");
-  assertEquals(values.get("remapError"), "Err 7");
+  assertEquals(types.get("remapError"), "Unit -> IResult<T, Int>");
+  assertEquals(values.get("remapError"), "IErr 7");
 });

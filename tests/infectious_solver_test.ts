@@ -32,8 +32,8 @@ Deno.test("solver allows infectious calls and spreads Result types", () => {
     type ParseError = Missing;
 
     let parseMaybe = match(flag) {
-      true => { Ok(1) },
-      false => { Err(Missing) }
+      true => { IOk(1) },
+      false => { IErr(Missing) }
     };
 
     let addOne = (value) => {
@@ -52,10 +52,10 @@ Deno.test("solver allows infectious calls and spreads Result types", () => {
   )?.scheme;
   assertExists(forcedScheme);
   const forcedType = formatScheme(forcedScheme);
-  // Should be Result<Int, ParseError>, not Int
+  // Should be IResult<Int, ParseError>, not Int
   assert(
-    forcedType.includes("Result"),
-    `Expected Result type, got: ${forcedType}`,
+    forcedType.includes("IResult"),
+    `Expected IResult type, got: ${forcedType}`,
   );
 });
 
@@ -63,10 +63,10 @@ Deno.test("solver flags matches that claim to discharge but remain infectious", 
   const analysis = analyzeSource(`
     type ParseError = Missing;
 
-    let leak = (value: Result<Int, ParseError>) => {
-      let cleaned: Result<Int, ParseError> = match(value) {
-        Ok(v) => { v },
-        Err(Missing) => { 0 },
+    let leak = (value: IResult<Int, ParseError>) => {
+      let cleaned: IResult<Int, ParseError> = match(value) {
+        IOk(v) => { v },
+        IErr(Missing) => { 0 },
         AllErrors => { 0 }
       };
       cleaned
@@ -85,8 +85,8 @@ Deno.test("solver allows infectious record projections and spreads Result types"
     };
 
     let parseMaybe = match(flag) {
-      true => { Ok(1) },
-      false => { Err(Missing) }
+      true => { IOk(1) },
+      false => { IErr(Missing) }
     };
 
     let forcedField = () => {
@@ -103,10 +103,10 @@ Deno.test("solver allows infectious record projections and spreads Result types"
   )?.scheme;
   assertExists(forcedFieldScheme);
   const forcedFieldType = formatScheme(forcedFieldScheme);
-  // Should be Unit -> Result<Int, ParseError>, not Unit -> Int
+  // Should be Unit -> IResult<Int, ParseError>, not Unit -> Int
   assert(
-    forcedFieldType.includes("Result"),
-    `Expected Result type, got: ${forcedFieldType}`,
+    forcedFieldType.includes("IResult"),
+    `Expected IResult type, got: ${forcedFieldType}`,
   );
 });
 
@@ -115,8 +115,8 @@ Deno.test("solver flags infectious annotations expecting bare types", () => {
     type ParseError = Missing;
 
     let parseMaybe = match(flag) {
-      true => { Ok(1) },
-      false => { Err(Missing) }
+      true => { IOk(1) },
+      false => { IErr(Missing) }
     };
 
     let forced: Int = parseMaybe(true);

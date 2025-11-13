@@ -1,7 +1,7 @@
 from "std/result" import { map, mapError, andThen, withDefault, fold };
 
 export let defaultOk = () => {
-  withDefault(0, Ok(5))
+  withDefault(0, IOk(5))
 };
 
 export let foldOk = () => {
@@ -12,7 +12,7 @@ export let foldOk = () => {
     (val) => {
       add(val, 1)
     },
-    Ok(9)
+    IOk(9)
   )
 };
 
@@ -24,12 +24,12 @@ export let foldErr = () => {
     (val) => {
       val
     },
-    Err(3)
+    IErr(3)
   )
 };
 
 export let mapChain = () => {
-  let base = Ok(7);
+  let base = IOk(7);
   let mapped = map(
     (n) => {
       add(n, 1)
@@ -38,7 +38,7 @@ export let mapChain = () => {
   );
   let chained = andThen(
     (n) => {
-      Ok(add(n, n))
+      IOk(add(n, n))
     },
     mapped
   );
@@ -50,6 +50,6 @@ export let remapError = () => {
     (n) => {
       add(n, 5)
     },
-    Err(2)
+    IErr(2)
   )
 };

@@ -166,7 +166,7 @@ Deno.test("mutually recursive tree traversal", () => {
 // Error Cases
 // ============================================================================
 
-Deno.test("rejects non-recursive function calling itself", () => {
+Deno.test("rejects self-reference without rec keyword", () => {
   const source = `
     let bad = match(n) {
       0 => { 1 },
@@ -197,8 +197,41 @@ Deno.test("rejects non-recursive function calling itself", () => {
     mark.kind === "mark_free_var" && mark.name === "bad"
   );
   assertExists(freeVar, "expected free variable mark for self call");
+  
+  // Check that we get a free_variable diagnostic
+  const freeVarDiag = result.layer1Diagnostics.find((diag) =>
+    diag.reason === "free_variable" && diag.details.name === "bad"
+  );
+  assertExists(freeVarDiag, "expected free_variable diagnostic for bad");
+});
+
+Deno.test("rejects calling a non-function value", () => {
+  const source = `
+    let notAFunction = 42;
+    let result = notAFunction(10);
+  `;
+  const {
+    initialEnv,
+    initialAdtEnv,
+    initialOperators,
+    initialPrefixOperators,
+  } = freshPreludeTypeEnv();
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    initialOperators,
+    initialPrefixOperators,
+  );
+  const result = inferProgram(program, {
+    initialEnv,
+    initialAdtEnv,
+    registerPrelude: false,
+  });
+  const marks = Array.from(result.marks.values());
   const notFunction = marks.find((mark) => mark.kind === "mark_not_function");
-  assertExists(notFunction, "expected not_function mark for bad(0)");
+  assertExists(notFunction, "expected not_function mark for notAFunction(10)");
 });
 
 Deno.test("rejects type mismatch in recursive call", () => {
@@ -272,6 +305,10 @@ Deno.test("rejects mutual recursion without 'and'", () => {
     mark.kind === "mark_free_var" && mark.name === "isOdd"
   );
   assertExists(freeVar, "expected free variable mark for isOdd");
-  const notFunction = marks.find((mark) => mark.kind === "mark_not_function");
-  assertExists(notFunction, "expected not_function mark for isOdd(0)");
+  
+  // Check that we get a free_variable diagnostic for isOdd
+  const freeVarDiag = result.layer1Diagnostics.find((diag) =>
+    diag.reason === "free_variable" && diag.details.name === "isOdd"
+  );
+  assertExists(freeVarDiag, "expected free_variable diagnostic for isOdd");
 });

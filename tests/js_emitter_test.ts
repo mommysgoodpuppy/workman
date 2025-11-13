@@ -1,6 +1,7 @@
 import { assertEquals } from "https://deno.land/std/assert/mod.ts";
 import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
 import { emitModule } from "../backends/compiler/js/emitter.ts";
+import { toFileUrl as pathToFileURL } from "https://deno.land/std@0.224.0/path/mod.ts";
 
 const RUNTIME_MODULE_SPEC = new URL(
   "../backends/compiler/js/runtime.mjs",
@@ -81,26 +82,31 @@ Deno.test({
 
 Deno.test({
   name: "JS emitter preserves infectious Result semantics",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const { coreGraph } = await compileWorkmanGraph(
     "./tests/fixtures/compiler/result_infectious/main.wm",
   );
-  const module = coreGraph.modules.get(coreGraph.entry);
-  if (!module) throw new Error("missing module");
-
-  const code = emitModule(module, coreGraph, {
-    extension: ".js",
-    runtimeModule: RUNTIME_MODULE_SPEC,
+  
+  // Emit the full graph including prelude to get proper infectious type registrations
+  const { emitModuleGraph } = await import("../backends/compiler/js/graph_emitter.ts");
+  const tempDir = await Deno.makeTempDir();
+  const { moduleFiles } = await emitModuleGraph(coreGraph, tempDir, {
+    runtimeFileName: "runtime.mjs",
   });
-
-  const dataUrl = `data:text/javascript,${encodeURIComponent(code)}`;
-  const mod = await import(dataUrl);
-
-  assertEquals(mod.okFlow().tag, "Ok");
+  
+  const entryFile = moduleFiles.get(coreGraph.entry);
+  if (!entryFile) throw new Error("Entry file not found");
+  
+  const mod = await import(pathToFileURL(entryFile).href);
+  
+  console.log("okFlow result:", mod.okFlow());
+  console.log("okFlow type:", typeof mod.okFlow());
+  
+  assertEquals(mod.okFlow().tag, "IOk");
   assertEquals(mod.okFlow()._0, 42);
-  assertEquals(mod.missingFlow().tag, "Err");
-  assertEquals(mod.badFlow().tag, "Err");
+  assertEquals(mod.missingFlow().tag, "IErr");
+  assertEquals(mod.badFlow().tag, "IErr");
 });
 
 Deno.test({
