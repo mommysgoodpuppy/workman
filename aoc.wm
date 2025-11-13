@@ -35,11 +35,11 @@ let rec extendDigits = (chars, step, count) => {
     true => { step },
     false => {
       match(listAt(chars, step.next, ExpectedDigit)) {
-        Err(_) => { step },
-        Ok(code) => {
+        IErr(_) => { step },
+        IOk(code) => {
           match(charToDigit(code, ExpectedDigit)) {
-            Err(_) => { step },
-            Ok(digit) => {
+            IErr(_) => { step },
+            IOk(digit) => {
               let combined = makeStep(
                 step.value * 10 + digit,
                 step.next + 1
@@ -56,21 +56,21 @@ let rec extendDigits = (chars, step, count) => {
 -- Require a specific delimiter at the cursor.
 let expectCharAt = (chars, i, expected, error) => {
   match(listAt(chars, i, error)) {
-    Ok(code) => {
+    IOk(code) => {
       match(code == expected) {
-        true => { Ok(i + 1) },
-        false => { Err(error) }
+        true => { IOk(i + 1) },
+        false => { IErr(error) }
       }
     },
-    _ => { Err(error) }
+    _ => { IErr(error) }
   }
 };
 
 -- Check for the mul( literal at a position, otherwise resume scanning.
 let expectMulLiteral = (chars, i) => {
   match(strEq(listSlice(chars, i, i + mulLiteralLength), mulLiteral)) {
-    true => { Ok(i + mulLiteralLength) },
-    false => { Err(NotMul) }
+    true => { IOk(i + mulLiteralLength) },
+    false => { IErr(NotMul) }
   }
 };
 
@@ -89,10 +89,10 @@ let parseMulAt = (chars, i) => {
 -- Walk the memory, summing successful multiplications.
 let rec scan = (chars, i, acc) => {
   match(listAt(chars, i, NotMul)) {
-    Err(_) => { acc },
-    Ok(_) => {
+    IErr(_) => { acc },
+    IOk(_) => {
       match(parseMulAt(chars, i)) {
-        Ok(step) => { scan(chars, step.next, acc + step.value) },
+        IOk(step) => { scan(chars, step.next, acc + step.value) },
         _ => {
           print(stringConcat("failed to parse at ", intToString(i)));
           scan(chars, i + 1, acc)

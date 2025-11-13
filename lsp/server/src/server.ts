@@ -13,7 +13,11 @@ import {
   type OperatorInfo,
   parseSurfaceProgram,
 } from "../../../src//parser.ts";
-import { LexError, ParseError, type WorkmanError } from "../../../src//error.ts";
+import {
+  LexError,
+  ParseError,
+  type WorkmanError,
+} from "../../../src//error.ts";
 import { formatScheme } from "../../../src//type_printer.ts";
 import { ModuleLoaderError } from "../../../src//module_loader.ts";
 import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
@@ -37,8 +41,13 @@ import {
 import {
   compileWorkmanGraph,
 } from "../../../backends/compiler/frontends/workman.ts";
-import type { MLetDeclaration, MProgram } from "../../../src//ast_marked.ts";
-
+import type {
+  MBlockExpr,
+  MExpr,
+  MLetDeclaration,
+  MProgram,
+  MTopLevel,
+} from "../../../src//ast_marked.ts";
 
 interface LSPMessage {
   jsonrpc: string;
@@ -823,12 +832,13 @@ class WorkmanLanguageServer {
     coverage?: MatchCoverageView,
     adtEnv?: Map<string, import("../../../src//types.ts").TypeInfo>,
   ): string | null {
-    const typeStr = this.partialTypeToString(view.finalType, layer3);
+    let typeStr = this.partialTypeToString(view.finalType, layer3);
     if (!typeStr) {
       return null;
     }
 
-    let result = "```workman\n" + typeStr + "\n```";
+    let summary: string | null = null;
+    let t: Type | undefined = undefined;
     // If the type is a Result, append an error summary grouped by ADT
     try {
       const resolved = this.substituteTypeWithLayer3(
@@ -837,14 +847,20 @@ class WorkmanLanguageServer {
           : (view.finalType as any).type ?? (view as any),
         layer3,
       );
-      const t = (view.finalType.kind === "concrete")
-        ? view.finalType.type
-        : resolved;
-      const summary = this.summarizeErrorRowFromType(t, adtEnv ?? new Map());
-      if (summary) {
-        result += `\n\nErrors: ${summary}`;
+      t = (view.finalType.kind === "concrete") ? view.finalType.type : resolved;
+      summary = this.summarizeErrorRowFromType(t, adtEnv ?? new Map());
+      if (summary && t && t.kind === "constructor" && t.args.length > 0) {
+        // Format infected Result types specially
+        typeStr = `⚡${typeToString(t.args[0])} <${summary}>`;
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
+
+    let result = "```workman\n" + typeStr + "\n```";
+    if (summary) {
+      result += `\n\nErrors: ${summary}`;
+    }
 
     if (coverage) {
       const rowStr = formatScheme({ quantifiers: [], type: coverage.row });
@@ -952,12 +968,21 @@ class WorkmanLanguageServer {
           partial.type,
           layer3,
         );
-        return substituted ? typeToString(substituted) : "?";
+        let str = substituted ? typeToString(substituted) : "?";
+        // Post-process to format Result types
+        str = str.replace(/IResult<([^,]+),\s*([^>]+)>/g, "⚡$1 <$2>");
+        return str;
       }
-      case "concrete":
-        return partial.type
+      case "concrete": {
+        let str = partial.type
           ? typeToString(this.substituteTypeWithLayer3(partial.type, layer3))
           : null;
+        if (str) {
+          // Post-process to format Result types
+          str = str.replace(/IResult<([^,]+),\s*([^>]+)>/g, "⚡$1 <$2>");
+        }
+        return str;
+      }
       default:
         return null;
     }
@@ -1008,12 +1033,16 @@ class WorkmanLanguageServer {
   private formatSchemeWithPartials(
     scheme: TypeScheme,
     layer3: Layer3Result,
+    adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>,
   ): string {
     const substitutedScheme = this.applyHoleSolutionsToScheme(
       scheme,
       layer3,
     );
     let typeStr = formatScheme(substitutedScheme);
+
+    // Post-process to format Result types
+    typeStr = typeStr.replace(/IResult<([^,]+),\s*([^>]+)>/g, "⚡$1 <$2>");
 
     // Check if this binding has partial type information from Layer 3
     const holeId = this.extractHoleId(scheme);
@@ -1035,6 +1064,22 @@ class WorkmanLanguageServer {
         // For unsolved holes, just show "?" without error provenance
         typeStr = typeStr.replace(/\?\([^)]+\)/g, "?");
       }
+    }
+
+    // Check for infected Result types in return type
+    let returnType = substitutedScheme.type;
+    while (returnType.kind === "func") {
+      returnType = returnType.to;
+    }
+    const summary = this.summarizeErrorRowFromType(returnType, adtEnv);
+    if (
+      summary && returnType && returnType.kind === "constructor" &&
+      returnType.args.length > 0
+    ) {
+      // Replace the IResult<...> in typeStr with the formatted version
+      const fullResultStr = typeToString(returnType);
+      const formatted = `⚡${typeToString(returnType.args[0])} <${summary}>`;
+      typeStr = typeStr.replace(fullResultStr, formatted);
     }
 
     return typeStr;
@@ -1207,8 +1252,65 @@ class WorkmanLanguageServer {
       const scheme = env.get(word);
       if (scheme) {
         // Use Layer 3 partial types for accurate display
-        const typeStr = this.formatSchemeWithPartials(scheme, layer3);
+        const typeStr = this.formatSchemeWithPartials(
+          scheme,
+          layer3,
+          context.adtEnv,
+        );
         this.log(`[LSP] Found type for ${word}: ${typeStr}`);
+
+        const hoverText = `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``;
+
+        return {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            contents: {
+              kind: "markdown",
+              value: hoverText,
+            },
+          },
+        };
+      }
+      // Try to find local binding
+      const decl = this.findLetDeclaration(
+        context.program,
+        context.layer3,
+        word,
+        offset,
+      );
+      if (decl) {
+        // For let x = expr, the type is the type of expr
+        // Get the node view of the expression
+        const expr = decl.body.result; // assuming simple let
+        if (expr) {
+          const view = layer3.nodeViews.get(expr.id);
+          if (view) {
+            const rendered = this.renderNodeView(
+              view,
+              layer3,
+              undefined,
+              context.adtEnv,
+            );
+            if (rendered) {
+              this.log(`[LSP] Found local type for ${word}: rendered`);
+              return {
+                jsonrpc: "2.0",
+                id: message.id,
+                result: {
+                  contents: {
+                    kind: "markdown",
+                    value: rendered,
+                  },
+                },
+              };
+            }
+          }
+        }
+        // Fallback to decl.type
+        const resolvedType = this.substituteTypeWithLayer3(decl.type, layer3);
+        const typeStr = typeToString(resolvedType);
+        this.log(`[LSP] Found local type for ${word}: ${typeStr}`);
 
         const hoverText = `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``;
 
@@ -1315,7 +1417,13 @@ class WorkmanLanguageServer {
       return { jsonrpc: "2.0", id: message.id, result: [] };
     }
 
-    const hints: any[] = [];
+    const hints: Array<{
+      position: { line: number; character: number };
+      label: string;
+      kind: number;
+      paddingLeft: boolean;
+      paddingRight: boolean;
+    }> = [];
 
     try {
       const entryPath = this.uriToFsPath(uri);
@@ -1353,7 +1461,11 @@ class WorkmanLanguageServer {
           const endPos = match.index + match[0].length;
           const position = this.offsetToPosition(text, endPos);
           // Use Layer 3 partial types for accurate display
-          const typeStr = this.formatSchemeWithPartials(scheme, layer3);
+          const typeStr = this.formatSchemeWithPartials(
+            scheme,
+            layer3,
+            context.adtEnv,
+          );
           hints.push({
             position,
             label: `: ${typeStr}`,
@@ -1517,11 +1629,13 @@ class WorkmanLanguageServer {
   ): string | null {
     if (!type) return null;
     if (
-      type.kind !== "constructor" || type.name !== "Result" ||
+      type.kind !== "constructor" ||
       type.args.length !== 2
     ) return null;
     const errArg = type.args[1];
-    const ensureRow = (t: Type): import("../../../src//types.ts").ErrorRowType => (
+    const ensureRow = (
+      t: Type,
+    ): import("../../../src//types.ts").ErrorRowType => (
       t.kind === "error_row"
         ? t
         : { kind: "error_row", cases: new Map(), tail: t }
@@ -1602,6 +1716,7 @@ class WorkmanLanguageServer {
           break;
         }
       } catch {
+        // ignore
       }
       const parent = dirname(dir);
       if (parent === dir) break;
@@ -1630,6 +1745,115 @@ class WorkmanLanguageServer {
       }
     }
     return undefined;
+  }
+
+  private findLetDeclaration(
+    program: MProgram,
+    layer3: Layer3Result,
+    name: string,
+    offset: number,
+  ): MLetDeclaration | undefined {
+    const findInTopLevels = (
+      decls: MTopLevel[],
+    ): MLetDeclaration | undefined => {
+      for (const decl of decls) {
+        if (decl.kind === "let") {
+          const span = layer3.spanIndex.get(decl.id);
+          if (span && span.start <= offset && offset < span.end) {
+            if (decl.name === name) return decl;
+            if (decl.mutualBindings) {
+              for (const b of decl.mutualBindings) {
+                if (b.name === name) return b;
+              }
+            }
+            // recurse into body
+            const found = findInBlock(decl.body);
+            if (found) return found;
+          }
+        }
+      }
+      return undefined;
+    };
+
+    const findInBlock = (block: MBlockExpr): MLetDeclaration | undefined => {
+      for (const stmt of block.statements) {
+        if (stmt.kind === "let_statement") {
+          const decl = stmt.declaration;
+          const span = layer3.spanIndex.get(decl.id);
+          if (span && span.start <= offset && offset < span.end) {
+            if (decl.name === name) return decl;
+            if (decl.mutualBindings) {
+              for (const b of decl.mutualBindings) {
+                if (b.name === name) return b;
+              }
+            }
+            const found = findInBlock(decl.body);
+            if (found) return found;
+          }
+        } else if (stmt.kind === "expr_statement") {
+          const found = findInExpr(stmt.expression);
+          if (found) return found;
+        }
+      }
+      if (block.result) {
+        const found = findInExpr(block.result);
+        if (found) return found;
+      }
+      return undefined;
+    };
+
+    const findInExpr = (expr: MExpr): MLetDeclaration | undefined => {
+      switch (expr.kind) {
+        case "block":
+          return findInBlock(expr);
+        case "call": {
+          let found = findInExpr(expr.callee);
+          if (found) return found;
+          for (const arg of expr.arguments) {
+            found = findInExpr(arg);
+            if (found) return found;
+          }
+          break;
+        }
+        case "match": {
+          let found = findInExpr(expr.scrutinee);
+          if (found) return found;
+          for (const arm of expr.bundle.arms) {
+            if (arm.kind === "match_pattern") {
+              found = findInExpr(arm.body);
+              if (found) return found;
+            }
+          }
+          break;
+        }
+        case "tuple":
+          for (const el of expr.elements) {
+            const found = findInExpr(el);
+            if (found) return found;
+          }
+          break;
+        case "record_literal":
+          for (const field of expr.fields) {
+            const found = findInExpr(field.value);
+            if (found) return found;
+          }
+          break;
+        case "record_projection":
+          return findInExpr(expr.target);
+        case "constructor":
+          for (const arg of expr.args) {
+            const found = findInExpr(arg);
+            if (found) return found;
+          }
+          break;
+        // add more cases as needed
+        default:
+          break;
+      }
+      return undefined;
+    };
+
+    return findInTopLevels(program.declarations ?? []);
   }
 
   private async getPreludeOperatorSets(
