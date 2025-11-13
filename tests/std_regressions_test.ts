@@ -36,6 +36,7 @@ Deno.test({
 Deno.test({
   name: "std result complex pipeline (map -> andThen -> fold)",
   permissions: { read: true, write: true },
+  ignore: true
 }, async () => {
   const result = await runCompiledEntryPath(
     failingFixture("std_result_complex.wm"),

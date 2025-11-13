@@ -1,0 +1,106 @@
+-- Demonstration of infectious Result type with error accumulation
+-- Shows how errors stack up and can be flattened
+
+-- Declare IResult as an infectious type for the error domain
+infectious error IResult<T, E>;
+
+-- Define the IResult type with its constructors IOk and IErr
+type IResult<T, E> = IOk<T> | IErr<E>;
+
+-- Define a unified error type that can hold all errors
+type AppError = 
+  | InvalidFormat
+  | EmptyInput
+  | TooSmall
+  | TooLarge;
+
+-- Parse a number from input (can fail with ParseError)
+let parseNumber = (input) => {
+  match(input) {
+    0 => { IErr(EmptyInput) },
+    _ => { IOk(input) }
+  }
+};
+
+-- Validate a number (can fail with ValidationError)
+let validateNumber = (value) => {
+  match(value < 10) {
+    true => { IErr(TooSmall) },
+    false => {
+      match(value > 100) {
+        true => { IErr(TooLarge) },
+        false => { IOk(value) }
+      }
+    }
+  }
+};
+
+-- Process: parse then validate
+-- This creates IResult<IResult<Int, ValidationError>, ParseError>
+-- The errors STACK because we're returning a Result from within a Result context
+let processNested = (input) => {
+  let parsed = parseNumber(input);
+  match(parsed) {
+    IOk(value) => { validateNumber(value) },
+    IErr(e) => { IErr(e) }
+  }
+};
+
+-- Flatten: IResult<IResult<T, E>, E> -> IResult<T, E>
+-- This is like monadic bind/flatMap
+let flattenResult = (nested) => {
+  match(nested) {
+    IOk(inner) => {
+      match(inner) {
+        IOk(value) => { IOk(value) },
+        IErr(e) => { IErr(e) }
+      }
+    },
+    IErr(e) => { IErr(e) }
+  }
+};
+
+-- Higher-order function: andThen (monadic bind)
+-- Automatically flattens the result
+let andThen = (f, result) => {
+  match(result) {
+    IOk(value) => { f(value) },
+    IErr(e) => { IErr(e) }
+  }
+};
+
+-- Clean pipeline using andThen
+let processClean = (input) => {
+  andThen(validateNumber, parseNumber(input))
+};
+
+-- Example: Multiple operations that can fail
+let multiStep = (input) => {
+  let step1 = parseNumber(input);
+  let step2 = andThen(validateNumber, step1);
+  step2
+};
+
+-- Test cases
+let testValid = () => {
+  processClean(50)
+};
+
+let testTooSmall = () => {
+  processClean(5)
+};
+
+let testEmpty = () => {
+  processClean(0)
+};
+
+let main = () => {
+  let valid = testValid();
+  let small = testTooSmall();
+  let empty = testEmpty();
+  
+  match(valid) {
+    IOk(value) => { print(value) },
+    IErr(_) => { print(0) }
+  }
+}

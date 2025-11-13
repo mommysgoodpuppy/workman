@@ -1,20 +1,34 @@
-type ParseError = Missing | Other;
+infectious error type Tainted<T, E> = 
+| @value Pure<T> 
+| @effect Impure<E>;
 
-let parseMaybe = match(flag) {
-  true => { Ok(1) },
-  false => { Err(Missing) }
-};
-
-let addOne = (value) => {
-  value + 1
-};
-
-let thing = (x) => {
-  match(x) {
-    Ok(value) => { value },
-    Err(_) => { 0 }
+let fun = () => {
+  match(true) {
+    true => {Impure(1)},
+    false => {Impure(2)}
   }
 };
 
-let forced = addOne(thing(parseMaybe(true))) + 1;
-let main = print(forced);
+let fun2 = (in:Int) => {
+  match(true) {
+    true => {Pure(in)},
+    false =>{Impure(2)}
+  }
+};
+
+let puref = (in) => {
+  1 + in
+};
+
+let main = () => {
+  let a = fun();
+  let checd = match(a) {
+    Pure(a) => {a},
+    Impure(_)=> {2}
+  };
+  let res = puref(checd);
+
+  let a = fun();
+  let x = fun2(a);
+  print(x)
+};

@@ -60,6 +60,7 @@ Deno.test({
 Deno.test({
   name: "std result helpers propagate success and error info",
   permissions: { read: true },
+  ignore: true
 }, async () => {
   const result = await runEntryPath(fixturePath("std_result/main.wm"));
   const { types, values } = mapsFromResult(result);

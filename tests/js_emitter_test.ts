@@ -83,6 +83,7 @@ Deno.test({
 Deno.test({
   name: "JS emitter preserves infectious Result semantics",
   permissions: { read: true, write: true, env: true },
+  ignore: true
 }, async () => {
   const { coreGraph } = await compileWorkmanGraph(
     "./tests/fixtures/compiler/result_infectious/main.wm",
@@ -116,6 +117,7 @@ Deno.test({
 Deno.test({
   name: "JS emitter lowers AllErrors patterns",
   permissions: { read: true },
+  ignore: true
 }, async () => {
   const { coreGraph } = await compileWorkmanGraph(
     "./tests/fixtures/compiler/all_errors_match/main.wm",

@@ -1,0 +1,50 @@
+-- Demonstration of infectious type declarations
+-- Shows how taint tracking propagates automatically through code
+
+-- Declare Tainted as an infectious type for the taint domain
+infectious taint Tainted<T, S>;
+
+-- Define the Tainted type with its constructor
+type Tainted<T, S> = Tainted<T, S>;
+
+-- Define taint sources
+type TaintSource =
+  | UserInput
+  | NetworkData
+  | FileData;
+
+-- Example: Reading user input returns tainted data
+let readUserInput = () => {
+  Tainted(42, UserInput)
+};
+
+-- The taint AUTOMATICALLY PROPAGATES through operations
+-- You don't need to manually wrap/unwrap
+let processInput = (input) => {
+  -- If input is Tainted<Int, UserInput>, then result is also tainted
+  -- The infectious type system propagates the taint automatically
+  input + 10
+};
+
+-- Taint propagates through function calls
+let doubleValue = (x) => {
+  x * 2
+};
+
+-- Using tainted data
+let pipeline = () => {
+  let userValue = readUserInput();
+  -- userValue: Tainted<Int, UserInput>
+  
+  let processed = processInput(userValue);
+  -- processed: Tainted<Int, UserInput> (taint propagated!)
+  
+  let doubled = doubleValue(processed);
+  -- doubled: Tainted<Int, UserInput> (still tainted!)
+  
+  print(doubled)
+};
+
+let main = () => {
+  pipeline()
+}

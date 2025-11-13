@@ -93,8 +93,18 @@ let rec scan = (chars, i, acc) => {
     IOk(_) => {
       match(parseMulAt(chars, i)) {
         IOk(step) => { scan(chars, step.next, acc + step.value) },
-        _ => {
-          print(stringConcat("failed to parse at ", intToString(i)));
+        IErr(NotMul) => {
+          print("yay");
+          print(stringConcat("skipping at ", intToString(i)));
+          scan(chars, i + 1, acc)
+        },
+        IErr(ExpectedComma) => {
+          print("ex comma");
+          print(stringConcat("skipping at ", intToString(i)));
+          scan(chars, i + 1, acc)
+        },
+        IErr(_)  => {
+          print(stringConcat("skipping at ", intToString(i)));
           scan(chars, i + 1, acc)
         }
       }
