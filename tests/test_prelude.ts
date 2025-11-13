@@ -109,6 +109,11 @@ export async function runCompiledEntryPath(
       throw new Error(`Entry module '${coreGraph.entry}' not found`);
     }
 
+    // Check for diagnostics
+    if (entryModule.analysis.layer2.diagnostics.length > 0) {
+      console.log("Diagnostics in runCompiledEntryPath:", entryModule.analysis.layer2.diagnostics);
+    }
+
     // Emit JavaScript files
     const result = await emitModuleGraph(coreGraph, { outDir: tmpDir });
 

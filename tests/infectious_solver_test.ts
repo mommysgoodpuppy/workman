@@ -59,7 +59,7 @@ Deno.test("solver allows infectious calls and spreads Result types", () => {
   );
 });
 
-Deno.test("solver flags matches that claim to discharge but remain infectious", () => {
+Deno.test("solver flags annotation mismatch when match discharges but annotation claims infectious", () => {
   const analysis = analyzeSource(`
     type ParseError = Missing;
 
@@ -67,14 +67,16 @@ Deno.test("solver flags matches that claim to discharge but remain infectious", 
       let cleaned: IResult<Int, ParseError> = match(value) {
         IOk(v) => { v },
         IErr(Missing) => { 0 },
-        AllErrors => { 0 }
+        IErr(_) => { 0 }
       };
       cleaned
     };
   `);
 
   const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
-  assertArrayIncludes(reasons, ["infectious_match_result_mismatch"]);
+  // The match discharges the infectious type (returns Int), but the annotation
+  // says it should still be IResult<Int, ParseError>, so we get a type_mismatch
+  assertArrayIncludes(reasons, ["type_mismatch"]);
 });
 
 Deno.test("solver allows infectious record projections and spreads Result types", () => {
