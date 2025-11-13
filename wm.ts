@@ -481,9 +481,26 @@ REPL Commands:
         return { line, col };
       };
 
+      // Group expressions by line
+      const expressionsByLine = new Map<
+        number,
+        Array<
+          {
+            nodeId: number;
+            view: any;
+            span: any;
+            startPos: { line: number; col: number };
+            excerpt: string;
+            typeStr: string;
+            annotation: string;
+            infectionInfo?: string;
+            coverageInfo?: string;
+          }
+        >
+      >();
+
       for (const { nodeId, view, span } of nodeViewsWithSpans) {
         const startPos = offsetToLineCol(span.start);
-        const _endPos = offsetToLineCol(span.end);
         const excerpt = source.substring(span.start, span.end);
 
         // finalType is a PartialType: { kind: "unknown" | "concrete", type?: Type }
@@ -519,10 +536,8 @@ REPL Commands:
           }
         }
 
-        console.log(`Line ${startPos.line + 1}:${startPos.col}: ${excerpt}`);
-        console.log(`  → ${typeStr}${annotation}`);
-
-        // Show infection information for this node
+        // Collect infection information
+        let infectionInfo: string | undefined;
         if (artifact.analysis.layer3.constraintFlow) {
           const flow = artifact.analysis.layer3.constraintFlow;
           const nodeLabels = flow.labels.get(nodeId);
@@ -536,7 +551,7 @@ REPL Commands:
           }
 
           if (nodeLabels || incomingEdges.size > 0) {
-            const infectionInfo: string[] = [];
+            const infectionParts: string[] = [];
 
             // Show incoming flow
             if (incomingEdges.size > 0) {
@@ -544,22 +559,24 @@ REPL Commands:
                 const span = artifact.analysis.layer3.spanIndex.get(id);
                 return span ? `line ${span.start + 1}` : `node ${id}`;
               }).join(", ");
-              infectionInfo.push(`infected from: ${incomingList}`);
+              infectionParts.push(`infected from: ${incomingList}`);
             }
 
             // Show labels on this node
             if (nodeLabels) {
               for (const [domain, labelStr] of nodeLabels.entries()) {
-                infectionInfo.push(`${domain}: ${labelStr}`);
+                infectionParts.push(`${domain}: ${labelStr}`);
               }
             }
 
-            if (infectionInfo.length > 0) {
-              console.log(`  🦠 ${infectionInfo.join("; ")}`);
+            if (infectionParts.length > 0) {
+              infectionInfo = `🦠 ${infectionParts.join("; ")}`;
             }
           }
         }
 
+        // Collect coverage information
+        let coverageInfo: string | undefined;
         const coverage = layer3.matchCoverages.get(nodeId);
         if (coverage) {
           const rowStr = formatScheme({ quantifiers: [], type: coverage.row });
@@ -572,25 +589,59 @@ REPL Commands:
             : "(none)";
           if (coverage.missingConstructors.length === 0) {
             if (coverage.dischargesResult) {
-              console.log(
-                `  ⚡ discharges Err row ${rowStr}; constructors: ${handledLabel}`,
-              );
+              coverageInfo =
+                `⚡ discharges Err row ${rowStr}; constructors: ${handledLabel}`;
             } else {
-              console.log(
-                `  ⚠️ covers Err row ${rowStr} but infection continues (handled: ${handledLabel})`,
-              );
+              coverageInfo =
+                `⚠️ covers Err row ${rowStr} but infection continues (handled: ${handledLabel})`;
             }
           } else {
             const missingLabel = coverage.missingConstructors.join(", ");
-            console.log(
-              `  ⚠️ missing Err constructors ${missingLabel} for row ${rowStr} (handled: ${handledLabel})`,
-            );
+            coverageInfo =
+              `⚠️ missing Err constructors ${missingLabel} for row ${rowStr} (handled: ${handledLabel})`;
+          }
+        }
+
+        const lineNum = startPos.line + 1;
+        if (!expressionsByLine.has(lineNum)) {
+          expressionsByLine.set(lineNum, []);
+        }
+        expressionsByLine.get(lineNum)!.push({
+          nodeId,
+          view,
+          span,
+          startPos,
+          excerpt,
+          typeStr,
+          annotation,
+          infectionInfo,
+          coverageInfo,
+        });
+      }
+
+      // Now display grouped by line
+      for (const [lineNum, expressions] of expressionsByLine.entries()) {
+        // Get the full line text
+        const lineText = source.split("\n")[lineNum - 1] || "";
+        console.log(`Line ${lineNum}: ${lineText}`);
+
+        // Sort expressions by column within the line
+        expressions.sort((a, b) => a.startPos.col - b.startPos.col);
+
+        for (const expr of expressions) {
+          console.log(`  ${expr.startPos.col}: ${expr.excerpt}`);
+          console.log(`    → ${expr.typeStr}${expr.annotation}`);
+
+          if (expr.infectionInfo) {
+            console.log(`    ${expr.infectionInfo}`);
+          }
+
+          if (expr.coverageInfo) {
+            console.log(`    ${expr.coverageInfo}`);
           }
         }
         console.log();
-      }
-
-      // Also show top-level bindings summary with Layer 3 types
+      } // Also show top-level bindings summary with Layer 3 types
       console.log("=== Top-Level Bindings ===\n");
       const summaries = artifact.analysis.layer1.summaries;
       const adtEnv = artifact.analysis.layer1.adtEnv;
