@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "@workman/value.ts";
+import type { RuntimeValue } from "./value.ts";
 
 export function formatRuntimeValue(value: RuntimeValue): string {
   switch (value.kind) {

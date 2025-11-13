@@ -3,7 +3,7 @@ import type {
   MatchBundle,
   Parameter,
   SourceSpan,
-} from "@workman/ast.ts";
+} from "./ast.ts";
 
 export type RuntimeValue =
   | IntValue

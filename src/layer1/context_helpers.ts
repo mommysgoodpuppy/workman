@@ -1,6 +1,6 @@
 // Helper functions extracted from context.ts to avoid Andromeda circular import issues
-import type { Expr, Literal, NodeId, Pattern } from "@workman/ast.ts";
-import { isHoleType, type Type, unknownType, getProvenance } from "@workman/types.ts";
+import type { Expr, Literal, NodeId, Pattern } from "../ast.ts";
+import { isHoleType, type Type, unknownType, getProvenance } from "../types.ts";
 import type { HoleOrigin, UnknownCategory } from "./context_types.ts";
 
 // Context interface is forward-declared here to avoid importing from context.ts

@@ -63,7 +63,7 @@ import type {
   HoleOriginKind,
   UnknownCategory,
 } from "./context_types.ts";
-export type { HoleId, HoleOrigin, HoleOriginKind, UnknownCategory };
+/* export type { HoleId, HoleOrigin, HoleOriginKind, UnknownCategory }; */
 
 export interface Context {
   env: TypeEnv;

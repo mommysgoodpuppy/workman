@@ -1,4 +1,4 @@
-import type { CoreModule } from "@workman/backends/compiler/ir/core.ts";
+import type { CoreModule } from "../backends/compiler/ir/core.ts";
 
 export interface CompiledValueSummary {
   readonly name: string;

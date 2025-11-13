@@ -1,5 +1,5 @@
 // Pure type definitions extracted to avoid Andromeda A→B→A import pattern
-import type { NodeId, SourceSpan } from "@workman/ast.ts";
+import type { NodeId, SourceSpan } from "../ast.ts";
 
 export type HoleOriginKind = "expr" | "pattern" | "type_expr" | "top_level";
 
