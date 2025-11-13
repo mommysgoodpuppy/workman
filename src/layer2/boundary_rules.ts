@@ -10,6 +10,7 @@ import {
   flattenResultType,
   flattenTaintedType,
   formatIdentity,
+  splitCarrier,
 } from "../types.ts";
 
 export interface BoundaryRule {
@@ -24,7 +25,14 @@ function errorBoundary(
   const errorLabels = Array.from(labels).filter((l) => l.domain === "error");
   if (errorLabels.length === 0) return null; // No errors, OK
 
-  // Check if return type is Result
+  // Check if return type is ANY carrier type in the error domain (generic check)
+  const carrierInfo = splitCarrier(returnType);
+  if (carrierInfo && carrierInfo.domain === "error") {
+    // Error is reified in an error-domain carrier type (Result, IResult, etc.) - OK
+    return null;
+  }
+
+  // Fallback: check hardcoded Result type for backward compatibility
   const resultInfo = flattenResultType(returnType);
   if (resultInfo) {
     // Error is reified in Result type - OK

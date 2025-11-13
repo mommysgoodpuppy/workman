@@ -428,6 +428,7 @@ export type MTopLevel =
   | { kind: "type"; node: TypeDeclaration }
   | { kind: "prefix"; node: PrefixDeclaration }
   | { kind: "infix"; node: InfixDeclaration }
+  | { kind: "infectious"; node: import("./ast.ts").InfectiousDeclaration }
   | MTopLevelMark;
 
 export interface MProgram {

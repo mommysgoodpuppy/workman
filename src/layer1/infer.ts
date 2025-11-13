@@ -1,6 +1,7 @@
 import type {
   BlockExpr,
   BlockStatement,
+  ConstructorExpr,
   Expr,
   InfixDeclaration,
   LetDeclaration,
@@ -18,12 +19,16 @@ import { lowerTupleParameters } from "../lower_tuple_params.ts";
 import { canonicalizeMatch } from "../passes/canonicalize_match.ts";
 import {
   applySubstitutionScheme,
+  type CarrierInfo,
+  type CarrierOperations,
   cloneType,
   cloneTypeScheme,
   collapseCarrier,
   collapseResultType,
+  ensureRow,
   errorLabel,
   type ErrorRowType,
+  errorRowUnion,
   flattenResultType,
   freeTypeVars,
   freshTypeVar,
@@ -31,6 +36,7 @@ import {
   isHoleType,
   joinCarrier,
   type Provenance,
+  registerCarrier,
   splitCarrier,
   type Type,
   type TypeEnv,
@@ -204,6 +210,167 @@ function registerPrefixDeclaration(ctx: Context, decl: PrefixDeclaration) {
 
   // Register it under the operator name
   ctx.env.set(opFuncName, implScheme);
+}
+
+function expandErrorRowTail(ctx: Context, errorRow: ErrorRowType): ErrorRowType {
+  // If the tail is a concrete ADT type, expand it into its constructors
+  // BUT: Keep type variable tails - they represent unknown errors
+  if (!errorRow.tail) {
+    return errorRow;
+  }
+
+  // Don't expand type variables - they need to stay as tails for unification
+  if (errorRow.tail.kind === "var") {
+    return errorRow;
+  }
+
+  // Only expand concrete constructor types (ADTs)
+  if (errorRow.tail.kind !== "constructor") {
+    return errorRow;
+  }
+
+  const tailType = errorRow.tail;
+  const adtInfo = ctx.adtEnv.get(tailType.name);
+  if (!adtInfo || adtInfo.isAlias) {
+    return errorRow;
+  }
+
+  // Expand the ADT constructors into the error_row cases
+  const expandedCases = new Map(errorRow.cases);
+  for (const ctor of adtInfo.constructors) {
+    if (!expandedCases.has(ctor.name)) {
+      // Add constructor with null payload for now (we'd need to track actual payload types)
+      expandedCases.set(ctor.name, null);
+    }
+  }
+
+  return {
+    kind: "error_row",
+    cases: expandedCases,
+    tail: undefined, // Remove tail since we've expanded it completely
+  };
+}
+
+function refineInfectiousConstructor(
+  ctx: Context,
+  expr: ConstructorExpr,
+  type: Type,
+): Type {
+  // Check if this type is an infectious carrier type
+  const carrierInfo = splitCarrier(type);
+  if (!carrierInfo || carrierInfo.domain !== "error") {
+    return type;
+  }
+
+  // Check if the state is an error_row with just a tail (no specific cases yet)
+  if (carrierInfo.state.kind !== "error_row") {
+    return type;
+  }
+
+  let errorRow = carrierInfo.state;
+  
+  // Check if any argument is a constructor expression
+  // For infectious types like IResult<T, E>, we care about the error constructor
+  // which is typically the last (or only) argument
+  if (expr.args.length > 0) {
+    const lastArg = expr.args[expr.args.length - 1];
+    if (lastArg.kind === "constructor") {
+      // The argument is a constructor! Add it as a specific case in the error_row
+      const constructorName = lastArg.name;
+      const newCases = new Map(errorRow.cases);
+      
+      // Add the constructor as a case with null payload (nullary constructor)
+      // TODO: Track payload types for constructors with arguments
+      newCases.set(constructorName, null);
+
+      errorRow = {
+        kind: "error_row",
+        cases: newCases,
+        tail: errorRow.tail,
+      };
+      
+      // Emit a constraint source to track this specific error constructor
+      // This allows the constraint system to track error propagation
+      emitConstraintSource(ctx, expr.id, errorLabel(errorRow));
+    }
+  }
+
+  // Don't expand the tail here - keep it for unification
+  // The type printer will expand it for display purposes
+  // errorRow = expandErrorRowTail(ctx, errorRow);
+
+  // Reconstruct the carrier type with the refined error_row
+  const refinedType = joinCarrier(
+    carrierInfo.domain,
+    carrierInfo.value,
+    errorRow,
+  );
+
+  return refinedType ?? type;
+}
+
+function registerInfectiousDeclaration(
+  ctx: Context,
+  decl: import("../ast.ts").InfectiousDeclaration,
+) {
+  // Register the infectious type as a carrier in the type system
+  const { domain, typeName, valueParam, stateParam } = decl;
+
+  // Create carrier operations for this infectious type
+  const carrier: CarrierOperations = {
+    is: (type: Type): boolean => {
+      return type.kind === "constructor" && type.name === typeName &&
+        type.args.length === 2;
+    },
+
+    split: (type: Type): CarrierInfo | null => {
+      if (!carrier.is(type)) {
+        return null;
+      }
+      const carrierType = type as Extract<Type, { kind: "constructor" }>;
+      const value = carrierType.args[0];
+      const state = carrierType.args[1];  // Don't wrap in ensureRow - keep as-is
+
+      // Handle nested carriers by flattening
+      const inner = carrier.split(value);
+      if (!inner) {
+        return { value, state };
+      }
+      // If we have nested carriers, union the states
+      const unionedState = state.kind === "error_row" 
+        ? errorRowUnion(inner.state, state)
+        : ensureRow(state);  // Only wrap if needed for union
+      return {
+        value: inner.value,
+        state: unionedState,
+      };
+    },
+
+    join: (value: Type, state: Type): Type => {
+      const stateRow = ensureRow(state);
+      return {
+        kind: "constructor",
+        name: typeName,
+        args: [value, stateRow],
+      };
+    },
+
+    collapse: (type: Type): Type => {
+      const info = carrier.split(type);
+      if (!info) {
+        return type;
+      }
+      const collapsedValue = carrier.collapse(info.value);
+      return carrier.join(collapsedValue, info.state);
+    },
+
+    unionStates: (left: Type, right: Type): Type => {
+      return errorRowUnion(left, right);
+    },
+  };
+
+  // Register the carrier for this domain
+  registerCarrier(domain, carrier);
 }
 
 function inferLetDeclaration(
@@ -629,7 +796,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         );
         return recordExprType(ctx, expr, mark.type);
       }
-      return recordExprType(ctx, expr, applied);
+      
+      // Special handling for infectious type constructors:
+      // If this is a constructor of an infectious type and the argument is a constructor,
+      // refine the error_row to include the specific constructor as a case
+      const refinedType = refineInfectiousConstructor(ctx, expr, applied);
+      return recordExprType(ctx, expr, refinedType);
     }
     case "tuple": {
       const elements = expr.elements.map((el) => inferExpr(ctx, el));
@@ -1327,12 +1499,21 @@ export function inferProgram(
   const markedDeclarations: MTopLevel[] = [];
   const successfulTypeDecls = new Set<TypeDeclaration>();
   const skippedTypeDecls = new Set<TypeDeclaration>(); // Types from initialAdtEnv
+  const infectiousTypes = new Map<string, import("../ast.ts").InfectiousDeclaration>(); // Track infectious declarations
 
   // Clear the type params cache for this program
   resetTypeParamsCache();
 
   if (options.registerPrelude !== false) {
     registerPrelude(ctx);
+  }
+
+  // Pass 0: Collect infectious declarations (before type registration)
+  for (const decl of canonicalProgram.declarations) {
+    if (decl.kind === "infectious") {
+      infectiousTypes.set(decl.typeName, decl);
+      registerInfectiousDeclaration(ctx, decl);
+    }
   }
 
   // Pass 1: Register all type names (allows forward references)
@@ -1363,7 +1544,8 @@ export function inferProgram(
       decl.kind === "type" && successfulTypeDecls.has(decl) &&
       !skippedTypeDecls.has(decl)
     ) {
-      const result = registerTypeConstructors(ctx, decl);
+      const infectiousDecl = infectiousTypes.get(decl.name);
+      const result = registerTypeConstructors(ctx, decl, infectiousDecl);
       if (!result.success) {
         markedDeclarations.push(result.mark);
         successfulTypeDecls.delete(decl); // Remove from successful set
@@ -1375,9 +1557,10 @@ export function inferProgram(
     if (decl.kind === "let") {
       const results = inferLetDeclaration(ctx, decl);
       for (const { name, scheme } of results) {
+        const finalScheme = applySubstitutionScheme(scheme, ctx.subst);
         summaries.push({
           name,
-          scheme: applySubstitutionScheme(scheme, ctx.subst),
+          scheme: finalScheme,
         });
       }
       const resolvedType = resolveTypeForName(ctx, decl.name);
@@ -1389,6 +1572,9 @@ export function inferProgram(
     } else if (decl.kind === "prefix") {
       registerPrefixDeclaration(ctx, decl);
       markedDeclarations.push({ kind: "prefix", node: decl });
+    } else if (decl.kind === "infectious") {
+      // Already registered in Pass 0
+      markedDeclarations.push({ kind: "infectious", node: decl });
     } else if (decl.kind === "type" && successfulTypeDecls.has(decl)) {
       markedDeclarations.push({ kind: "type", node: decl });
     }
@@ -1868,6 +2054,7 @@ export function ensureExhaustive(
 ): void {
   if (hasWildcard) return;
   const resolved = applyCurrentSubst(ctx, scrutineeType);
+  
   if (resolved.kind === "bool") {
     const missing: string[] = [];
     if (!booleanCoverage.has("true")) missing.push("true");
@@ -1882,10 +2069,12 @@ export function ensureExhaustive(
   }
   const info = ctx.adtEnv.get(resolved.name);
   if (!info) return;
+  
   const seenForType = coverageMap.get(resolved.name) ?? new Set();
   const missing = info.constructors
     .map((ctor) => ctor.name)
     .filter((name) => !seenForType.has(name));
+  
   if (missing.length > 0) {
     markNonExhaustive(ctx, expr, expr.span, missing, resolved);
   }
@@ -2027,38 +2216,68 @@ export function inferMatchBranches(
       branchBodies.push(arm.body);
     }
     const branchKind = classifyBranchKind(patternInfo);
+    
     if (patternInfo.coverage.kind === "wildcard") {
       hasWildcard = true;
     } else if (patternInfo.coverage.kind === "all_errors") {
       hasAllErrors = true;
       handledErrorConstructors.add("_");
-      if (
-        expected.kind === "constructor" &&
-        expected.name === "Result"
-      ) {
-        const set = coverageMap.get(expected.name) ?? new Set<string>();
-        set.add("Err");
-        coverageMap.set(expected.name, set);
-      }
-    } else if (patternInfo.coverage.kind === "constructor") {
-      if (
-        patternInfo.coverage.typeName === "Result" &&
-        patternInfo.coverage.ctor === "Err"
-      ) {
-        hasErrConstructor = true;
-        const errorRow = patternInfo.coverage.errorRow;
-        if (errorRow) {
-          for (const ctor of errorRow.constructors) {
-            handledErrorConstructors.add(ctor);
-          }
-          if (errorRow.coversTail) {
-            handledErrorConstructors.add("_");
+      // If the scrutinee is an error-domain carrier, mark it as having error handling
+      if (expected.kind === "constructor") {
+        const carrierInfo = splitCarrier(expected);
+        if (carrierInfo && carrierInfo.domain === "error") {
+          // Find the error constructor name for this carrier type
+          const typeInfo = ctx.adtEnv.get(expected.name);
+          if (typeInfo) {
+            // Find which constructor is the error constructor (has error row payload)
+            for (const ctor of typeInfo.constructors) {
+              // Heuristic: error constructors typically have one parameter
+              // TODO: Make this more robust by checking constructor signatures
+              if (ctor.arity === 1) {
+                const set = coverageMap.get(expected.name) ?? new Set<string>();
+                set.add(ctor.name);
+                coverageMap.set(expected.name, set);
+                break;
+              }
+            }
           }
         }
       }
-      const key = patternInfo.coverage.typeName;
+    } else if (patternInfo.coverage.kind === "constructor") {
+      // Check if this pattern is for a carrier type in the error domain
+      // We need to check the actual type, not just the name
+      const typeName = patternInfo.coverage.typeName;
+      const ctorName = patternInfo.coverage.ctor;
+      
+      // Try to construct the type and check if it's an error carrier
+      const typeInfo = ctx.adtEnv.get(typeName);
+      if (typeInfo) {
+        // Create a sample type to check if it's a carrier
+        const sampleType: Type = {
+          kind: "constructor",
+          name: typeName,
+          args: typeInfo.parameters.map(() => freshTypeVar()),
+        };
+        const carrierInfo = splitCarrier(sampleType);
+        
+        // If this is an error-domain carrier, track error handling
+        if (carrierInfo && carrierInfo.domain === "error") {
+          hasErrConstructor = true;
+          const errorRow = patternInfo.coverage.errorRow;
+          if (errorRow) {
+            for (const ctor of errorRow.constructors) {
+              handledErrorConstructors.add(ctor);
+            }
+            if (errorRow.coversTail) {
+              handledErrorConstructors.add("_");
+            }
+          }
+        }
+      }
+      
+      const key = typeName;
       const set = coverageMap.get(key) ?? new Set<string>();
-      set.add(patternInfo.coverage.ctor);
+      set.add(ctorName);
       coverageMap.set(key, set);
     } else if (patternInfo.coverage.kind === "bool") {
       booleanCoverage.add(patternInfo.coverage.value ? "true" : "false");
@@ -2111,14 +2330,24 @@ export function inferMatchBranches(
   const preventsDischarge = okBranchesReturnResult || errBranchesReturnResult;
 
   if (exhaustive) {
-    if (
-      hasAllErrors &&
-      resolvedScrutinee.kind === "constructor" &&
-      resolvedScrutinee.name === "Result"
-    ) {
-      const set = coverageMap.get(resolvedScrutinee.name) ?? new Set<string>();
-      set.add("Err");
-      coverageMap.set(resolvedScrutinee.name, set);
+    // If we have all_errors pattern and scrutinee is an error-domain carrier,
+    // mark the error constructor as covered
+    if (hasAllErrors && resolvedScrutinee.kind === "constructor") {
+      const carrierInfo = splitCarrier(resolvedScrutinee);
+      if (carrierInfo && carrierInfo.domain === "error") {
+        const typeInfo = ctx.adtEnv.get(resolvedScrutinee.name);
+        if (typeInfo) {
+          // Find the error constructor (heuristic: has arity 1)
+          for (const ctor of typeInfo.constructors) {
+            if (ctor.arity === 1) {
+              const set = coverageMap.get(resolvedScrutinee.name) ?? new Set<string>();
+              set.add(ctor.name);
+              coverageMap.set(resolvedScrutinee.name, set);
+              break;
+            }
+          }
+        }
+      }
     }
     ensureExhaustive(
       ctx,

@@ -39,6 +39,7 @@ function canonicalizeTopLevel(node: TopLevel): void {
     case "type":
     case "infix":
     case "prefix":
+    case "infectious":
       // No expression children to canonicalise.
       break;
     default:

@@ -53,9 +53,27 @@ export function createErrorRow(
 }
 
 // Internal helper: converts any type to a row type (used by carriers)
-// If already a row, return as-is; otherwise wrap as tail
-function ensureRow(type: Type): ErrorRowType {
+// If already a row, return as-is (flattening nested rows); otherwise wrap as tail
+// Exported for use in dynamic carrier registration
+export function ensureRow(type: Type): ErrorRowType {
   if (type.kind === "error_row") {
+    // Flatten nested error_rows: if the tail is also an error_row, merge them
+    if (type.tail?.kind === "error_row") {
+      const tailRow = type.tail;
+      const mergedCases = new Map(type.cases);
+      // Add cases from the tail
+      for (const [label, payload] of tailRow.cases) {
+        if (!mergedCases.has(label)) {
+          mergedCases.set(label, payload);
+        }
+      }
+      // Recursively flatten the tail's tail
+      return ensureRow({
+        kind: "error_row",
+        cases: mergedCases,
+        tail: tailRow.tail,
+      });
+    }
     return type;
   }
   return {
@@ -220,21 +238,33 @@ export interface CarrierOperations {
   unionStates: (left: Type, right: Type) => Type;
 }
 
-// Registry of carrier types by domain
-const CARRIER_REGISTRY = new Map<string, CarrierOperations>();
+// Registry of carrier types by domain - supports multiple carriers per domain
+const CARRIER_REGISTRY = new Map<string, CarrierOperations[]>();
 
 export function registerCarrier(domain: string, ops: CarrierOperations): void {
-  CARRIER_REGISTRY.set(domain, ops);
+  const existing = CARRIER_REGISTRY.get(domain) || [];
+  existing.push(ops);
+  CARRIER_REGISTRY.set(domain, existing);
 }
 
-export function getCarrier(domain: string): CarrierOperations | undefined {
-  return CARRIER_REGISTRY.get(domain);
+export function getCarrier(domain: string, type: Type): CarrierOperations | undefined {
+  const carriers = CARRIER_REGISTRY.get(domain);
+  if (!carriers) return undefined;
+  // Find the first carrier that matches this type
+  for (const ops of carriers) {
+    if (ops.is(type)) {
+      return ops;
+    }
+  }
+  return undefined;
 }
 
 export function findCarrierDomain(type: Type): string | null {
-  for (const [domain, ops] of CARRIER_REGISTRY.entries()) {
-    if (ops.is(type)) {
-      return domain;
+  for (const [domain, carriers] of CARRIER_REGISTRY.entries()) {
+    for (const ops of carriers) {
+      if (ops.is(type)) {
+        return domain;
+      }
     }
   }
   return null;
@@ -252,7 +282,7 @@ export function splitCarrier(type: Type): GenericCarrierInfo | null {
   const domain = findCarrierDomain(type);
   if (!domain) return null;
 
-  const ops = getCarrier(domain);
+  const ops = getCarrier(domain, type);
   if (!ops) return null;
 
   const info = ops.split(type);
@@ -271,9 +301,11 @@ export function joinCarrier(
   value: Type,
   state: Type,
 ): Type | null {
-  const ops = getCarrier(domain);
-  if (!ops) return null;
-  return ops.join(value, state);
+  // Get the first carrier for this domain
+  // TODO: This assumes all carriers in a domain have the same join logic
+  const carriers = CARRIER_REGISTRY.get(domain);
+  if (!carriers || carriers.length === 0) return null;
+  return carriers[0].join(value, state);
 }
 
 // Collapse any carrier type (remove wrapper, keep state)
@@ -281,7 +313,7 @@ export function collapseCarrier(type: Type): Type {
   const domain = findCarrierDomain(type);
   if (!domain) return type;
 
-  const ops = getCarrier(domain);
+  const ops = getCarrier(domain, type);
   if (!ops) return type;
 
   return ops.collapse(type);
@@ -303,7 +335,8 @@ export function unionCarrierStates(
   left: Type,
   right: Type,
 ): Type | null {
-  const ops = getCarrier(domain);
+  // For unionStates, we need a sample type - use left as the sample
+  const ops = getCarrier(domain, left);
   if (!ops) return null;
   return ops.unionStates(left, right);
 }
@@ -362,7 +395,8 @@ const ResultCarrier: CarrierOperations = {
 };
 
 // Register Result carrier for error domain
-registerCarrier("error", ResultCarrier);
+// DISABLED: The std library now uses IResult exclusively
+// registerCarrier("error", ResultCarrier);
 
 // ============================================================================
 // Tainted<T, TaintRow> Carrier (Taint Domain)
@@ -1055,22 +1089,29 @@ export function typeToString(type: Type): string {
 
       // Simplify display for common cases:
       // 1. If no concrete cases and just a tail, show the tail directly
-      if (rendered.length === 0 && type.tail) {
-        return typeToString(type.tail);
-      }
+      // DISABLED: We want to show error_row structure for infectious types
+      // if (rendered.length === 0 && type.tail) {
+      //   return typeToString(type.tail);
+      // }
+      
       // 2. If one concrete case with an open tail variable, hide the tail
       if (rendered.length === 1 && type.tail?.kind === "var") {
         return `<${rendered[0]}>`;
       }
 
-      // Otherwise show full notation with tail
+      // Show full notation with tail
       if (type.tail) {
         const tailStr = typeToString(type.tail);
-        // Tail represents "all other potential errors" - prefix with _
-        rendered.push(`_${tailStr}`);
+        // If no specific cases, just show the tail in angle brackets to indicate it's an error row
+        if (rendered.length === 0) {
+          // Show as <TailType> to indicate this is an error row, not just the type
+          return `<${tailStr}>`;
+        }
+        // Otherwise show cases with tail using .. prefix
+        rendered.push(`..${tailStr}`);
       } else if (rendered.length === 0) {
-        // Empty error row
-        rendered.push("_");
+        // Empty error row (no cases, no tail)
+        return `<>`;
       }
       return `<${rendered.join(" | ")}>`;
     }

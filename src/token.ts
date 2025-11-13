@@ -33,6 +33,7 @@ export const keywords = new Set([
   "infixl",
   "infixr",
   "prefix",
+  "infectious",
 ]);
 
 // Symbols sorted by length (longest first) to ensure correct matching

@@ -345,11 +345,24 @@ export interface PrefixDeclaration extends NodeBase {
   hasBlankLineBefore?: boolean;
 }
 
+export interface InfectiousDeclaration extends NodeBase {
+  kind: "infectious";
+  domain: string; // The domain name (e.g., "error", "taint", "hole")
+  typeName: string; // The type constructor name (e.g., "Result", "Tainted")
+  valueParam: string; // The value type parameter name (e.g., "T")
+  stateParam: string; // The state type parameter name (e.g., "E")
+  export?: ExportModifier;
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
+}
+
 export type TopLevel =
   | LetDeclaration
   | TypeDeclaration
   | InfixDeclaration
-  | PrefixDeclaration;
+  | PrefixDeclaration
+  | InfectiousDeclaration;
 
 export interface Program {
   imports: ModuleImport[];

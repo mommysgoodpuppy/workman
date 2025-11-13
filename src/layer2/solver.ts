@@ -33,10 +33,12 @@ import {
   getProvenance,
   type Identity,
   isHoleType,
+  joinCarrier,
   makeResultType,
   type makeTaintedType,
   occursInType,
   type sameIdentity,
+  splitCarrier,
   type Substitution,
   taintLabel,
   type TaintRowType,
@@ -167,7 +169,8 @@ export function solveConstraints(input: SolveInput): SolverResult {
   }
 
   const resolvedNodeTypes = new Map<NodeId, Type>();
-  for (const [nodeId, type] of input.nodeTypeById.entries()) {
+  // Use state.nodeTypeById which may have been updated during solving (e.g., branch joins with unions)
+  for (const [nodeId, type] of state.nodeTypeById.entries()) {
     const resolved = applySubstitution(type, state.substitution);
     resolvedNodeTypes.set(nodeId, cloneType(resolved));
   }
@@ -258,7 +261,12 @@ export function solveConstraints(input: SolveInput): SolverResult {
 
   // Transform summaries with resolved types and conflict information
   const transformedSummaries = input.summaries.map(({ name, scheme }) => {
-    const transformedType = transformTypeWithSolutions(scheme.type, solutions);
+    // Apply substitution to get the most up-to-date type
+    let transformedType = applySubstitution(scheme.type, state.substitution);
+    // Then apply hole solutions
+    transformedType = transformTypeWithSolutions(transformedType, solutions);
+    // Flatten any nested error_rows that may have been created
+    transformedType = flattenNestedErrorRows(transformedType);
     return {
       name,
       scheme: {
@@ -658,45 +666,66 @@ function solveBranchJoinConstraint(
     return;
   }
 
-  const referenceType = getTypeForNode(state, stub.branches[0]);
+  let mergedType = getTypeForNode(state, stub.branches[0]);
   let currentSubst = state.substitution;
 
   for (let index = 1; index < stub.branches.length; index += 1) {
     const branchType = getTypeForNode(state, stub.branches[index]);
-    const unified = unifyTypes(referenceType, branchType, currentSubst);
-    if (!unified.success) {
-      state.diagnostics.push({
-        origin: stub.origin,
-        reason: "branch_mismatch",
-        details: {
-          branchIndex: index,
-          dischargesResult: stub.dischargesResult ?? false,
-          errorRow: stub.errorRowCoverage?.row,
-          missingConstructors: stub.errorRowCoverage?.missingConstructors,
-        },
-      });
-      return;
+    
+    // Check if both types are carriers in the same domain
+    const leftCarrier = splitCarrier(mergedType);
+    const rightCarrier = splitCarrier(branchType);
+    
+    if (leftCarrier && rightCarrier && leftCarrier.domain === rightCarrier.domain) {
+      // Both are carriers in the same domain - merge their states using union
+      const valueUnify = unifyTypes(leftCarrier.value, rightCarrier.value, currentSubst);
+      if (!valueUnify.success) {
+        state.diagnostics.push({
+          origin: stub.origin,
+          reason: "branch_mismatch",
+          details: {
+            branchIndex: index,
+            dischargesResult: stub.dischargesResult ?? false,
+            errorRow: stub.errorRowCoverage?.row,
+            missingConstructors: stub.errorRowCoverage?.missingConstructors,
+          },
+        });
+        return;
+      }
+      currentSubst = valueUnify.subst;
+      
+      // For error domain, union the error rows
+      if (leftCarrier.domain === "error" && 
+          leftCarrier.state.kind === "error_row" && 
+          rightCarrier.state.kind === "error_row") {
+        const unionState = errorRowUnion(leftCarrier.state, rightCarrier.state);
+        mergedType = joinCarrier(leftCarrier.domain, leftCarrier.value, unionState) ?? mergedType;
+      }
+    } else {
+      // Normal unification
+      const unified = unifyTypes(mergedType, branchType, currentSubst);
+      if (!unified.success) {
+        state.diagnostics.push({
+          origin: stub.origin,
+          reason: "branch_mismatch",
+          details: {
+            branchIndex: index,
+            dischargesResult: stub.dischargesResult ?? false,
+            errorRow: stub.errorRowCoverage?.row,
+            missingConstructors: stub.errorRowCoverage?.missingConstructors,
+          },
+        });
+        return;
+      }
+      currentSubst = unified.subst;
     }
-    currentSubst = unified.subst;
   }
 
-  const resultType = getTypeForNode(state, stub.origin);
-  const unifiedResult = unifyTypes(referenceType, resultType, currentSubst);
-  if (!unifiedResult.success) {
-    state.diagnostics.push({
-      origin: stub.origin,
-      reason: "branch_mismatch",
-      details: {
-        branchIndex: "result",
-        dischargesResult: stub.dischargesResult ?? false,
-        errorRow: stub.errorRowCoverage?.row,
-        missingConstructors: stub.errorRowCoverage?.missingConstructors,
-      },
-    });
-    return;
-  }
-
-  state.substitution = unifiedResult.subst;
+  // Store the merged type (with unions) directly
+  // Don't unify with the old result type - just replace it
+  // This ensures the union is visible in the final type display
+  state.nodeTypeById.set(stub.origin, mergedType);
+  state.substitution = currentSubst;
 }
 
 function getTypeForNode(state: SolverState, nodeId: NodeId): Type {
@@ -705,6 +734,66 @@ function getTypeForNode(state: SolverState, nodeId: NodeId): Type {
     return cloneType(applySubstitution(type, state.substitution));
   }
   return unknownType({ kind: "incomplete", reason: "solver.missing_node" });
+}
+
+function flattenNestedErrorRows(type: Type): Type {
+  switch (type.kind) {
+    case "error_row": {
+      // Flatten nested error_rows
+      if (type.tail?.kind === "error_row") {
+        const tailRow = type.tail;
+        const mergedCases = new Map(type.cases);
+        for (const [label, payload] of tailRow.cases) {
+          if (!mergedCases.has(label)) {
+            mergedCases.set(label, payload ? flattenNestedErrorRows(payload) : null);
+          }
+        }
+        return flattenNestedErrorRows({
+          kind: "error_row",
+          cases: mergedCases,
+          tail: tailRow.tail,
+        });
+      }
+      // Flatten payloads
+      const flattenedCases = new Map();
+      for (const [label, payload] of type.cases) {
+        flattenedCases.set(label, payload ? flattenNestedErrorRows(payload) : null);
+      }
+      return {
+        kind: "error_row",
+        cases: flattenedCases,
+        tail: type.tail ? flattenNestedErrorRows(type.tail) : type.tail,
+      };
+    }
+    case "func":
+      return {
+        kind: "func",
+        from: flattenNestedErrorRows(type.from),
+        to: flattenNestedErrorRows(type.to),
+      };
+    case "constructor":
+      return {
+        kind: "constructor",
+        name: type.name,
+        args: type.args.map(flattenNestedErrorRows),
+      };
+    case "tuple":
+      return {
+        kind: "tuple",
+        elements: type.elements.map(flattenNestedErrorRows),
+      };
+    case "record":
+      const flattenedFields = new Map();
+      for (const [name, fieldType] of type.fields) {
+        flattenedFields.set(name, flattenNestedErrorRows(fieldType));
+      }
+      return {
+        kind: "record",
+        fields: flattenedFields,
+      };
+    default:
+      return type;
+  }
 }
 
 function registerUnifyFailure(

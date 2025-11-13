@@ -81,6 +81,7 @@ export type RegisterConstructorsResult = { success: true } | {
 export function registerTypeConstructors(
   ctx: Context,
   decl: TypeDeclaration,
+  infectiousDecl?: import("../ast.ts").InfectiousDeclaration,
 ): RegisterConstructorsResult {
   if (isAliasTypeDeclaration(decl)) {
     return registerTypeAlias(ctx, decl);
@@ -161,6 +162,7 @@ export function registerTypeConstructors(
       parameterTypes,
       member,
       typeScope,
+      infectiousDecl,
     );
 
     // Shape validation: ensure the scheme returns the ADT constructor
@@ -544,7 +546,9 @@ function buildConstructorInfo(
   parameterTypes: Type[],
   ctor: ConstructorAlias,
   scope: TypeScope,
+  infectiousDecl?: import("../ast.ts").InfectiousDeclaration,
 ): ConstructorInfo {
+  // Don't wrap parameters here - let the carrier system handle wrapping
   const ctorResult = makeDataConstructor(typeName, parameterTypes);
   const args = ctor.typeArgs.map((arg) =>
     convertTypeExpr(ctx, arg, scope, { allowNewVariables: false })

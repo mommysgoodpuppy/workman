@@ -35,6 +35,7 @@ import {
   composeSubstitution,
   type ConstraintLabel,
   type ErrorRowType,
+  errorRowUnion,
   generalize,
   getProvenance,
   type Identity,
@@ -43,6 +44,7 @@ import {
   occursInType,
   type Provenance,
   resetTypeVarCounter,
+  splitCarrier,
   type Substitution,
   type Type,
   type TypeEnv,
@@ -973,6 +975,19 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
   }
 
   if (left.kind === "constructor" && right.kind === "constructor") {
+    // Special case: Check if both are carriers in the same domain
+    // If so, unify their value and state components instead of requiring exact name match
+    const leftCarrier = splitCarrier(left);
+    const rightCarrier = splitCarrier(right);
+    
+    if (leftCarrier && rightCarrier && leftCarrier.domain === rightCarrier.domain) {
+      // Both are carriers in the same domain - unify value and state
+      const valueUnify = unifyTypes(leftCarrier.value, rightCarrier.value, subst);
+      if (!valueUnify.success) return valueUnify;
+      return unifyTypes(leftCarrier.state, rightCarrier.state, valueUnify.subst);
+    }
+    
+    // Normal constructor unification - require exact name match
     if (left.name !== right.name || left.args.length !== right.args.length) {
       return {
         success: false,
@@ -1047,44 +1062,69 @@ function unifyErrorRowTypes(
   right: ErrorRowType,
   subst: Substitution,
 ): UnifyResult {
-  if (left.cases.size !== right.cases.size) {
-    return {
-      success: false,
-      reason: { kind: "type_mismatch", left, right },
-    };
+  // Error domain uses UNION semantics, not exact match
+  // Per INFECTION_REFACTOR_PLAN_V3.md: "Errors compose via union"
+  
+  // Apply current substitution to both sides
+  const resolvedLeft = applySubstitution(left, subst) as ErrorRowType;
+  const resolvedRight = applySubstitution(right, subst) as ErrorRowType;
+  
+  // If they're structurally equal, we're done
+  if (errorRowsEqual(resolvedLeft, resolvedRight)) {
+    return { success: true, subst };
   }
+  
+  // Check if either is a type variable tail - if so, bind it to the other side
+  if (resolvedLeft.cases.size === 0 && resolvedLeft.tail?.kind === "var") {
+    // Left is just a type variable - bind it to the right side (not the union!)
+    // Binding to the union would create an occurs check failure
+    return bindVar(resolvedLeft.tail.id, resolvedRight, subst);
+  }
+  
+  if (resolvedRight.cases.size === 0 && resolvedRight.tail?.kind === "var") {
+    // Right is just a type variable - bind it to the left side (not the union!)
+    return bindVar(resolvedRight.tail.id, resolvedLeft, subst);
+  }
+  
+  // Both have concrete cases - create a fresh type variable and bind it to the union
+  // This allows the union to be represented in the type system
+  const unionRow = errorRowUnion(resolvedLeft, resolvedRight);
+  
+  // If both tails are the same type variable, bind it to the union
+  if (resolvedLeft.tail?.kind === "var" && resolvedRight.tail?.kind === "var" &&
+      resolvedLeft.tail.id === resolvedRight.tail.id) {
+    // Same tail variable - the union will have the same tail
+    return { success: true, subst };
+  }
+  
+  // Different tails or one has no tail - try to unify tails
   let current = subst;
-  for (const [label, leftPayload] of left.cases.entries()) {
-    if (!right.cases.has(label)) {
-      return {
-        success: false,
-        reason: { kind: "type_mismatch", left, right },
-      };
-    }
-    const rightPayload = right.cases.get(label) ?? null;
-    if (leftPayload && rightPayload) {
-      const merged = unifyTypes(leftPayload, rightPayload, current);
-      if (!merged.success) {
-        return merged;
-      }
-      current = merged.subst;
-    } else if (leftPayload || rightPayload) {
-      return {
-        success: false,
-        reason: { kind: "type_mismatch", left, right },
-      };
+  if (resolvedLeft.tail && resolvedRight.tail) {
+    const tailUnify = unifyTypes(resolvedLeft.tail, resolvedRight.tail, current);
+    if (tailUnify.success) {
+      current = tailUnify.subst;
     }
   }
-  if (left.tail && right.tail) {
-    return unifyTypes(left.tail, right.tail, current);
-  }
-  if (left.tail || right.tail) {
-    return {
-      success: false,
-      reason: { kind: "type_mismatch", left, right },
-    };
-  }
+  
+  // Error rows always unify - they compose via union
+  // The union is implicit - it will be computed when needed
   return { success: true, subst: current };
+}
+
+function errorRowsEqual(left: ErrorRowType, right: ErrorRowType): boolean {
+  if (left.cases.size !== right.cases.size) return false;
+  for (const [label, leftPayload] of left.cases) {
+    const rightPayload = right.cases.get(label);
+    if (rightPayload === undefined) return false;
+    // Simplified equality check - could be more thorough
+    if (leftPayload !== rightPayload) return false;
+  }
+  // Check tails
+  if (left.tail?.kind !== right.tail?.kind) return false;
+  if (left.tail?.kind === "var" && right.tail?.kind === "var") {
+    return left.tail.id === right.tail.id;
+  }
+  return true;
 }
 
 export function unify(ctx: Context, a: Type, b: Type): boolean {

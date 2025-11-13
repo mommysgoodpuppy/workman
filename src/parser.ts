@@ -318,6 +318,8 @@ class SurfaceParser {
           return this.parseInfixDeclaration(exportToken);
         case "prefix":
           return this.parsePrefixDeclaration(exportToken);
+        case "infectious":
+          return this.parseInfectiousDeclaration(exportToken);
         default:
           throw this.error(
             `Unexpected keyword '${token.value}' at top-level`,
@@ -327,7 +329,7 @@ class SurfaceParser {
     }
     if (exportToken) {
       throw this.error(
-        "Expected 'let', 'type', 'infix', or 'prefix' after 'export'",
+        "Expected 'let', 'type', 'infix', 'prefix', or 'infectious' after 'export'",
         token,
       );
     }
@@ -838,6 +840,56 @@ class SurfaceParser {
       operator,
       implementation,
       span: this.spanFrom(prefixToken.start, implToken.end),
+      id: nextNodeId(),
+    };
+
+    if (exportToken) {
+      declaration.export = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+    }
+
+    return declaration;
+  }
+
+  private parseInfectiousDeclaration(
+    exportToken?: Token,
+  ): import("./ast.ts").InfectiousDeclaration {
+    const infectiousToken = this.expectKeyword("infectious");
+
+    // Parse domain name (identifier)
+    const domainToken = this.expectIdentifier();
+    const domain = domainToken.value;
+
+    // Parse type name (constructor)
+    const typeNameToken = this.expectTypeName();
+    const typeName = typeNameToken.value;
+
+    // Expect <
+    this.expectSymbol("<");
+
+    // Parse value parameter name
+    const valueParamToken = this.expectTypeParamName();
+    const valueParam = valueParamToken.value;
+
+    // Expect ,
+    this.expectSymbol(",");
+
+    // Parse state parameter name
+    const stateParamToken = this.expectTypeParamName();
+    const stateParam = stateParamToken.value;
+
+    // Expect >
+    this.expectSymbol(">");
+
+    const declaration: import("./ast.ts").InfectiousDeclaration = {
+      kind: "infectious",
+      domain,
+      typeName,
+      valueParam,
+      stateParam,
+      span: this.spanFrom(infectiousToken.start, this.previous().end),
       id: nextNodeId(),
     };
 
