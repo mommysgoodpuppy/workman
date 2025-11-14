@@ -1,0 +1,44 @@
+from "std/result/core" import { IOk, IErr };
+from "std/result" import { map };
+from "std/nativeString" import { stringToList, stringConcat, intToString };
+
+-- Define a simple error type for testing
+type TestError = Err1 | Err2;
+
+-- A pure function that should only accept clean Int
+let pureAdd = (x: Int) => {x + 1};
+
+-- Functions that return specific errors
+let makeErr1 = () => {IErr(Err1)};
+let makeErr2 = () => {IErr(Err2)};
+
+-- Recursive function to trigger errors: Err1 for n=1,2; Err2 for n=3
+let rec triggerErrors = (n: Int) => {
+  match (n == 0) {
+    true => {{ err1: 0, err2: 0 }},
+    false => {
+      let res = match (n <= 2) {
+        true => {makeErr1()},
+        false => {makeErr2()}
+      };
+    
+      let prev = triggerErrors(n - 1);
+      let adds = match (res) {
+        IOk(_) => { {add1: 0, add2: 0} },
+        IErr(Err1) => { {add1: 1, add2: 0} },
+        IErr(Err2) => { {add1: 0, add2: 1} },
+        IErr(_) => { {add1: 0, add2: 0} }  -- Should not happen
+      };
+      { err1: prev.err1 + adds.add1, err2: prev.err2 + adds.add2 }
+    }
+  }
+};
+
+let mainX = () => {
+  let counts = triggerErrors(3);
+  print(counts.err1 * 10 + counts.err2)  -- Should print 21 if matching works
+};
+
+let main = () => {
+  mainX()
+};
