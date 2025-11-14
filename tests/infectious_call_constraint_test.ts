@@ -49,7 +49,7 @@ Deno.test("call constraint captures infectious error rows", () => {
 
   // Should have at least one error constraint source (from parseMaybe call)
   const hasErrorSource = constraintSourceStubs.some((stub) =>
-    stub.kind === "constraint_source" && stub.label.domain === "error"
+    stub.kind === "constraint_source" && stub.label.domain === "effect"
   );
   assertEquals(hasErrorSource, true, "Should have error constraint sources");
 

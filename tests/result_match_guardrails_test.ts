@@ -25,7 +25,7 @@ function inferSource(source: string) {
 Deno.test("Result matches returning Result simply remain infectious", () => {
   const source = `
     type ParseError = Bad;
-    let handle = (value: IResult<Int, <Bad>>) => {
+    let handle = (value: IResult<Int, ParseError>) => {
       match(value) {
         IOk(x) => { IOk(x) },
         IErr(_) => { IErr(Bad) }
