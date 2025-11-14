@@ -17,9 +17,9 @@ import type {
 import type {
   ConstraintStub,
   ErrorRowCoverageStub,
-  HoleId,
   UnknownInfo,
 } from "../layer1/context.ts";
+import type { HoleId } from "../layer1/context_types.ts";
 import {
   applySubstitution,
   cloneType,
@@ -27,6 +27,7 @@ import {
   errorLabel,
   type ErrorRowType,
   errorRowUnion,
+  findCarrierDomain,
   flattenResultType,
   type flattenTaintedType,
   formatLabel,

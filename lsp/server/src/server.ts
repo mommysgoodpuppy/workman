@@ -14,6 +14,7 @@ import {
   parseSurfaceProgram,
 } from "../../../src//parser.ts";
 import {
+InferError,
   LexError,
   ParseError,
   type WorkmanError,

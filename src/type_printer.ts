@@ -95,8 +95,6 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       return "Char";
     case "string":
       return "String";
-    case "unknown":
-      return provenanceToString(type.provenance);
     default:
       return "?";
   }

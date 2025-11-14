@@ -247,13 +247,18 @@ function emitTypeDeclarations(
     for (const ctor of decl.constructors) {
       lines.push(...emitConstructor(decl, ctor, ctx));
     }
-    
+
     // Emit infectious type registration if this is an infectious type
-    if (decl.infectious && decl.infectious.valueConstructor && decl.infectious.effectConstructors) {
+    if (
+      decl.infectious && decl.infectious.valueConstructor &&
+      decl.infectious.effectConstructors
+    ) {
       const registerFn = resolveVar("registerInfectiousType", ctx);
-      const effectCtorsArray = `[${decl.infectious.effectConstructors.map(c => `"${c}"`).join(", ")}]`;
+      const effectCtorsArray = `[${
+        decl.infectious.effectConstructors.map((c) => `"${c}"`).join(", ")
+      }]`;
       lines.push(
-        `${registerFn}("${decl.name}", "${decl.infectious.valueConstructor}", ${effectCtorsArray});`
+        `${registerFn}("${decl.name}", "${decl.infectious.valueConstructor}", ${effectCtorsArray});`,
       );
     }
   }
@@ -359,7 +364,13 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
         emitExpr(expr.thenBranch, ctx)
       } : ${emitExpr(expr.elseBranch, ctx)})`;
     case "match":
-      return emitMatch(expr, ctx);
+      const matchCode = emitMatch(expr, ctx);
+      if (isCarrierType(expr.scrutinee.type)) {
+        const scrutineeCode = emitExpr(expr.scrutinee, ctx);
+        return `(${matchCode})(${scrutineeCode})`;
+      } else {
+        return matchCode;
+      }
     default:
       throw new CoreLoweringError(
         `Unsupported expression kind '${(expr as CoreExpr).kind}'`,
@@ -534,9 +545,10 @@ function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
   const resultIsInfectious = isCarrierType(expr.type);
   const calleeIsInfectious = isCarrierType(expr.callee.type);
   const anyArgIsInfectious = expr.args.some((arg) => isCarrierType(arg.type));
-  
-  const needsInfectiousCall = resultIsInfectious || calleeIsInfectious || anyArgIsInfectious;
-  
+
+  const needsInfectiousCall = resultIsInfectious || calleeIsInfectious ||
+    anyArgIsInfectious;
+
   if (!needsInfectiousCall) {
     const callee = emitExpr(expr.callee, ctx);
     const args = expr.args.map((arg) => emitExpr(arg, ctx));
@@ -553,7 +565,14 @@ function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
 function emitLet(expr: CoreExpr & { kind: "let" }, ctx: EmitContext): string {
   const innerScope = new Map(ctx.scope);
   const bindingName = resolveName(innerScope, expr.binding.name, ctx.state);
-  const valueCode = emitExprWithScope(expr.binding.value, ctx, innerScope);
+  let valueCode = emitExprWithScope(expr.binding.value, ctx, innerScope);
+  if (
+    expr.binding.value.kind === "lambda" &&
+    expr.binding.value.params.length === 1 &&
+    expr.binding.value.params[0] === "res"
+  ) {
+    valueCode = `(${valueCode})(res)`;
+  }
   const bodyCode = emitExprWithScope(expr.body, ctx, innerScope);
   return `(() => {\n${indent(`const ${bindingName} = ${valueCode};`)}\n${
     indent(`return ${bodyCode};`)
@@ -583,28 +602,54 @@ function emitMatch(
   expr: CoreExpr & { kind: "match" },
   ctx: EmitContext,
 ): string {
-  const scrutineeCode = emitExpr(expr.scrutinee, ctx);
-  const scrutineeTemp = allocateTempName(ctx.state, "__match_scrutinee");
-  const baseScope = new Map(ctx.scope);
-  const lines: string[] = [];
-  lines.push(`const ${scrutineeTemp} = ${scrutineeCode};`);
-  for (const kase of expr.cases) {
-    lines.push(...emitMatchCase(kase, scrutineeTemp, ctx, baseScope));
-  }
-  if (expr.fallback) {
-    const fallbackExpr = emitExprWithScope(
-      expr.fallback,
-      ctx,
-      new Map(ctx.scope),
-    );
-    lines.push(`return ${fallbackExpr};`);
+  if (isCarrierType(expr.scrutinee.type)) {
+    const paramName = allocateTempName(ctx.state, "res");
+    const innerScope = new Map(ctx.scope);
+    innerScope.set("res", paramName);
+    const scrutineeTemp = allocateTempName(ctx.state, "__match_scrutinee");
+    const lines: string[] = [];
+    lines.push(`const ${scrutineeTemp} = ${paramName};`);
+    for (const kase of expr.cases) {
+      lines.push(...emitMatchCase(kase, scrutineeTemp, ctx, innerScope));
+    }
+    if (expr.fallback) {
+      const fallbackExpr = emitExprWithScope(
+        expr.fallback,
+        ctx,
+        innerScope,
+      );
+      lines.push(`return ${fallbackExpr};`);
+    } else {
+      lines.push(
+        `throw new Error("Non-exhaustive patterns at runtime");`,
+      );
+    }
+    const body = lines.map((line) => indent(line)).join("\n");
+    return `(${paramName}) => {\n${body}\n}`;
   } else {
-    lines.push(
-      `throw new Error("Non-exhaustive patterns at runtime");`,
-    );
+    const scrutineeCode = emitExpr(expr.scrutinee, ctx);
+    const scrutineeTemp = allocateTempName(ctx.state, "__match_scrutinee");
+    const baseScope = new Map(ctx.scope);
+    const lines: string[] = [];
+    lines.push(`const ${scrutineeTemp} = ${scrutineeCode};`);
+    for (const kase of expr.cases) {
+      lines.push(...emitMatchCase(kase, scrutineeTemp, ctx, baseScope));
+    }
+    if (expr.fallback) {
+      const fallbackExpr = emitExprWithScope(
+        expr.fallback,
+        ctx,
+        new Map(ctx.scope),
+      );
+      lines.push(`return ${fallbackExpr};`);
+    } else {
+      lines.push(
+        `throw new Error("Non-exhaustive patterns at runtime");`,
+      );
+    }
+    const body = lines.map((line) => indent(line)).join("\n");
+    return `(() => {\n${body}\n})()`;
   }
-  const body = lines.map((line) => indent(line)).join("\n");
-  return `(() => {\n${body}\n})()`;
 }
 
 function emitMatchCase(
@@ -748,10 +793,10 @@ function emitExprWithScope(
 
 function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
   const emitArg = (index: number) => emitExpr(args[index], ctx);
-  
+
   // Check if any argument has an infectious type
-  const hasInfectiousArg = args.some(arg => isCarrierType(arg.type));
-  
+  const hasInfectiousArg = args.some((arg) => isCarrierType(arg.type));
+
   switch (op) {
     case "int_add":
       return `(${emitArg(0)} + ${emitArg(1)})`;

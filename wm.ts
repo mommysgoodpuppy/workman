@@ -629,8 +629,8 @@ REPL Commands:
         expressions.sort((a, b) => a.startPos.col - b.startPos.col);
 
         for (const expr of expressions) {
-          console.log(`  ${expr.startPos.col}: ${expr.excerpt}`);
-          console.log(`    → ${expr.typeStr}${expr.annotation}`);
+          console.log(` Col ${expr.startPos.col}: ${expr.excerpt}    //(nodeId:${expr.nodeId})`);
+          console.log(`  type: ${expr.typeStr}${expr.annotation}`);
 
           if (expr.infectionInfo) {
             console.log(`    ${expr.infectionInfo}`);

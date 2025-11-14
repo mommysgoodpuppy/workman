@@ -312,6 +312,8 @@ class SurfaceParser {
           return this.parseTypeDeclaration(exportToken);
         case "record":
           return this.parseRecordDeclaration(exportToken);
+        case "carrier":
+          return this.parseCarrierDeclaration(exportToken);
         case "infix":
         case "infixl":
         case "infixr":
@@ -342,13 +344,13 @@ class SurfaceParser {
     const letToken = this.expectKeyword("let");
     const isRecursive = this.matchKeyword("rec");
 
-    const firstBinding = this.parseLetBinding(letToken.start, isRecursive);
+    const firstBinding = this.parseLetBinding(letToken.start, isRecursive, true);
 
     // Parse mutual bindings with "and"
     const mutualBindings: LetDeclaration[] = [];
     while (this.matchKeyword("and")) {
       const andStart = this.previous().start;
-      mutualBindings.push(this.parseLetBinding(andStart, true));
+      mutualBindings.push(this.parseLetBinding(andStart, true, true));
     }
     if (mutualBindings.length > 0) {
       firstBinding.mutualBindings = mutualBindings;
@@ -373,6 +375,7 @@ class SurfaceParser {
   private parseLetBinding(
     startPos: number,
     isRecursive: boolean,
+    isTopLevel: boolean = false,
   ): LetDeclaration {
     const nameToken = this.expectIdentifier();
     const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
@@ -522,10 +525,11 @@ class SurfaceParser {
   }
 
   private createMatchParameter(spec: MatchParameterSpec): Parameter {
+    const defaultSpan: SourceSpan = spec.span ?? { start: 0, end: 0 };
     const pattern: Pattern = {
       kind: "variable",
       name: spec.name,
-      span: spec.span,
+      span: defaultSpan,
       id: nextNodeId(),
     };
     return {
@@ -533,7 +537,7 @@ class SurfaceParser {
       pattern,
       name: spec.name,
       annotation: undefined,
-      span: spec.span,
+      span: defaultSpan,
       id: nextNodeId(),
     };
   }
@@ -606,7 +610,11 @@ class SurfaceParser {
 
     while (!this.checkSymbol("}")) {
       if (this.checkKeyword("let")) {
-        const declaration = this.parseLetDeclaration();
+        const letToken = this.expectKeyword("let");
+        const isRecursive = this.matchKeyword("rec");
+        // For let statements inside blocks, pass isTopLevel = false
+        // This prevents first-class match transformation
+        const declaration = this.parseLetBinding(letToken.start, isRecursive, false);
         statements.push({
           kind: "let_statement",
           declaration,

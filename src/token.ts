@@ -24,6 +24,7 @@ export const keywords = new Set([
   "and",
   "type",
   "record",
+  "carrier",
   "match",
   "import",
   "export",
@@ -63,19 +64,34 @@ export const symbols = [
 // Note: <, > are now included for comparison operators
 // Note: = is included for operators like == and !=, but single = is a symbol
 export const operatorChars = new Set([
-  "+", "-", "*", "/", "%",
-  "=", "!",
-  "<", ">",
-  "&", "^", "~",
-  "@", "#", "$",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "=",
+  "!",
+  "<",
+  ">",
+  "&",
+  "^",
+  "~",
+  "@",
+  "#",
+  "$",
   "?",
 ]);
 
 // Multi-character operators need to be checked in order of length
 export const multiCharOperators = [
-  "<=", ">=",  // Check these before < and >
-  "==", "!=",
-  "&&", "||",
-  "++", "--",
-  "**", "//",
+  "<=",
+  ">=", // Check these before < and >
+  "==",
+  "!=",
+  "&&",
+  "||",
+  "++",
+  "--",
+  "**",
+  "//",
 ];
