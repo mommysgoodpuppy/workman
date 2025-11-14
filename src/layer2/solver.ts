@@ -2091,6 +2091,22 @@ function extractConstrainedTypes(
           types.push({ kind: "func", from: argType, to: resType });
         }
       }
+
+      // If the argument contains the hole, constrain it to the expected argument type
+      if (nodeContainsHole(constraint.argument)) {
+        const expectedArgType = constraint.argumentValueType ??
+          resolvedTypes.get(constraint.argument);
+        if (expectedArgType && !isHoleType(expectedArgType)) {
+          types.push(expectedArgType);
+        }
+      }
+
+      // If the result contains the hole, constrain it to the function result type
+      if (nodeContainsHole(constraint.result)) {
+        if (constraint.resultType && !isHoleType(constraint.resultType)) {
+          types.push(constraint.resultType);
+        }
+      }
       break;
     }
     case "annotation": {

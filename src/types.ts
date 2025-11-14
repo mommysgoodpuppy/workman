@@ -57,6 +57,14 @@ export function createEffectRow(
 // Exported for use in dynamic carrier registration
 export function ensureRow(type: Type): EffectRowType {
   if (type.kind === "effect_row") {
+    if (!(type.cases instanceof Map)) {
+      const entries = Object.entries(type.cases as Record<string, Type | null>);
+      type = {
+        kind: "effect_row",
+        cases: new Map(entries),
+        tail: type.tail,
+      };
+    }
     // Flatten nested effect_rows: if the tail is also an effect_row, merge them
     if (type.tail?.kind === "effect_row") {
       const tailRow = type.tail;
@@ -465,6 +473,14 @@ export function makeHoleType(value: Type, holeRow?: Type): Type {
 export function getHoleEffectTags(type: Type): Type[] {
   const info = flattenHoleType(type);
   if (!info) return [];
+  if (!(info.holeRow.cases instanceof Map)) {
+    console.warn(
+      "[warn] holeRow.cases is not a Map",
+      info.holeRow,
+      type,
+    );
+    return [];
+  }
   const tags: Type[] = [];
   for (const [label, payload] of info.holeRow.cases.entries()) {
     if (label.startsWith(HOLE_EFFECT_PREFIX) && payload) {
@@ -505,6 +521,10 @@ export function getProvenance(type: Type): Provenance | null {
   const holeInfo = flattenHoleType(type);
   if (!holeInfo) return null;
   // Extract provenance from hole row labels (JSON-encoded)
+  if (!(holeInfo.holeRow.cases instanceof Map)) {
+    console.warn("[warn] invalid hole row in getProvenance", holeInfo);
+    return { kind: "incomplete", reason: "invalid_hole_row" };
+  }
   for (const label of holeInfo.holeRow.cases.keys()) {
     if (label.startsWith("hole:")) {
       try {
