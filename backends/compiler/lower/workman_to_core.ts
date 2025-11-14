@@ -95,7 +95,9 @@ function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[]
           if (typeInfo) {
             for (const ctor of typeInfo.constructors) {
               if (summary.exports.values.has(ctor.name)) {
-                constructorsToImport.push(ctor.name);
+                const sanitized = ctor.name.replace(/[^A-Za-z0-9_$]/g, "_");
+                const importedName = /^[A-Za-z_$]/.test(sanitized) ? sanitized : `_${sanitized}`;
+                constructorsToImport.push(importedName);
               }
             }
           }
@@ -221,6 +223,9 @@ function convertExports(node: ModuleNode, summary?: ModuleSummary): CoreExport[]
     });
   }
   
+      // Export constructors from re-exported types
+  // When a module re-exports a type with constructors (e.g., std/option re-exporting Option with Some/None),
+  // we need to also export the constructors themselves
   // Export constructors from re-exported types
   // When a module re-exports a type with constructors (e.g., std/option re-exporting Option with Some/None),
   // we need to also export the constructors themselves
@@ -233,11 +238,13 @@ function convertExports(node: ModuleNode, summary?: ModuleSummary): CoreExport[]
           // Only add if not already exported as a regular value
           const alreadyExported = node.exportedValueNames.includes(ctor.name);
           if (!alreadyExported) {
+            const sanitized = ctor.name.replace(/[^A-Za-z0-9_$]/g, "_");
+            const exportedName = /^[A-Za-z_$]/.test(sanitized) ? sanitized : `_${sanitized}`;
             exports.push({
               kind: "constructor",
               typeName,
               ctor: ctor.name,
-              exported: ctor.name,
+              exported: exportedName,
             });
           }
         }

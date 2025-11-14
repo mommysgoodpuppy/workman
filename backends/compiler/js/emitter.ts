@@ -272,7 +272,8 @@ function emitConstructor(
 ): string[] {
   const name = resolveName(ctx.scope, ctor.name, ctx.state);
   if (ctor.exported) {
-    ctx.extraExports.push({ local: name, exported: ctor.name });
+    const sanitized = makeIdentifierBase(ctor.name);
+    ctx.extraExports.push({ local: name, exported: sanitized });
   }
   if (ctor.arity === 0) {
     return [
@@ -302,16 +303,13 @@ function emitExports(module: CoreModule, ctx: EmitContext): string | undefined {
     if (exp.kind === "type") {
       continue;
     }
-    const local = resolveName(
-      ctx.scope,
-      exp.kind === "value" ? exp.local : exp.ctor,
-      ctx.state,
-    );
-    const exported = exp.kind === "value" ? exp.exported : exp.exported;
+    const local = exp.kind === "value"
+      ? resolveName(ctx.scope, exp.local, ctx.state)
+      : exp.exported;  // For constructors, exported is already sanitized
     // For operators, the local name is already sanitized, so just export that
-    // This avoids trying to export invalid JS identifiers like __op_++
+    // This avoids trying to export invalid JS identifiers like __op_++'
     specifiers.push(local);
-    exportedNames.add(exported);
+    exportedNames.add(exp.exported);
   }
   for (const extra of ctx.extraExports) {
     if (exportedNames.has(extra.exported)) continue;

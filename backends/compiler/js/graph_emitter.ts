@@ -164,7 +164,8 @@ function isStdCoreModule(path: string): boolean {
   }
   return normalized.endsWith("/std/list/core.wm") ||
     normalized.endsWith("/std/option/core.wm") ||
-    normalized.endsWith("/std/result/core.wm");
+    normalized.endsWith("/std/result/core.wm") ||
+    normalized.endsWith("/std/hole/core.wm");
 }
 
 function filePathFromModule(meta: ImportMeta, specifier: string): string {

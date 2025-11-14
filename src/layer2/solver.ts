@@ -21,6 +21,7 @@ import type {
 } from "../layer1/context.ts";
 import type { HoleId } from "../layer1/context_types.ts";
 import {
+  addHoleEffectTag,
   applySubstitution,
   cloneType,
   type ConstraintLabel,
@@ -31,6 +32,7 @@ import {
   flattenResultType,
   formatLabel,
   type GenericCarrierInfo,
+  getHoleEffectTags,
   getProvenance,
   type Identity,
   isHoleType,
@@ -173,6 +175,15 @@ export function solveConstraints(input: SolveInput): SolverResult {
     resolvedNodeTypes.set(nodeId, cloneType(resolved));
   }
 
+  const {
+    conflicts: holeEffectConflicts,
+    conflictedHoles,
+  } = annotateHoleEffectTags(
+    resolvedNodeTypes,
+    input.constraintStubs,
+    input.holes,
+  );
+
   // PHASE 5: NEW Constraint Propagation System (parallel to existing)
   // Build constraint flow graph
   const constraintFlow = buildConstraintFlow(input.constraintStubs);
@@ -203,12 +214,14 @@ export function solveConstraints(input: SolveInput): SolverResult {
   // Phase 8: Old system removed - new constraint system fully handles infectious types
 
   // Detect conflicts in unknown types
-  const conflicts = detectConflicts(
+  const deferredConflicts = detectConflicts(
     input.holes,
     input.constraintStubs,
     state.substitution,
     resolvedNodeTypes,
+    conflictedHoles,
   );
+  const conflicts = [...holeEffectConflicts, ...deferredConflicts];
 
   // Add diagnostics for conflicts
   for (const conflict of conflicts) {
@@ -1807,6 +1820,93 @@ function checkInfectiousAnnotations(
 // ============================================================================
 // End of Constraint Flow Graph
 // ============================================================================
+function annotateHoleEffectTags(
+  resolvedTypes: Map<NodeId, Type>,
+  constraints: ConstraintStub[],
+  holes: Map<HoleId, UnknownInfo>,
+): {
+  conflicts: ConstraintConflict[];
+  conflictedHoles: Set<HoleId>;
+} {
+  const conflictMap = new Map<HoleId, ConstraintConflict>();
+
+  for (const constraint of constraints) {
+    const referencedHoles = getReferencedHoles(constraint, resolvedTypes);
+    if (referencedHoles.length === 0) continue;
+
+    for (const holeId of referencedHoles) {
+      const holeType = resolvedTypes.get(holeId);
+      if (!holeType || !isHoleType(holeType)) continue;
+
+      const requiredTypes = extractConstrainedTypes(
+        constraint,
+        holeId,
+        resolvedTypes,
+      ).filter(isPrimitiveEffectType);
+
+      if (requiredTypes.length === 0) continue;
+
+      const existingTags = getHoleEffectTags(holeType);
+      let conflictDetected = false;
+
+      for (const requiredType of requiredTypes) {
+        const conflictingTag = existingTags.find((tag) =>
+          !typesEqual(tag, requiredType)
+        );
+        if (conflictingTag) {
+          const provenance = holes.get(holeId);
+          if (!provenance) {
+            conflictDetected = true;
+            break;
+          }
+          const existing = conflictMap.get(holeId);
+          if (existing) {
+            existing.conflictingConstraints.push(constraint);
+            if (!existing.types.some((t) => typesEqual(t, requiredType))) {
+              existing.types.push(cloneType(requiredType));
+            }
+          } else {
+            conflictMap.set(holeId, {
+              holeId,
+              provenance,
+              conflictingConstraints: [constraint],
+              reason: "type_mismatch",
+              types: [cloneType(conflictingTag), cloneType(requiredType)],
+            });
+          }
+          conflictDetected = true;
+          break;
+        }
+      }
+
+      if (conflictDetected) {
+        continue;
+      }
+
+      for (const requiredType of requiredTypes) {
+        const alreadyTagged = existingTags.some((tag) =>
+          typesEqual(tag, requiredType)
+        );
+        if (alreadyTagged) {
+          continue;
+        }
+        const updated = addHoleEffectTag(holeType, requiredType);
+        resolvedTypes.set(holeId, updated);
+        existingTags.push(cloneType(requiredType));
+      }
+    }
+  }
+
+  return {
+    conflicts: Array.from(conflictMap.values()),
+    conflictedHoles: new Set(conflictMap.keys()),
+  };
+}
+
+function isPrimitiveEffectType(type: Type): boolean {
+  return type.kind === "int" || type.kind === "bool" || type.kind === "string";
+}
+
 // Old System Removed - Replaced by Unified Constraint System
 // The old enforceInfectiousMetadata function has been removed.
 // All infectious type checking is now handled by:
@@ -1821,8 +1921,10 @@ function detectConflicts(
   constraints: ConstraintStub[],
   substitution: Substitution,
   resolvedTypes: Map<NodeId, Type>,
+  existingConflicts?: Set<HoleId>,
 ): ConstraintConflict[] {
   const conflicts: ConstraintConflict[] = [];
+  const skipped = existingConflicts ?? new Set<HoleId>();
 
   // Group constraints by the holes they reference
   const constraintsByHole = new Map<HoleId, ConstraintStub[]>();
@@ -1839,6 +1941,7 @@ function detectConflicts(
 
   // For each hole, check if its constraints are compatible
   for (const [holeId, holeConstraints] of constraintsByHole.entries()) {
+    if (skipped.has(holeId)) continue;
     const info = holes.get(holeId);
     if (!info) continue;
 

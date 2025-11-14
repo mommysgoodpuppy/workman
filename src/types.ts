@@ -440,6 +440,8 @@ registerCarrier("hole", HoleCarrier);
 // Public API for Hole type
 // ============================================================================
 
+const HOLE_EFFECT_PREFIX = "hole_effect:" as const;
+
 export interface HoleTypeInfo {
   value: Type;
   holeRow: EffectRowType;
@@ -458,6 +460,40 @@ export function flattenHoleType(type: Type): HoleTypeInfo | null {
 export function makeHoleType(value: Type, holeRow?: Type): Type {
   const row = holeRow ? ensureRow(holeRow) : createEffectRow();
   return HoleCarrier.join(value, row);
+}
+
+export function getHoleEffectTags(type: Type): Type[] {
+  const info = flattenHoleType(type);
+  if (!info) return [];
+  const tags: Type[] = [];
+  for (const [label, payload] of info.holeRow.cases.entries()) {
+    if (label.startsWith(HOLE_EFFECT_PREFIX) && payload) {
+      tags.push(payload);
+    }
+  }
+  return tags;
+}
+
+export function addHoleEffectTag(type: Type, tag: Type): Type {
+  const info = flattenHoleType(type);
+  if (!info) {
+    return type;
+  }
+  const row = ensureRow(info.holeRow);
+  const newCases = new Map(row.cases);
+  let index = 0;
+  let label = `${HOLE_EFFECT_PREFIX}${index}`;
+  while (newCases.has(label)) {
+    index += 1;
+    label = `${HOLE_EFFECT_PREFIX}${index}`;
+  }
+  newCases.set(label, cloneType(tag));
+  const updatedRow: EffectRowType = {
+    kind: "effect_row",
+    cases: newCases,
+    tail: row.tail,
+  };
+  return makeHoleType(info.value, updatedRow);
 }
 
 export function collapseHoleType(type: Type): Type {
