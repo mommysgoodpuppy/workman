@@ -33,13 +33,13 @@ function jsToWorkmanString(str) {
   return result;
 }
 
-// Helper to create Result types
+// Helper to create infectious Result (IResult) types
 function Ok(value) {
-  return { tag: "Ok", type: "Result", _0: value };
+  return { tag: "IOk", type: "IResult", _0: value };
 }
 
 function Err(error) {
-  return { tag: "Err", type: "Result", _0: error };
+  return { tag: "IErr", type: "IResult", _0: error };
 }
 
 // Helper to create FsError variants

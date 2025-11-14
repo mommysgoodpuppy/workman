@@ -570,11 +570,13 @@ class WorkmanLanguageServer {
           code,
         });
       } else {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        const range = this.estimateRangeFromMessage(text, errorMsg) || {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        };
         diagnostics.push({
-          range: {
-            start: { line: 0, character: 0 },
-            end: { line: 0, character: 1 },
-          },
+          range,
           severity: 1,
           message: `Internal error: ${error}`,
           source: "workman",
@@ -1981,6 +1983,20 @@ class WorkmanLanguageServer {
   }
 
   private estimateRangeFromMessage(text: string, msg: string) {
+    // Check for line and column in "at line X, column Y" format (e.g., Parse Error at line 100, column 7)
+    const locationMatch = msg.match(/at line (\d+),\s*column (\d+)/i);
+    if (locationMatch) {
+      const line = parseInt(locationMatch[1], 10) - 1; // Convert to 0-indexed
+      const column = parseInt(locationMatch[2], 10); // 0-indexed already in the match
+      // Estimate end position by looking at the character or next few locations
+      // For simplicity, highlight from the specified column for 1 character,
+      // or find the end of the line/token if possible
+      const start = { line, character: Math.max(0, column) };
+      const end = { line, character: Math.max(1, column + 1) };
+      return { start, end };
+    }
+
+    // Fallback to quoted strings in the message
     const quoted = Array.from(msg.matchAll(/["']([^"']+)["']/g)).map((m) =>
       m[1]
     );
@@ -1992,6 +2008,8 @@ class WorkmanLanguageServer {
         return { start, end };
       }
     }
+
+    // Default range at the beginning of the document
     return { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
   }
 }

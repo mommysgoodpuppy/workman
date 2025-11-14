@@ -1666,8 +1666,13 @@ class SurfaceParser {
       return { kind: "literal", literal, span: literal.span, id: nextNodeId() };
     }
 
-    if (token.kind === "constructor") {
+    const isQuestionConstructor = (
+      (token.kind === "symbol" || token.kind === "operator") &&
+      token.value === "?"
+    );
+    if (token.kind === "constructor" || isQuestionConstructor) {
       const ctor = this.consume();
+      const ctorName = isQuestionConstructor ? "?" : ctor.value;
       const args: Pattern[] = [];
       if (this.matchSymbol("(")) {
         if (!this.checkSymbol(")")) {
@@ -1680,7 +1685,7 @@ class SurfaceParser {
       const end = args.length > 0 ? args[args.length - 1].span.end : ctor.end;
       return {
         kind: "constructor",
-        name: ctor.value,
+        name: ctorName,
         args,
         span: this.spanFrom(ctor.start, end),
         id: nextNodeId(),

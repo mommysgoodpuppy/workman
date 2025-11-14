@@ -11,7 +11,6 @@ from "../../denoshim.js" import {
   cwd as nativeCwd
 };
 
-from "std/result/core" import { Ok, Err };
 from "std/option/core" import { Some, None };
 
 -- File system error types

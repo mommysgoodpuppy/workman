@@ -618,6 +618,7 @@ function emitMatch(
       );
       lines.push(`return ${fallbackExpr};`);
     } else {
+      // improve debug msg
       lines.push(
         `throw new Error("Non-exhaustive patterns at runtime");`,
       );
@@ -642,7 +643,7 @@ function emitMatch(
       lines.push(`return ${fallbackExpr};`);
     } else {
       lines.push(
-        `throw new Error("Non-exhaustive patterns at runtime");`,
+        `throw new Error("Non-exhaustive patterns at runtime" + JSON.stringify(${scrutineeTemp}));`,
       );
     }
     const body = lines.map((line) => indent(line)).join("\n");
@@ -769,7 +770,7 @@ function emitPattern(
       void _exhaustive;
       throw new CoreLoweringError(
         `Unsupported pattern kind '${(pattern as CorePattern).kind}'`,
-        pattern.origin,
+        (pattern as any).origin,
       );
     }
   }

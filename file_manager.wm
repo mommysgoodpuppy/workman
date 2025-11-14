@@ -94,9 +94,10 @@ export let main = () => {
   log(fromLiteral(""));
   log(strConcat(fromLiteral("File exists: "), 
     match(fileCheck) {
-      Ok(true) => { fromLiteral("yes") },
-      Ok(false) => { fromLiteral("no") },
-      Err(_) => { fromLiteral("error checking file") }
+      IOk(true) => { fromLiteral("yes") },
+      IOk(false) => { fromLiteral("no") },
+      IErr(_) => { fromLiteral("error checking file") },
+      ?(_) => { fromLiteral("unknown result") }
     }
   ));
   
