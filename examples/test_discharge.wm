@@ -1,0 +1,8 @@
+let x = IOk(42);
+
+let test = () => { 
+  match(x) {
+    IOk(x) => { x },
+    IErr(e) => { 0 } 
+  }
+};

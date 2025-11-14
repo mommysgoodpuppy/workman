@@ -452,6 +452,7 @@ class WorkmanLanguageServer {
         diagnostics,
         context.layer3.diagnostics.conflicts,
         text,
+        context.layer3,
       );
       this.appendFlowDiagnostics(
         diagnostics,
@@ -641,6 +642,7 @@ class WorkmanLanguageServer {
     target: any[],
     conflicts: any[],
     text: string,
+    layer3: Layer3Result,
   ): void {
     for (const conflict of conflicts) {
       const range = conflict.span
@@ -655,12 +657,24 @@ class WorkmanLanguageServer {
           start: { line: 0, character: 0 },
           end: { line: 0, character: 1 },
         };
+      let message = "Conflicting type requirements";
+      if (conflict.details && conflict.details.expected && conflict.details.actual) {
+        const expected = this.substituteTypeWithLayer3(conflict.details.expected, layer3);
+        const actual = this.substituteTypeWithLayer3(conflict.details.actual, layer3);
+        const expectedStr = typeToString(expected);
+        const actualStr = typeToString(actual);
+        message = `Type mismatch: expected ${expectedStr}, got ${actualStr}`;
+      } else if (conflict.message) {
+        message = conflict.message;
+      } else if (conflict.details) {
+        message += `. Details: ${JSON.stringify(conflict.details)}`;
+      }
       target.push({
         range,
         severity: 1,
-        message: conflict.message,
-        source: "workman-conflicts",
-        code: "unfillable-hole",
+        message,
+        source: "workman-layer2",
+        code: "type_mismatch",
       });
     }
   }

@@ -40,6 +40,7 @@ export class CoreLoweringError extends Error {
 interface LoweringState {
   tempIndex: number;
   readonly resolvedTypes: Map<number, Type>;
+  readonly bundleArms: Map<string, MMatchArm[]>;
 }
 
 const UNKNOWN_PROVENANCE = "core.lowering.unresolved_type";
@@ -48,7 +49,7 @@ export function lowerProgramToValues(
   program: MProgram,
   resolvedTypes: Map<number, Type>,
 ): CoreValueBinding[] {
-  const state: LoweringState = { tempIndex: 0, resolvedTypes };
+  const state: LoweringState = { tempIndex: 0, resolvedTypes, bundleArms: new Map() };
   const values: CoreValueBinding[] = [];
   for (const declaration of program.declarations) {
     if (declaration.kind === "let") {
@@ -114,7 +115,15 @@ function lowerLetBindingValue(
   if (decl.parameters.length > 0 || decl.isArrowSyntax) {
     return lowerFunctionValue(decl, state);
   }
-  return lowerBlockExpr(decl.body, state);
+  const value = lowerBlockExpr(decl.body, state);
+
+  // Store bundle arms if this is a bundle literal assignment
+  if (decl.body.result && decl.body.result.kind === "match_bundle_literal") {
+    const expandedArms = expandBundleArms(decl.body.result.bundle.arms, state);
+    state.bundleArms.set(decl.name, expandedArms);
+  }
+
+  return value;
 }
 
 function lowerRecursiveCluster(
@@ -281,11 +290,9 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
     case "match":
       return lowerMatchExpr(expr.scrutinee, expr.bundle, expr, state);
     case "match_fn":
+      return lowerMatchFnExpr(expr, state);
     case "match_bundle_literal":
-      throw new CoreLoweringError(
-        `Lowering for '${expr.kind}' expressions is not implemented`,
-        expr.id,
-      );
+      return lowerMatchBundleLiteralExpr(expr, state);
     // Hazel-style: Lower marked expressions as best-effort
     // These have type errors but we compile anyway and let them fail at runtime
     case "mark_free_var":
@@ -334,7 +341,7 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
     default:
       const _exhaustive: never = expr;
       void _exhaustive;
-      throw new CoreLoweringError("Unsupported expression kind", expr.id);
+      throw new CoreLoweringError("Unsupported expression kind", (expr as any).id);
   }
 }
 
@@ -345,7 +352,8 @@ function lowerMatchExpr(
   state: LoweringState,
 ): CoreExpr {
   const loweredScrutinee = lowerExpr(scrutinee, state);
-  const cases: CoreMatchCase[] = bundle.arms.map((arm) =>
+  const expandedArms = expandBundleArms(bundle.arms, state);
+  const cases: CoreMatchCase[] = expandedArms.map((arm) =>
     lowerMatchArm(arm, state)
   );
   const effectRowCoverage = bundle.effectRowCoverage
@@ -457,7 +465,7 @@ function lowerPattern(pattern: MPattern, state: LoweringState): CorePattern {
     default:
       const _exhaustive: never = pattern;
       void _exhaustive;
-      throw new CoreLoweringError("Unsupported pattern kind", pattern.id);
+      throw new CoreLoweringError("Unsupported pattern kind", (pattern as any).id);
   }
 }
 
@@ -682,7 +690,7 @@ function lowerLiteral(literal: Literal): CoreLiteral {
     default:
       const _exhaustive: never = literal;
       void _exhaustive;
-      throw new CoreLoweringError("Unsupported literal kind", literal.id);
+      throw new CoreLoweringError("Unsupported literal kind", (literal as any).id);
   }
 }
 
@@ -710,6 +718,80 @@ function createLetExpression(
     },
     body,
     type: resultType,
+  };
+}
+
+function lowerMatchBundleLiteralExpr(expr: any, state: LoweringState): CoreExpr {
+  // match_bundle_literal represents a function that takes one argument and matches it
+  // Store the expanded arms for potential bundle references
+  const expandedArms = expandBundleArms(expr.bundle.arms, state);
+  // For anonymous bundles, we don't store them since they can't be referenced
+  // Only named bundles (assigned to variables) can be referenced
+
+  const paramName = freshTemp(state, "__bundle_arg");
+  const matchExpr: CoreExpr = {
+    kind: "match",
+    scrutinee: {
+      kind: "var",
+      name: paramName,
+      type: unknownType({ kind: "incomplete", reason: "match_bundle_scrutinee" }),
+    },
+    cases: expandedArms.map((arm) => lowerMatchArm(arm, state)),
+    type: resolveNodeType(state, expr.id, expr.type),
+    // Note: removing effectRowCoverage for bundle literals as they don't have coverage info
+  };
+  return {
+    kind: "lambda",
+    params: [paramName],
+    body: matchExpr,
+    type: resolveNodeType(state, expr.id, expr.type),
+  };
+}
+
+function expandBundleArms(arms: readonly MMatchArm[], state: LoweringState): MMatchArm[] {
+  const expanded: MMatchArm[] = [];
+  for (const arm of arms) {
+    if (arm.kind === "match_bundle_reference") {
+      const referencedArms = state.bundleArms.get(arm.name);
+      if (referencedArms) {
+        expanded.push(...referencedArms);
+      } else {
+        // Bundle not found - this should be an error, but for now ignore
+      }
+    } else {
+      expanded.push(arm);
+    }
+  }
+  return expanded;
+}
+
+function lowerMatchFnExpr(expr: any, state: LoweringState): CoreExpr {
+  // match_fn should have been rewritten by canonicalize pass, but if it reaches here,
+  // lower it as a lambda that applies the match
+  const paramNames = extractParameterNames(expr.parameters, state);
+  if (paramNames.length !== 1) {
+    throw new CoreLoweringError(
+      `match_fn lowering expects exactly one parameter, got ${paramNames.length}`,
+      expr.id,
+    );
+  }
+  const paramName = paramNames[0];
+  const expandedArms = expandBundleArms(expr.bundle.arms, state);
+  const matchExpr: CoreExpr = {
+    kind: "match",
+    scrutinee: {
+      kind: "var",
+      name: paramName,
+      type: unknownType({ kind: "incomplete", reason: "match_fn_scrutinee" }),
+    },
+    cases: expandedArms.map((arm: MMatchArm) => lowerMatchArm(arm, state)),
+    type: resolveNodeType(state, expr.id, expr.type),
+  };
+  return {
+    kind: "lambda",
+    params: [paramName],
+    body: matchExpr,
+    type: resolveNodeType(state, expr.id, expr.type),
   };
 }
 

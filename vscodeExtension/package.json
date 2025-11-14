@@ -27,21 +27,30 @@
     "onLanguage:wm"
   ],
   "contributes": {
-    "languages": [{
-      "id": "wm",
-      "aliases": ["Workman", "workman"],
-      "extensions": [".wm"],
-      "configuration": "./language-configuration.json",
-      "icon": {
-        "light": "./workman.svg",
-        "dark": "./workman.svg"
+    "languages": [
+      {
+        "id": "wm",
+        "aliases": [
+          "Workman",
+          "workman"
+        ],
+        "extensions": [
+          ".wm"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./workman.svg",
+          "dark": "./workman.svg"
+        }
       }
-    }],
-    "grammars": [{
-      "language": "wm",
-      "scopeName": "source.workman",
-      "path": "./syntaxes/wm.tmLanguage.json"
-    }],
+    ],
+    "grammars": [
+      {
+        "language": "wm",
+        "scopeName": "source.workman",
+        "path": "./syntaxes/wm.tmLanguage.json"
+      }
+    ],
     "iconThemes": [
       {
         "id": "workman-icons",
@@ -56,7 +65,11 @@
         "workman.trace.server": {
           "scope": "window",
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server."
         },
@@ -66,7 +79,9 @@
           "items": {
             "type": "string"
           },
-          "default": ["std"],
+          "default": [
+            "std"
+          ],
           "description": "Paths where the language server should search for the standard library (relative to workspace folders or absolute)."
         },
         "workman.preludeModule": {
