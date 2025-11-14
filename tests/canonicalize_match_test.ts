@@ -1,4 +1,7 @@
-import { assertStrictEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import {
+  assert,
+  assertStrictEquals,
+} from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { canonicalizeMatch } from "../src/passes/canonicalize_match.ts";
@@ -62,5 +65,38 @@ Deno.test("canonicalizeMatch rewrites match_fn into arrow function", () => {
   if (!firstDecl.isFirstClassMatch) {
     throw new Error("expected let declaration to be marked as first-class match");
   }
+});
+
+Deno.test("block-level match binding stays a value", () => {
+  const source = `
+    let outer = () => {
+      let res = IOk(0);
+      let adds = match (res) {
+        IOk(_) => {0},
+        IErr(_) => {1}
+      };
+      adds
+    };
+  `;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens, source);
+  canonicalizeMatch(program);
+
+  const firstDecl = program.declarations[0];
+  if (firstDecl.kind !== "let") {
+    throw new Error("expected let declaration");
+  }
+  const outerBody = firstDecl.body;
+  if (outerBody.kind !== "block") {
+    throw new Error("expected outer block body");
+  }
+  const addsStatement = outerBody.statements.find((statement) =>
+    statement.kind === "let_statement" &&
+    statement.declaration.name === "adds"
+  );
+  assert(addsStatement && addsStatement.kind === "let_statement");
+  const addsDecl = addsStatement.declaration;
+  assertStrictEquals(addsDecl.parameters.length, 0);
+  assertStrictEquals(addsDecl.isFirstClassMatch, undefined);
 });
 

@@ -383,8 +383,9 @@ class SurfaceParser {
     const initializer = this.parseExpression();
 
     // Handle first-class match: match(x) { ... } desugars to (x) => { match(x) { ... } }
-    // Only apply this transformation when the scrutinee is a simple identifier or tuple of identifiers
+    // Only apply this transformation for top-level or recursive bindings when the scrutinee is a simple identifier or tuple of identifiers
     if (
+      (isTopLevel || isRecursive) &&
       initializer.kind === "match" &&
       this.isValidMatchFunctionScrutinee(initializer.scrutinee)
     ) {
@@ -613,7 +614,7 @@ class SurfaceParser {
         const letToken = this.expectKeyword("let");
         const isRecursive = this.matchKeyword("rec");
         // For let statements inside blocks, pass isTopLevel = false
-        // This prevents first-class match transformation
+        // This limits first-class match transformation to recursive helpers
         const declaration = this.parseLetBinding(letToken.start, isRecursive, false);
         statements.push({
           kind: "let_statement",
