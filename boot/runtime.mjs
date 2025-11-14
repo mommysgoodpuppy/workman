@@ -192,7 +192,7 @@ export function markResultHandler(fn, handledParams) {
   return fn;
 }
 
-function unwrapResultForCall(value) {
+export function unwrapResultForCall(value) {
   if (isResultData(value)) {
     if (value.tag === "Err") {
       return { value, infected: true, shortCircuit: value };

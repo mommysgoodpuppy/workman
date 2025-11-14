@@ -29,7 +29,7 @@ import {
   errorRowUnion,
   findCarrierDomain,
   flattenResultType,
-  type flattenTaintedType,
+
   formatLabel,
   type GenericCarrierInfo,
   getProvenance,
@@ -37,14 +37,12 @@ import {
   isHoleType,
   joinCarrier,
   makeResultType,
-  type makeTaintedType,
+
   occursInType,
   type sameIdentity,
   splitCarrier,
   type Substitution,
-  taintLabel,
-  type TaintRowType,
-  taintRowUnion,
+
   type Type,
   unknownType,
 } from "../types.ts";
@@ -512,17 +510,6 @@ function projectFieldFromRecord(
         const fieldError = fieldCarrierInfo.state as ErrorRowType;
         const combinedError = errorRowUnion(targetError, fieldError);
         finalType = makeResultType(cloneType(finalValue), combinedError);
-      } else if (targetCarrierInfo.domain === "taint") {
-        // Taint domain: union the taint rows
-        const targetTaint = targetCarrierInfo.state as TaintRowType;
-        const fieldTaint = fieldCarrierInfo.state as TaintRowType;
-        const combinedTaint = taintRowUnion(targetTaint, fieldTaint);
-        const joined = joinCarrier(
-          targetCarrierInfo.domain,
-          finalValue,
-          combinedTaint,
-        );
-        finalType = joined ?? finalValue;
       } else {
         // Unknown domain: just use target's carrier
         const joined = joinCarrier(
@@ -640,16 +627,7 @@ function solveNumericConstraint(
             domain: operandCarrierInfo.domain,
             state: combinedError,
           });
-        } else if (operandCarrierInfo.domain === "taint") {
-          const combinedTaint = taintRowUnion(
-            existing.state as TaintRowType,
-            operandCarrierInfo.state as TaintRowType,
-          );
-          accumulatedCarriers.set(operandCarrierInfo.domain, {
-            domain: operandCarrierInfo.domain,
-            state: combinedTaint,
-          });
-        }
+        } 
         // For other domains, keep the first one (or implement domain-specific logic)
       } else {
         accumulatedCarriers.set(operandCarrierInfo.domain, {
@@ -683,16 +661,7 @@ function solveNumericConstraint(
             domain: resultCarrierInfo.domain,
             state: combinedError,
           });
-        } else if (resultCarrierInfo.domain === "taint") {
-          const combinedTaint = taintRowUnion(
-            existing.state as TaintRowType,
-            resultCarrierInfo.state as TaintRowType,
-          );
-          accumulatedCarriers.set(resultCarrierInfo.domain, {
-            domain: resultCarrierInfo.domain,
-            state: combinedTaint,
-          });
-        }
+        } 
       } else {
         accumulatedCarriers.set(resultCarrierInfo.domain, {
           domain: resultCarrierInfo.domain,
@@ -783,16 +752,7 @@ function solveBooleanConstraint(
             domain: operandCarrierInfo.domain,
             state: combinedError,
           });
-        } else if (operandCarrierInfo.domain === "taint") {
-          const combinedTaint = taintRowUnion(
-            existing.state as TaintRowType,
-            operandCarrierInfo.state as TaintRowType,
-          );
-          accumulatedCarriers.set(operandCarrierInfo.domain, {
-            domain: operandCarrierInfo.domain,
-            state: combinedTaint,
-          });
-        }
+        } 
         // For other domains, keep the first one (or implement domain-specific logic)
       } else {
         accumulatedCarriers.set(operandCarrierInfo.domain, {
@@ -820,16 +780,7 @@ function solveBooleanConstraint(
           domain: resultCarrierInfo.domain,
           state: combinedError,
         });
-      } else if (resultCarrierInfo.domain === "taint") {
-        const combinedTaint = taintRowUnion(
-          existing.state as TaintRowType,
-          resultCarrierInfo.state as TaintRowType,
-        );
-        accumulatedCarriers.set(resultCarrierInfo.domain, {
-          domain: resultCarrierInfo.domain,
-          state: combinedTaint,
-        });
-      }
+      } 
     } else {
       accumulatedCarriers.set(resultCarrierInfo.domain, {
         domain: resultCarrierInfo.domain,
@@ -1530,10 +1481,6 @@ function buildConstraintFlow(stubs: ConstraintStub[]): ConstraintFlow {
         // Error domain: union rows
         const merged = errorRowUnion(existing.row, stub.label.row);
         domainMap.set("error", errorLabel(merged));
-      } else if (existing && stub.label.domain === "taint") {
-        // Taint domain: union rows (same as error)
-        const merged = taintRowUnion(existing.row, stub.label.row);
-        domainMap.set("taint", taintLabel(merged));
       } else {
         domainMap.set(stub.label.domain, stub.label);
       }
@@ -1613,12 +1560,6 @@ function propagateConstraints(
             const merged = errorRowUnion(existing.row, label.row);
             toLabels.set("error", errorLabel(merged));
           }
-        } else if (existing && domain === "taint") {
-          // Taint domain: union rows (same as error)
-          if (existing.domain === "taint" && label.domain === "taint") {
-            const merged = taintRowUnion(existing.row, label.row);
-            toLabels.set("taint", taintLabel(merged));
-          }
         } else if (!existing) {
           toLabels.set(domain, label);
         }
@@ -1651,12 +1592,6 @@ function propagateConstraints(
             if (existing.domain === "error" && label.domain === "error") {
               const unionRow = errorRowUnion(existing.row, label.row);
               merged.set("error", errorLabel(unionRow));
-            }
-          } else if (existing && domain === "taint") {
-            // Taint domain: union rows (same as error)
-            if (existing.domain === "taint" && label.domain === "taint") {
-              const unionRow = taintRowUnion(existing.row, label.row);
-              merged.set("taint", taintLabel(unionRow));
             }
           } else if (!existing) {
             merged.set(domain, label);

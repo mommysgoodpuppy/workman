@@ -3,7 +3,7 @@ from "std/core/bool" import { boolNot, boolAnd as boolAndImpl, boolOr as boolOrI
 export from "std/option/core" type Option(..);
 export from "std/result/core" type IResult(..);
 export from "std/list/core" type List(..);
-
+export from "std/hole/core" type Hole(..);
 
 -- Char comparison (native)
 export let charEq = (left, right) => {

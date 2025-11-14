@@ -153,8 +153,6 @@ export function freshBorrow(): Identity {
 export type ConstraintLabel =
   // Error domain - reuses existing ErrorRowType structure
   | { domain: "error"; row: ErrorRowType }
-  // Taint domain - uses same row structure as errors (parallel domain)
-  | { domain: "taint"; row: TaintRowType }
   // Memory domain - capability tracking (future: Phase 5)
   | { domain: "mem"; label: string; identity: Identity }
   // Hole domain - type hole tracking (integration with existing hole system)
@@ -163,10 +161,6 @@ export type ConstraintLabel =
 // Helper constructors for constraint labels
 export function errorLabel(row: ErrorRowType): ConstraintLabel {
   return { domain: "error", row };
-}
-
-export function taintLabel(row: TaintRowType): ConstraintLabel {
-  return { domain: "taint", row };
 }
 
 export function memLabel(label: string, identity: Identity): ConstraintLabel {
@@ -203,9 +197,6 @@ export function formatLabel(label: ConstraintLabel): string {
     case "error":
       // For error domain, we could format the row constructors
       return `error:<${Array.from(label.row.cases.keys()).join("|")}>`;
-    case "taint":
-      // For taint domain, format the taint constructors
-      return `taint:<${Array.from(label.row.cases.keys()).join("|")}>`;
     case "mem":
       return `${label.label}[${formatIdentity(label.identity)}]`;
     case "hole":
@@ -387,179 +378,14 @@ export function unionCarrierStates(
 // Result<T, E> Carrier (Error Domain)
 // ============================================================================
 
-// ============================================================================
-// Tainted<T, TaintRow> Carrier (Taint Domain)
-// ============================================================================
 
-// Taint row type - identical structure to error row
-export type TaintRowType = Extract<Type, { kind: "error_row" }>;
-
-export function isTaintRow(type: Type): type is TaintRowType {
-  return type.kind === "error_row";
-}
-
-export function createTaintRow(
-  entries: Iterable<[string, Type | null]> = [],
-  tail?: Type | null,
-): TaintRowType {
-  return {
-    kind: "error_row",
-    cases: new Map(entries),
-    tail,
-  };
-}
-
-// Note: ensureTaintRow removed - use internal ensureRow() instead
-
-export function taintRowUnion(left: Type, right: Type): TaintRowType {
-  const lhs = ensureRow(left);
-  const rhs = ensureRow(right);
-  const merged = new Map<string, Type | null>();
-  for (const [label, payload] of lhs.cases.entries()) {
-    merged.set(label, payload ? cloneType(payload) : null);
-  }
-  for (const [label, payload] of rhs.cases.entries()) {
-    if (!merged.has(label)) {
-      merged.set(label, payload ? cloneType(payload) : null);
-      continue;
-    }
-    const existing = merged.get(label);
-    if (!existing && payload) {
-      merged.set(label, cloneType(payload));
-    }
-  }
-  return {
-    kind: "error_row",
-    cases: merged,
-    tail: lhs.tail || rhs.tail,
-  };
-}
-
-// Tainted carrier operations (parallel to Result)
-const TaintedCarrier: CarrierOperations = {
-  is: (type: Type): boolean => {
-    return type.kind === "constructor" && type.name === "Tainted" &&
-      type.args.length === 2;
-  },
-
-  split: (type: Type): CarrierInfo | null => {
-    if (!TaintedCarrier.is(type)) {
-      return null;
-    }
-    const taintedType = type as Extract<Type, { kind: "constructor" }>;
-    const value = taintedType.args[0];
-    const taintRow = ensureRow(taintedType.args[1]);
-
-    // Handle nested Tainted by flattening
-    const inner = TaintedCarrier.split(value);
-    if (!inner) {
-      return { value, state: taintRow };
-    }
-    return {
-      value: inner.value,
-      state: taintRowUnion(inner.state, taintRow),
-    };
-  },
-
-  join: (value: Type, state: Type): Type => {
-    const taintRow = ensureRow(state);
-    return {
-      kind: "constructor",
-      name: "Tainted",
-      args: [value, taintRow],
-    };
-  },
-
-  collapse: (type: Type): Type => {
-    const info = TaintedCarrier.split(type);
-    if (!info) {
-      return type;
-    }
-    const collapsedValue = TaintedCarrier.collapse(info.value);
-    return TaintedCarrier.join(collapsedValue, info.state);
-  },
-
-  unionStates: (left: Type, right: Type): Type => {
-    return taintRowUnion(left, right);
-  },
-};
-
-// Register Tainted carrier for taint domain
-registerCarrier("taint", TaintedCarrier);
 
 // ============================================================================
-// Public API for Tainted type
-// ============================================================================
-
-export interface TaintedTypeInfo {
-  value: Type;
-  taint: TaintRowType;
-}
-
-export function isTaintedType(type: Type): boolean {
-  return TaintedCarrier.is(type);
-}
-
-export function flattenTaintedType(type: Type): TaintedTypeInfo | null {
-  const info = TaintedCarrier.split(type);
-  if (!info) return null;
-  return { value: info.value, taint: info.state as TaintRowType };
-}
-
-export function makeTaintedType(value: Type, taint?: Type): Type {
-  const taintRow = taint ? ensureRow(taint) : createTaintRow();
-  return TaintedCarrier.join(value, taintRow);
-}
-
-export function collapseTaintedType(type: Type): Type {
-  return TaintedCarrier.collapse(type);
-}
-
-// ============================================================================
-// Hole<T, HoleRow> Carrier (Hole Domain)
+// Hole<T, Row> Carrier (Hole Domain)
 // ============================================================================
 // Represents incomplete/unknown types that propagate through expressions.
 // Instead of using { kind: "unknown", provenance }, we model this as
-// Hole<T, HoleRow> where T is the "best guess" type and HoleRow tracks
-// reasons for incompleteness.
-
-// HoleRow uses the same error_row structure but with provenance labels
-export type HoleRowType = ErrorRowType;
-
-export function createHoleRow(
-  cases?: Map<string, Type | null>,
-  tail?: Type | null,
-): HoleRowType {
-  return {
-    kind: "error_row",
-    cases: cases ?? new Map(),
-    tail,
-  };
-}
-
-export function holeRowUnion(left: Type, right: Type): HoleRowType {
-  const lhs = ensureRow(left);
-  const rhs = ensureRow(right);
-  const merged = new Map<string, Type | null>();
-  for (const [label, payload] of lhs.cases.entries()) {
-    merged.set(label, payload ? cloneType(payload) : null);
-  }
-  for (const [label, payload] of rhs.cases.entries()) {
-    if (!merged.has(label)) {
-      merged.set(label, payload ? cloneType(payload) : null);
-      continue;
-    }
-    const existing = merged.get(label);
-    if (!existing && payload) {
-      merged.set(label, cloneType(payload));
-    }
-  }
-  return {
-    kind: "error_row",
-    cases: merged,
-    tail: mergeErrorRowTails(lhs.tail, rhs.tail),
-  };
-}
+// Hole<T, Row> where T is the "best guess" type and the row tracks reasons.
 
 const HoleCarrier: CarrierOperations = {
   is: (type: Type): boolean => {
@@ -582,7 +408,7 @@ const HoleCarrier: CarrierOperations = {
     }
     return {
       value: inner.value,
-      state: holeRowUnion(inner.state, holeRow),
+      state: errorRowUnion(inner.state, holeRow),
     };
   },
 
@@ -605,7 +431,7 @@ const HoleCarrier: CarrierOperations = {
   },
 
   unionStates: (left: Type, right: Type): Type => {
-    return holeRowUnion(left, right);
+    return errorRowUnion(left, right);
   },
 };
 
@@ -618,7 +444,7 @@ registerCarrier("hole", HoleCarrier);
 
 export interface HoleTypeInfo {
   value: Type;
-  holeRow: HoleRowType;
+  holeRow: ErrorRowType;
 }
 
 export function isHoleType(type: Type): boolean {
@@ -628,11 +454,11 @@ export function isHoleType(type: Type): boolean {
 export function flattenHoleType(type: Type): HoleTypeInfo | null {
   const info = HoleCarrier.split(type);
   if (!info) return null;
-  return { value: info.value, holeRow: info.state as HoleRowType };
+  return { value: info.value, holeRow: ensureRow(info.state) };
 }
 
 export function makeHoleType(value: Type, holeRow?: Type): Type {
-  const row = holeRow ? ensureRow(holeRow) : createHoleRow();
+  const row = holeRow ? ensureRow(holeRow) : createErrorRow();
   return HoleCarrier.join(value, row);
 }
 
@@ -726,7 +552,7 @@ export function unknownType(provenance: Provenance): Type {
   // Instead of { kind: "unknown", provenance }, use Hole carrier
   // Store provenance as JSON-encoded label for recovery
   const provenanceLabel = `hole:${JSON.stringify(provenance)}`;
-  const holeRow = createHoleRow(
+  const holeRow = createErrorRow(
     new Map([[provenanceLabel, null]]),
   );
   const valueVar = freshTypeVar(); // The "best guess" type

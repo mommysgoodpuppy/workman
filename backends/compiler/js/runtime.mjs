@@ -224,7 +224,7 @@ export function registerInfectiousType(typeName, valueConstructor, effectConstru
   });
 }
 
-function unwrapResultForCall(value) {
+export function unwrapResultForCall(value) {
   if (!value || typeof value !== "object") {
     return { value, infected: false };
   }

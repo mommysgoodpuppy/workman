@@ -999,12 +999,22 @@ class SurfaceParser {
     }
     
     const token = this.peek();
-    if (token.kind === "constructor") {
+    const isQuestionConstructor = (
+      (token.kind === "symbol" || token.kind === "operator") &&
+      token.value === "?"
+    );
+    if (token.kind === "constructor" || isQuestionConstructor) {
       const ctor = this.consume();
-      const typeArgs = this.matchSymbol("<") ? this.parseTypeArguments() : [];
+      const ctorName = isQuestionConstructor ? "?" : ctor.value;
+      if (isQuestionConstructor && this.checkSymbol("<")) {
+        throw this.error("Question mark constructor cannot take type arguments", this.peek());
+      }
+      const typeArgs = (!isQuestionConstructor && this.matchSymbol("<"))
+        ? this.parseTypeArguments()
+        : [];
       return {
         kind: "constructor",
-        name: ctor.value,
+        name: ctorName,
         typeArgs,
         annotation,
         span: this.spanFrom(

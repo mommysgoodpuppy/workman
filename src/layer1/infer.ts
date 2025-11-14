@@ -1596,20 +1596,28 @@ export function inferProgram(
   }
 
   // Pass 0: Collect infectious declarations (before type registration)
+  const seenTypeDeclsPass0 = new Set<number>();
   for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "infectious") {
       // Old standalone syntax: infectious error IResult<T, E>;
       infectiousTypes.set(decl.typeName, decl);
       registerInfectiousDeclaration(ctx, decl, canonicalProgram);
     } else if (decl.kind === "type" && decl.infectious) {
+      if (seenTypeDeclsPass0.has(decl.id)) continue;
+      seenTypeDeclsPass0.add(decl.id);
       // New combined syntax: infectious error type IResult<T, E> = ...
       registerInfectiousTypeDeclaration(ctx, decl);
     }
   }
 
   // Pass 1: Register all type names (allows forward references)
+  const seenTypeDeclsPass1 = new Set<number>();
   for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "type") {
+      if (seenTypeDeclsPass1.has(decl.id)) {
+        continue;
+      }
+      seenTypeDeclsPass1.add(decl.id);
       const result = registerTypeName(ctx, decl);
       if (!result.success) {
         // Duplicate detected - mark it and skip further processing
@@ -1626,11 +1634,14 @@ export function inferProgram(
   }
 
   // Pass 2: Register constructors (now all type names are known)
+  const seenTypeDeclsPass2 = new Set<number>();
   for (const decl of canonicalProgram.declarations) {
     if (
       decl.kind === "type" && successfulTypeDecls.has(decl) &&
       !skippedTypeDecls.has(decl)
     ) {
+      if (seenTypeDeclsPass2.has(decl.id)) continue;
+      seenTypeDeclsPass2.add(decl.id);
       const infectiousDecl = infectiousTypes.get(decl.name);
       const result = registerTypeConstructors(ctx, decl, infectiousDecl);
       if (!result.success) {

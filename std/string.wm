@@ -12,11 +12,9 @@ from "std/result/core" import { IOk, IErr };
 -- Type alias for clarity (just documentation, not enforced)
 -- type String = List<Int>;
 
-type CharLiteralErrorInternal =
-  EmptyLiteral
+export type CharErr  =
+  | EmptyLiteral
   | MultiCharLiteral;
-
-export type CharLiteralError = CharLiteralErrorInternal;
 
 export let fromLiteral = (literal) => {
   strFromLiteral(literal)

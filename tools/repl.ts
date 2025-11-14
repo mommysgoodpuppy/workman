@@ -42,11 +42,11 @@ class Repl {
   }
 
   async start() {
-    console.log("🗿 Workman REPL v1.0");
+    console.log("⚡ Workman REPL v1.0");
     console.log(
       "Run 'wm --help' to see CLI usage (wm <file.wm>, wm fmt, etc.)\n",
     );
-    console.log("Type :help for REPL commands, :quit to exit");
+    console.log("Type :help for REPL commands, :exit to exit");
 
     // Load prelude
     await this.loadPrelude();
@@ -91,6 +91,7 @@ class Repl {
     const [cmd, ...args] = input.slice(1).split(" ");
 
     switch (cmd.toLowerCase()) {
+      case "q":
       case "quit":
       case "exit":
         console.log("Goodbye!");
@@ -353,7 +354,7 @@ class Repl {
     console.log(`
 Workman REPL Commands:
   :help       - Show this help message
-  :quit       - Exit the REPL
+  :exit       - Exit the REPL
   :load <f>   - Load and evaluate a .wm file
   :clear      - Clear the accumulated context
   :env        - Show all defined bindings

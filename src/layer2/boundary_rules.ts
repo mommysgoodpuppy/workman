@@ -8,7 +8,6 @@
 import type { ConstraintLabel, Type } from "../types.ts";
 import {
   flattenResultType,
-  flattenTaintedType,
   formatIdentity,
   splitCarrier,
 } from "../types.ts";

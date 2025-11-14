@@ -127,7 +127,9 @@ function isStdCoreModule(path: string): boolean {
     normalized.endsWith("/std/option/core.wm") ||
     normalized.endsWith("std/option/core.wm") ||
     normalized.endsWith("/std/result/core.wm") ||
-    normalized.endsWith("std/result/core.wm");
+    normalized.endsWith("std/result/core.wm") ||
+    normalized.endsWith("/std/hole/core.wm") ||
+    normalized.endsWith("std/hole/core.wm");
 }
 
 export async function loadModuleGraph(
