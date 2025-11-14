@@ -19,7 +19,7 @@ export type Type =
   | { kind: "constructor"; name: string; args: Type[] }
   | { kind: "tuple"; elements: Type[] }
   | { kind: "record"; fields: Map<string, Type> }
-  | { kind: "error_row"; cases: Map<string, Type | null>; tail?: Type | null }
+  | { kind: "effect_row"; cases: Map<string, Type | null>; tail?: Type | null }
   | { kind: "unit" }
   | { kind: "int" }
   | { kind: "bool" }
@@ -35,18 +35,18 @@ export interface TypeScheme {
 
 export type Substitution = Map<number, Type>;
 
-export type ErrorRowType = Extract<Type, { kind: "error_row" }>;
+export type EffectRowType = Extract<Type, { kind: "effect_row" }>;
 
-export function isErrorRow(type: Type): type is ErrorRowType {
-  return type.kind === "error_row";
+export function isEffectRow(type: Type): type is EffectRowType {
+  return type.kind === "effect_row";
 }
 
-export function createErrorRow(
+export function createEffectRow(
   entries: Iterable<[string, Type | null]> = [],
   tail?: Type | null,
-): ErrorRowType {
+): EffectRowType {
   return {
-    kind: "error_row",
+    kind: "effect_row",
     cases: new Map(entries),
     tail,
   };
@@ -55,10 +55,10 @@ export function createErrorRow(
 // Internal helper: converts any type to a row type (used by carriers)
 // If already a row, return as-is (flattening nested rows); otherwise wrap as tail
 // Exported for use in dynamic carrier registration
-export function ensureRow(type: Type): ErrorRowType {
-  if (type.kind === "error_row") {
-    // Flatten nested error_rows: if the tail is also an error_row, merge them
-    if (type.tail?.kind === "error_row") {
+export function ensureRow(type: Type): EffectRowType {
+  if (type.kind === "effect_row") {
+    // Flatten nested effect_rows: if the tail is also an effect_row, merge them
+    if (type.tail?.kind === "effect_row") {
       const tailRow = type.tail;
       const mergedCases = new Map(type.cases);
       // Add cases from the tail
@@ -69,7 +69,7 @@ export function ensureRow(type: Type): ErrorRowType {
       }
       // Recursively flatten the tail's tail
       return ensureRow({
-        kind: "error_row",
+        kind: "effect_row",
         cases: mergedCases,
         tail: tailRow.tail,
       });
@@ -77,13 +77,13 @@ export function ensureRow(type: Type): ErrorRowType {
     return type;
   }
   return {
-    kind: "error_row",
+    kind: "effect_row",
     cases: new Map(),
     tail: type,
   };
 }
 
-export function errorRowUnion(left: Type, right: Type): ErrorRowType {
+export function effectRowUnion(left: Type, right: Type): EffectRowType {
   const lhs = ensureRow(left);
   const rhs = ensureRow(right);
   const merged = new Map<string, Type | null>();
@@ -101,13 +101,13 @@ export function errorRowUnion(left: Type, right: Type): ErrorRowType {
     }
   }
   return {
-    kind: "error_row",
+    kind: "effect_row",
     cases: merged,
-    tail: mergeErrorRowTails(lhs.tail, rhs.tail),
+    tail: mergeEffectRowTails(lhs.tail, rhs.tail),
   };
 }
 
-function mergeErrorRowTails(
+function mergeEffectRowTails(
   left?: Type | null,
   right?: Type | null,
 ): Type | null | undefined {
@@ -151,16 +151,16 @@ export function freshBorrow(): Identity {
 // NOTE: Each node has AT MOST ONE constraint label per domain (per-domain singleton invariant)
 // Multiple sources for the same domain are merged using domain-specific rules
 export type ConstraintLabel =
-  // Error domain - reuses existing ErrorRowType structure
-  | { domain: "error"; row: ErrorRowType }
+  // Effect domain - reuses existing EffectRowType structure
+  | { domain: "effect"; row: EffectRowType }
   // Memory domain - capability tracking (future: Phase 5)
   | { domain: "mem"; label: string; identity: Identity }
   // Hole domain - type hole tracking (integration with existing hole system)
   | { domain: "hole"; identity: Identity; provenance: Provenance };
 
 // Helper constructors for constraint labels
-export function errorLabel(row: ErrorRowType): ConstraintLabel {
-  return { domain: "error", row };
+export function effectLabel(row: EffectRowType): ConstraintLabel {
+  return { domain: "effect", row };
 }
 
 export function memLabel(label: string, identity: Identity): ConstraintLabel {
@@ -194,7 +194,7 @@ export function formatIdentity(id: Identity): string {
 // Helper: format label for display
 export function formatLabel(label: ConstraintLabel): string {
   switch (label.domain) {
-    case "error":
+    case "effect":
       // For error domain, we could format the row constructors
       return `error:<${Array.from(label.row.cases.keys()).join("|")}>`;
     case "mem":
@@ -378,8 +378,6 @@ export function unionCarrierStates(
 // Result<T, E> Carrier (Error Domain)
 // ============================================================================
 
-
-
 // ============================================================================
 // Hole<T, Row> Carrier (Hole Domain)
 // ============================================================================
@@ -408,7 +406,7 @@ const HoleCarrier: CarrierOperations = {
     }
     return {
       value: inner.value,
-      state: errorRowUnion(inner.state, holeRow),
+      state: effectRowUnion(inner.state, holeRow),
     };
   },
 
@@ -431,7 +429,7 @@ const HoleCarrier: CarrierOperations = {
   },
 
   unionStates: (left: Type, right: Type): Type => {
-    return errorRowUnion(left, right);
+    return effectRowUnion(left, right);
   },
 };
 
@@ -444,7 +442,7 @@ registerCarrier("hole", HoleCarrier);
 
 export interface HoleTypeInfo {
   value: Type;
-  holeRow: ErrorRowType;
+  holeRow: EffectRowType;
 }
 
 export function isHoleType(type: Type): boolean {
@@ -458,7 +456,7 @@ export function flattenHoleType(type: Type): HoleTypeInfo | null {
 }
 
 export function makeHoleType(value: Type, holeRow?: Type): Type {
-  const row = holeRow ? ensureRow(holeRow) : createErrorRow();
+  const row = holeRow ? ensureRow(holeRow) : createEffectRow();
   return HoleCarrier.join(value, row);
 }
 
@@ -492,41 +490,41 @@ export function getProvenance(type: Type): Provenance | null {
 
 export interface ResultTypeInfo {
   value: Type;
-  error: Type; // Can be error_row or type variable during inference
+  effect: Type; // Can be effect_row or type variable during inference
 }
 
 export function isResultType(type: Type): boolean {
-  return hasCarrierDomain(type, "error");
+  return hasCarrierDomain(type, "effect");
 }
 
 export function flattenResultType(type: Type): ResultTypeInfo | null {
   const info = splitCarrier(type);
-  if (!info || info.domain !== "error") return null;
-  // During inference, the state might be a type variable that will become an error_row
-  // So we don't require state.kind === "error_row" here
-  return { value: info.value, error: info.state };
+  if (!info || info.domain !== "effect") return null;
+  // During inference, the state might be a type variable that will become an effect_row
+  // So we don't require state.kind === "effect_row" here
+  return { value: info.value, effect: info.state };
 }
 
 export function makeResultType(value: Type, error?: Type): Type {
-  const errorRow = error ? ensureRow(error) : createErrorRow();
-  const carrier = getCarrier("error", {
+  const effectRow = error ? ensureRow(error) : createEffectRow();
+  const carrier = getCarrier("effect", {
     kind: "constructor",
     name: "Result",
-    args: [value, errorRow],
+    args: [value, effectRow],
   });
   if (carrier) {
-    return carrier.join(value, errorRow);
+    return carrier.join(value, effectRow);
   }
   // Fallback for backward compatibility
   return {
     kind: "constructor",
     name: "Result",
-    args: [value, errorRow],
+    args: [value, effectRow],
   };
 }
 
 export function collapseResultType(type: Type): Type {
-  const carrier = getCarrier("error", type);
+  const carrier = getCarrier("effect", type);
   if (carrier) {
     return carrier.collapse(type);
   }
@@ -552,7 +550,7 @@ export function unknownType(provenance: Provenance): Type {
   // Instead of { kind: "unknown", provenance }, use Hole carrier
   // Store provenance as JSON-encoded label for recovery
   const provenanceLabel = `hole:${JSON.stringify(provenance)}`;
-  const holeRow = createErrorRow(
+  const holeRow = createEffectRow(
     new Map([[provenanceLabel, null]]),
   );
   const valueVar = freshTypeVar(); // The "best guess" type
@@ -620,7 +618,7 @@ export function applySubstitution(type: Type, subst: Substitution): Type {
       }
       return { kind: "record", fields: updated };
     }
-    case "error_row": {
+    case "effect_row": {
       let changed = false;
       const nextCases = new Map<string, Type | null>();
       for (const [label, payload] of type.cases.entries()) {
@@ -641,7 +639,7 @@ export function applySubstitution(type: Type, subst: Substitution): Type {
         return type;
       }
       return {
-        kind: "error_row",
+        kind: "effect_row",
         cases: nextCases,
         tail: nextTail,
       };
@@ -702,7 +700,7 @@ export function occursInType(id: number, type: Type): boolean {
         }
       }
       return false;
-    case "error_row":
+    case "effect_row":
       for (const payload of type.cases.values()) {
         if (payload && occursInType(id, payload)) {
           return true;
@@ -732,7 +730,7 @@ export function freeTypeVars(type: Type): Set<number> {
       const sets = Array.from(type.fields.values()).map(freeTypeVars);
       return unionMany(sets);
     }
-    case "error_row": {
+    case "effect_row": {
       const caseSets = Array.from(type.cases.values())
         .filter((payload): payload is Type => Boolean(payload))
         .map(freeTypeVars);
@@ -835,13 +833,13 @@ export function cloneType(type: Type): Type {
         fields: clonedFields,
       };
     }
-    case "error_row": {
+    case "effect_row": {
       const clonedCases = new Map<string, Type | null>();
       for (const [label, payload] of type.cases.entries()) {
         clonedCases.set(label, payload ? cloneType(payload) : null);
       }
       return {
-        kind: "error_row",
+        kind: "effect_row",
         cases: clonedCases,
         tail: type.tail ? cloneType(type.tail) : undefined,
       };
@@ -913,7 +911,7 @@ export function typeToString(type: Type): string {
       ).join(", ");
       return `{ ${rendered} }`;
     }
-    case "error_row": {
+    case "effect_row": {
       const entries = Array.from(type.cases.entries());
       entries.sort(([a], [b]) => a.localeCompare(b));
       const rendered = entries.map(([label, payload]) =>
@@ -922,7 +920,7 @@ export function typeToString(type: Type): string {
 
       // Simplify display for common cases:
       // 1. If no concrete cases and just a tail, show the tail directly
-      // DISABLED: We want to show error_row structure for infectious types
+      // DISABLED: We want to show effect_row structure for infectious types
       // if (rendered.length === 0 && type.tail) {
       //   return typeToString(type.tail);
       // }

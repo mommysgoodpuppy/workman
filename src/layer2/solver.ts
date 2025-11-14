@@ -16,7 +16,7 @@ import type {
 } from "../ast_marked.ts";
 import type {
   ConstraintStub,
-  ErrorRowCoverageStub,
+  EffectRowCoverageStub,
   UnknownInfo,
 } from "../layer1/context.ts";
 import type { HoleId } from "../layer1/context_types.ts";
@@ -24,12 +24,11 @@ import {
   applySubstitution,
   cloneType,
   type ConstraintLabel,
-  errorLabel,
-  type ErrorRowType,
-  errorRowUnion,
+  effectLabel,
+  type EffectRowType,
+  effectRowUnion,
   findCarrierDomain,
   flattenResultType,
-
   formatLabel,
   type GenericCarrierInfo,
   getProvenance,
@@ -37,12 +36,10 @@ import {
   isHoleType,
   joinCarrier,
   makeResultType,
-
   occursInType,
   type sameIdentity,
   splitCarrier,
   type Substitution,
-
   type Type,
   unknownType,
 } from "../types.ts";
@@ -267,7 +264,7 @@ export function solveConstraints(input: SolveInput): SolverResult {
     // Then apply hole solutions
     transformedType = transformTypeWithSolutions(transformedType, solutions);
     // Flatten any nested error_rows that may have been created
-    transformedType = flattenNestedErrorRows(transformedType);
+    transformedType = flattenNestedEffectRows(transformedType);
     return {
       name,
       scheme: {
@@ -504,11 +501,11 @@ function projectFieldFromRecord(
     // TODO: Handle cross-domain carrier combinations properly
     if (targetCarrierInfo.domain === fieldCarrierInfo.domain) {
       // Same domain - combine states based on domain type
-      if (targetCarrierInfo.domain === "error") {
+      if (targetCarrierInfo.domain === "effect") {
         // Error domain: union the error rows
-        const targetError = targetCarrierInfo.state as ErrorRowType;
-        const fieldError = fieldCarrierInfo.state as ErrorRowType;
-        const combinedError = errorRowUnion(targetError, fieldError);
+        const targetError = targetCarrierInfo.state as EffectRowType;
+        const fieldError = fieldCarrierInfo.state as EffectRowType;
+        const combinedError = effectRowUnion(targetError, fieldError);
         finalType = makeResultType(cloneType(finalValue), combinedError);
       } else {
         // Unknown domain: just use target's carrier
@@ -618,16 +615,16 @@ function solveNumericConstraint(
       const existing = accumulatedCarriers.get(operandCarrierInfo.domain);
       if (existing) {
         // Combine states for the same domain
-        if (operandCarrierInfo.domain === "error") {
-          const combinedError = errorRowUnion(
-            existing.state as ErrorRowType,
-            operandCarrierInfo.state as ErrorRowType,
+        if (operandCarrierInfo.domain === "effect") {
+          const combinedError = effectRowUnion(
+            existing.state as EffectRowType,
+            operandCarrierInfo.state as EffectRowType,
           );
           accumulatedCarriers.set(operandCarrierInfo.domain, {
             domain: operandCarrierInfo.domain,
             state: combinedError,
           });
-        } 
+        }
         // For other domains, keep the first one (or implement domain-specific logic)
       } else {
         accumulatedCarriers.set(operandCarrierInfo.domain, {
@@ -652,16 +649,16 @@ function solveNumericConstraint(
     if (resultCarrierInfo) {
       const existing = accumulatedCarriers.get(resultCarrierInfo.domain);
       if (existing) {
-        if (resultCarrierInfo.domain === "error") {
-          const combinedError = errorRowUnion(
-            existing.state as ErrorRowType,
-            resultCarrierInfo.state as ErrorRowType,
+        if (resultCarrierInfo.domain === "effect") {
+          const combinedError = effectRowUnion(
+            existing.state as EffectRowType,
+            resultCarrierInfo.state as EffectRowType,
           );
           accumulatedCarriers.set(resultCarrierInfo.domain, {
             domain: resultCarrierInfo.domain,
             state: combinedError,
           });
-        } 
+        }
       } else {
         accumulatedCarriers.set(resultCarrierInfo.domain, {
           domain: resultCarrierInfo.domain,
@@ -743,16 +740,16 @@ function solveBooleanConstraint(
       const existing = accumulatedCarriers.get(operandCarrierInfo.domain);
       if (existing) {
         // Combine states for the same domain
-        if (operandCarrierInfo.domain === "error") {
-          const combinedError = errorRowUnion(
-            existing.state as ErrorRowType,
-            operandCarrierInfo.state as ErrorRowType,
+        if (operandCarrierInfo.domain === "effect") {
+          const combinedError = effectRowUnion(
+            existing.state as EffectRowType,
+            operandCarrierInfo.state as EffectRowType,
           );
           accumulatedCarriers.set(operandCarrierInfo.domain, {
             domain: operandCarrierInfo.domain,
             state: combinedError,
           });
-        } 
+        }
         // For other domains, keep the first one (or implement domain-specific logic)
       } else {
         accumulatedCarriers.set(operandCarrierInfo.domain, {
@@ -771,16 +768,16 @@ function solveBooleanConstraint(
   if (resultCarrierInfo) {
     const existing = accumulatedCarriers.get(resultCarrierInfo.domain);
     if (existing) {
-      if (resultCarrierInfo.domain === "error") {
-        const combinedError = errorRowUnion(
-          existing.state as ErrorRowType,
-          resultCarrierInfo.state as ErrorRowType,
+      if (resultCarrierInfo.domain === "effect") {
+        const combinedError = effectRowUnion(
+          existing.state as EffectRowType,
+          resultCarrierInfo.state as EffectRowType,
         );
         accumulatedCarriers.set(resultCarrierInfo.domain, {
           domain: resultCarrierInfo.domain,
           state: combinedError,
         });
-      } 
+      }
     } else {
       accumulatedCarriers.set(resultCarrierInfo.domain, {
         domain: resultCarrierInfo.domain,
@@ -853,8 +850,8 @@ function solveBranchJoinConstraint(
           details: {
             branchIndex: index,
             dischargesResult: stub.dischargesResult ?? false,
-            errorRow: stub.errorRowCoverage?.row,
-            missingConstructors: stub.errorRowCoverage?.missingConstructors,
+            effectRow: stub.effectRowCoverage?.row,
+            missingConstructors: stub.effectRowCoverage?.missingConstructors,
           },
         });
         return;
@@ -863,11 +860,14 @@ function solveBranchJoinConstraint(
 
       // For error domain, union the error rows
       if (
-        leftCarrier.domain === "error" &&
-        leftCarrier.state.kind === "error_row" &&
-        rightCarrier.state.kind === "error_row"
+        leftCarrier.domain === "effect" &&
+        leftCarrier.state.kind === "effect_row" &&
+        rightCarrier.state.kind === "effect_row"
       ) {
-        const unionState = errorRowUnion(leftCarrier.state, rightCarrier.state);
+        const unionState = effectRowUnion(
+          leftCarrier.state,
+          rightCarrier.state,
+        );
         mergedType =
           joinCarrier(leftCarrier.domain, leftCarrier.value, unionState) ??
             mergedType;
@@ -882,8 +882,8 @@ function solveBranchJoinConstraint(
           details: {
             branchIndex: index,
             dischargesResult: stub.dischargesResult ?? false,
-            errorRow: stub.errorRowCoverage?.row,
-            missingConstructors: stub.errorRowCoverage?.missingConstructors,
+            effectRow: stub.effectRowCoverage?.row,
+            missingConstructors: stub.effectRowCoverage?.missingConstructors,
           },
         });
         return;
@@ -907,23 +907,23 @@ function getTypeForNode(state: SolverState, nodeId: NodeId): Type {
   return unknownType({ kind: "incomplete", reason: "solver.missing_node" });
 }
 
-function flattenNestedErrorRows(type: Type): Type {
+function flattenNestedEffectRows(type: Type): Type {
   switch (type.kind) {
-    case "error_row": {
-      // Flatten nested error_rows
-      if (type.tail?.kind === "error_row") {
+    case "effect_row": {
+      // Flatten nested effect_rows
+      if (type.tail?.kind === "effect_row") {
         const tailRow = type.tail;
         const mergedCases = new Map(type.cases);
         for (const [label, payload] of tailRow.cases) {
           if (!mergedCases.has(label)) {
             mergedCases.set(
               label,
-              payload ? flattenNestedErrorRows(payload) : null,
+              payload ? flattenNestedEffectRows(payload) : null,
             );
           }
         }
-        return flattenNestedErrorRows({
-          kind: "error_row",
+        return flattenNestedEffectRows({
+          kind: "effect_row",
           cases: mergedCases,
           tail: tailRow.tail,
         });
@@ -933,36 +933,36 @@ function flattenNestedErrorRows(type: Type): Type {
       for (const [label, payload] of type.cases) {
         flattenedCases.set(
           label,
-          payload ? flattenNestedErrorRows(payload) : null,
+          payload ? flattenNestedEffectRows(payload) : null,
         );
       }
       return {
-        kind: "error_row",
+        kind: "effect_row",
         cases: flattenedCases,
-        tail: type.tail ? flattenNestedErrorRows(type.tail) : type.tail,
+        tail: type.tail ? flattenNestedEffectRows(type.tail) : type.tail,
       };
     }
     case "func":
       return {
         kind: "func",
-        from: flattenNestedErrorRows(type.from),
-        to: flattenNestedErrorRows(type.to),
+        from: flattenNestedEffectRows(type.from),
+        to: flattenNestedEffectRows(type.to),
       };
     case "constructor":
       return {
         kind: "constructor",
         name: type.name,
-        args: type.args.map(flattenNestedErrorRows),
+        args: type.args.map(flattenNestedEffectRows),
       };
     case "tuple":
       return {
         kind: "tuple",
-        elements: type.elements.map(flattenNestedErrorRows),
+        elements: type.elements.map(flattenNestedEffectRows),
       };
     case "record":
       const flattenedFields = new Map();
       for (const [name, fieldType] of type.fields) {
-        flattenedFields.set(name, flattenNestedErrorRows(fieldType));
+        flattenedFields.set(name, flattenNestedEffectRows(fieldType));
       }
       return {
         kind: "record",
@@ -1122,8 +1122,10 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
     return { success: true, subst: current };
   }
 
-  if (resolvedLeft.kind === "error_row" && resolvedRight.kind === "error_row") {
-    return unifyErrorRows(resolvedLeft, resolvedRight, subst);
+  if (
+    resolvedLeft.kind === "effect_row" && resolvedRight.kind === "effect_row"
+  ) {
+    return unifyEffectRows(resolvedLeft, resolvedRight, subst);
   }
 
   if (resolvedLeft.kind === resolvedRight.kind) {
@@ -1196,8 +1198,8 @@ function typesEqual(a: Type, b: Type): boolean {
       }
       return true;
     }
-    case "error_row": {
-      if (b.kind !== "error_row" || a.cases.size !== b.cases.size) {
+    case "effect_row": {
+      if (b.kind !== "effect_row" || a.cases.size !== b.cases.size) {
         return false;
       }
       for (const [label, payloadA] of a.cases.entries()) {
@@ -1225,9 +1227,9 @@ function typesEqual(a: Type, b: Type): boolean {
   }
 }
 
-function unifyErrorRows(
-  left: ErrorRowType,
-  right: ErrorRowType,
+function unifyEffectRows(
+  left: EffectRowType,
+  right: EffectRowType,
   subst: Substitution,
 ): UnifyResult {
   if (left.cases.size !== right.cases.size) {
@@ -1477,10 +1479,10 @@ function buildConstraintFlow(stubs: ConstraintStub[]): ConstraintFlow {
 
       // Per-domain singleton: merge if already exists
       const existing = domainMap.get(stub.label.domain);
-      if (existing && stub.label.domain === "error") {
+      if (existing && stub.label.domain === "effect") {
         // Error domain: union rows
-        const merged = errorRowUnion(existing.row, stub.label.row);
-        domainMap.set("error", errorLabel(merged));
+        const merged = effectRowUnion(existing.row, stub.label.row);
+        domainMap.set("effect", effectLabel(merged));
       } else {
         domainMap.set(stub.label.domain, stub.label);
       }
@@ -1554,11 +1556,11 @@ function propagateConstraints(
 
       for (const [domain, label] of fromLabels.entries()) {
         const existing = toLabels.get(domain);
-        if (existing && domain === "error") {
+        if (existing && domain === "effect") {
           // Error domain: union rows
-          if (existing.domain === "error" && label.domain === "error") {
-            const merged = errorRowUnion(existing.row, label.row);
-            toLabels.set("error", errorLabel(merged));
+          if (existing.domain === "effect" && label.domain === "effect") {
+            const merged = effectRowUnion(existing.row, label.row);
+            toLabels.set("effect", effectLabel(merged));
           }
         } else if (!existing) {
           toLabels.set(domain, label);
@@ -1587,11 +1589,11 @@ function propagateConstraints(
 
         for (const [domain, label] of branchLabels.entries()) {
           const existing = merged.get(domain);
-          if (existing && domain === "error") {
+          if (existing && domain === "effect") {
             // Error domain: union rows
-            if (existing.domain === "error" && label.domain === "error") {
-              const unionRow = errorRowUnion(existing.row, label.row);
-              merged.set("error", errorLabel(unionRow));
+            if (existing.domain === "effect" && label.domain === "effect") {
+              const unionRow = effectRowUnion(existing.row, label.row);
+              merged.set("effect", effectLabel(unionRow));
             }
           } else if (!existing) {
             merged.set(domain, label);
@@ -1714,10 +1716,10 @@ function checkInfectiousAnnotations(
 
     // Get error row from constraint labels
     const labels = flow.labels.get(nodeId);
-    let row: ErrorRowType | undefined;
+    let row: EffectRowType | undefined;
     if (labels) {
-      const errorLabel = labels.get("error");
-      if (errorLabel && errorLabel.domain === "error") {
+      const errorLabel = labels.get("effect");
+      if (errorLabel && errorLabel.domain === "effect") {
         row = errorLabel.row;
       }
     }
@@ -1725,13 +1727,13 @@ function checkInfectiousAnnotations(
     diagnostics.push({
       origin: nodeId,
       reason: "infectious_call_result_mismatch",
-      details: row ? { errorRow: row } : undefined,
+      details: row ? { effectRow: row } : undefined,
     });
   };
 
   const reportInfectiousMatch = (
     nodeId: NodeId,
-    coverage?: ErrorRowCoverageStub,
+    coverage?: EffectRowCoverageStub,
   ) => {
     if (flaggedMatches.has(nodeId)) {
       return;
@@ -1741,19 +1743,22 @@ function checkInfectiousAnnotations(
       origin: nodeId,
       reason: "infectious_match_result_mismatch",
       details: {
-        errorRow: coverage?.row,
+        effectRow: coverage?.row,
         missingConstructors: coverage?.missingConstructors,
       },
     });
   };
 
   // Build map of discharged matches
-  const dischargedMatches = new Map<NodeId, ErrorRowCoverageStub | undefined>();
+  const dischargedMatches = new Map<
+    NodeId,
+    EffectRowCoverageStub | undefined
+  >();
 
   for (const stub of stubs) {
     // Track matches that claim to discharge
     if (stub.kind === "branch_join" && stub.dischargesResult) {
-      dischargedMatches.set(stub.origin, stub.errorRowCoverage);
+      dischargedMatches.set(stub.origin, stub.effectRowCoverage);
     }
   }
 
@@ -1772,7 +1777,7 @@ function checkInfectiousAnnotations(
         // Annotation expects non-Result type
         // Check if value has error constraints
         const valueLabels = flow.labels.get(stub.value);
-        if (valueLabels?.has("error")) {
+        if (valueLabels?.has("effect")) {
           reportInfectiousCall(stub.value);
         }
 

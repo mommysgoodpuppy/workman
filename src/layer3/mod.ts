@@ -502,11 +502,11 @@ function recordCoverageForBundle(
   coverages: Map<NodeId, MatchCoverageView>,
   partials: CoveragePartialInfo[],
 ): void {
-  if (!bundle.errorRowCoverage) {
+  if (!bundle.effectRowCoverage) {
     return;
   }
   const cloned = cloneMatchCoverage(
-    bundle.errorRowCoverage,
+    bundle.effectRowCoverage,
     bundle.dischargesResult ?? false,
   );
   coverages.set(ownerId, cloned);

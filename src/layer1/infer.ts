@@ -25,10 +25,10 @@ import {
   cloneTypeScheme,
   collapseCarrier,
   collapseResultType,
+  type EffectRowType,
+  effectRowUnion,
   ensureRow,
-  errorLabel,
-  type ErrorRowType,
-  errorRowUnion,
+  effectLabel,
   flattenResultType,
   freeTypeVars,
   freshTypeVar,
@@ -64,7 +64,6 @@ import {
   emitConstraintSource,
   expectFunctionType,
   generalizeInContext,
-  type HoleOrigin,
   holeOriginFromExpr,
   holeOriginFromPattern,
   inferError,
@@ -99,11 +98,12 @@ import {
 import { materializeExpr, materializeMarkedLet } from "./materialize.ts";
 import { unknownFromReason } from "./infer_utils.ts";
 import type {
-  ErrorRowCoverage,
+  EffectRowCoverage,
   MatchBranchesResult,
-  MatchErrorRowCoverage,
+  MatchEffectRowCoverage,
   PatternInfo,
 } from "./infer_types.ts";
+import type { HoleOrigin } from "./context_types.ts";
 
 export type { Context, InferOptions, InferResult } from "./context.ts";
 export { InferError } from "../error.ts";
@@ -215,32 +215,32 @@ function registerPrefixDeclaration(ctx: Context, decl: PrefixDeclaration) {
 
 function expandErrorRowTail(
   ctx: Context,
-  errorRow: ErrorRowType,
-): ErrorRowType {
+  effectRow: EffectRowType,
+): EffectRowType {
   // If the tail is a concrete ADT type, expand it into its constructors
   // BUT: Keep type variable tails - they represent unknown errors
-  if (!errorRow.tail) {
-    return errorRow;
+  if (!effectRow.tail) {
+    return effectRow;
   }
 
   // Don't expand type variables - they need to stay as tails for unification
-  if (errorRow.tail.kind === "var") {
-    return errorRow;
+  if (effectRow.tail.kind === "var") {
+    return effectRow;
   }
 
   // Only expand concrete constructor types (ADTs)
-  if (errorRow.tail.kind !== "constructor") {
-    return errorRow;
+  if (effectRow.tail.kind !== "constructor") {
+    return effectRow;
   }
 
-  const tailType = errorRow.tail;
+  const tailType = effectRow.tail;
   const adtInfo = ctx.adtEnv.get(tailType.name);
   if (!adtInfo || adtInfo.isAlias) {
-    return errorRow;
+    return effectRow;
   }
 
   // Expand the ADT constructors into the error_row cases
-  const expandedCases = new Map(errorRow.cases);
+  const expandedCases = new Map(effectRow.cases);
   for (const ctor of adtInfo.constructors) {
     if (!expandedCases.has(ctor.name)) {
       // Add constructor with null payload for now (we'd need to track actual payload types)
@@ -249,7 +249,7 @@ function expandErrorRowTail(
   }
 
   return {
-    kind: "error_row",
+    kind: "effect_row",
     cases: expandedCases,
     tail: undefined, // Remove tail since we've expanded it completely
   };
@@ -266,12 +266,12 @@ function refineInfectiousConstructor(
     return type;
   }
 
-  // Check if the state is an error_row with just a tail (no specific cases yet)
-  if (carrierInfo.state.kind !== "error_row") {
+  // Check if the state is an effect_row with just a tail (no specific cases yet)
+  if (carrierInfo.state.kind !== "effect_row") {
     return type;
   }
 
-  let errorRow = carrierInfo.state;
+  let effectRow = carrierInfo.state;
 
   // Check if any argument is a constructor expression
   // For infectious types like IResult<T, E>, we care about the error constructor
@@ -281,33 +281,31 @@ function refineInfectiousConstructor(
     if (lastArg.kind === "constructor") {
       // The argument is a constructor! Add it as a specific case in the error_row
       const constructorName = lastArg.name;
-      const newCases = new Map(errorRow.cases);
+      const newCases = new Map(effectRow.cases);
 
       // Add the constructor as a case with null payload (nullary constructor)
       // TODO: Track payload types for constructors with arguments
       newCases.set(constructorName, null);
 
-      errorRow = {
-        kind: "error_row",
+      effectRow = {
+        kind: "effect_row",
         cases: newCases,
-        tail: errorRow.tail,
+        tail: effectRow.tail,
       };
 
       // Emit a constraint source to track this specific error constructor
       // This allows the constraint system to track error propagation
-      emitConstraintSource(ctx, expr.id, errorLabel(errorRow));
+      emitConstraintSource(ctx, expr.id, effectLabel(effectRow));
     }
   }
 
   // Don't expand the tail here - keep it for unification
-  // The type printer will expand it for display purposes
-  // errorRow = expandErrorRowTail(ctx, errorRow);
 
   // Reconstruct the carrier type with the refined error_row
   const refinedType = joinCarrier(
     carrierInfo.domain,
     carrierInfo.value,
-    errorRow,
+    effectRow,
   );
 
   return refinedType ?? type;
@@ -426,8 +424,8 @@ function createAndRegisterCarrier(
         return { value, state };
       }
       // If we have nested carriers, union the states
-      const unionedState = state.kind === "error_row"
-        ? errorRowUnion(inner.state, state)
+      const unionedState = state.kind === "effect_row"
+        ? effectRowUnion(inner.state, state)
         : ensureRow(state); // Only wrap if needed for union
       return {
         value: inner.value,
@@ -454,7 +452,7 @@ function createAndRegisterCarrier(
     },
 
     unionStates: (left: Type, right: Type): Type => {
-      return errorRowUnion(left, right);
+      return effectRowUnion(left, right);
     },
 
     // Store constructor metadata for runtime
@@ -1228,17 +1226,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (finalCarrierInfo) {
         // Emit constraint source with the carrier's state
         if (
-          finalCarrierInfo.domain === "error" &&
-          finalCarrierInfo.state.kind === "error_row"
+          finalCarrierInfo.domain === "effect" &&
+          finalCarrierInfo.state.kind === "effect_row"
         ) {
           emitConstraintSource(
             ctx,
             expr.id,
-            errorLabel(finalCarrierInfo.state),
+            effectLabel(finalCarrierInfo.state),
           );
         }
-        // TODO: Add taintLabel when taint domain is fully implemented
-        // if (finalCarrierInfo.domain === "taint" && finalCarrierInfo.state.kind === "error_row") {
+        // TODO: Add taintLabel when taint domaineffectLabelimplemented
+        // if (finalCarrierInfo.domain === "taint" && finalCarrierInfo.state.kind === "effect_row") {
         //   emitConstraintSource(ctx, expr.id, taintLabel(finalCarrierInfo.state));
         // }
 
@@ -2050,7 +2048,7 @@ export function inferPattern(
           marked: mark,
         };
       }
-      const errorRow = extractErrConstructorCoverage(pattern, final);
+      const effectRow = extractErrConstructorCoverage(pattern, final);
       return {
         type: final,
         bindings,
@@ -2058,7 +2056,7 @@ export function inferPattern(
           kind: "constructor",
           typeName: final.name,
           ctor: pattern.name,
-          errorRow,
+          effectRow,
         },
         marked: {
           kind: "constructor",
@@ -2110,7 +2108,7 @@ export function inferPattern(
 function extractErrConstructorCoverage(
   pattern: Pattern,
   final: Type,
-): ErrorRowCoverage | undefined {
+): EffectRowCoverage | undefined {
   if (pattern.kind !== "constructor") {
     return undefined;
   }
@@ -2124,7 +2122,7 @@ function extractErrConstructorCoverage(
       coversTail: true,
     };
   }
-  const inner = collectErrorRowCoverage(pattern.args[0]);
+  const inner = collectEffectRowCoverage(pattern.args[0]);
   if (!inner) {
     return undefined;
   }
@@ -2134,9 +2132,9 @@ function extractErrConstructorCoverage(
   };
 }
 
-function collectErrorRowCoverage(
+function collectEffectRowCoverage(
   pattern: Pattern,
-): ErrorRowCoverage | undefined {
+): EffectRowCoverage | undefined {
   if (pattern.kind === "constructor") {
     return { constructors: new Set([pattern.name]), coversTail: false };
   }
@@ -2266,7 +2264,7 @@ export function inferMatchBranches(
   const patternInfos: PatternInfo[] = [];
   const bodyTypes: Type[] = [];
   const branchBodies: Expr[] = [];
-  let errorRowCoverage: MatchErrorRowCoverage | undefined;
+  let effectRowCoverage: MatchEffectRowCoverage | undefined;
   const branchMetadata: { kind: MatchBranchKind; type: Type }[] = [];
   let dischargedResult = false;
 
@@ -2320,18 +2318,18 @@ export function inferMatchBranches(
     }
     const branchKind = classifyBranchKind(patternInfo);
 
-    // Populate handledErrorConstructors from errorRow if present
+    // Populate handledErrorConstructors from effectRow if present
     if (
       patternInfo.coverage.kind === "constructor" &&
-      (patternInfo.coverage as any).errorRow
+      (patternInfo.coverage as any).effectRow
     ) {
       hasErrConstructor = true;
-      const errorRow = (patternInfo.coverage as any)
-        .errorRow as ErrorRowCoverage;
-      for (const ctor of errorRow.constructors) {
+      const effectRow = (patternInfo.coverage as any)
+        .effectRow as EffectRowCoverage;
+      for (const ctor of effectRow.constructors) {
         handledErrorConstructors.add(ctor);
       }
-      if (errorRow.coversTail) {
+      if (effectRow.coversTail) {
         handledErrorConstructors.add("_");
       }
     }
@@ -2455,7 +2453,7 @@ export function inferMatchBranches(
   let resolvedResult = applyCurrentSubst(ctx, resultType);
   const scrutineeInfo = flattenResultType(resolvedScrutinee);
 
-  const dischargeErrorRow = () => {
+  const dischargeEffectRow = () => {
     const currentInfo = flattenResultType(resolvedResult);
     if (currentInfo) {
       resolvedResult = applyCurrentSubst(
@@ -2469,8 +2467,8 @@ export function inferMatchBranches(
     row: Type,
     missing: string[],
   ) => {
-    errorRowCoverage = {
-      errorRow: row,
+    effectRowCoverage = {
+      effectRow: row,
       coveredConstructors: new Set(handledErrorConstructors),
       coversTail: handledErrorConstructors.has("_"),
       missingConstructors: missing,
@@ -2484,15 +2482,15 @@ export function inferMatchBranches(
         reason: "all_errors_outside_result",
       });
     } else if (preventsDischarge) {
-      snapshotErrorCoverage(scrutineeInfo.error, []);
+      snapshotErrorCoverage(scrutineeInfo.effect, []);
     } else {
       dischargedResult = true;
-      dischargeErrorRow();
-      snapshotErrorCoverage(scrutineeInfo.error, []);
+      dischargeEffectRow();
+      snapshotErrorCoverage(scrutineeInfo.effect, []);
 
       // PHASE 2.3: Emit constraint rewrite (parallel to existing eager discharge)
-      // Only emit rewrites if we have a concrete error row
-      if (scrutineeInfo.error.kind === "error_row") {
+      // Only emit rewrites if we have a concrete effect row
+      if (scrutineeInfo.effect.kind === "effect_row") {
         // Emit rewrite for Ok branches to remove error labels
         for (let i = 0; i < bundle.arms.length; i++) {
           const arm = bundle.arms[i];
@@ -2502,7 +2500,7 @@ export function inferMatchBranches(
             emitConstraintRewrite(
               ctx,
               arm.body.id,
-              [errorLabel(scrutineeInfo.error)], // remove
+              [effectLabel(scrutineeInfo.effect)], // remove
               [], // add (nothing)
             );
           }
@@ -2510,25 +2508,25 @@ export function inferMatchBranches(
       }
     }
   } else if (scrutineeInfo && hasErrConstructor) {
-    // Only compute missing constructors if we have a concrete error row
+    // Only compute missing constructors if we have a concrete effect row
     let missingConstructors: string[] = [];
-    if (scrutineeInfo.error.kind === "error_row") {
+    if (scrutineeInfo.effect.kind === "effect_row") {
       missingConstructors = findMissingErrorConstructors(
-        scrutineeInfo.error,
+        scrutineeInfo.effect,
         handledErrorConstructors,
       );
     }
     if (missingConstructors.length === 0) {
       if (preventsDischarge) {
-        snapshotErrorCoverage(scrutineeInfo.error, []);
+        snapshotErrorCoverage(scrutineeInfo.effect, []);
       } else {
         dischargedResult = true;
-        dischargeErrorRow();
-        snapshotErrorCoverage(scrutineeInfo.error, []);
+        dischargeEffectRow();
+        snapshotErrorCoverage(scrutineeInfo.effect, []);
 
         // PHASE 2.3: Emit constraint rewrite (parallel to existing eager discharge)
-        // Only emit rewrites if we have a concrete error row
-        if (scrutineeInfo.error.kind === "error_row") {
+        // Only emit rewrites if we have a concrete effect row
+        if (scrutineeInfo.effect.kind === "effect_row") {
           // Emit rewrite for Ok branches to remove error labels
           for (let i = 0; i < bundle.arms.length; i++) {
             const arm = bundle.arms[i];
@@ -2538,7 +2536,7 @@ export function inferMatchBranches(
               emitConstraintRewrite(
                 ctx,
                 arm.body.id,
-                [errorLabel(scrutineeInfo.error)], // remove
+                [effectLabel(scrutineeInfo.effect)], // remove
                 [], // add (nothing)
               );
             }
@@ -2546,15 +2544,15 @@ export function inferMatchBranches(
         }
       }
     } else {
-      // Only report partial coverage if we have a concrete error row
-      if (scrutineeInfo.error.kind === "error_row") {
+      // Only report partial coverage if we have a concrete effect row
+      if (scrutineeInfo.effect.kind === "effect_row") {
         ctx.layer1Diagnostics.push({
           origin: expr.id,
           reason: "error_row_partial_coverage",
           details: { constructors: missingConstructors },
         });
       }
-      snapshotErrorCoverage(scrutineeInfo.error, missingConstructors);
+      snapshotErrorCoverage(scrutineeInfo.effect, missingConstructors);
     }
   }
   if (branchBodies.length > 0 && scrutineeExpr) {
@@ -2565,7 +2563,7 @@ export function inferMatchBranches(
       scrutineeExpr,
       {
         dischargesResult: dischargedResult,
-        errorRowCoverage,
+        effectRowCoverage,
       },
     );
   }
@@ -2582,7 +2580,7 @@ export function inferMatchBranches(
     type: resolvedResult,
     patternInfos,
     bodyTypes,
-    errorRowCoverage,
+    effectRowCoverage: effectRowCoverage,
     dischargesResult: dischargedResult,
   };
   ctx.matchResults.set(bundle, result);
@@ -2590,19 +2588,19 @@ export function inferMatchBranches(
 }
 
 function findMissingErrorConstructors(
-  errorRow: ErrorRowType,
+  effectRow: EffectRowType,
   covered: Set<string>,
 ): string[] {
   if (covered.has("_")) {
     return [];
   }
   const missing: string[] = [];
-  for (const label of errorRow.cases.keys()) {
+  for (const label of effectRow.cases.keys()) {
     if (!covered.has(label)) {
       missing.push(label);
     }
   }
-  if (errorRow.tail) {
+  if (effectRow.tail) {
     missing.push("_");
   }
   return missing;

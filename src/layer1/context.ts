@@ -23,8 +23,8 @@ import type {
   MMarkUnsupportedExpr,
   MProgram,
   MTopLevelMark,
+  MTypeEffectRowExpr,
   MTypeExpr,
-  MTypeExprMark,
 } from "../ast_marked.ts";
 import {
   applySubstitution,
@@ -34,9 +34,9 @@ import {
   cloneTypeScheme,
   composeSubstitution,
   type ConstraintLabel,
-  type ErrorRowType,
+  type EffectRowType,
+  effectRowUnion,
   ensureRow,
-  errorRowUnion,
   generalize,
   getProvenance,
   type Identity,
@@ -59,7 +59,7 @@ import type {
   ConstraintDiagnostic,
   ConstraintDiagnosticReason,
 } from "../diagnostics.ts";
-import type { MatchBranchesResult } from "./infer_types.ts";
+import type { MatchBranchesResult, MatchEffectRowCoverage } from "./infer_types.ts";
 import type {
   HoleId,
   HoleOrigin,
@@ -144,8 +144,8 @@ export interface UnknownInfo {
   origin: HoleOrigin;
 }
 
-export interface ErrorRowCoverageStub {
-  row: ErrorRowType;
+export interface EffectRowCoverageStub {
+  row: EffectRowType;
   coveredConstructors: string[];
   coversTail: boolean;
   missingConstructors: string[];
@@ -168,7 +168,7 @@ export type ConstraintStub =
     scrutinee: NodeId | null;
     branches: NodeId[];
     dischargesResult?: boolean;
-    errorRowCoverage?: ErrorRowCoverageStub;
+    effectRowCoverage?: EffectRowCoverageStub;
   }
   | {
     kind: "annotation";
@@ -253,17 +253,17 @@ export function recordBranchJoinConstraint(
   scrutinee?: Expr,
   metadata?: {
     dischargesResult?: boolean;
-    errorRowCoverage?: MatchErrorRowCoverage;
+    effectRowCoverage?: MatchEffectRowCoverage;
   },
 ): void {
-  const coverage = metadata?.errorRowCoverage
+  const coverage = metadata?.effectRowCoverage!
     ? {
-      row: metadata.errorRowCoverage.errorRow,
+      row: metadata.effectRowCoverage.effectRow,
       coveredConstructors: Array.from(
-        metadata.errorRowCoverage.coveredConstructors,
+        metadata.effectRowCoverage.coveredConstructors,
       ),
-      coversTail: metadata.errorRowCoverage.coversTail,
-      missingConstructors: metadata.errorRowCoverage.missingConstructors,
+      coversTail: metadata.effectRowCoverage.coversTail,
+      missingConstructors: metadata.effectRowCoverage.missingConstructors,
     }
     : undefined;
   ctx.constraintStubs.push({
@@ -272,7 +272,7 @@ export function recordBranchJoinConstraint(
     scrutinee: scrutinee?.id ?? null,
     branches: branchBodies.map((body) => body.id),
     dischargesResult: metadata?.dischargesResult ?? false,
-    errorRowCoverage: coverage,
+    effectRowCoverage: coverage!,
   });
 }
 
@@ -909,8 +909,8 @@ export function markTypeExprArity(
   return mark;
 }
 
-function coerceToErrorRow(state: Type): ErrorRowType | null {
-  if (state.kind === "error_row") {
+function coerceToEffectRow(state: Type): EffectRowType | null {
+  if (state.kind === "effect_row") {
     return state;
   }
   if (state.kind === "var") {
@@ -995,16 +995,28 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
       leftCarrier && rightCarrier && leftCarrier.domain === rightCarrier.domain
     ) {
       // Both are carriers in the same domain - unify value and state
-      const valueUnify = unifyTypes(leftCarrier.value, rightCarrier.value, subst);
+      const valueUnify = unifyTypes(
+        leftCarrier.value,
+        rightCarrier.value,
+        subst,
+      );
       if (!valueUnify.success) return valueUnify;
       if (leftCarrier.domain === "error") {
-        const leftStateRow = coerceToErrorRow(leftCarrier.state);
-        const rightStateRow = coerceToErrorRow(rightCarrier.state);
+        const leftStateRow = coerceToEffectRow(leftCarrier.state);
+        const rightStateRow = coerceToEffectRow(rightCarrier.state);
         if (leftStateRow && rightStateRow) {
-          return unifyErrorRowTypes(leftStateRow, rightStateRow, valueUnify.subst);
+          return unifyEffectRowTypes(
+            leftStateRow,
+            rightStateRow,
+            valueUnify.subst,
+          );
         }
       }
-      return unifyTypes(leftCarrier.state, rightCarrier.state, valueUnify.subst);
+      return unifyTypes(
+        leftCarrier.state,
+        rightCarrier.state,
+        valueUnify.subst,
+      );
     }
 
     // Normal constructor unification - require exact name match
@@ -1043,8 +1055,8 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
     return { success: true, subst: current };
   }
 
-  if (left.kind === "error_row" && right.kind === "error_row") {
-    return unifyErrorRowTypes(left, right, subst);
+  if (left.kind === "effect_row" && right.kind === "effect_row") {
+    return unifyEffectRowTypes(left, right, subst);
   }
 
   if (left.kind === right.kind) {
@@ -1077,20 +1089,20 @@ function bindVar(id: number, type: Type, subst: Substitution): UnifyResult {
   return { success: true, subst: next };
 }
 
-function unifyErrorRowTypes(
-  left: ErrorRowType,
-  right: ErrorRowType,
+function unifyEffectRowTypes(
+  left: EffectRowType,
+  right: EffectRowType,
   subst: Substitution,
 ): UnifyResult {
   // Error domain uses UNION semantics, not exact match
   // Per INFECTION_REFACTOR_PLAN_V3.md: "Errors compose via union"
 
   // Apply current substitution to both sides
-  const resolvedLeft = applySubstitution(left, subst) as ErrorRowType;
-  const resolvedRight = applySubstitution(right, subst) as ErrorRowType;
+  const resolvedLeft = applySubstitution(left, subst) as EffectRowType;
+  const resolvedRight = applySubstitution(right, subst) as EffectRowType;
 
   // If they're structurally equal, we're done
-  if (errorRowsEqual(resolvedLeft, resolvedRight)) {
+  if (effectRowsEqual(resolvedLeft, resolvedRight)) {
     return { success: true, subst };
   }
 
@@ -1108,7 +1120,7 @@ function unifyErrorRowTypes(
 
   // Both have concrete cases - create a fresh type variable and bind it to the union
   // This allows the union to be represented in the type system
-  const unionRow = errorRowUnion(resolvedLeft, resolvedRight);
+  const unionRow = effectRowUnion(resolvedLeft, resolvedRight);
 
   // If both tails are the same type variable, bind it to the union
   if (
@@ -1137,7 +1149,7 @@ function unifyErrorRowTypes(
   return { success: true, subst: current };
 }
 
-function errorRowsEqual(left: ErrorRowType, right: ErrorRowType): boolean {
+function effectRowsEqual(left: EffectRowType, right: EffectRowType): boolean {
   if (left.cases.size !== right.cases.size) return false;
   for (const [label, leftPayload] of left.cases) {
     const rightPayload = right.cases.get(label);

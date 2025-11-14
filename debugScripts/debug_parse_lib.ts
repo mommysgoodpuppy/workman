@@ -2,7 +2,10 @@ import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 
 async function main() {
-  const path = new URL("../tests/fixtures/module_loader/basic/lib.wm", import.meta.url);
+  const path = new URL(
+    "../tests/fixtures/module_loader/basic/lib.wm",
+    import.meta.url,
+  );
   const source = await Deno.readTextFile(path);
   console.log("SOURCE:\n" + source);
   const tokens = lex(source);

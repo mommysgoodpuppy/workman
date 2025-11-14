@@ -473,7 +473,7 @@ function detectHandledResultParams(
       return [paramIndex];
     }
     // Fall back to coverage check
-    const coverage = expr.body.errorRowCoverage;
+    const coverage = expr.body.effectRowCoverage;
     if (coverage?.dischargesResult) {
       return [paramIndex];
     }
@@ -508,7 +508,7 @@ function detectHandledResultParams(
     }
 
     // Fall back to checking if any element variables are in the param list
-    const coverage = expr.body.errorRowCoverage;
+    const coverage = expr.body.effectRowCoverage;
     if (coverage?.dischargesResult) {
       for (const element of expr.body.scrutinee.elements) {
         if (element.kind === "var") {

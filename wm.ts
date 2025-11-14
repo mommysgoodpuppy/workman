@@ -629,7 +629,9 @@ REPL Commands:
         expressions.sort((a, b) => a.startPos.col - b.startPos.col);
 
         for (const expr of expressions) {
-          console.log(` Col ${expr.startPos.col}: ${expr.excerpt}    //(nodeId:${expr.nodeId})`);
+          console.log(
+            ` Col ${expr.startPos.col}: ${expr.excerpt}    //(nodeId:${expr.nodeId})`,
+          );
           console.log(`  type: ${expr.typeStr}${expr.annotation}`);
 
           if (expr.infectionInfo) {
@@ -663,7 +665,7 @@ REPL Commands:
           const errArg = type.args[1];
           const ensureRow = (
             t: import("./src/types.ts").Type,
-          ): import("./src/types.ts").ErrorRowType => {
+          ): import("./src/types.ts").EffectRowType => {
             return (t.kind === "error_row")
               ? t
               : { kind: "error_row", cases: new Map(), tail: t };

@@ -1,5 +1,4 @@
 import type {
-  Literal,
   MBinaryExpr,
   MBlockExpr,
   MBlockStatement,
@@ -15,6 +14,7 @@ import type {
   MRecordProjectionExpr,
   MUnaryExpr,
 } from "../../../src/ast_marked.ts";
+import type { Literal } from "../../../src/ast.ts";
 import { cloneType, type Type, unknownType } from "../../../src/types.ts";
 import type {
   CoreDataExpr,
@@ -348,15 +348,15 @@ function lowerMatchExpr(
   const cases: CoreMatchCase[] = bundle.arms.map((arm) =>
     lowerMatchArm(arm, state)
   );
-  const errorRowCoverage = bundle.errorRowCoverage
+  const effectRowCoverage = bundle.effectRowCoverage
     ? {
-      row: bundle.errorRowCoverage.row,
+      row: bundle.effectRowCoverage.row,
       coveredConstructors: [
-        ...bundle.errorRowCoverage.coveredConstructors,
+        ...bundle.effectRowCoverage.coveredConstructors,
       ],
-      coversTail: bundle.errorRowCoverage.coversTail,
+      coversTail: bundle.effectRowCoverage.coversTail,
       missingConstructors: [
-        ...bundle.errorRowCoverage.missingConstructors,
+        ...bundle.effectRowCoverage.missingConstructors,
       ],
       dischargesResult: bundle.dischargesResult ?? false,
     }
@@ -366,7 +366,7 @@ function lowerMatchExpr(
     scrutinee: loweredScrutinee,
     cases,
     type: resolveNodeType(state, expr.id, expr.type),
-    errorRowCoverage,
+    effectRowCoverage: effectRowCoverage,
   };
 }
 

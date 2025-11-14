@@ -14,7 +14,7 @@ import {
   parseSurfaceProgram,
 } from "../../../src//parser.ts";
 import {
-InferError,
+  InferError,
   LexError,
   ParseError,
   type WorkmanError,
@@ -780,14 +780,14 @@ class WorkmanLanguageServer {
         base = "Internal type inference error";
         break;
       case "infectious_call_result_mismatch": {
-        const row = diag.details?.errorRow as Type | undefined;
+        const row = diag.details?.effectRow as Type | undefined;
         const rowLabel = row ? typeToString(row) : "an unresolved error row";
         base =
           `This call must remain infectious because an argument carries ${rowLabel}`;
         break;
       }
       case "infectious_match_result_mismatch": {
-        const row = diag.details?.errorRow as Type | undefined;
+        const row = diag.details?.effectRow as Type | undefined;
         const missing = Array.isArray(diag.details?.missingConstructors)
           ? (diag.details?.missingConstructors as string[]).join(", ")
           : null;
@@ -849,7 +849,7 @@ class WorkmanLanguageServer {
         layer3,
       );
       t = (view.finalType.kind === "concrete") ? view.finalType.type : resolved;
-      summary = this.summarizeErrorRowFromType(t, adtEnv ?? new Map());
+      summary = this.summarizeEffectRowFromType(t, adtEnv ?? new Map());
       if (summary && t && t.kind === "constructor" && t.args.length > 0) {
         // Format infected Result types specially
         typeStr = `⚡${typeToString(t.args[0])} <${summary}>`;
@@ -1072,7 +1072,7 @@ class WorkmanLanguageServer {
     while (returnType.kind === "func") {
       returnType = returnType.to;
     }
-    const summary = this.summarizeErrorRowFromType(returnType, adtEnv);
+    const summary = this.summarizeEffectRowFromType(returnType, adtEnv);
     if (
       summary && returnType && returnType.kind === "constructor" &&
       returnType.args.length > 0
@@ -1624,7 +1624,7 @@ class WorkmanLanguageServer {
     };
   }
 
-  private summarizeErrorRowFromType(
+  private summarizeEffectRowFromType(
     type: Type | undefined,
     adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>,
   ): string | null {
@@ -1636,10 +1636,10 @@ class WorkmanLanguageServer {
     const errArg = type.args[1];
     const ensureRow = (
       t: Type,
-    ): import("../../../src//types.ts").ErrorRowType => (
-      t.kind === "error_row"
+    ): import("../../../src//types.ts").EffectRowType => (
+      t.kind === "effect_row"
         ? t
-        : { kind: "error_row", cases: new Map(), tail: t }
+        : { kind: "effect_row", cases: new Map(), tail: t }
     );
     const row = ensureRow(errArg);
     const caseLabels = new Set<string>(Array.from(row.cases.keys()));

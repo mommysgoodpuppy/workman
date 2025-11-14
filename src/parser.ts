@@ -26,7 +26,7 @@ import type {
   TopLevel,
   TypeAliasMember,
   TypeDeclaration,
-  TypeErrorRowCase,
+  TypeEffectRowCase,
   TypeExpr,
   TypeParameter,
   TypeRecordField,
@@ -312,8 +312,8 @@ class SurfaceParser {
           return this.parseTypeDeclaration(exportToken);
         case "record":
           return this.parseRecordDeclaration(exportToken);
-        case "carrier":
-          return this.parseCarrierDeclaration(exportToken);
+        /* case "carrier":
+          return this.parseCarrierDeclaration(exportToken); */
         case "infix":
         case "infixl":
         case "infixr":
@@ -1447,7 +1447,7 @@ class SurfaceParser {
   private parseTypePrimary(): TypeExpr {
     const token = this.peek();
     if (token.kind === "symbol" && token.value === "<") {
-      return this.parseErrorRowTypeExpr();
+      return this.parseEffectRowTypeExpr();
     }
     if (token.kind === "symbol" && token.value === "(") {
       return this.parseTypeTupleOrGrouping();
@@ -1485,9 +1485,9 @@ class SurfaceParser {
     throw this.error("Expected type expression", token);
   }
 
-  private parseErrorRowTypeExpr(): TypeExpr {
+  private parseEffectRowTypeExpr(): TypeExpr {
     const open = this.expectSymbol("<");
-    const cases: TypeErrorRowCase[] = [];
+    const cases: TypeEffectRowCase[] = [];
     let hasTailWildcard = false;
     let first = true;
     while (!this.checkSymbol(">")) {
@@ -1515,7 +1515,7 @@ class SurfaceParser {
         end = payload.span.end;
       }
       cases.push({
-        kind: "type_error_row_case",
+        kind: "type_effect_row_case",
         name: ctor.value,
         payload,
         span: this.spanFrom(ctor.start, end),
@@ -1524,7 +1524,7 @@ class SurfaceParser {
     }
     const close = this.expectSymbol(">");
     return {
-      kind: "type_error_row",
+      kind: "type_effect_row",
       cases,
       hasTailWildcard,
       span: this.spanFrom(open.start, close.end),

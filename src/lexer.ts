@@ -68,7 +68,12 @@ export function lex(source: string, sourceName?: string): Token[] {
         while (index < length && isDigit(source[index])) {
           value += source[index++];
         }
-        tokens.push({ kind: "number", value, start, end: index });
+        tokens.push({
+          kind: "number",
+          value,
+          start,
+          end: index,
+        });
         continue;
       }
     }
@@ -79,26 +84,46 @@ export function lex(source: string, sourceName?: string): Token[] {
       while (index < length && isDigit(source[index])) {
         value += source[index++];
       }
-      tokens.push({ kind: "number", value, start, end: index });
+      tokens.push({
+        kind: "number",
+        value,
+        start,
+        end: index,
+      });
       continue;
     }
 
     if (char === "'") {
       const { value, nextIndex } = readCharLiteral(source, index);
-      tokens.push({ kind: "char", value, start, end: nextIndex });
+      tokens.push({
+        kind: "char",
+        value,
+        start,
+        end: nextIndex,
+      });
       index = nextIndex;
       continue;
     }
 
     if (char === '"') {
       const { value, nextIndex } = readStringLiteral(source, index);
-      tokens.push({ kind: "string", value, start, end: nextIndex });
+      tokens.push({
+        kind: "string",
+        value,
+        start,
+        end: nextIndex,
+      });
       index = nextIndex;
       continue;
     }
 
     if (char === "_") {
-      tokens.push({ kind: "symbol", value: "_", start, end: start + 1 });
+      tokens.push({
+        kind: "symbol",
+        value: "_",
+        start,
+        end: start + 1,
+      });
       index++;
       continue;
     }
@@ -111,20 +136,35 @@ export function lex(source: string, sourceName?: string): Token[] {
       }
       const lower = value.toLowerCase();
       if (lower === "true" || lower === "false") {
-        tokens.push({ kind: "bool", value: lower, start, end: index });
+        tokens.push({
+          kind: "bool",
+          value: lower,
+          start,
+          end: index,
+        });
         continue;
       }
       if (keywords.has(lower)) {
-        tokens.push({ kind: "keyword", value: lower, start, end: index });
+        tokens.push({
+          kind: "keyword",
+          value: lower,
+          start,
+          end: index,
+        });
         continue;
       }
       const kind = isUppercase(value[0]) ? "constructor" : "identifier";
-      tokens.push({ kind, value, start, end: index });
+      tokens.push({ kind: kind, value, start, end: index });
       continue;
     }
 
     if (char === "-" && source[index + 1] === ">") {
-      tokens.push({ kind: "symbol", value: "->", start, end: index + 2 });
+      tokens.push({
+        kind: "symbol",
+        value: "->",
+        start,
+        end: index + 2,
+      });
       index += 2;
       continue;
     }
@@ -159,7 +199,12 @@ export function lex(source: string, sourceName?: string): Token[] {
     throw unexpectedCharError(char, index, source);
   }
 
-  tokens.push({ kind: "eof", value: "", start: length, end: length });
+  tokens.push({
+    kind: "eof",
+    value: "",
+    start: length,
+    end: length,
+  });
   return tokens;
 }
 

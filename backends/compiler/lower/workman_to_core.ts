@@ -298,7 +298,7 @@ function simpleFormatType(type: Type): string {
       return "Char";
     case "string":
       return "String";
-    case "error_row":
+    case "effect_row":
       return typeToString(type);
     case "record":
       return `{ ${
@@ -415,12 +415,12 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
       return "Match does not cover all error constructors";
     }
     case "infectious_call_result_mismatch": {
-      const row = diagnostic.details?.errorRow as Type | undefined;
-      const rowLabel = row ? simpleFormatType(row) : "the incoming error row";
+      const row = diagnostic.details?.effectRow as Type | undefined;
+      const rowLabel = row ? simpleFormatType(row) : "the incoming effect row";
       return `This call must return a Result because its argument carries ${rowLabel}`;
     }
     case "infectious_match_result_mismatch": {
-      const row = diagnostic.details?.errorRow as Type | undefined;
+      const row = diagnostic.details?.effectRow as Type | undefined;
       const missing = diagnostic.details?.missingConstructors as
         | string[]
         | undefined;

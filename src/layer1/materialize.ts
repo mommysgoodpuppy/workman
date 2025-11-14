@@ -45,14 +45,14 @@ export function materializeMatchBundle(
   const patternInfos = matchResult?.patternInfos ?? [];
   const resolvedBundleType = matchResult?.type ?? inferredType ??
     unknownFromReason("match.bundle");
-  const errorRowCoverage = matchResult?.errorRowCoverage
+  const effectRowCoverage = matchResult?.effectRowCoverage
     ? {
-      row: matchResult.errorRowCoverage.errorRow,
+      row: matchResult.effectRowCoverage.effectRow,
       coveredConstructors: Array.from(
-        matchResult.errorRowCoverage.coveredConstructors,
+        matchResult.effectRowCoverage.coveredConstructors,
       ).filter((ctor) => ctor !== "_"),
-      coversTail: matchResult.errorRowCoverage.coversTail,
-      missingConstructors: matchResult.errorRowCoverage.missingConstructors,
+      coversTail: matchResult.effectRowCoverage.coversTail,
+      missingConstructors: matchResult.effectRowCoverage.missingConstructors,
     }
     : undefined;
   const arms: MMatchArm[] = [];
@@ -98,7 +98,7 @@ export function materializeMatchBundle(
     id: bundle.id,
     arms,
     type: resolvedBundleType,
-    errorRowCoverage,
+    effectRowCoverage: effectRowCoverage,
     dischargesResult: matchResult?.dischargesResult ?? false,
   } satisfies MMatchBundle;
 }
@@ -578,14 +578,14 @@ export function materializeTypeExpr(
         span: typeExpr.span,
         id: typeExpr.id,
       };
-    case "type_error_row":
+    case "type_effect_row":
       return {
-        kind: "type_error_row",
+        kind: "type_effect_row",
         span: typeExpr.span,
         id: typeExpr.id,
         hasTailWildcard: typeExpr.hasTailWildcard,
         cases: typeExpr.cases.map((entry) => ({
-          kind: "type_error_row_case",
+          kind: "type_effect_row_case",
           span: entry.span,
           id: entry.id,
           name: entry.name,

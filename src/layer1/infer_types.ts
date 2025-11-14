@@ -2,9 +2,9 @@
 // between infer.ts and context.ts
 
 import type { MPattern } from "../ast_marked.ts";
-import type { ErrorRowType, Type } from "../types.ts";
+import type { EffectRowType, Type } from "../types.ts";
 
-export interface ErrorRowCoverage {
+export interface EffectRowCoverage {
   constructors: Set<string>;
   coversTail: boolean;
 }
@@ -15,7 +15,7 @@ export type PatternCoverage =
     kind: "constructor";
     typeName: string;
     ctor: string;
-    errorRow?: ErrorRowCoverage;
+    effectRow?: EffectRowCoverage;
   }
   | { kind: "bool"; value: boolean }
   | { kind: "none" }
@@ -28,8 +28,8 @@ export interface PatternInfo {
   marked: MPattern;
 }
 
-export interface MatchErrorRowCoverage {
-  errorRow: Type; // Can be error_row or type variable during inference
+export interface MatchEffectRowCoverage {
+  effectRow: Type; // Can be error_row or type variable during inference
   coveredConstructors: Set<string>;
   coversTail: boolean;
   missingConstructors: string[];
@@ -39,6 +39,6 @@ export interface MatchBranchesResult {
   type: Type;
   patternInfos: PatternInfo[];
   bodyTypes: Type[];
-  errorRowCoverage?: MatchErrorRowCoverage;
+  effectRowCoverage?: MatchEffectRowCoverage;
   dischargesResult?: boolean;
 }

@@ -127,7 +127,7 @@ export interface MExprStatement extends MNodeBase {
   expression: MExpr;
 }
 
-export interface MErrorRowCoverage {
+export interface MEffectRowCoverage {
   row: Type;
   coveredConstructors: string[];
   coversTail: boolean;
@@ -137,7 +137,7 @@ export interface MErrorRowCoverage {
 export interface MMatchBundle extends MTypedNode {
   kind: "match_bundle";
   arms: MMatchArm[];
-  errorRowCoverage?: MErrorRowCoverage;
+  effectRowCoverage?: MEffectRowCoverage;
   dischargesResult?: boolean;
 }
 
@@ -268,15 +268,15 @@ export interface MTypeUnit extends MNodeBase {
   kind: "type_unit";
 }
 
-export interface MTypeErrorRowCase extends MNodeBase {
-  kind: "type_error_row_case";
+export interface MTypeEffectRowCase extends MNodeBase {
+  kind: "type_effect_row_case";
   name: string;
   payload?: MTypeExpr;
 }
 
-export interface MTypeErrorRowExpr extends MNodeBase {
-  kind: "type_error_row";
-  cases: MTypeErrorRowCase[];
+export interface MTypeEffectRowExpr extends MNodeBase {
+  kind: "type_effect_row";
+  cases: MTypeEffectRowCase[];
   hasTailWildcard: boolean;
 }
 
@@ -287,7 +287,7 @@ export type MTypeExpr =
   | MTypeTuple
   | MTypeRecordExpr
   | MTypeUnit
-  | MTypeErrorRowExpr
+  | MTypeEffectRowExpr
   | MTypeExprMark;
 
 export type MMarkExpr =

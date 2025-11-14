@@ -226,7 +226,7 @@ export type TypeExpr =
   | TypeTuple
   | TypeRecordExpr
   | TypeUnit
-  | TypeErrorRowExpr;
+  | TypeEffectRowExpr;
 
 export interface TypeVariable extends NodeBase {
   kind: "type_var";
@@ -259,15 +259,15 @@ export interface TypeUnit extends NodeBase {
   kind: "type_unit";
 }
 
-export interface TypeErrorRowCase extends NodeBase {
-  kind: "type_error_row_case";
+export interface TypeEffectRowCase extends NodeBase {
+  kind: "type_effect_row_case";
   name: string;
   payload?: TypeExpr;
 }
 
-export interface TypeErrorRowExpr extends NodeBase {
-  kind: "type_error_row";
-  cases: TypeErrorRowCase[];
+export interface TypeEffectRowExpr extends NodeBase {
+  kind: "type_effect_row";
+  cases: TypeEffectRowCase[];
   hasTailWildcard: boolean;
 }
 

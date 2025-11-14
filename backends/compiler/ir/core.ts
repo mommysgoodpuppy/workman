@@ -116,7 +116,7 @@ export interface CoreMatchExpr extends CoreNodeMeta {
   readonly scrutinee: CoreExpr;
   readonly cases: readonly CoreMatchCase[];
   readonly fallback?: CoreExpr;
-  readonly errorRowCoverage?: CoreMatchCoverage;
+  readonly effectRowCoverage?: CoreMatchCoverage;
 }
 
 export type CoreExpr =
