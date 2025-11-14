@@ -64,7 +64,7 @@ Deno.test("Pattern matching on Tainted discharges infection", () => {
     let sanitize = (tainted) => {
       match(tainted) {
         Clean(x) => { x },
-        Dirty(UserInput) => { 0 }
+        Dirty(_) => { 0 }
       }
     };
 

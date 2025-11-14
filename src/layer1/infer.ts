@@ -1226,7 +1226,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (finalCarrierInfo) {
         // Emit constraint source with the carrier's state
         if (
-          finalCarrierInfo.domain === "effect" &&
+          finalCarrierInfo.domain === "error" &&
           finalCarrierInfo.state.kind === "effect_row"
         ) {
           emitConstraintSource(
