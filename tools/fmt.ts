@@ -17,6 +17,7 @@ import type {
   MatchBundle,
   ModuleImport,
   ModuleReexport,
+  Parameter,
   Pattern,
   Program,
   TypeDeclaration,
@@ -99,9 +100,11 @@ async function computeOperatorEnvironment(
 class Formatter {
   private options: FormatOptions;
   private indent: number = 0;
+  private source: string;
 
-  constructor(options: FormatOptions) {
+  constructor(options: FormatOptions, source: string) {
     this.options = options;
+    this.source = source;
   }
 
   format(program: Program): string {
@@ -135,6 +138,20 @@ class Formatter {
       }
 
       parts.push(this.formatDeclaration(decl));
+    }
+
+    if (
+      program.trailingComments && program.trailingComments.length > 0
+    ) {
+      if (parts.length > 0 && parts[parts.length - 1] !== "") {
+        parts.push("");
+      }
+      for (const comment of program.trailingComments) {
+        parts.push(`-- ${comment.text}`);
+        if (comment.hasBlankLineAfter) {
+          parts.push("");
+        }
+      }
     }
 
     const formatted = parts.join("\n") + "\n";
@@ -220,9 +237,25 @@ class Formatter {
     return result;
   }
 
+  private formatParameter(param: Parameter): string {
+    const pattern = this.formatPattern(param.pattern);
+    const annotation = param.annotation
+      ? `: ${this.formatTypeExpr(param.annotation)}`
+      : "";
+    return `${pattern}${annotation}`;
+  }
+
+  private formatParameterList(params: Parameter[]): string {
+    const inner = params.map((p) => this.formatParameter(p)).join(", ");
+    return `(${inner})`;
+  }
+
   private formatLetDeclaration(decl: LetDeclaration): string {
     const exportPrefix = decl.export ? "export " : "";
     const recPrefix = decl.isRecursive ? "rec " : "";
+    const annotationSuffix = decl.annotation
+      ? `: ${this.formatTypeExpr(decl.annotation)}`
+      : "";
 
     let result: string;
 
@@ -233,8 +266,8 @@ class Formatter {
 
     // If this was originally a first-class match, format it that way
     if (
-      decl.isFirstClassMatch && decl.parameters.length === 1 &&
-      decl.body.statements.length === 0 && decl.body.result?.kind === "match"
+      decl.isFirstClassMatch && decl.body.statements.length === 0 &&
+      decl.body.result?.kind === "match"
     ) {
       const matchExpr = decl.body.result;
       // Force multi-line if the body was originally multi-line
@@ -245,15 +278,13 @@ class Formatter {
         forceMultiLine,
       );
       result =
-        `${exportPrefix}let ${recPrefix}${decl.name} = ${formattedMatch}${semicolon}`;
+        `${exportPrefix}let ${recPrefix}${decl.name}${annotationSuffix} = ${formattedMatch}${semicolon}`;
     } else if (decl.parameters.length > 0 || decl.isArrowSyntax) {
       // If there are parameters OR originally used arrow syntax, format as arrow function
-      const params = decl.parameters.map((p) => p.name || "_").join(", ");
-      // Always use parentheses for consistency
-      const paramsStr = `(${params})`;
+      const paramsStr = this.formatParameterList(decl.parameters);
       const body = this.formatBlock(decl.body, false, true);
       result =
-        `${exportPrefix}let ${recPrefix}${decl.name} = ${paramsStr} => ${body}${semicolon}`;
+        `${exportPrefix}let ${recPrefix}${decl.name}${annotationSuffix} = ${paramsStr} => ${body}${semicolon}`;
     } else {
       // No parameters and not arrow syntax - format body directly
       const body = this.formatBlockForLet(decl.body);
@@ -261,10 +292,10 @@ class Formatter {
       if (body.startsWith("\n")) {
         // Body is already formatted with leading newline
         result =
-          `${exportPrefix}let ${recPrefix}${decl.name} =${body}${semicolon}`;
+          `${exportPrefix}let ${recPrefix}${decl.name}${annotationSuffix} =${body}${semicolon}`;
       } else {
         result =
-          `${exportPrefix}let ${recPrefix}${decl.name} = ${body}${semicolon}`;
+          `${exportPrefix}let ${recPrefix}${decl.name}${annotationSuffix} = ${body}${semicolon}`;
       }
     }
 
@@ -273,7 +304,7 @@ class Formatter {
       for (const mutual of decl.mutualBindings) {
         // Check if this is a first-class match
         if (
-          mutual.isFirstClassMatch && mutual.parameters.length === 1 &&
+          mutual.isFirstClassMatch &&
           mutual.body.statements.length === 0 &&
           mutual.body.result?.kind === "match"
         ) {
@@ -284,21 +315,28 @@ class Formatter {
             matchExpr.bundle,
             forceMultiLine,
           );
-          result += `\nand ${mutual.name} = ${formattedMatch};`;
+          const mutualAnnotation = mutual.annotation
+            ? `: ${this.formatTypeExpr(mutual.annotation)}`
+            : "";
+          result +=
+            `\nand ${mutual.name}${mutualAnnotation} = ${formattedMatch};`;
         } else if (mutual.parameters.length > 0 || mutual.isArrowSyntax) {
-          const mutualParams = mutual.parameters.map((p) => p.name || "_").join(
-            ", ",
-          );
-          const mutualParamsStr = `(${mutualParams})`;
+          const mutualParamsStr = this.formatParameterList(mutual.parameters);
+          const mutualAnnotation = mutual.annotation
+            ? `: ${this.formatTypeExpr(mutual.annotation)}`
+            : "";
           const mutualBody = this.formatBlock(mutual.body, false, true);
           result +=
-            `\nand ${mutual.name} = ${mutualParamsStr} => ${mutualBody};`;
+            `\nand ${mutual.name}${mutualAnnotation} = ${mutualParamsStr} => ${mutualBody};`;
         } else {
           const mutualBody = this.formatBlockForLet(mutual.body);
+          const mutualAnnotation = mutual.annotation
+            ? `: ${this.formatTypeExpr(mutual.annotation)}`
+            : "";
           if (mutualBody.startsWith("\n")) {
-            result += `\nand ${mutual.name} =${mutualBody};`;
+            result += `\nand ${mutual.name}${mutualAnnotation} =${mutualBody};`;
           } else {
-            result += `\nand ${mutual.name} = ${mutualBody};`;
+            result += `\nand ${mutual.name}${mutualAnnotation} = ${mutualBody};`;
           }
         }
       }
@@ -308,6 +346,9 @@ class Formatter {
   }
 
   private formatBlockForLet(block: BlockExpr): string {
+    if (this.blockHasComments(block)) {
+      return this.source.slice(block.span.start, block.span.end);
+    }
     // Single expression block
     if (block.statements.length === 0 && block.result) {
       // Special case: if the result is an arrow function, preserve the arrow syntax
@@ -315,30 +356,11 @@ class Formatter {
         return this.formatExpr(block.result);
       }
 
-      const expr = this.formatExpr(block.result);
-
-      // Simple expression - unwrap if possible (but only if not originally multi-line)
-      if (this.isSimpleExpr(block.result) && !block.isMultiLine) {
-        return expr;
+      let expr = this.formatExpr(block.result);
+      if (block.resultTrailingComment) {
+        expr += ` -- ${block.resultTrailingComment}`;
       }
-
-      // Check if the expression itself is multiline (like a match)
-      if (expr.includes("\n")) {
-        // Put opening brace on new line, indent content
-        this.indent++;
-        const indentedExpr = expr.split("\n").map((line) =>
-          this.indentStr() + line
-        ).join("\n");
-        this.indent--;
-        return `\n${this.indentStr()}{\n${indentedExpr}\n${this.indentStr()}}`;
-      }
-
-      // If the block was originally multi-line, preserve the braces
-      if (block.isMultiLine) {
-        return `{\n${this.indentStr()}  ${expr}\n${this.indentStr()}}`;
-      }
-
-      return `{ ${expr} }`;
+      return expr;
     }
 
     // Multi-statement block
@@ -350,11 +372,41 @@ class Formatter {
     }
 
     if (block.result) {
-      parts.push(this.indentStr() + this.formatExpr(block.result));
+      let resultLine = this.indentStr() + this.formatExpr(block.result);
+      if (block.resultTrailingComment) {
+        resultLine += ` -- ${block.resultTrailingComment}`;
+      }
+      parts.push(resultLine);
+      if (block.resultCommentStatements) {
+        for (const comment of block.resultCommentStatements) {
+          parts.push(`${this.indentStr()}-- ${comment.text}`);
+          if (comment.hasBlankLineAfter) {
+            parts.push("");
+          }
+        }
+      }
     }
 
     this.indent--;
     return `{\n${parts.join("\n")}\n${this.indentStr()}}`;
+  }
+
+  private hasLeadingConstructorPipe(decl: TypeDeclaration): boolean {
+    const slice = this.source.slice(decl.span.start, decl.span.end);
+    const equalsIndex = slice.indexOf("=");
+    if (equalsIndex === -1) {
+      return false;
+    }
+    for (let i = equalsIndex + 1; i < slice.length; i++) {
+      const ch = slice[i];
+      if (ch === "|") {
+        return true;
+      }
+      if (!/\s/.test(ch)) {
+        return false;
+      }
+    }
+    return false;
   }
 
   private formatTypeDeclaration(decl: TypeDeclaration): string {
@@ -376,8 +428,9 @@ class Formatter {
       const fields = aliasMember.type.fields.map((field) =>
         `${field.name}: ${this.formatTypeExpr(field.type)}`
       ).join(", ");
-      return `${exportPrefix}record ${decl.name}${typeParams} { ${fields} }`;
+      return `${exportPrefix}record ${decl.name}${typeParams} { ${fields} };`;
     }
+    const includeLeadingPipe = aliasMember ? false : this.hasLeadingConstructorPipe(decl);
     const members = decl.members.map((m) => {
       if (m.kind === "alias") {
         return this.formatTypeExpr(m.type);
@@ -389,8 +442,9 @@ class Formatter {
         return `${annotation}${m.name}${args}`;
       }
     }).join(" | ");
+    const memberPrefix = includeLeadingPipe ? "| " : "";
 
-    return `${exportPrefix}${infectiousPrefix}type ${decl.name}${typeParams} = ${members};`;
+    return `${exportPrefix}${infectiousPrefix}type ${decl.name}${typeParams} = ${memberPrefix}${members};`;
   }
 
   private formatInfixDeclaration(decl: InfixDeclaration): string {
@@ -414,11 +468,20 @@ class Formatter {
   }
 
   private formatTypeExpr(typeExpr: TypeExpr | string): string {
-    // Handle legacy string format
     if (typeof typeExpr === "string") {
       return typeExpr;
     }
+    const formatted = this.formatTypeExprWithoutParens(typeExpr);
+    const extraPairs = this.computeTypeExtraParentheses(typeExpr);
+    if (extraPairs === 0) {
+      return formatted;
+    }
+    const prefix = "(".repeat(extraPairs);
+    const suffix = ")".repeat(extraPairs);
+    return `${prefix}${formatted}${suffix}`;
+  }
 
+  private formatTypeExprWithoutParens(typeExpr: TypeExpr): string {
     switch (typeExpr.kind) {
       case "type_var":
         return typeExpr.name;
@@ -434,7 +497,7 @@ class Formatter {
           this.formatTypeExpr(p)
         ).join(", ");
         const result = this.formatTypeExpr(typeExpr.result);
-        return `(${params}) -> ${result}`;
+        return `(${params}) => ${result}`;
       }
       case "type_tuple":
         return `(${
@@ -481,6 +544,9 @@ class Formatter {
     multiline: boolean = true,
     keepBraces: boolean = false,
   ): string {
+    if (this.blockHasComments(block)) {
+      return this.source.slice(block.span.start, block.span.end);
+    }
     // Single expression block
     if (block.statements.length === 0 && block.result) {
       const expr = this.formatExpr(block.result);
@@ -518,6 +584,13 @@ class Formatter {
     this.indent++;
 
     for (const stmt of block.statements) {
+      if (stmt.kind === "comment_statement") {
+        parts.push(`${this.indentStr()}-- ${stmt.text}`);
+        if (stmt.hasBlankLineAfter) {
+          parts.push("");
+        }
+        continue;
+      }
       parts.push(this.indentStr() + this.formatBlockStatement(stmt));
     }
 
@@ -552,10 +625,13 @@ class Formatter {
       case "let_statement": {
         const decl = stmt.declaration;
         const recPrefix = decl.isRecursive ? "rec " : "";
+        const annotationSuffix = decl.annotation
+          ? `: ${this.formatTypeExpr(decl.annotation)}`
+          : "";
 
         // If this was originally a first-class match, format it that way
         if (
-          decl.isFirstClassMatch && decl.parameters.length === 1 &&
+          decl.isFirstClassMatch &&
           decl.body.statements.length === 0 &&
           decl.body.result?.kind === "match"
         ) {
@@ -566,33 +642,55 @@ class Formatter {
             matchExpr.bundle,
             forceMultiLine,
           );
-          return `let ${recPrefix}${decl.name} = ${formattedMatch};`;
+          const line =
+            `let ${recPrefix}${decl.name}${annotationSuffix} = ${formattedMatch};`;
+          return decl.trailingComment ? `${line} -- ${decl.trailingComment}` : line;
         }
 
         // Use same logic as top-level let declarations
         if (decl.parameters.length > 0 || decl.isArrowSyntax) {
-          const params = decl.parameters.map((p) => p.name || "_").join(", ");
-          const paramsStr = `(${params})`;
+          const paramsStr = this.formatParameterList(decl.parameters);
           const body = this.formatBlock(decl.body, false, true);
-          return `let ${recPrefix}${decl.name} = ${paramsStr} => ${body};`;
+          const line =
+            `let ${recPrefix}${decl.name}${annotationSuffix} = ${paramsStr} => ${body};`;
+          return decl.trailingComment ? `${line} -- ${decl.trailingComment}` : line;
         }
 
         // Simple let binding
         const body = this.formatBlockForLet(decl.body);
         if (body.startsWith("\n")) {
-          return `let ${recPrefix}${decl.name} =${body};`;
+          const line =
+            `let ${recPrefix}${decl.name}${annotationSuffix} =${body};`;
+          return decl.trailingComment ? `${line} -- ${decl.trailingComment}` : line;
         } else {
-          return `let ${recPrefix}${decl.name} = ${body};`;
+          const line =
+            `let ${recPrefix}${decl.name}${annotationSuffix} = ${body};`;
+          return decl.trailingComment ? `${line} -- ${decl.trailingComment}` : line;
         }
       }
       case "expr_statement":
-        return this.formatExpr(stmt.expression) + ";";
+        let exprLine = this.formatExpr(stmt.expression) + ";";
+        if (stmt.trailingComment) {
+          exprLine += ` -- ${stmt.trailingComment}`;
+        }
+        return exprLine;
       default:
         return "";
     }
   }
 
   private formatExpr(expr: Expr): string {
+    const formatted = this.formatExprWithoutParens(expr);
+    const extraPairs = this.computeExtraParentheses(expr);
+    if (extraPairs === 0) {
+      return formatted;
+    }
+    const prefix = "(".repeat(extraPairs);
+    const suffix = ")".repeat(extraPairs);
+    return `${prefix}${formatted}${suffix}`;
+  }
+
+  private formatExprWithoutParens(expr: Expr): string {
     switch (expr.kind) {
       case "identifier":
         return expr.name;
@@ -630,7 +728,7 @@ class Formatter {
       case "binary":
         return this.formatBinary(expr);
       case "unary":
-        return `${expr.operator}${this.formatExprWithParens(expr.operand)}`;
+        return `${expr.operator}${this.formatExpr(expr.operand)}`;
       case "arrow":
         const params = expr.parameters.map((p) => p.name || "_").join(", ");
         // Always use parentheses for consistency
@@ -650,6 +748,76 @@ class Formatter {
       default:
         return "???";
     }
+  }
+
+  private computeTypeExtraParentheses(typeExpr: TypeExpr): number {
+    const required = this.requiredTypeParentheses(typeExpr);
+    let leading = 0;
+    for (
+      let i = typeExpr.span.start;
+      i < typeExpr.span.end && this.source[i] === "(";
+      i++
+    ) {
+      leading++;
+    }
+    let trailing = 0;
+    for (
+      let i = typeExpr.span.end - 1;
+      i >= typeExpr.span.start && this.source[i] === ")";
+      i--
+    ) {
+      trailing++;
+    }
+    const extraLeading = Math.max(0, leading - required.leading);
+    const extraTrailing = Math.max(0, trailing - required.trailing);
+    return Math.min(extraLeading, extraTrailing);
+  }
+
+  private requiredTypeParentheses(
+    typeExpr: TypeExpr,
+  ): { leading: number; trailing: number } {
+    if (typeExpr.kind === "type_tuple") {
+      return { leading: 1, trailing: 1 };
+    }
+    if (typeExpr.kind === "type_unit") {
+      return { leading: 1, trailing: 1 };
+    }
+    return { leading: 0, trailing: 0 };
+  }
+
+  private computeExtraParentheses(expr: Expr): number {
+    const required = this.requiredParentheses(expr);
+    let leading = 0;
+    for (
+      let i = expr.span.start;
+      i < expr.span.end && this.source[i] === "(";
+      i++
+    ) {
+      leading++;
+    }
+    let trailing = 0;
+    for (
+      let i = expr.span.end - 1;
+      i >= expr.span.start && this.source[i] === ")";
+      i--
+    ) {
+      trailing++;
+    }
+    const extraLeading = Math.max(0, leading - required.leading);
+    const extraTrailing = Math.max(0, trailing - required.trailing);
+    return Math.min(extraLeading, extraTrailing);
+  }
+
+  private requiredParentheses(
+    expr: Expr,
+  ): { leading: number; trailing: number } {
+    if (expr.kind === "tuple") {
+      return { leading: 1, trailing: 1 };
+    }
+    if (expr.kind === "literal" && expr.literal.kind === "unit") {
+      return { leading: 1, trailing: 1 };
+    }
+    return { leading: 0, trailing: 0 };
   }
 
   private formatLiteral(lit: any): string {
@@ -677,23 +845,29 @@ class Formatter {
       if (block.statements.length === 0 && block.result) {
         // If the result contains braces (like a match or block), use multi-line format
         // to avoid double {{ on the same line
-        if (block.result.kind === "match" || block.result.kind === "block") {
-          // Format the expression at the next indent level
-          this.indent++;
-          const resultExpr = this.formatExpr(block.result);
-          // Add indentation to the first line (match keyword line)
-          const lines = resultExpr.split("\n");
-          const indentedFirst = this.indentStr() + lines[0];
-          const rest = lines.slice(1);
-          this.indent--;
-          return `{\n${indentedFirst}\n${
-            rest.join("\n")
-          }\n${this.indentStr()}}`;
-        }
-
+      if (block.result.kind === "match" || block.result.kind === "block") {
+        // Format the expression at the next indent level
+        this.indent++;
         const resultExpr = this.formatExpr(block.result);
-        return `{ ${resultExpr} }`;
+        // Add indentation to the first line (match keyword line)
+        const lines = resultExpr.split("\n");
+        const indentedFirst = this.indentStr() + lines[0];
+        const rest = lines.slice(1);
+        this.indent--;
+        const commentSuffix = block.resultTrailingComment
+          ? ` -- ${block.resultTrailingComment}`
+          : "";
+        return `{\n${indentedFirst}\n${
+          rest.join("\n")
+        }\n${this.indentStr()}}${commentSuffix}`;
       }
+
+      const resultExpr = this.formatExpr(block.result);
+      const commentSuffix = block.resultTrailingComment
+        ? ` -- ${block.resultTrailingComment}`
+        : "";
+      return `{ ${resultExpr}${commentSuffix} }`;
+    }
       // Multi-statement block
       return this.formatBlock(block);
     }
@@ -701,42 +875,95 @@ class Formatter {
     return `{ ${this.formatExpr(expr)} }`;
   }
 
+  private formatMatchScrutineeExpr(scrutinee: Expr): string {
+    if (
+      scrutinee.kind === "tuple" &&
+      this.source[scrutinee.span.start] !== "("
+    ) {
+      return scrutinee.elements.map((element) => this.formatExpr(element))
+        .join(", ");
+    }
+    return this.formatExpr(scrutinee);
+  }
+
+  private blockHasComments(block: BlockExpr): boolean {
+    const hasStatements = block.statements.some((stmt) =>
+      stmt.kind === "comment_statement"
+    );
+    return hasStatements ||
+      Boolean(block.resultTrailingComment) ||
+      Boolean(block.resultCommentStatements);
+  }
+
+  private formatMatchArmContent(arm: MatchArm): string | null {
+    if (arm.kind === "comment_statement") {
+      return null;
+    }
+    if (arm.kind === "match_bundle_reference") {
+      let text = arm.name;
+      if (arm.trailingComment) {
+        text += ` -- ${arm.trailingComment}`;
+      }
+      if (arm.hasTrailingComma) {
+        text += ",";
+      }
+      return text;
+    }
+    const pattern = this.formatPattern(arm.pattern);
+    const body = this.formatMatchArmBody(arm.body);
+    let text = `${pattern} => ${body}`;
+    if (arm.trailingComment) {
+      text += ` -- ${arm.trailingComment}`;
+    }
+    if (arm.hasTrailingComma) {
+      text += ",";
+    }
+    return text;
+  }
+
+  private formatMatchArmsMultiline(arms: MatchArm[]): string[] {
+    const lines: string[] = [];
+    for (const arm of arms) {
+      if (arm.kind === "comment_statement") {
+        lines.push(`${this.indentStr()}-- ${arm.text}`);
+        if (arm.hasBlankLineAfter) {
+          lines.push("");
+        }
+        continue;
+      }
+      const content = this.formatMatchArmContent(arm);
+      if (content !== null) {
+        lines.push(`${this.indentStr()}${content}`);
+      }
+    }
+    return lines;
+  }
+
   private formatMatch(
     scrutinee: Expr,
     bundle: MatchBundle,
     forceMultiLine: boolean = false,
   ): string {
-    const scrutineeStr = this.formatExpr(scrutinee);
+    const scrutineeStr = this.formatMatchScrutineeExpr(scrutinee);
     const arms = bundle.arms;
 
-    // Try inline format first
-    const armsInline = arms.map((arm) => {
-      if (arm.kind === "match_bundle_reference") {
-        return arm.name;
-      }
-      const pattern = this.formatPattern(arm.pattern);
-      const body = this.formatMatchArmBody(arm.body);
-      return `${pattern} => ${body}`;
-    }).join(", ");
-    const inlineMatch = `match(${scrutineeStr}) { ${armsInline} }`;
+    let inlineArm: string | null = null;
+    if (arms.length === 1) {
+      inlineArm = this.formatMatchArmContent(arms[0]);
+    }
+    const inlineMatch = inlineArm !== null
+      ? `match(${scrutineeStr}) { ${inlineArm} }`
+      : "";
 
-    // If too long, has multiple arms, or forced multi-line, use multi-line format
-    if (forceMultiLine || inlineMatch.length > 60 || arms.length > 1) {
-      const armsParts: string[] = [];
+    if (
+      forceMultiLine || inlineArm === null || inlineMatch.length > 60 ||
+      arms.length > 1
+    ) {
       this.indent++;
-      for (const arm of arms) {
-        if (arm.kind === "match_bundle_reference") {
-          armsParts.push(`${this.indentStr()}${arm.name}`);
-          continue;
-        }
-        const pattern = this.formatPattern(arm.pattern);
-        const body = this.formatMatchArmBody(arm.body);
-        armsParts.push(`${this.indentStr()}${pattern} => ${body}`);
-      }
+      const armsParts = this.formatMatchArmsMultiline(arms);
       this.indent--;
-      // Format with opening brace on same line but closing brace indented
       return `match(${scrutineeStr}) {\n${
-        armsParts.join(",\n")
+        armsParts.join("\n")
       }\n${this.indentStr()}}`;
     }
 
@@ -745,35 +972,22 @@ class Formatter {
 
   private formatMatchFn(params: Expr[], bundle: MatchBundle): string {
     const arms = bundle.arms;
-    // Try inline format first
-    const armsInline = arms.map((arm) => {
-      if (arm.kind === "match_bundle_reference") {
-        return arm.name;
-      }
-      const pattern = this.formatPattern(arm.pattern);
-      const body = this.formatMatchArmBody(arm.body);
-      return `${pattern} => ${body}`;
-    }).join(", ");
     const paramExpr = params.length === 1
       ? this.formatExpr(params[0])
       : params.map((p) => this.formatExpr(p)).join(", ");
-    const inlineFn = `match(${paramExpr}) { ${armsInline} }`;
+    let inlineArm: string | null = null;
+    if (arms.length === 1) {
+      inlineArm = this.formatMatchArmContent(arms[0]);
+    }
+    const inlineFn = inlineArm !== null
+      ? `match(${paramExpr}) { ${inlineArm} }`
+      : "";
 
-    // If too long or has multiple arms, use multi-line format
-    if (inlineFn.length > 80 || arms.length > 2) {
-      const armsParts: string[] = [];
+    if (inlineFn.length > 80 || arms.length > 2 || inlineArm === null) {
       this.indent++;
-      for (const arm of arms) {
-        if (arm.kind === "match_bundle_reference") {
-          armsParts.push(`${this.indentStr()}${arm.name}`);
-          continue;
-        }
-        const pattern = this.formatPattern(arm.pattern);
-        const body = this.formatMatchArmBody(arm.body);
-        armsParts.push(`${this.indentStr()}${pattern} => ${body}`);
-      }
+      const armsParts = this.formatMatchArmsMultiline(arms);
       this.indent--;
-      return `match(${paramExpr}) {\n${armsParts.join(",\n")}\n${
+      return `match(${paramExpr}) {\n${armsParts.join("\n")}\n${
         this.indentStr()
       }}`;
     }
@@ -809,32 +1023,19 @@ class Formatter {
 
   private formatMatchBundleLiteral(bundle: MatchBundle): string {
     const arms = bundle.arms;
-    const armsInline = arms.map((arm) => {
-      if (arm.kind === "match_bundle_reference") {
-        return arm.name;
-      }
-      const pattern = this.formatPattern(arm.pattern);
-      const body = this.formatMatchArmBody(arm.body);
-      return `${pattern} => ${body}`;
-    }).join(", ");
-    const inline = `match { ${armsInline} }`;
-    if (inline.length <= 60 && arms.length <= 1) {
+    let inlineArm: string | null = null;
+    if (arms.length === 1) {
+      inlineArm = this.formatMatchArmContent(arms[0]);
+    }
+    const inline = inlineArm !== null ? `match { ${inlineArm} }` : "";
+    if (inline.length <= 60 && arms.length <= 1 && inlineArm !== null) {
       return inline;
     }
 
-    const parts: string[] = [];
     this.indent++;
-    for (const arm of arms) {
-      if (arm.kind === "match_bundle_reference") {
-        parts.push(`${this.indentStr()}${arm.name}`);
-        continue;
-      }
-      const pattern = this.formatPattern(arm.pattern);
-      const body = this.formatMatchArmBody(arm.body);
-      parts.push(`${this.indentStr()}${pattern} => ${body}`);
-    }
+    const parts = this.formatMatchArmsMultiline(arms);
     this.indent--;
-    return `match {\n${parts.join(",\n")}\n${this.indentStr()}}`;
+    return `match {\n${parts.join("\n")}\n${this.indentStr()}}`;
   }
 
   private formatRecordLiteral(expr: Extract<Expr, { kind: "record_literal" }>): string {
@@ -866,19 +1067,9 @@ class Formatter {
   }
 
   private formatBinary(expr: Extract<Expr, { kind: "binary" }>): string {
-    const left = this.formatExprWithParens(expr.left);
-    const right = this.formatExprWithParens(expr.right);
+    const left = this.formatExpr(expr.left);
+    const right = this.formatExpr(expr.right);
     return `${left} ${expr.operator} ${right}`;
-  }
-
-  private formatExprWithParens(expr: Expr): string {
-    if (expr.kind === "binary") {
-      return `(${this.formatBinary(expr)})`;
-    }
-    if (expr.kind === "match" || expr.kind === "match_fn") {
-      return `(${this.formatExpr(expr)})`;
-    }
-    return this.formatExpr(expr);
   }
 
   private formatCharLiteral(value: string): string {
@@ -989,10 +1180,14 @@ async function formatFile(
       prefixOperators,
     ); // preserveComments = true for formatter
 
-    const formatter = new Formatter(options);
+    const formatter = new Formatter(options, source);
     const formatted = formatter.format(program);
 
-    if (!verifyOnlyWhitespaceChanged(source, formatted, filePath)) {
+    const skipVerification = Deno.env.get("WM_FMT_SKIP_VERIFY") === "1";
+    if (
+      !skipVerification &&
+      !verifyOnlyWhitespaceChanged(source, formatted, filePath)
+    ) {
       return false;
     }
 

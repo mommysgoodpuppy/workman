@@ -72,9 +72,17 @@ export interface BlockExpr extends NodeBase {
   statements: BlockStatement[];
   result?: Expr;
   isMultiLine?: boolean; // True if the block was originally formatted across multiple lines
+  resultTrailingComment?: string;
+  resultCommentStatements?: CommentStatement[];
 }
 
-export type BlockStatement = LetStatement | ExprStatement;
+export interface CommentStatement extends NodeBase {
+  kind: "comment_statement";
+  text: string;
+  hasBlankLineAfter?: boolean;
+}
+
+export type BlockStatement = LetStatement | ExprStatement | CommentStatement;
 
 export interface LetStatement extends NodeBase {
   kind: "let_statement";
@@ -84,21 +92,27 @@ export interface LetStatement extends NodeBase {
 export interface ExprStatement extends NodeBase {
   kind: "expr_statement";
   expression: Expr;
+  trailingComment?: string;
 }
 
-export type MatchArm = MatchPatternArm | MatchBundleReferenceArm;
+export type MatchArm =
+  | MatchPatternArm
+  | MatchBundleReferenceArm
+  | CommentStatement;
 
 export interface MatchPatternArm extends NodeBase {
   kind: "match_pattern";
   pattern: Pattern;
   body: Expr;
   hasTrailingComma: boolean;
+  trailingComment?: string;
 }
 
 export interface MatchBundleReferenceArm extends NodeBase {
   kind: "match_bundle_reference";
   name: string;
   hasTrailingComma: boolean;
+  trailingComment?: string;
 }
 
 export interface MatchBundle extends NodeBase {
@@ -378,4 +392,5 @@ export interface Program {
   imports: ModuleImport[];
   reexports: ModuleReexport[];
   declarations: TopLevel[];
+  trailingComments?: CommentBlock[];
 }

@@ -95,6 +95,7 @@ class SurfaceParser {
     const reexports: ModuleReexport[] = [];
     const declarations: TopLevel[] = [];
     let lastTokenEnd = 0;
+    const trailingCommentBlocks: import("./ast.ts").CommentBlock[] = [];
 
     while (!this.isEOF()) {
       // Check if there's a blank line before this declaration
@@ -113,6 +114,9 @@ class SurfaceParser {
         : [];
 
       if (this.isEOF()) {
+        if (leadingComments.length > 0) {
+          trailingCommentBlocks.push(...leadingComments);
+        }
         break;
       }
 
@@ -163,7 +167,15 @@ class SurfaceParser {
         this.expectSymbol(";"); //cause of error
       }
     }
-    return { imports, reexports, declarations };
+    const trailingComments = this.preserveComments
+      ? [...trailingCommentBlocks, ...this.collectLeadingComments()]
+      : [];
+    return {
+      imports,
+      reexports,
+      declarations,
+      trailingComments: trailingComments.length > 0 ? trailingComments : undefined,
+    };
   }
 
   private parseImportDeclaration(): ModuleImport {
@@ -608,8 +620,14 @@ class SurfaceParser {
     const open = this.expectSymbol("{");
     const statements: BlockStatement[] = [];
     let result: Expr | undefined;
+    let resultTrailingComment: string | undefined;
+    const resultCommentStatements: import("./ast.ts").CommentStatement[] = [];
 
     while (!this.checkSymbol("}")) {
+      if (this.preserveComments && this.peek().kind === "comment") {
+        statements.push(this.parseCommentStatement());
+        continue;
+      }
       if (this.checkKeyword("let")) {
         const letToken = this.expectKeyword("let");
         const isRecursive = this.matchKeyword("rec");
@@ -623,21 +641,49 @@ class SurfaceParser {
           id: nextNodeId(),
         });
         this.expectSymbol(";");
+        const semicolonToken = this.previous();
+        const trailingComment = this.consumeInlineCommentAfter(
+          semicolonToken.end,
+        );
+        if (trailingComment) {
+          declaration.trailingComment = trailingComment;
+        }
         continue;
       }
 
       const expression = this.parseExpression();
       if (this.matchSymbol(";")) {
-        statements.push({
+        const exprStmt: import("./ast.ts").ExprStatement = {
           kind: "expr_statement",
           expression,
           span: expression.span,
           id: nextNodeId(),
-        });
+        };
+        const semicolonToken = this.previous();
+        const trailingComment = this.consumeInlineCommentAfter(
+          semicolonToken.end,
+        );
+        if (trailingComment) {
+          exprStmt.trailingComment = trailingComment;
+        }
+        statements.push(exprStmt);
         continue;
       }
       result = expression;
+      const inlineComment = this.consumeInlineCommentAfter(expression.span.end);
+      if (inlineComment) {
+        resultTrailingComment = inlineComment;
+      }
+      while (this.preserveComments && this.peek().kind === "comment") {
+        resultCommentStatements.push(this.parseCommentStatement());
+      }
       break;
+    }
+
+    if (this.preserveComments) {
+      while (this.peek().kind === "comment") {
+        resultCommentStatements.push(this.parseCommentStatement());
+      }
     }
 
     const close = this.expectSymbol("}");
@@ -656,6 +702,10 @@ class SurfaceParser {
       result,
       span,
       isMultiLine,
+      resultTrailingComment,
+      resultCommentStatements: resultCommentStatements.length > 0
+        ? resultCommentStatements
+        : undefined,
       id: nextNodeId(),
     };
   }
@@ -1730,6 +1780,15 @@ class SurfaceParser {
 
     if (!this.checkSymbol("}")) {
       while (true) {
+        if (this.preserveComments && this.peek().kind === "comment") {
+          arms.push(this.parseCommentStatement());
+          continue;
+        }
+
+        if (this.checkSymbol("}")) {
+          break;
+        }
+
         const entryStart = this.peek();
 
         if (entryStart.kind === "identifier") {
@@ -1741,16 +1800,17 @@ class SurfaceParser {
             const hasComma = this.matchSymbol(",");
             const endToken = hasComma ? this.previous() : identifier;
             const span = this.spanFrom(identifier.start, endToken.end);
+            const trailingComment = this.consumeInlineCommentAfter(
+              endToken.end,
+            );
             arms.push({
               kind: "match_bundle_reference",
               name: identifier.value,
               hasTrailingComma: hasComma,
+              trailingComment,
               span,
               id: nextNodeId(),
             });
-            if (!hasComma || this.checkSymbol("}")) {
-              break;
-            }
             continue;
           }
         }
@@ -1768,6 +1828,7 @@ class SurfaceParser {
           );
         }
 
+        const trailingComment = this.consumeInlineCommentAfter(body.span.end);
         const hasComma = this.matchSymbol(",");
         const span = this.spanFrom(patternStart.start, body.span.end);
         arms.push({
@@ -1775,12 +1836,10 @@ class SurfaceParser {
           pattern,
           body,
           hasTrailingComma: hasComma,
+          trailingComment,
           span,
           id: nextNodeId(),
         });
-        if (!hasComma || this.checkSymbol("}")) {
-          break;
-        }
       }
     }
 
@@ -1941,6 +2000,47 @@ class SurfaceParser {
       comments.push({ text: commentText, hasBlankLineAfter });
     }
     return comments;
+  }
+
+  private parseCommentStatement(): import("./ast.ts").CommentStatement {
+    const token = this.peek();
+    if (token.kind !== "comment") {
+      throw this.error("Expected comment", token);
+    }
+    const commentToken = this.consume();
+    let hasBlankLineAfter = false;
+    if (this.source) {
+      const nextToken = this.peek();
+      const textBetween = this.source.slice(
+        commentToken.end,
+        nextToken.start,
+      );
+      const newlineCount = (textBetween.match(/\n/g) || []).length;
+      hasBlankLineAfter = newlineCount >= 2;
+    }
+    return {
+      kind: "comment_statement",
+      text: commentToken.value,
+      hasBlankLineAfter,
+      span: this.spanFrom(commentToken.start, commentToken.end),
+      id: nextNodeId(),
+    };
+  }
+
+  private consumeInlineCommentAfter(position: number): string | undefined {
+    if (
+      !this.preserveComments || this.peek().kind !== "comment" ||
+      !this.source
+    ) {
+      return undefined;
+    }
+    const commentToken = this.peek();
+    const textBetween = this.source.slice(position, commentToken.start);
+    if (textBetween.includes("\n")) {
+      return undefined;
+    }
+    this.consume();
+    return commentToken.value;
   }
 
   private skipComments(): void {
