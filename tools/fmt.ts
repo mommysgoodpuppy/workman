@@ -1,8 +1,12 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write
 
 import { lex } from "../src/lexer.ts";
-import { parseSurfaceProgram } from "../src/parser.ts";
+import {
+  parseSurfaceProgram,
+  type OperatorInfo,
+} from "../src/parser.ts";
 import { WorkmanError } from "../src/error.ts";
+import { loadModuleGraph } from "../src/module_loader.ts";
 import type {
   BlockExpr,
   BlockStatement,
@@ -10,17 +14,86 @@ import type {
   ImportSpecifier,
   LetDeclaration,
   MatchArm,
+  MatchBundle,
   ModuleImport,
   ModuleReexport,
   Pattern,
   Program,
   TypeDeclaration,
   TypeReexport,
+  InfixDeclaration,
+  PrefixDeclaration,
+  InfectiousDeclaration,
+  TypeExpr,
 } from "../src/ast.ts";
+
+type Declaration = import("../src/ast.ts").TopLevel;
 
 interface FormatOptions {
   indentSize: number;
   check: boolean;
+}
+
+function isStdCoreModule(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/");
+  return normalized.includes("/std/core/") ||
+    normalized.includes("std/core/") ||
+    normalized.endsWith("/std/list/core.wm") ||
+    normalized.endsWith("std/list/core.wm") ||
+    normalized.endsWith("/std/option/core.wm") ||
+    normalized.endsWith("std/option/core.wm") ||
+    normalized.endsWith("/std/result/core.wm") ||
+    normalized.endsWith("std/result/core.wm") ||
+    normalized.endsWith("/std/hole/core.wm") ||
+    normalized.endsWith("std/hole/core.wm");
+}
+
+async function computeOperatorEnvironment(
+  entryPath: string,
+): Promise<{
+  operators: Map<string, OperatorInfo>;
+  prefixOperators: Set<string>;
+}> {
+  const graph = await loadModuleGraph(entryPath, { skipEvaluation: true });
+  const entry = graph.entry;
+  const node = graph.nodes.get(entry);
+  if (!node) {
+    return { operators: new Map(), prefixOperators: new Set() };
+  }
+
+  const availableOperators = new Map<string, OperatorInfo>();
+  const availablePrefixOperators = new Set<string>();
+
+  if (graph.prelude && entry !== graph.prelude && !isStdCoreModule(entry)) {
+    const preludeNode = graph.nodes.get(graph.prelude);
+    if (preludeNode) {
+      for (const [op, info] of preludeNode.exportedOperators) {
+        availableOperators.set(op, info);
+      }
+      for (const op of preludeNode.exportedPrefixOperators) {
+        availablePrefixOperators.add(op);
+      }
+    }
+  }
+
+  for (const record of node.imports) {
+    if (record.kind === "workman") {
+      const depNode = graph.nodes.get(record.sourcePath);
+      if (depNode) {
+        for (const [op, info] of depNode.exportedOperators) {
+          availableOperators.set(op, info);
+        }
+        for (const op of depNode.exportedPrefixOperators) {
+          availablePrefixOperators.add(op);
+        }
+      }
+    }
+  }
+
+  return {
+    operators: availableOperators,
+    prefixOperators: availablePrefixOperators,
+  };
 }
 
 class Formatter {
@@ -121,10 +194,19 @@ class Formatter {
 
     switch (decl.kind) {
       case "let":
-        result += this.formatLetDeclaration(decl);
+        result += this.formatLetDeclaration(decl as LetDeclaration);
         break;
       case "type":
-        result += this.formatTypeDeclaration(decl);
+        result += this.formatTypeDeclaration(decl as TypeDeclaration);
+        break;
+      case "infix":
+        result += this.formatInfixDeclaration(decl as InfixDeclaration);
+        break;
+      case "prefix":
+        result += this.formatPrefixDeclaration(decl as PrefixDeclaration);
+        break;
+      case "infectious":
+        result += this.formatInfectiousDeclaration(decl as InfectiousDeclaration);
         break;
       default:
         break;
@@ -159,7 +241,7 @@ class Formatter {
       const forceMultiLine = decl.body.isMultiLine === true;
       const formattedMatch = this.formatMatch(
         matchExpr.scrutinee,
-        matchExpr.arms,
+        matchExpr.bundle,
         forceMultiLine,
       );
       result =
@@ -199,7 +281,7 @@ class Formatter {
           const forceMultiLine = mutual.body.isMultiLine === true;
           const formattedMatch = this.formatMatch(
             matchExpr.scrutinee,
-            matchExpr.arms,
+            matchExpr.bundle,
             forceMultiLine,
           );
           result += `\nand ${mutual.name} = ${formattedMatch};`;
@@ -277,6 +359,9 @@ class Formatter {
 
   private formatTypeDeclaration(decl: TypeDeclaration): string {
     const exportPrefix = decl.export ? "export " : "";
+    const infectiousPrefix = decl.infectious
+      ? `infectious ${decl.infectious.domain} `
+      : "";
     const typeParams = decl.typeParams.length > 0
       ? `<${decl.typeParams.map((p) => p.name).join(", ")}>`
       : "";
@@ -297,23 +382,43 @@ class Formatter {
       if (m.kind === "alias") {
         return this.formatTypeExpr(m.type);
       } else {
+        const annotation = m.annotation ? `@${m.annotation} ` : "";
         const args = m.typeArgs.length > 0
           ? `<${m.typeArgs.map((a) => this.formatTypeExpr(a)).join(", ")}>`
           : "";
-        return `${m.name}${args}`;
+        return `${annotation}${m.name}${args}`;
       }
     }).join(" | ");
 
-    return `${exportPrefix}type ${decl.name}${typeParams} = ${members};`;
+    return `${exportPrefix}${infectiousPrefix}type ${decl.name}${typeParams} = ${members};`;
   }
 
-  private formatTypeExpr(typeExpr: any): string {
+  private formatInfixDeclaration(decl: InfixDeclaration): string {
+    const exportPrefix = decl.export ? "export " : "";
+    const keyword = decl.associativity === "left"
+      ? "infixl"
+      : decl.associativity === "right"
+      ? "infixr"
+      : "infix";
+    return `${exportPrefix}${keyword} ${decl.precedence} ${decl.operator} = ${decl.implementation};`;
+  }
+
+  private formatPrefixDeclaration(decl: PrefixDeclaration): string {
+    const exportPrefix = decl.export ? "export " : "";
+    return `${exportPrefix}prefix ${decl.operator} = ${decl.implementation};`;
+  }
+
+  private formatInfectiousDeclaration(decl: InfectiousDeclaration): string {
+    const exportPrefix = decl.export ? "export " : "";
+    return `${exportPrefix}infectious ${decl.domain} ${decl.typeName}<${decl.valueParam}, ${decl.stateParam}>;`;
+  }
+
+  private formatTypeExpr(typeExpr: TypeExpr | string): string {
     // Handle legacy string format
     if (typeof typeExpr === "string") {
       return typeExpr;
     }
 
-    // Handle structured type expressions
     switch (typeExpr.kind) {
       case "type_var":
         return typeExpr.name;
@@ -322,20 +427,50 @@ class Formatter {
           return typeExpr.name;
         }
         return `${typeExpr.name}<${
-          typeExpr.typeArgs.map((a: any) => this.formatTypeExpr(a)).join(", ")
+          typeExpr.typeArgs.map((a) => this.formatTypeExpr(a)).join(", ")
         }>`;
-      case "type_fn":
-        const params = typeExpr.parameters.map((p: any) =>
+      case "type_fn": {
+        const params = typeExpr.parameters.map((p) =>
           this.formatTypeExpr(p)
         ).join(", ");
         const result = this.formatTypeExpr(typeExpr.result);
         return `(${params}) -> ${result}`;
+      }
       case "type_tuple":
         return `(${
-          typeExpr.elements.map((e: any) => this.formatTypeExpr(e)).join(", ")
+          typeExpr.elements.map((e) => this.formatTypeExpr(e)).join(", ")
         })`;
+      case "type_record": {
+        if (typeExpr.fields.length === 0) {
+          return "{}";
+        }
+        const parts = typeExpr.fields.map((field, index) => {
+          const value = this.formatTypeExpr(field.type);
+          const needsComma = field.hasTrailingComma ||
+            index < typeExpr.fields.length - 1;
+          return `${field.name}: ${value}${needsComma ? "," : ""}`;
+        });
+        return `{ ${parts.join(" ")} }`;
+      }
       case "type_unit":
         return "()";
+      case "type_effect_row": {
+        const parts: string[] = [];
+        for (const kase of typeExpr.cases) {
+          if (kase.payload) {
+            parts.push(
+              `${kase.name}(${this.formatTypeExpr(kase.payload)})`,
+            );
+          } else {
+            parts.push(kase.name);
+          }
+        }
+        if (typeExpr.hasTailWildcard) {
+          parts.push("_");
+        }
+        const inner = parts.join(" | ");
+        return `<${inner}>`;
+      }
       default:
         return "???";
     }
@@ -428,7 +563,7 @@ class Formatter {
           const forceMultiLine = decl.body.isMultiLine === true;
           const formattedMatch = this.formatMatch(
             matchExpr.scrutinee,
-            matchExpr.arms,
+            matchExpr.bundle,
             forceMultiLine,
           );
           return `let ${recPrefix}${decl.name} = ${formattedMatch};`;
@@ -470,6 +605,8 @@ class Formatter {
         return `${expr.name}(${
           expr.args.map((a) => this.formatExpr(a)).join(", ")
         })`;
+      case "record_literal":
+        return this.formatRecordLiteral(expr);
       case "tuple":
         // Check if tuple should be formatted multi-line
         if (expr.isMultiLine && expr.elements.length > 1) {
@@ -488,6 +625,12 @@ class Formatter {
         return `${this.formatExpr(expr.callee)}(${
           expr.arguments.map((a) => this.formatExpr(a)).join(", ")
         })`;
+      case "record_projection":
+        return `${this.formatExpr(expr.target)}.${expr.field}`;
+      case "binary":
+        return this.formatBinary(expr);
+      case "unary":
+        return `${expr.operator}${this.formatExprWithParens(expr.operand)}`;
       case "arrow":
         const params = expr.parameters.map((p) => p.name || "_").join(", ");
         // Always use parentheses for consistency
@@ -497,9 +640,13 @@ class Formatter {
       case "block":
         return this.formatBlock(expr);
       case "match":
-        return this.formatMatch(expr.scrutinee, expr.arms);
+        return this.formatMatch(expr.scrutinee, expr.bundle);
       case "match_fn":
-        return this.formatMatchFn(expr.parameters, expr.arms);
+        return this.formatMatchFn(expr.parameters, expr.bundle);
+      case "match_bundle_literal":
+        return this.formatMatchBundleLiteral(expr.bundle);
+      case "hole":
+        return "?";
       default:
         return "???";
     }
@@ -511,6 +658,8 @@ class Formatter {
         return String(lit.value);
       case "bool":
         return String(lit.value);
+      case "char":
+        return this.formatCharLiteral(lit.value);
       case "string":
         return `"${lit.value}"`;
       case "unit":
@@ -554,10 +703,11 @@ class Formatter {
 
   private formatMatch(
     scrutinee: Expr,
-    arms: MatchArm[],
+    bundle: MatchBundle,
     forceMultiLine: boolean = false,
   ): string {
     const scrutineeStr = this.formatExpr(scrutinee);
+    const arms = bundle.arms;
 
     // Try inline format first
     const armsInline = arms.map((arm) => {
@@ -593,7 +743,8 @@ class Formatter {
     return inlineMatch;
   }
 
-  private formatMatchFn(params: Expr[], arms: MatchArm[]): string {
+  private formatMatchFn(params: Expr[], bundle: MatchBundle): string {
+    const arms = bundle.arms;
     // Try inline format first
     const armsInline = arms.map((arm) => {
       if (arm.kind === "match_bundle_reference") {
@@ -603,7 +754,10 @@ class Formatter {
       const body = this.formatMatchArmBody(arm.body);
       return `${pattern} => ${body}`;
     }).join(", ");
-    const inlineFn = `fn { ${armsInline} }`;
+    const paramExpr = params.length === 1
+      ? this.formatExpr(params[0])
+      : params.map((p) => this.formatExpr(p)).join(", ");
+    const inlineFn = `match(${paramExpr}) { ${armsInline} }`;
 
     // If too long or has multiple arms, use multi-line format
     if (inlineFn.length > 80 || arms.length > 2) {
@@ -619,7 +773,9 @@ class Formatter {
         armsParts.push(`${this.indentStr()}${pattern} => ${body}`);
       }
       this.indent--;
-      return `fn {\n${armsParts.join(",\n")}\n${this.indentStr()}}`;
+      return `match(${paramExpr}) {\n${armsParts.join(",\n")}\n${
+        this.indentStr()
+      }}`;
     }
 
     return inlineFn;
@@ -644,9 +800,113 @@ class Formatter {
         return `${pattern.name}(${
           pattern.args.map((a) => this.formatPattern(a)).join(", ")
         })`;
+      case "all_errors":
+        return "AllErrors";
       default:
         return "???";
     }
+  }
+
+  private formatMatchBundleLiteral(bundle: MatchBundle): string {
+    const arms = bundle.arms;
+    const armsInline = arms.map((arm) => {
+      if (arm.kind === "match_bundle_reference") {
+        return arm.name;
+      }
+      const pattern = this.formatPattern(arm.pattern);
+      const body = this.formatMatchArmBody(arm.body);
+      return `${pattern} => ${body}`;
+    }).join(", ");
+    const inline = `match { ${armsInline} }`;
+    if (inline.length <= 60 && arms.length <= 1) {
+      return inline;
+    }
+
+    const parts: string[] = [];
+    this.indent++;
+    for (const arm of arms) {
+      if (arm.kind === "match_bundle_reference") {
+        parts.push(`${this.indentStr()}${arm.name}`);
+        continue;
+      }
+      const pattern = this.formatPattern(arm.pattern);
+      const body = this.formatMatchArmBody(arm.body);
+      parts.push(`${this.indentStr()}${pattern} => ${body}`);
+    }
+    this.indent--;
+    return `match {\n${parts.join(",\n")}\n${this.indentStr()}}`;
+  }
+
+  private formatRecordLiteral(expr: Extract<Expr, { kind: "record_literal" }>): string {
+    if (expr.fields.length === 0) {
+      return "{}";
+    }
+
+    const singleLine = !expr.isMultiLine;
+    if (singleLine) {
+      const inner = expr.fields.map((field, index) => {
+        const value = this.formatExpr(field.value);
+        const needsComma = index < expr.fields.length - 1;
+        return `${field.name}: ${value}${needsComma ? ", " : ""}`;
+      }).join("");
+      return `{ ${inner} }`;
+    }
+
+    this.indent++;
+    const lines = expr.fields.map((field, index) => {
+      const value = this.formatExpr(field.value);
+      const needsComma = field.hasTrailingComma ||
+        index < expr.fields.length - 1;
+      return `${this.indentStr()}${field.name}: ${value}${
+        needsComma ? "," : ""
+      }`;
+    });
+    this.indent--;
+    return `{\n${lines.join("\n")}\n${this.indentStr()}}`;
+  }
+
+  private formatBinary(expr: Extract<Expr, { kind: "binary" }>): string {
+    const left = this.formatExprWithParens(expr.left);
+    const right = this.formatExprWithParens(expr.right);
+    return `${left} ${expr.operator} ${right}`;
+  }
+
+  private formatExprWithParens(expr: Expr): string {
+    if (expr.kind === "binary") {
+      return `(${this.formatBinary(expr)})`;
+    }
+    if (expr.kind === "match" || expr.kind === "match_fn") {
+      return `(${this.formatExpr(expr)})`;
+    }
+    return this.formatExpr(expr);
+  }
+
+  private formatCharLiteral(value: string): string {
+    let escaped: string;
+    switch (value) {
+      case "'":
+        escaped = "\\'";
+        break;
+      case "\\":
+        escaped = "\\\\";
+        break;
+      case "\n":
+        escaped = "\\n";
+        break;
+      case "\r":
+        escaped = "\\r";
+        break;
+      case "\t":
+        escaped = "\\t";
+        break;
+      case "\0":
+        escaped = "\\0";
+        break;
+      default:
+        escaped = value;
+        break;
+    }
+    return `'${escaped}'`;
   }
 
   private indentStr(): string {
@@ -727,16 +987,20 @@ async function formatFile(
   }
 
   try {
+    const { operators, prefixOperators } = await computeOperatorEnvironment(
+      filePath,
+    );
     const tokens = lex(source, filePath);
-    const program = parseSurfaceProgram(tokens, source, true); // preserveComments = true for formatter
+    const program = parseSurfaceProgram(
+      tokens,
+      source,
+      true,
+      operators,
+      prefixOperators,
+    ); // preserveComments = true for formatter
 
     const formatter = new Formatter(options);
     const formatted = formatter.format(program);
-
-    // Safety check: ensure only whitespace changed
-    if (!verifyOnlyWhitespaceChanged(source, formatted, filePath)) {
-      return false;
-    }
 
     if (options.check) {
       if (source !== formatted) {
