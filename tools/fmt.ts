@@ -930,16 +930,6 @@ function verifyOnlyWhitespaceChanged(
   if (originalStripped !== formattedStripped) {
     console.error(`\n❌ FORMATTER ERROR in ${filePath}!`);
     console.error(`The formatter would change non-whitespace characters.`);
-    console.error(
-      `\nOriginal (no whitespace): ${originalStripped.slice(0, 100)}${
-        originalStripped.length > 100 ? "..." : ""
-      }`,
-    );
-    console.error(
-      `Formatted (no whitespace): ${formattedStripped.slice(0, 100)}${
-        formattedStripped.length > 100 ? "..." : ""
-      }`,
-    );
 
     // Find first difference
     const minLen = Math.min(originalStripped.length, formattedStripped.length);
@@ -947,7 +937,7 @@ function verifyOnlyWhitespaceChanged(
       if (originalStripped[i] !== formattedStripped[i]) {
         console.error(`\nFirst difference at position ${i}:`);
         console.error(
-          `  Original: ...${
+          `  Original : ...${
             originalStripped.slice(Math.max(0, i - 20), i + 20)
           }...`,
         );
@@ -1001,6 +991,10 @@ async function formatFile(
 
     const formatter = new Formatter(options);
     const formatted = formatter.format(program);
+
+    if (!verifyOnlyWhitespaceChanged(source, formatted, filePath)) {
+      return false;
+    }
 
     if (options.check) {
       if (source !== formatted) {
