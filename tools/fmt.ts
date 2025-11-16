@@ -473,17 +473,17 @@ class Formatter {
       aliasMember &&
       aliasMember.type.kind === "type_record"
     ) {
-      const fields = aliasMember.type.fields.map((field, index) => {
+      const recordType = aliasMember.type;
+      const fields = recordType.fields.map((field, index) => {
         const value = this.formatTypeExpr(field.type);
         const needsComma = field.hasTrailingComma ||
-          index < aliasMember.type.fields.length - 1;
+          index < recordType.fields.length - 1;
         return `${field.name}: ${value}${needsComma ? "," : ""}`;
       }).join(" ");
       return `${exportPrefix}record ${decl.name}${typeParams} { ${fields} }${
         this.formatTerminator(decl)
       }`;
     }
-    const includeLeadingPipe = aliasMember ? false : this.hasLeadingConstructorPipe(decl);
     const members = decl.members.map((m) => {
       if (m.kind === "alias") {
         return this.formatTypeExpr(m.type);
@@ -494,12 +494,19 @@ class Formatter {
           : "";
         return `${annotation}${m.name}${args}`;
       }
-    }).join(" | ");
-    const memberPrefix = includeLeadingPipe ? "| " : "";
-
-    return `${exportPrefix}${infectiousPrefix}type ${decl.name}${typeParams} = ${memberPrefix}${members}${
-      this.formatTerminator(decl)
-    }`;
+    });
+    const header =
+      `${exportPrefix}${infectiousPrefix}type ${decl.name}${typeParams} =`;
+    const forceMultiline = !aliasMember && this.hasLeadingConstructorPipe(decl);
+    if (forceMultiline && members.length > 0) {
+      const lines = members.map((member) => `  | ${member}`);
+      lines[lines.length - 1] =
+        `${lines[lines.length - 1]}${this.formatTerminator(decl)}`;
+      return `${header}\n${lines.join("\n")}`;
+    }
+    const body = members.join(" | ");
+    const separator = body.length > 0 ? " " : "";
+    return `${header}${separator}${body}${this.formatTerminator(decl)}`;
   }
 
   private formatInfixDeclaration(decl: InfixDeclaration): string {
@@ -781,9 +788,7 @@ class Formatter {
         }
         return `(${expr.elements.map((e) => this.formatExpr(e)).join(", ")})`;
       case "call":
-        return `${this.formatExpr(expr.callee)}(${
-          expr.arguments.map((a) => this.formatExpr(a)).join(", ")
-        })`;
+        return this.formatCall(expr);
       case "record_projection":
         return `${this.formatExpr(expr.target)}.${expr.field}`;
       case "binary":
@@ -1226,6 +1231,38 @@ class Formatter {
     });
     this.indent--;
     return `{\n${lines.join("\n")}\n${this.indentStr()}}`;
+  }
+
+  private formatCall(expr: Extract<Expr, { kind: "call" }>): string {
+    const callee = this.formatExpr(expr.callee);
+    const args = expr.arguments.map((a) => this.formatExpr(a));
+    if (args.length === 0) {
+      return `${callee}()`;
+    }
+    if (this.shouldFormatCallMultiline(expr, args)) {
+      this.indent++;
+      const lines = args.map((arg, index) => {
+        const comma = index < args.length - 1 ? "," : "";
+        return `${this.indentStr()}${arg}${comma}`;
+      });
+      this.indent--;
+      return `${callee}(\n${lines.join("\n")}\n${this.indentStr()})`;
+    }
+    return `${callee}(${args.join(", ")})`;
+  }
+
+  private shouldFormatCallMultiline(
+    expr: Extract<Expr, { kind: "call" }>,
+    formattedArgs: string[],
+  ): boolean {
+    if (formattedArgs.some((arg) => arg.includes("\n"))) {
+      return true;
+    }
+    if (!this.source) {
+      return false;
+    }
+    const slice = this.source.slice(expr.callee.span.end, expr.span.end);
+    return slice.includes("\n");
   }
 
   private formatBinary(expr: Extract<Expr, { kind: "binary" }>): string {
