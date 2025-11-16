@@ -155,7 +155,9 @@ class Formatter {
         parts.push("");
       }
 
-      parts.push(this.formatDeclaration(decl));
+      this.indent = 0;
+      const formattedDecl = this.formatDeclaration(decl);
+      parts.push(formattedDecl);
     }
 
     if (
@@ -399,6 +401,9 @@ class Formatter {
   }
 
   private formatBlockForLet(block: BlockExpr): string {
+    if (block.isMultiLine === true && this.source) {
+      return this.source.slice(block.span.start, block.span.end);
+    }
     if (this.blockHasComments(block)) {
       return this.source.slice(block.span.start, block.span.end);
     }
@@ -427,6 +432,11 @@ class Formatter {
     // Multi-statement block
     const parts: string[] = [];
     this.indent++;
+    const blockIndentLevel = this.indent;
+    const absoluteBlockIndent = this.computeAbsoluteIndent(block.span.start);
+    const absoluteChildIndent = absoluteBlockIndent !== null
+      ? absoluteBlockIndent + this.options.indentSize
+      : null;
     let previousSpanEnd: number | null = null;
 
     for (const stmt of block.statements) {
@@ -437,13 +447,16 @@ class Formatter {
         parts.push("");
       }
       const stmtText = this.formatBlockStatement(stmt);
-      const indentStr = this.indentStr();
+      const indentStr = absoluteChildIndent !== null
+        ? " ".repeat(absoluteChildIndent)
+        : this.indentStrForLevel(blockIndentLevel);
       if (stmt.kind === "expr_statement" && stmtText.includes("\n")) {
         const normalized = this.normalizeIndent(stmtText);
         parts.push(this.indentMultiline(normalized, indentStr));
       } else {
         parts.push(indentStr + stmtText);
       }
+      this.indent = blockIndentLevel;
       previousSpanEnd = stmt.span.end;
     }
 
@@ -458,16 +471,22 @@ class Formatter {
       if (block.resultTrailingComment) {
         resultText += this.formatInlineComment(block.resultTrailingComment);
       }
-      const resultIndent = this.indentStr();
+      const resultIndent = absoluteChildIndent !== null
+        ? " ".repeat(absoluteChildIndent)
+        : this.indentStrForLevel(blockIndentLevel);
       if (resultText.includes("\n")) {
         const normalized = this.normalizeIndent(resultText);
         parts.push(this.indentMultiline(normalized, resultIndent));
       } else {
         parts.push(resultIndent + resultText);
       }
+      this.indent = blockIndentLevel;
       if (block.resultCommentStatements) {
         for (const comment of block.resultCommentStatements) {
-          parts.push(`${this.indentStr()}-- ${comment.text}`);
+          const commentIndent = absoluteChildIndent !== null
+            ? " ".repeat(absoluteChildIndent)
+            : this.indentStrForLevel(blockIndentLevel);
+          parts.push(`${commentIndent}-- ${comment.text}`);
           if (comment.hasBlankLineAfter) {
             parts.push("");
           }
@@ -476,7 +495,10 @@ class Formatter {
     }
 
     this.indent--;
-    return `{\n${parts.join("\n")}\n${this.indentStr()}}`;
+    const closingIndent = absoluteBlockIndent !== null
+      ? " ".repeat(absoluteBlockIndent)
+      : this.indentStr();
+    return `{\n${parts.join("\n")}\n${closingIndent}}`;
   }
 
   private hasLeadingConstructorPipe(decl: TypeDeclaration): boolean {
@@ -655,6 +677,12 @@ class Formatter {
     const hasResultOnlyComments = block.statements.length === 0 &&
       block.resultCommentStatements &&
       block.resultCommentStatements.length > 0;
+    if (
+      block.isMultiLine === true && this.source &&
+      block.statements.length > 0
+    ) {
+      return this.source.slice(block.span.start, block.span.end);
+    }
     if (this.blockHasComments(block) && !hasResultOnlyComments) {
       return this.source.slice(block.span.start, block.span.end);
     }
@@ -705,6 +733,11 @@ class Formatter {
     // Multi-statement block - always use multiple lines
     const parts: string[] = ["{"];
     this.indent++;
+    const blockIndentLevel = this.indent;
+    const absoluteBlockIndent = this.computeAbsoluteIndent(block.span.start);
+    const absoluteChildIndent = absoluteBlockIndent !== null
+      ? absoluteBlockIndent + this.options.indentSize
+      : null;
     let previousSpanEnd: number | null = null;
 
     for (const stmt of block.statements) {
@@ -728,13 +761,16 @@ class Formatter {
         parts.push("");
       }
       const stmtText = this.formatBlockStatement(stmt);
-      const indentStr = this.indentStr();
+      const indentStr = absoluteChildIndent !== null
+        ? " ".repeat(absoluteChildIndent)
+        : this.indentStrForLevel(blockIndentLevel);
       if (stmt.kind === "expr_statement" && stmtText.includes("\n")) {
         const normalized = this.normalizeIndent(stmtText);
         parts.push(this.indentMultiline(normalized, indentStr));
       } else {
         parts.push(indentStr + stmtText);
       }
+      this.indent = blockIndentLevel;
       previousSpanEnd = stmt.span.end;
     }
 
@@ -749,19 +785,25 @@ class Formatter {
       if (block.resultTrailingComment) {
         resultText += this.formatInlineComment(block.resultTrailingComment);
       }
-      const resultIndent = this.indentStr();
+      const resultIndent = absoluteChildIndent !== null
+        ? " ".repeat(absoluteChildIndent)
+        : this.indentStrForLevel(blockIndentLevel);
       if (resultText.includes("\n")) {
         const normalized = this.normalizeIndent(resultText);
         parts.push(this.indentMultiline(normalized, resultIndent));
       } else {
         parts.push(resultIndent + resultText);
       }
+      this.indent = blockIndentLevel;
       if (block.resultCommentStatements) {
         for (const comment of block.resultCommentStatements) {
           const commentText = comment.rawText
             ? this.normalizeNewlines(comment.rawText)
             : this.formatCommentLine(comment.text);
-          parts.push(`${this.indentStr()}${commentText}`);
+          const commentIndent = absoluteChildIndent !== null
+            ? " ".repeat(absoluteChildIndent)
+            : this.indentStrForLevel(blockIndentLevel);
+          parts.push(`${commentIndent}${commentText}`);
           if (comment.hasBlankLineAfter) {
             parts.push("");
           }
@@ -770,7 +812,10 @@ class Formatter {
     }
 
     this.indent--;
-    parts.push(this.indentStr() + "}");
+    const closingIndent = absoluteBlockIndent !== null
+      ? " ".repeat(absoluteBlockIndent)
+      : this.indentStrForLevel(blockIndentLevel - 1);
+    parts.push(closingIndent + "}");
 
     return parts.join("\n");
   }
@@ -781,7 +826,11 @@ class Formatter {
     baseIndentLevel: number = this.indent,
   ): string {
     const baseIndentStr = this.indentStrForLevel(baseIndentLevel);
-    const stripBaseIndent = baseIndentStr.length > 0
+    const shouldStripIndent = baseIndentStr.length > 0 &&
+      exprLines.every((line) =>
+        line.length === 0 || line.startsWith(baseIndentStr)
+      );
+    const stripBaseIndent = shouldStripIndent
       ? (line: string) =>
         line.startsWith(baseIndentStr) ? line.slice(baseIndentStr.length) : line
       : (line: string) => line;
@@ -1428,13 +1477,13 @@ class Formatter {
     }
     if (this.shouldFormatCallMultiline(expr, argInfos)) {
       this.indent++;
-      const argIndent = this.indentStr();
+      const baseIndent = this.indentStr();
       const lines = argInfos.map((info, index) => {
         const comma = index < argInfos.length - 1 ? "," : "";
         const argLines = info.text.split("\n");
         const indented = argLines.map((line, lineIndex) => {
           const suffix = lineIndex === argLines.length - 1 ? comma : "";
-          return `${argIndent}${line}${suffix}`;
+          return `${baseIndent}${line}${suffix}`;
         });
         return indented.join("\n");
       });
@@ -1456,13 +1505,13 @@ class Formatter {
     }));
     if (this.shouldFormatConstructorMultiline(expr, argInfos)) {
       this.indent++;
-      const argIndent = this.indentStr();
+      const baseIndent = this.indentStr();
       const lines = argInfos.map((info, index) => {
-        const comma = index < argInfos.length - 1 ? "," : "";
+        const comma = index < expr.args.length - 1 ? "," : "";
         const argLines = info.text.split("\n");
         const indented = argLines.map((line, lineIndex) => {
           const suffix = lineIndex === argLines.length - 1 ? comma : "";
-          return `${argIndent}${line}${suffix}`;
+          return `${baseIndent}${line}${suffix}`;
         });
         return indented.join("\n");
       });
@@ -1628,6 +1677,32 @@ class Formatter {
     return lines.join("\n");
   }
 
+  private computeAbsoluteIndent(position: number): number | null {
+    if (!this.source || position <= 0) {
+      return null;
+    }
+    let lineStart = position - 1;
+    while (lineStart >= 0) {
+      const ch = this.source[lineStart];
+      if (ch === "\n") {
+        lineStart++;
+        break;
+      }
+      lineStart--;
+    }
+    if (lineStart < 0) {
+      lineStart = 0;
+    }
+    let count = 0;
+    while (
+      lineStart + count < this.source.length &&
+      this.source[lineStart + count] === " "
+    ) {
+      count++;
+    }
+    return count;
+  }
+
   private normalizeIndent(text: string): string {
     const lines = text.split("\n");
     let minIndent = Infinity;
@@ -1648,10 +1723,7 @@ class Formatter {
         break;
       }
     }
-    if (!isFinite(minIndent)) {
-      return text;
-    }
-    if (minIndent === 0) {
+    if (!isFinite(minIndent) || minIndent === 0) {
       return text;
     }
     const strip = " ".repeat(minIndent);
