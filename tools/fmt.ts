@@ -427,8 +427,15 @@ class Formatter {
     // Multi-statement block
     const parts: string[] = [];
     this.indent++;
+    let previousSpanEnd: number | null = null;
 
     for (const stmt of block.statements) {
+      if (
+        previousSpanEnd !== null &&
+        this.hasBlankLineBetween(previousSpanEnd, stmt.span.start)
+      ) {
+        parts.push("");
+      }
       const stmtText = this.formatBlockStatement(stmt);
       const indentStr = this.indentStr();
       if (stmt.kind === "expr_statement" && stmtText.includes("\n")) {
@@ -437,9 +444,16 @@ class Formatter {
       } else {
         parts.push(indentStr + stmtText);
       }
+      previousSpanEnd = stmt.span.end;
     }
 
     if (block.result) {
+      if (
+        previousSpanEnd !== null &&
+        this.hasBlankLineBetween(previousSpanEnd, block.result.span.start)
+      ) {
+        parts.push("");
+      }
       let resultText = this.formatExpr(block.result);
       if (block.resultTrailingComment) {
         resultText += this.formatInlineComment(block.resultTrailingComment);
@@ -691,6 +705,7 @@ class Formatter {
     // Multi-statement block - always use multiple lines
     const parts: string[] = ["{"];
     this.indent++;
+    let previousSpanEnd: number | null = null;
 
     for (const stmt of block.statements) {
       if (stmt.kind === "comment_statement") {
@@ -700,8 +715,17 @@ class Formatter {
         parts.push(`${this.indentStr()}${commentText}`);
         if (stmt.hasBlankLineAfter) {
           parts.push("");
+          previousSpanEnd = null;
+          continue;
         }
+        previousSpanEnd = stmt.span.end;
         continue;
+      }
+      if (
+        previousSpanEnd !== null &&
+        this.hasBlankLineBetween(previousSpanEnd, stmt.span.start)
+      ) {
+        parts.push("");
       }
       const stmtText = this.formatBlockStatement(stmt);
       const indentStr = this.indentStr();
@@ -711,9 +735,16 @@ class Formatter {
       } else {
         parts.push(indentStr + stmtText);
       }
+      previousSpanEnd = stmt.span.end;
     }
 
     if (block.result) {
+      if (
+        previousSpanEnd !== null &&
+        this.hasBlankLineBetween(previousSpanEnd, block.result.span.start)
+      ) {
+        parts.push("");
+      }
       let resultText = this.formatExpr(block.result);
       if (block.resultTrailingComment) {
         resultText += this.formatInlineComment(block.resultTrailingComment);
@@ -1397,16 +1428,13 @@ class Formatter {
     }
     if (this.shouldFormatCallMultiline(expr, argInfos)) {
       this.indent++;
+      const argIndent = this.indentStr();
       const lines = argInfos.map((info, index) => {
         const comma = index < argInfos.length - 1 ? "," : "";
-        const normalizedText = info.text.includes("\n")
-          ? this.normalizeIndent(info.text)
-          : info.text;
-        const argLines = normalizedText.split("\n");
-        const baseIndent = this.indentStr();
+        const argLines = info.text.split("\n");
         const indented = argLines.map((line, lineIndex) => {
           const suffix = lineIndex === argLines.length - 1 ? comma : "";
-          return `${baseIndent}${line}${suffix}`;
+          return `${argIndent}${line}${suffix}`;
         });
         return indented.join("\n");
       });
@@ -1428,16 +1456,13 @@ class Formatter {
     }));
     if (this.shouldFormatConstructorMultiline(expr, argInfos)) {
       this.indent++;
+      const argIndent = this.indentStr();
       const lines = argInfos.map((info, index) => {
         const comma = index < argInfos.length - 1 ? "," : "";
-        const normalizedText = info.text.includes("\n")
-          ? this.normalizeIndent(info.text)
-          : info.text;
-        const argLines = normalizedText.split("\n");
-        const baseIndent = this.indentStr();
+        const argLines = info.text.split("\n");
         const indented = argLines.map((line, lineIndex) => {
           const suffix = lineIndex === argLines.length - 1 ? comma : "";
-          return `${baseIndent}${line}${suffix}`;
+          return `${argIndent}${line}${suffix}`;
         });
         return indented.join("\n");
       });
@@ -1637,6 +1662,14 @@ class Formatter {
       return line.startsWith(strip) ? line.slice(minIndent) : line;
     });
     return normalized.join("\n");
+  }
+
+  private hasBlankLineBetween(start: number, end: number): boolean {
+    if (!this.source || end <= start) {
+      return false;
+    }
+    const between = this.source.slice(start, end);
+    return /\r?\n\s*\r?\n/.test(between);
   }
 
   private stripBaseIndent(text: string, baseIndent: string): string {
