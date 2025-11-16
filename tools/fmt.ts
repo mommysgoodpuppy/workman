@@ -33,7 +33,7 @@ type Declaration = import("../src/ast.ts").TopLevel;
 
 interface FormatOptions {
   indentSize: number;
-  check: boolean;
+  mode: "write" | "check" | "check-full";
 }
 
 function isStdCoreModule(path: string): boolean {
@@ -623,9 +623,11 @@ class Formatter {
         return expr;
       }
 
-      // When keepBraces is true (arrow functions), always use multiline format
-      // to preserve the original multi-line style and prevent multiple { on same line
+      // When keepBraces is true (arrow functions), prefer single-line braces if possible
       if (keepBraces) {
+        if (!expr.includes("\n") && block.isMultiLine !== true) {
+          return `{ ${expr} }`;
+        }
         this.indent++;
         const indentedExpr = expr.split("\n").map((line) =>
           this.indentStr() + line
@@ -1243,7 +1245,13 @@ class Formatter {
       this.indent++;
       const lines = args.map((arg, index) => {
         const comma = index < args.length - 1 ? "," : "";
-        return `${this.indentStr()}${arg}${comma}`;
+        const argLines = arg.split("\n");
+        const baseIndent = this.indentStr();
+        const indented = argLines.map((line, lineIndex) => {
+          const suffix = lineIndex === argLines.length - 1 ? comma : "";
+          return `${baseIndent}${line}${suffix}`;
+        });
+        return indented.join("\n");
       });
       this.indent--;
       return `${callee}(\n${lines.join("\n")}\n${this.indentStr()})`;
@@ -1390,24 +1398,31 @@ async function formatFile(
     const formatter = new Formatter(options, source);
     const formatted = formatter.format(program);
 
-    const skipVerification = Deno.env.get("WM_FMT_SKIP_VERIFY") === "1";
-    if (
-      !skipVerification &&
-      !verifyOnlyWhitespaceChanged(source, formatted, filePath)
-    ) {
+    if (!verifyOnlyWhitespaceChanged(source, formatted, filePath)) {
       return false;
     }
 
-    if (options.check) {
-      if (source !== formatted) {
-        console.error(`${filePath} is not formatted`);
-        return false;
-      }
-      return true;
-    } else {
-      await Deno.writeTextFile(filePath, formatted);
-      console.log(`Formatted ${filePath}`);
-      return true;
+    const changed = source !== formatted;
+    switch (options.mode) {
+      case "check":
+        if (changed) {
+          console.error(`${filePath} is not formatted`);
+          printDiffSnippets(filePath, source, formatted);
+          return false;
+        }
+        return true;
+      case "check-full":
+        if (changed) {
+          console.error(`${filePath} is not formatted`);
+          printFullFormattedFile(filePath, formatted);
+          return false;
+        }
+        return true;
+      case "write":
+      default:
+        await Deno.writeTextFile(filePath, formatted);
+        console.log(`Formatted ${filePath}`);
+        return true;
     }
   } catch (error) {
     if (error instanceof WorkmanError) {
@@ -1461,24 +1476,30 @@ async function collectWmFiles(path: string): Promise<string[]> {
 export async function runFormatter(args: string[]): Promise<void> {
   if (args.length === 0) {
     console.error(
-      "Usage: wm fmt [--check] <file.wm|directory> [<file2.wm> ...]",
+      "Usage: wm fmt [--check|--check-full] <file.wm|directory> [<file2.wm> ...]",
     );
     Deno.exit(1);
   }
 
-  const check = args[0] === "--check";
-  const paths = check ? args.slice(1) : args;
+  let mode: FormatOptions["mode"] = "write";
+  let paths: string[] = [];
+  if (args[0] === "--check" || args[0] === "--check-full") {
+    mode = args[0] === "--check" ? "check" : "check-full";
+    paths = args.slice(1);
+  } else {
+    paths = args.slice();
+  }
 
   if (paths.length === 0) {
     console.error(
-      "Usage: wm fmt [--check] <file.wm|directory> [<file2.wm> ...]",
+      "Usage: wm fmt [--check|--check-full] <file.wm|directory> [<file2.wm> ...]",
     );
     Deno.exit(1);
   }
 
   const options: FormatOptions = {
     indentSize: 2,
-    check,
+    mode,
   };
 
   // Collect all .wm files from paths (files or directories)
@@ -1517,4 +1538,51 @@ export async function runFormatter(args: string[]): Promise<void> {
 
 if (import.meta.main) {
   await runFormatter(Deno.args);
+}
+
+function printDiffSnippets(
+  filePath: string,
+  original: string,
+  formatted: string,
+) {
+  const originalLines = original.split(/\r?\n/);
+  const formattedLines = formatted.split(/\r?\n/);
+  let i = 0;
+  let j = 0;
+  while (i < originalLines.length || j < formattedLines.length) {
+    const originalLine = i < originalLines.length ? originalLines[i] : undefined;
+    const formattedLine = j < formattedLines.length
+      ? formattedLines[j]
+      : undefined;
+    if (originalLine === formattedLine) {
+      i++;
+      j++;
+      continue;
+    }
+    const blockHeaderLine = Math.max(
+      1,
+      Math.min(i, originalLines.length - 1) + 1,
+    );
+    console.error(`--- ${filePath}:${blockHeaderLine}`);
+    while (
+      (i < originalLines.length || j < formattedLines.length) &&
+      (i >= originalLines.length || j >= formattedLines.length ||
+        originalLines[i] !== formattedLines[j])
+    ) {
+      if (i < originalLines.length) {
+        console.error(`- ${i + 1}| ${originalLines[i]}`);
+        i++;
+      }
+      if (j < formattedLines.length) {
+        console.error(`+ ${j + 1}| ${formattedLines[j]}`);
+        j++;
+      }
+    }
+    console.error("");
+  }
+}
+
+function printFullFormattedFile(filePath: string, formatted: string) {
+  console.error(`+++ ${filePath} (formatted output) +++`);
+  console.error(formatted);
 }
