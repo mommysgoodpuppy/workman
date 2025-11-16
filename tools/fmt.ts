@@ -11,6 +11,7 @@ import type {
   BlockExpr,
   BlockStatement,
   CommentBlock,
+  CommentStatement,
   Expr,
   ImportSpecifier,
   LetDeclaration,
@@ -428,15 +429,28 @@ class Formatter {
     this.indent++;
 
     for (const stmt of block.statements) {
-      parts.push(this.indentStr() + this.formatBlockStatement(stmt));
+      const stmtText = this.formatBlockStatement(stmt);
+      const indentStr = this.indentStr();
+      if (stmt.kind === "expr_statement" && stmtText.includes("\n")) {
+        const normalized = this.normalizeIndent(stmtText);
+        parts.push(this.indentMultiline(normalized, indentStr));
+      } else {
+        parts.push(indentStr + stmtText);
+      }
     }
 
     if (block.result) {
-      let resultLine = this.indentStr() + this.formatExpr(block.result);
+      let resultText = this.formatExpr(block.result);
       if (block.resultTrailingComment) {
-        resultLine += this.formatInlineComment(block.resultTrailingComment);
+        resultText += this.formatInlineComment(block.resultTrailingComment);
       }
-      parts.push(resultLine);
+      const resultIndent = this.indentStr();
+      if (resultText.includes("\n")) {
+        const normalized = this.normalizeIndent(resultText);
+        parts.push(this.indentMultiline(normalized, resultIndent));
+      } else {
+        parts.push(resultIndent + resultText);
+      }
       if (block.resultCommentStatements) {
         for (const comment of block.resultCommentStatements) {
           parts.push(`${this.indentStr()}-- ${comment.text}`);
@@ -624,39 +638,52 @@ class Formatter {
     multiline: boolean = true,
     keepBraces: boolean = false,
   ): string {
-    if (this.blockHasComments(block)) {
+    const hasResultOnlyComments = block.statements.length === 0 &&
+      block.resultCommentStatements &&
+      block.resultCommentStatements.length > 0;
+    if (this.blockHasComments(block) && !hasResultOnlyComments) {
       return this.source.slice(block.span.start, block.span.end);
     }
     // Single expression block
     if (block.statements.length === 0 && block.result) {
-      const expr = this.formatExpr(block.result);
+      let expr = this.formatExpr(block.result);
+      if (block.resultTrailingComment) {
+        expr += this.formatInlineComment(block.resultTrailingComment);
+      }
+      const exprLines = expr.split("\n");
+      const hasResultComments = !!(
+        block.resultCommentStatements && block.resultCommentStatements.length > 0
+      );
+      const requiresMultiline = block.isMultiLine === true ||
+        exprLines.length > 1 ||
+        hasResultComments;
       // Don't wrap simple expressions in extra braces unless keepBraces is true
-      if (this.isSimpleExpr(block.result) && !keepBraces) {
+      if (this.isSimpleExpr(block.result) && !keepBraces && !requiresMultiline) {
         return expr;
       }
 
       // When keepBraces is true (arrow functions), prefer single-line braces if possible
       if (keepBraces) {
-        if (!expr.includes("\n") && block.isMultiLine !== true) {
+        if (!requiresMultiline) {
           return `{ ${expr} }`;
         }
-        this.indent++;
-        const indentedExpr = expr.split("\n").map((line) =>
-          this.indentStr() + line
-        ).join("\n");
-        this.indent--;
-        return `{\n${indentedExpr}\n${this.indentStr()}}`;
+        return this.formatSingleExprBlockLines(
+          exprLines,
+          block.resultCommentStatements,
+          this.indent,
+        );
       }
 
       // If the expression is multiline OR contains braces, format with proper indentation
       // This prevents multiple { on the same line
-      if (expr.includes("\n") || expr.includes("{")) {
-        this.indent++;
-        const indentedExpr = expr.split("\n").map((line) =>
-          this.indentStr() + line
-        ).join("\n");
-        this.indent--;
-        return `{\n${indentedExpr}\n${this.indentStr()}}`;
+      const needsMultilineFormatting = requiresMultiline ||
+        expr.includes("{");
+      if (needsMultilineFormatting) {
+        return this.formatSingleExprBlockLines(
+          exprLines,
+          block.resultCommentStatements,
+          this.indent,
+        );
       }
       return `{ ${expr} }`;
     }
@@ -676,15 +703,28 @@ class Formatter {
         }
         continue;
       }
-      parts.push(this.indentStr() + this.formatBlockStatement(stmt));
+      const stmtText = this.formatBlockStatement(stmt);
+      const indentStr = this.indentStr();
+      if (stmt.kind === "expr_statement" && stmtText.includes("\n")) {
+        const normalized = this.normalizeIndent(stmtText);
+        parts.push(this.indentMultiline(normalized, indentStr));
+      } else {
+        parts.push(indentStr + stmtText);
+      }
     }
 
     if (block.result) {
-      let resultLine = this.indentStr() + this.formatExpr(block.result);
+      let resultText = this.formatExpr(block.result);
       if (block.resultTrailingComment) {
-        resultLine += this.formatInlineComment(block.resultTrailingComment);
+        resultText += this.formatInlineComment(block.resultTrailingComment);
       }
-      parts.push(resultLine);
+      const resultIndent = this.indentStr();
+      if (resultText.includes("\n")) {
+        const normalized = this.normalizeIndent(resultText);
+        parts.push(this.indentMultiline(normalized, resultIndent));
+      } else {
+        parts.push(resultIndent + resultText);
+      }
       if (block.resultCommentStatements) {
         for (const comment of block.resultCommentStatements) {
           const commentText = comment.rawText
@@ -702,6 +742,52 @@ class Formatter {
     parts.push(this.indentStr() + "}");
 
     return parts.join("\n");
+  }
+
+  private formatSingleExprBlockLines(
+    exprLines: string[],
+    comments?: CommentStatement[],
+    baseIndentLevel: number = this.indent,
+  ): string {
+    const baseIndentStr = this.indentStrForLevel(baseIndentLevel);
+    const stripBaseIndent = baseIndentStr.length > 0
+      ? (line: string) =>
+        line.startsWith(baseIndentStr) ? line.slice(baseIndentStr.length) : line
+      : (line: string) => line;
+    const normalizedExprLines = exprLines.map(stripBaseIndent);
+
+    this.indent++;
+    const currentIndentStr = this.indentStr();
+    const lines: string[] = [];
+
+    for (const line of normalizedExprLines) {
+      lines.push(
+        line.length === 0 ? currentIndentStr : `${currentIndentStr}${line}`,
+      );
+    }
+
+    if (comments) {
+      for (const comment of comments) {
+        const commentText = comment.rawText
+          ? this.normalizeNewlines(comment.rawText)
+          : this.formatCommentLine(comment.text);
+        const commentLines = commentText.split("\n").map(stripBaseIndent);
+        for (const commentLine of commentLines) {
+          lines.push(
+            commentLine.length === 0
+              ? currentIndentStr
+              : `${currentIndentStr}${commentLine}`,
+          );
+        }
+        if (comment.hasBlankLineAfter) {
+          lines.push("");
+        }
+      }
+    }
+
+    this.indent--;
+    const closingIndent = this.indentStr();
+    return `{\n${lines.join("\n")}\n${closingIndent}}`;
   }
 
   private isSimpleExpr(expr: Expr): boolean {
@@ -805,12 +891,7 @@ class Formatter {
       case "literal":
         return this.formatLiteral(expr.literal);
       case "constructor":
-        if (expr.args.length === 0) {
-          return expr.name;
-        }
-        return `${expr.name}(${
-          expr.args.map((a) => this.formatExpr(a)).join(", ")
-        })`;
+        return this.formatConstructor(expr);
       case "record_literal":
         return this.formatRecordLiteral(expr);
       case "tuple":
@@ -1045,38 +1126,13 @@ class Formatter {
     // Match arm bodies must always be block expressions
     if (expr.kind === "block") {
       const block = expr;
-      if (this.blockHasComments(block)) {
+      const hasResultOnlyComments = block.statements.length === 0 &&
+        block.resultCommentStatements &&
+        block.resultCommentStatements.length > 0;
+      if (this.blockHasComments(block) && !hasResultOnlyComments) {
         return this.source.slice(block.span.start, block.span.end);
       }
-      // Single expression block
-      if (block.statements.length === 0 && block.result) {
-        // If the result contains braces (like a match or block), use multi-line format
-        // to avoid double {{ on the same line
-      if (block.result.kind === "match" || block.result.kind === "block") {
-        // Format the expression at the next indent level
-        this.indent++;
-        const resultExpr = this.formatExpr(block.result);
-        // Add indentation to the first line (match keyword line)
-        const lines = resultExpr.split("\n");
-        const indentedFirst = this.indentStr() + lines[0];
-        const rest = lines.slice(1);
-        this.indent--;
-        const commentSuffix = block.resultTrailingComment
-          ? ` -- ${block.resultTrailingComment}`
-          : "";
-        return `{\n${indentedFirst}\n${
-          rest.join("\n")
-        }\n${this.indentStr()}}${commentSuffix}`;
-      }
-
-      const resultExpr = this.formatExpr(block.result);
-      const commentSuffix = block.resultTrailingComment
-        ? ` -- ${block.resultTrailingComment}`
-        : "";
-      return `{ ${resultExpr}${commentSuffix} }`;
-    }
-      // Multi-statement block
-      return this.formatBlock(block);
+      return this.formatBlock(block, true, true);
     }
     // If it's not a block, wrap it in braces (shouldn't happen in valid code)
     return `{ ${this.formatExpr(expr)} }`;
@@ -1158,14 +1214,32 @@ class Formatter {
 
   private formatMatchArmsMultiline(arms: MatchArm[]): string[] {
     const lines: string[] = [];
-    for (const arm of arms) {
+    for (let index = 0; index < arms.length; index++) {
+      const arm = arms[index];
       if (arm.kind === "comment_statement") {
         const commentText = arm.rawText
           ? this.normalizeNewlines(arm.rawText)
           : this.formatCommentLine(arm.text);
-        lines.push(`${this.indentStr()}${commentText}`);
-        if (arm.hasBlankLineAfter) {
-          lines.push("");
+        const prevArm = index > 0 ? arms[index - 1] : null;
+        const nextArm = index + 1 < arms.length ? arms[index + 1] : null;
+        const prevIsNonComment = prevArm !== null &&
+          prevArm.kind !== "comment_statement";
+        const nextIsNonComment = nextArm !== null &&
+          nextArm.kind !== "comment_statement";
+        const canInline = prevIsNonComment && nextIsNonComment &&
+          !arm.hasBlankLineAfter &&
+          !commentText.includes("\n") &&
+          lines.length > 0;
+        if (canInline) {
+          const inlineText = this.formatInlineComment(
+            arm.rawText ?? arm.text,
+          );
+          lines[lines.length - 1] += inlineText;
+        } else {
+          lines.push(`${this.indentStr()}${commentText}`);
+          if (arm.hasBlankLineAfter) {
+            lines.push("");
+          }
         }
         continue;
       }
@@ -1325,7 +1399,10 @@ class Formatter {
       this.indent++;
       const lines = argInfos.map((info, index) => {
         const comma = index < argInfos.length - 1 ? "," : "";
-        const argLines = info.text.split("\n");
+        const normalizedText = info.text.includes("\n")
+          ? this.normalizeIndent(info.text)
+          : info.text;
+        const argLines = normalizedText.split("\n");
         const baseIndent = this.indentStr();
         const indented = argLines.map((line, lineIndex) => {
           const suffix = lineIndex === argLines.length - 1 ? comma : "";
@@ -1339,14 +1416,42 @@ class Formatter {
     return `${callee}(${argInfos.map((info) => info.text).join(", ")})`;
   }
 
+  private formatConstructor(
+    expr: Extract<Expr, { kind: "constructor" }>,
+  ): string {
+    if (expr.args.length === 0) {
+      return expr.name;
+    }
+    const argInfos = expr.args.map((argument) => ({
+      expr: argument,
+      text: this.formatExpr(argument),
+    }));
+    if (this.shouldFormatConstructorMultiline(expr, argInfos)) {
+      this.indent++;
+      const lines = argInfos.map((info, index) => {
+        const comma = index < argInfos.length - 1 ? "," : "";
+        const normalizedText = info.text.includes("\n")
+          ? this.normalizeIndent(info.text)
+          : info.text;
+        const argLines = normalizedText.split("\n");
+        const baseIndent = this.indentStr();
+        const indented = argLines.map((line, lineIndex) => {
+          const suffix = lineIndex === argLines.length - 1 ? comma : "";
+          return `${baseIndent}${line}${suffix}`;
+        });
+        return indented.join("\n");
+      });
+      this.indent--;
+      return `${expr.name}(\n${lines.join("\n")}\n${this.indentStr()})`;
+    }
+    return `${expr.name}(${argInfos.map((info) => info.text).join(", ")})`;
+  }
+
   private shouldFormatCallMultiline(
     expr: Extract<Expr, { kind: "call" }>,
     formattedArgs: { expr: Expr; text: string }[],
   ): boolean {
-    const hadOriginalNewline = this.source
-      ? /\r?\n/.test(this.source.slice(expr.callee.span.end, expr.span.end))
-      : false;
-    if (hadOriginalNewline) {
+    if (this.hasTopLevelCallNewline(expr)) {
       return true;
     }
     if (
@@ -1357,6 +1462,72 @@ class Formatter {
       return true;
     }
     return false;
+  }
+
+  private shouldFormatConstructorMultiline(
+    expr: Extract<Expr, { kind: "constructor" }>,
+    formattedArgs: { expr: Expr; text: string }[],
+  ): boolean {
+    if (this.hasTopLevelConstructorNewline(expr)) {
+      return true;
+    }
+    if (
+      formattedArgs.some((info) =>
+        info.text.includes("\n") && !this.isInlineBlockArgument(info.expr)
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private hasTopLevelCallNewline(
+    expr: Extract<Expr, { kind: "call" }>,
+  ): boolean {
+    if (!this.source) {
+      return false;
+    }
+    const spans: Array<[number, number]> = [];
+    if (expr.arguments.length === 0) {
+      spans.push([expr.callee.span.end, expr.span.end]);
+    } else {
+      spans.push([expr.callee.span.end, expr.arguments[0].span.start]);
+      for (let index = 1; index < expr.arguments.length; index++) {
+        const prev = expr.arguments[index - 1];
+        const current = expr.arguments[index];
+        spans.push([prev.span.end, current.span.start]);
+      }
+      const lastArgument = expr.arguments[expr.arguments.length - 1];
+      spans.push([lastArgument.span.end, expr.span.end]);
+    }
+
+    return spans.some(([start, end]) =>
+      /\r?\n/.test(this.source.slice(start, end))
+    );
+  }
+
+  private hasTopLevelConstructorNewline(
+    expr: Extract<Expr, { kind: "constructor" }>,
+  ): boolean {
+    if (!this.source) {
+      return false;
+    }
+    if (expr.args.length === 0) {
+      return false;
+    }
+    const spans: Array<[number, number]> = [];
+    spans.push([expr.span.start, expr.args[0].span.start]);
+    for (let index = 1; index < expr.args.length; index++) {
+      const prev = expr.args[index - 1];
+      const current = expr.args[index];
+      spans.push([prev.span.end, current.span.start]);
+    }
+    const lastArgument = expr.args[expr.args.length - 1];
+    spans.push([lastArgument.span.end, expr.span.end]);
+
+    return spans.some(([start, end]) =>
+      /\r?\n/.test(this.source.slice(start, end))
+    );
   }
 
   private isInlineBlockArgument(expr: Expr): boolean {
@@ -1409,7 +1580,74 @@ class Formatter {
   }
 
   private indentStr(): string {
-    return " ".repeat(this.indent * this.options.indentSize);
+    return this.indentStrForLevel(this.indent);
+  }
+
+  private indentStrForLevel(level: number): string {
+    return " ".repeat(level * this.options.indentSize);
+  }
+
+  private indentMultiline(text: string, indent: string): string {
+    const lines = text.split("\n");
+    return lines.map((line) =>
+      line.length === 0 ? indent : `${indent}${line}`
+    ).join("\n");
+  }
+
+  private indentFirstLine(text: string, indent: string): string {
+    const lines = text.split("\n");
+    if (lines.length === 0) {
+      return indent;
+    }
+    lines[0] = indent + lines[0];
+    return lines.join("\n");
+  }
+
+  private normalizeIndent(text: string): string {
+    const lines = text.split("\n");
+    let minIndent = Infinity;
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.trim().length === 0) {
+        continue;
+      }
+      if (line[0] !== " ") {
+        continue;
+      }
+      let count = 0;
+      while (count < line.length && line[count] === " ") {
+        count++;
+      }
+      minIndent = Math.min(minIndent, count);
+      if (minIndent === 0) {
+        break;
+      }
+    }
+    if (!isFinite(minIndent)) {
+      return text;
+    }
+    if (minIndent === 0) {
+      return text;
+    }
+    const strip = " ".repeat(minIndent);
+    const normalized = lines.map((line, index) => {
+      if (index === 0) {
+        return line;
+      }
+      return line.startsWith(strip) ? line.slice(minIndent) : line;
+    });
+    return normalized.join("\n");
+  }
+
+  private stripBaseIndent(text: string, baseIndent: string): string {
+    if (!text.includes("\n") || baseIndent.length === 0) {
+      return text;
+    }
+    const lines = text.split("\n");
+    const stripped = lines.map((line) =>
+      line.startsWith(baseIndent) ? line.slice(baseIndent.length) : line
+    );
+    return stripped.join("\n");
   }
 
   private matchBundleIsMultiLine(bundle: MatchBundle): boolean {
