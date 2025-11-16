@@ -105,8 +105,8 @@ export function lex(source: string, sourceName?: string): Token[] {
       continue;
     }
 
-    if (char === '"') {
-      const { value, nextIndex } = readStringLiteral(source, index);
+    if (char === '"' || char === "`") {
+      const { value, nextIndex } = readStringLiteral(source, index, char);
       tokens.push({
         kind: "string",
         value,
@@ -344,6 +344,7 @@ function readCharLiteral(
 function readStringLiteral(
   source: string,
   start: number,
+  quoteChar: string,
 ): { value: string; nextIndex: number } {
   let index = start + 1;
   let value = "";
@@ -351,7 +352,7 @@ function readStringLiteral(
 
   while (index < length) {
     const char = source[index];
-    if (char === '"') {
+    if (char === quoteChar) {
       return { value, nextIndex: index + 1 };
     }
     if (char === "\\") {
@@ -361,7 +362,18 @@ function readStringLiteral(
       const escape = source[index + 1];
       switch (escape) {
         case '"':
+          if (quoteChar === '"') {
+            value += '"';
+            break;
+          }
           value += '"';
+          break;
+        case "`":
+          if (quoteChar === "`") {
+            value += "`";
+            break;
+          }
+          value += "`";
           break;
         case "\\":
           value += "\\";
@@ -376,6 +388,10 @@ function readStringLiteral(
           value += "\t";
           break;
         default:
+          if (escape === quoteChar) {
+            value += quoteChar;
+            break;
+          }
           value += escape;
           break;
       }

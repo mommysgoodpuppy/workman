@@ -10,6 +10,7 @@ import { loadModuleGraph } from "../src/module_loader.ts";
 import type {
   BlockExpr,
   BlockStatement,
+  CommentBlock,
   Expr,
   ImportSpecifier,
   LetDeclaration,
@@ -112,11 +113,23 @@ class Formatter {
 
     // Format imports
     for (const imp of program.imports) {
+      if (
+        imp.hasBlankLineBefore &&
+        (parts.length === 0 || parts[parts.length - 1] !== "")
+      ) {
+        parts.push("");
+      }
       parts.push(this.formatImport(imp));
     }
 
     // Format reexports
     for (const reexp of program.reexports) {
+      if (
+        reexp.hasBlankLineBefore &&
+        (parts.length === 0 || parts[parts.length - 1] !== "")
+      ) {
+        parts.push("");
+      }
       parts.push(this.formatReexport(reexp));
     }
 
@@ -160,11 +173,46 @@ class Formatter {
     return formatted.replace(/\n\n\n+/g, "\n\n");
   }
 
+  private renderLeadingComments(
+    comments?: (CommentBlock | string)[],
+  ): string {
+    if (!comments || comments.length === 0) {
+      return "";
+    }
+    let result = "";
+    for (const commentBlock of comments) {
+      if (typeof commentBlock === "string") {
+        result += `-- ${commentBlock}\n`;
+        continue;
+      }
+      result += `-- ${commentBlock.text}\n`;
+      if (commentBlock.hasBlankLineAfter) {
+        result += "\n";
+      }
+    }
+    return result;
+  }
+
+  private formatTerminator(
+    node?: { hasTerminatingSemicolon?: boolean },
+  ): string {
+    if (node && node.hasTerminatingSemicolon === false) {
+      return "";
+    }
+    return ";";
+  }
+
   private formatImport(imp: ModuleImport): string {
     const specs = imp.specifiers.map((s) => this.formatImportSpecifier(s)).join(
       ", ",
     );
-    return `from "${imp.source}" import { ${specs} };`;
+    let result = this.renderLeadingComments(imp.leadingComments);
+    result +=
+      `from "${imp.source}" import { ${specs} }${this.formatTerminator(imp)}`;
+    if (imp.trailingComment) {
+      result += ` -- ${imp.trailingComment}`;
+    }
+    return result;
   }
 
   private formatImportSpecifier(spec: ImportSpecifier): string {
@@ -180,7 +228,13 @@ class Formatter {
     const types = reexp.typeExports.map((t) => this.formatTypeReexport(t)).join(
       ", ",
     );
-    return `export from "${reexp.source}" type ${types};`;
+    let result = this.renderLeadingComments(reexp.leadingComments);
+    result +=
+      `export from "${reexp.source}" type ${types}${this.formatTerminator(reexp)}`;
+    if (reexp.trailingComment) {
+      result += ` -- ${reexp.trailingComment}`;
+    }
+    return result;
   }
 
   private formatTypeReexport(typeExp: TypeReexport): string {
@@ -191,23 +245,7 @@ class Formatter {
     let result = "";
 
     // Add leading comments
-    if (decl.leadingComments && decl.leadingComments.length > 0) {
-      for (const commentBlock of decl.leadingComments) {
-        // Handle both old string format and new CommentBlock format
-        const commentText = typeof commentBlock === "string"
-          ? commentBlock
-          : commentBlock.text;
-        const hasBlankLineAfter = typeof commentBlock === "object" &&
-          commentBlock.hasBlankLineAfter;
-
-        result += `-- ${commentText}\n`;
-
-        // Add blank line after comment if needed
-        if (hasBlankLineAfter) {
-          result += "\n";
-        }
-      }
-    }
+    result += this.renderLeadingComments(decl.leadingComments);
 
     switch (decl.kind) {
       case "let":
@@ -262,7 +300,9 @@ class Formatter {
     // Determine if we should add semicolon (not if there are mutual bindings)
     const hasMutualBindings = decl.mutualBindings &&
       decl.mutualBindings.length > 0;
-    const semicolon = hasMutualBindings ? "" : ";";
+    const shouldEmitSemicolon = !hasMutualBindings &&
+      decl.hasTerminatingSemicolon !== false;
+    const semicolon = shouldEmitSemicolon ? ";" : "";
 
     // If this was originally a first-class match, format it that way
     if (
@@ -360,6 +400,14 @@ class Formatter {
       if (block.resultTrailingComment) {
         expr += ` -- ${block.resultTrailingComment}`;
       }
+      if (block.isMultiLine) {
+        this.indent++;
+        const indentedExpr = expr.split("\n").map((line) =>
+          this.indentStr() + line
+        ).join("\n");
+        this.indent--;
+        return `{\n${indentedExpr}\n${this.indentStr()}}`;
+      }
       return expr;
     }
 
@@ -425,10 +473,15 @@ class Formatter {
       aliasMember &&
       aliasMember.type.kind === "type_record"
     ) {
-      const fields = aliasMember.type.fields.map((field) =>
-        `${field.name}: ${this.formatTypeExpr(field.type)}`
-      ).join(", ");
-      return `${exportPrefix}record ${decl.name}${typeParams} { ${fields} };`;
+      const fields = aliasMember.type.fields.map((field, index) => {
+        const value = this.formatTypeExpr(field.type);
+        const needsComma = field.hasTrailingComma ||
+          index < aliasMember.type.fields.length - 1;
+        return `${field.name}: ${value}${needsComma ? "," : ""}`;
+      }).join(" ");
+      return `${exportPrefix}record ${decl.name}${typeParams} { ${fields} }${
+        this.formatTerminator(decl)
+      }`;
     }
     const includeLeadingPipe = aliasMember ? false : this.hasLeadingConstructorPipe(decl);
     const members = decl.members.map((m) => {
@@ -444,7 +497,9 @@ class Formatter {
     }).join(" | ");
     const memberPrefix = includeLeadingPipe ? "| " : "";
 
-    return `${exportPrefix}${infectiousPrefix}type ${decl.name}${typeParams} = ${memberPrefix}${members};`;
+    return `${exportPrefix}${infectiousPrefix}type ${decl.name}${typeParams} = ${memberPrefix}${members}${
+      this.formatTerminator(decl)
+    }`;
   }
 
   private formatInfixDeclaration(decl: InfixDeclaration): string {
@@ -454,17 +509,23 @@ class Formatter {
       : decl.associativity === "right"
       ? "infixr"
       : "infix";
-    return `${exportPrefix}${keyword} ${decl.precedence} ${decl.operator} = ${decl.implementation};`;
+    return `${exportPrefix}${keyword} ${decl.precedence} ${decl.operator} = ${decl.implementation}${
+      this.formatTerminator(decl)
+    }`;
   }
 
   private formatPrefixDeclaration(decl: PrefixDeclaration): string {
     const exportPrefix = decl.export ? "export " : "";
-    return `${exportPrefix}prefix ${decl.operator} = ${decl.implementation};`;
+    return `${exportPrefix}prefix ${decl.operator} = ${decl.implementation}${
+      this.formatTerminator(decl)
+    }`;
   }
 
   private formatInfectiousDeclaration(decl: InfectiousDeclaration): string {
     const exportPrefix = decl.export ? "export " : "";
-    return `${exportPrefix}infectious ${decl.domain} ${decl.typeName}<${decl.valueParam}, ${decl.stateParam}>;`;
+    return `${exportPrefix}infectious ${decl.domain} ${decl.typeName}<${decl.valueParam}, ${decl.stateParam}>${
+      this.formatTerminator(decl)
+    }`;
   }
 
   private formatTypeExpr(typeExpr: TypeExpr | string): string {
@@ -787,25 +848,11 @@ class Formatter {
 
   private computeExtraParentheses(expr: Expr): number {
     const required = this.requiredParentheses(expr);
-    let leading = 0;
-    for (
-      let i = expr.span.start;
-      i < expr.span.end && this.source[i] === "(";
-      i++
-    ) {
-      leading++;
-    }
-    let trailing = 0;
-    for (
-      let i = expr.span.end - 1;
-      i >= expr.span.start && this.source[i] === ")";
-      i--
-    ) {
-      trailing++;
-    }
-    const extraLeading = Math.max(0, leading - required.leading);
-    const extraTrailing = Math.max(0, trailing - required.trailing);
-    return Math.min(extraLeading, extraTrailing);
+    const wrappingPairs = this.countWrappingParenthesisPairs(
+      expr.span.start,
+      expr.span.end,
+    );
+    return Math.max(0, wrappingPairs - required.leading);
   }
 
   private requiredParentheses(
@@ -820,6 +867,88 @@ class Formatter {
     return { leading: 0, trailing: 0 };
   }
 
+  private countWrappingParenthesisPairs(start: number, end: number): number {
+    let pairs = 0;
+    let left = start;
+    let right = end;
+    while (true) {
+      left = this.skipWhitespaceForward(left, right);
+      right = this.skipWhitespaceBackward(left, right);
+      if (left >= right) {
+        break;
+      }
+      if (this.source[left] !== "(" || this.source[right - 1] !== ")") {
+        break;
+      }
+      const closing = this.findMatchingClosingParen(left, right);
+      if (closing === null || closing !== right - 1) {
+        break;
+      }
+      pairs++;
+      left++;
+      right--;
+    }
+    return pairs;
+  }
+
+  private skipWhitespaceForward(start: number, end: number): number {
+    let index = start;
+    while (index < end && /\s/.test(this.source[index])) {
+      index++;
+    }
+    return index;
+  }
+
+  private skipWhitespaceBackward(start: number, end: number): number {
+    let index = end;
+    while (index > start && /\s/.test(this.source[index - 1])) {
+      index--;
+    }
+    return index;
+  }
+
+  private findMatchingClosingParen(
+    start: number,
+    end: number,
+  ): number | null {
+    let depth = 0;
+    for (let i = start; i < end; i++) {
+      const ch = this.source[i];
+      if (ch === "\"" || ch === "'") {
+        i = this.skipQuotedText(i, end, ch);
+        continue;
+      }
+      if (ch === "(") {
+        depth++;
+      } else if (ch === ")") {
+        depth--;
+        if (depth === 0) {
+          return i;
+        }
+        if (depth < 0) {
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
+  private skipQuotedText(index: number, end: number, quote: string): number {
+    let i = index + 1;
+    while (i < end) {
+      const ch = this.source[i];
+      if (ch === "\\" && i + 1 < end) {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) {
+        return i;
+      }
+      i++;
+    }
+    return end - 1;
+  }
+
   private formatLiteral(lit: any): string {
     switch (lit.kind) {
       case "int":
@@ -829,7 +958,7 @@ class Formatter {
       case "char":
         return this.formatCharLiteral(lit.value);
       case "string":
-        return `"${lit.value}"`;
+        return this.formatStringLiteral(lit.value);
       case "unit":
         return "()";
       default:
@@ -837,10 +966,43 @@ class Formatter {
     }
   }
 
+  private formatStringLiteral(value: string): string {
+    let escaped = "";
+    for (const ch of value) {
+      switch (ch) {
+        case "\\":
+          escaped += "\\\\";
+          break;
+        case "\"":
+          escaped += "\\\"";
+          break;
+        case "\n":
+          escaped += "\\n";
+          break;
+        case "\r":
+          escaped += "\\r";
+          break;
+        case "\t":
+          escaped += "\\t";
+          break;
+        case "\0":
+          escaped += "\\0";
+          break;
+        default:
+          escaped += ch;
+          break;
+      }
+    }
+    return `"${escaped}"`;
+  }
+
   private formatMatchArmBody(expr: Expr): string {
     // Match arm bodies must always be block expressions
     if (expr.kind === "block") {
       const block = expr;
+      if (this.blockHasComments(block)) {
+        return this.source.slice(block.span.start, block.span.end);
+      }
       // Single expression block
       if (block.statements.length === 0 && block.result) {
         // If the result contains braces (like a match or block), use multi-line format
@@ -1168,9 +1330,17 @@ async function formatFile(
   }
 
   try {
-    const { operators, prefixOperators } = await computeOperatorEnvironment(
-      filePath,
-    );
+    let operators: Map<string, OperatorInfo> = new Map();
+    let prefixOperators: Set<string> = new Set();
+    try {
+      const env = await computeOperatorEnvironment(filePath);
+      operators = env.operators;
+      prefixOperators = env.prefixOperators;
+    } catch (error) {
+      console.warn(
+        `Warning: failed to compute operator environment for ${filePath}, falling back to built-in defaults: ${error}`,
+      );
+    }
     const tokens = lex(source, filePath);
     const program = parseSurfaceProgram(
       tokens,

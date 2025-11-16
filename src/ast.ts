@@ -29,12 +29,20 @@ export interface ModuleImport extends NodeBase {
   kind: "module_import";
   source: string;
   specifiers: ImportSpecifier[];
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
+  hasTerminatingSemicolon?: boolean;
 }
 
 export interface ModuleReexport extends NodeBase {
   kind: "module_reexport";
   source: string;
   typeExports: TypeReexport[];
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
+  hasTerminatingSemicolon?: boolean;
 }
 
 export type ImportSpecifier = NamedImport | NamespaceImport;
@@ -327,6 +335,7 @@ export interface TypeDeclaration extends NodeBase {
   leadingComments?: CommentBlock[];
   trailingComment?: string;
   hasBlankLineBefore?: boolean; // True if there was a blank line before this declaration
+  hasTerminatingSemicolon?: boolean;
 }
 
 export interface LetDeclaration extends NodeBase {
@@ -343,6 +352,7 @@ export interface LetDeclaration extends NodeBase {
   leadingComments?: CommentBlock[];
   trailingComment?: string;
   hasBlankLineBefore?: boolean; // True if there was a blank line before this declaration
+  hasTerminatingSemicolon?: boolean;
 }
 
 export type Associativity = "left" | "right" | "none";
@@ -357,6 +367,7 @@ export interface InfixDeclaration extends NodeBase {
   leadingComments?: CommentBlock[];
   trailingComment?: string;
   hasBlankLineBefore?: boolean;
+  hasTerminatingSemicolon?: boolean;
 }
 
 export interface PrefixDeclaration extends NodeBase {
@@ -367,6 +378,7 @@ export interface PrefixDeclaration extends NodeBase {
   leadingComments?: CommentBlock[];
   trailingComment?: string;
   hasBlankLineBefore?: boolean;
+  hasTerminatingSemicolon?: boolean;
 }
 
 export interface InfectiousDeclaration extends NodeBase {
@@ -379,6 +391,7 @@ export interface InfectiousDeclaration extends NodeBase {
   leadingComments?: CommentBlock[];
   trailingComment?: string;
   hasBlankLineBefore?: boolean;
+  hasTerminatingSemicolon?: boolean;
 }
 
 export type TopLevel =

@@ -96,11 +96,13 @@ class SurfaceParser {
     const declarations: TopLevel[] = [];
     let lastTokenEnd = 0;
     const trailingCommentBlocks: import("./ast.ts").CommentBlock[] = [];
+    let hasPreviousItem = false;
+    let lastTopLevel: ModuleImport | ModuleReexport | TopLevel | null = null;
 
     while (!this.isEOF()) {
       // Check if there's a blank line before this declaration
       let hasBlankLineBefore = false;
-      if (this.source && declarations.length > 0) {
+      if (this.source && hasPreviousItem) {
         const currentTokenStart = this.peek().start;
         const textBetween = this.source.slice(lastTokenEnd, currentTokenStart);
         // Count newlines - if 2 or more, there's a blank line
@@ -123,13 +125,29 @@ class SurfaceParser {
       const val = this.peek(this.index);
       //console.log(val, this.index);
       if (this.checkKeyword("from")) {
-        imports.push(this.parseImportDeclaration());
+        const imp = this.parseImportDeclaration();
+        if (leadingComments.length > 0) {
+          imp.leadingComments = leadingComments;
+        }
+        if (hasBlankLineBefore) {
+          imp.hasBlankLineBefore = true;
+        }
+        imports.push(imp);
+        lastTopLevel = imp;
       } else if (
         this.checkKeyword("export") &&
         this.peek(1).kind === "keyword" &&
         this.peek(1).value === "from"
       ) {
-        reexports.push(this.parseModuleReexport());
+        const reexp = this.parseModuleReexport();
+        if (leadingComments.length > 0) {
+          reexp.leadingComments = leadingComments;
+        }
+        if (hasBlankLineBefore) {
+          reexp.hasBlankLineBefore = true;
+        }
+        reexports.push(reexp);
+        lastTopLevel = reexp;
       } else {
         const decl = this.parseTopLevel();
         if (leadingComments.length > 0) {
@@ -139,11 +157,20 @@ class SurfaceParser {
           decl.hasBlankLineBefore = true;
         }
         declarations.push(decl);
+        lastTopLevel = decl;
       }
+      hasPreviousItem = true;
+      let semicolonToken: Token | null = null;
       if (this.matchSymbol(";")) {
-        const semicolonToken = this.previous();
+        semicolonToken = this.previous();
+      } else if (!this.isEOF()) {
+        semicolonToken = this.expectSymbol(";");
+      }
+      if (semicolonToken) {
         lastTokenEnd = semicolonToken.end;
-        // Check for trailing comment on the same line (only when preserving comments)
+        if (lastTopLevel) {
+          lastTopLevel.hasTerminatingSemicolon = true;
+        }
         if (
           this.preserveComments && this.peek().kind === "comment" && this.source
         ) {
@@ -152,19 +179,15 @@ class SurfaceParser {
             semicolonToken.end,
             commentToken.start,
           );
-          // Only treat as trailing if there's no newline between semicolon and comment
-          if (!textBetween.includes("\n")) {
-            const lastDecl = declarations[declarations.length - 1];
-            if (lastDecl) {
-              lastDecl.trailingComment = this.consume().value;
-              lastTokenEnd = this.previous().end;
-            }
+          if (!textBetween.includes("\n") && lastTopLevel) {
+            lastTopLevel.trailingComment = this.consume().value;
+            lastTokenEnd = this.previous().end;
           }
         }
         continue;
-      }
-      if (!this.isEOF()) {
-        this.expectSymbol(";"); //cause of error
+      } else if (lastTopLevel) {
+        lastTopLevel.hasTerminatingSemicolon = false;
+        lastTokenEnd = lastTopLevel.span.end;
       }
     }
     const trailingComments = this.preserveComments
@@ -1700,6 +1723,17 @@ class SurfaceParser {
         kind: "bool" as const,
         value: bool.value === "true",
         span: this.createSpan(bool, bool),
+        id: nextNodeId(),
+      };
+      return { kind: "literal", literal, span: literal.span, id: nextNodeId() };
+    }
+
+    if (token.kind === "string") {
+      const str = this.consume();
+      const literal = {
+        kind: "string" as const,
+        value: str.value,
+        span: this.createSpan(str, str),
         id: nextNodeId(),
       };
       return { kind: "literal", literal, span: literal.span, id: nextNodeId() };
