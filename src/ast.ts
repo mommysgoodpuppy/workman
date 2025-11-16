@@ -88,6 +88,7 @@ export interface CommentStatement extends NodeBase {
   kind: "comment_statement";
   text: string;
   hasBlankLineAfter?: boolean;
+  rawText?: string;
 }
 
 export type BlockStatement = LetStatement | ExprStatement | CommentStatement;
@@ -316,6 +317,7 @@ export interface TypeParameter extends NodeBase {
 export interface CommentBlock {
   text: string;
   hasBlankLineAfter?: boolean; // True if there's a blank line after this comment
+  rawText?: string;
 }
 
 export interface InfectiousModifier {

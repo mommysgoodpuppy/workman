@@ -102,10 +102,14 @@ class Formatter {
   private options: FormatOptions;
   private indent: number = 0;
   private source: string;
+  private newline: string;
+  private hadTrailingNewline: boolean;
 
   constructor(options: FormatOptions, source: string) {
     this.options = options;
     this.source = source;
+    this.newline = source.includes("\r\n") ? "\r\n" : "\n";
+    this.hadTrailingNewline = source.endsWith("\n") || source.endsWith("\r");
   }
 
   format(program: Program): string {
@@ -160,17 +164,21 @@ class Formatter {
         parts.push("");
       }
       for (const comment of program.trailingComments) {
-        parts.push(`-- ${comment.text}`);
+        parts.push(this.formatCommentLine(comment.text));
         if (comment.hasBlankLineAfter) {
           parts.push("");
         }
       }
     }
 
-    const formatted = parts.join("\n") + "\n";
+    const formattedBody = parts.join("\n");
+    const formatted = this.hadTrailingNewline
+      ? `${formattedBody}\n`
+      : formattedBody;
 
     // Collapse multiple consecutive empty lines to single empty line
-    return formatted.replace(/\n\n\n+/g, "\n\n");
+    const collapsed = formatted.replace(/\n\n\n+/g, "\n\n");
+    return this.normalizeNewlines(collapsed);
   }
 
   private renderLeadingComments(
@@ -182,10 +190,14 @@ class Formatter {
     let result = "";
     for (const commentBlock of comments) {
       if (typeof commentBlock === "string") {
-        result += `-- ${commentBlock}\n`;
+        result += `${this.formatCommentLine(commentBlock)}\n`;
         continue;
       }
-      result += `-- ${commentBlock.text}\n`;
+      const raw = commentBlock.rawText
+        ? this.normalizeNewlines(commentBlock.rawText)
+        : undefined;
+      const line = raw ?? this.formatCommentLine(commentBlock.text);
+      result += `${line}\n`;
       if (commentBlock.hasBlankLineAfter) {
         result += "\n";
       }
@@ -210,7 +222,7 @@ class Formatter {
     result +=
       `from "${imp.source}" import { ${specs} }${this.formatTerminator(imp)}`;
     if (imp.trailingComment) {
-      result += ` -- ${imp.trailingComment}`;
+      result += this.formatInlineComment(imp.trailingComment);
     }
     return result;
   }
@@ -232,7 +244,7 @@ class Formatter {
     result +=
       `export from "${reexp.source}" type ${types}${this.formatTerminator(reexp)}`;
     if (reexp.trailingComment) {
-      result += ` -- ${reexp.trailingComment}`;
+      result += this.formatInlineComment(reexp.trailingComment);
     }
     return result;
   }
@@ -268,10 +280,6 @@ class Formatter {
     }
 
     // Add trailing comment on same line
-    if (decl.trailingComment) {
-      result += ` -- ${decl.trailingComment}`;
-    }
-
     return result;
   }
 
@@ -382,6 +390,10 @@ class Formatter {
       }
     }
 
+    if (decl.trailingComment) {
+      result += this.formatInlineComment(decl.trailingComment);
+    }
+
     return result;
   }
 
@@ -398,7 +410,7 @@ class Formatter {
 
       let expr = this.formatExpr(block.result);
       if (block.resultTrailingComment) {
-        expr += ` -- ${block.resultTrailingComment}`;
+        expr += this.formatInlineComment(block.resultTrailingComment);
       }
       if (block.isMultiLine) {
         this.indent++;
@@ -422,7 +434,7 @@ class Formatter {
     if (block.result) {
       let resultLine = this.indentStr() + this.formatExpr(block.result);
       if (block.resultTrailingComment) {
-        resultLine += ` -- ${block.resultTrailingComment}`;
+        resultLine += this.formatInlineComment(block.resultTrailingComment);
       }
       parts.push(resultLine);
       if (block.resultCommentStatements) {
@@ -655,7 +667,10 @@ class Formatter {
 
     for (const stmt of block.statements) {
       if (stmt.kind === "comment_statement") {
-        parts.push(`${this.indentStr()}-- ${stmt.text}`);
+        const commentText = stmt.rawText
+          ? this.normalizeNewlines(stmt.rawText)
+          : this.formatCommentLine(stmt.text);
+        parts.push(`${this.indentStr()}${commentText}`);
         if (stmt.hasBlankLineAfter) {
           parts.push("");
         }
@@ -714,7 +729,9 @@ class Formatter {
           );
           const line =
             `let ${recPrefix}${decl.name}${annotationSuffix} = ${formattedMatch};`;
-          return decl.trailingComment ? `${line} -- ${decl.trailingComment}` : line;
+          return decl.trailingComment
+            ? `${line}${this.formatInlineComment(decl.trailingComment)}`
+            : line;
         }
 
         // Use same logic as top-level let declarations
@@ -723,7 +740,9 @@ class Formatter {
           const body = this.formatBlock(decl.body, false, true);
           const line =
             `let ${recPrefix}${decl.name}${annotationSuffix} = ${paramsStr} => ${body};`;
-          return decl.trailingComment ? `${line} -- ${decl.trailingComment}` : line;
+          return decl.trailingComment
+            ? `${line}${this.formatInlineComment(decl.trailingComment)}`
+            : line;
         }
 
         // Simple let binding
@@ -731,11 +750,15 @@ class Formatter {
         if (body.startsWith("\n")) {
           const line =
             `let ${recPrefix}${decl.name}${annotationSuffix} =${body};`;
-          return decl.trailingComment ? `${line} -- ${decl.trailingComment}` : line;
+          return decl.trailingComment
+            ? `${line}${this.formatInlineComment(decl.trailingComment)}`
+            : line;
         } else {
           const line =
             `let ${recPrefix}${decl.name}${annotationSuffix} = ${body};`;
-          return decl.trailingComment ? `${line} -- ${decl.trailingComment}` : line;
+          return decl.trailingComment
+            ? `${line}${this.formatInlineComment(decl.trailingComment)}`
+            : line;
         }
       }
       case "expr_statement":
@@ -1059,9 +1082,50 @@ class Formatter {
     const hasStatements = block.statements.some((stmt) =>
       stmt.kind === "comment_statement"
     );
-    return hasStatements ||
+    const hasTrailingComments = block.statements.some((stmt) => {
+      if (stmt.kind === "expr_statement") {
+        return Boolean(stmt.trailingComment);
+      }
+      if (stmt.kind === "let_statement") {
+        return Boolean(stmt.declaration.trailingComment);
+      }
+      return false;
+    });
+    const hasCommentData = hasStatements ||
+      hasTrailingComments ||
       Boolean(block.resultTrailingComment) ||
       Boolean(block.resultCommentStatements);
+    if (hasCommentData) {
+      return true;
+    }
+    if (this.source) {
+      const snippet = this.source.slice(block.span.start, block.span.end);
+      if (snippet.includes("--")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private formatCommentLine(text: string): string {
+    const needsSpace = text.length === 0 || !/^[\s]/.test(text);
+    return needsSpace ? `-- ${text}` : `--${text}`;
+  }
+
+  private formatInlineComment(text: string | undefined): string {
+    if (!text) {
+      return "";
+    }
+    if (text.includes("String literal")) {
+    }
+    const normalized = this.normalizeNewlines(text);
+    if (normalized.startsWith("--")) {
+      return ` ${normalized}`;
+    }
+    const suffix = normalized.length > 0 && normalized[0] === " "
+      ? normalized
+      : ` ${normalized}`;
+    return ` --${suffix}`;
   }
 
   private formatMatchArmContent(arm: MatchArm): string | null {
@@ -1071,7 +1135,7 @@ class Formatter {
     if (arm.kind === "match_bundle_reference") {
       let text = arm.name;
       if (arm.trailingComment) {
-        text += ` -- ${arm.trailingComment}`;
+        text += this.formatInlineComment(arm.trailingComment);
       }
       if (arm.hasTrailingComma) {
         text += ",";
@@ -1082,7 +1146,7 @@ class Formatter {
     const body = this.formatMatchArmBody(arm.body);
     let text = `${pattern} => ${body}`;
     if (arm.trailingComment) {
-      text += ` -- ${arm.trailingComment}`;
+      text += this.formatInlineComment(arm.trailingComment);
     }
     if (arm.hasTrailingComma) {
       text += ",";
@@ -1094,7 +1158,10 @@ class Formatter {
     const lines: string[] = [];
     for (const arm of arms) {
       if (arm.kind === "comment_statement") {
-        lines.push(`${this.indentStr()}-- ${arm.text}`);
+        const commentText = arm.rawText
+          ? this.normalizeNewlines(arm.rawText)
+          : this.formatCommentLine(arm.text);
+        lines.push(`${this.indentStr()}${commentText}`);
         if (arm.hasBlankLineAfter) {
           lines.push("");
         }
@@ -1124,8 +1191,10 @@ class Formatter {
       ? `match(${scrutineeStr}) { ${inlineArm} }`
       : "";
 
+    const shouldForce = forceMultiLine || this.matchBundleIsMultiLine(bundle);
+
     if (
-      forceMultiLine || inlineArm === null || inlineMatch.length > 60 ||
+      shouldForce || inlineArm === null || inlineMatch.length > 60 ||
       arms.length > 1
     ) {
       this.indent++;
@@ -1152,7 +1221,10 @@ class Formatter {
       ? `match(${paramExpr}) { ${inlineArm} }`
       : "";
 
-    if (inlineFn.length > 80 || arms.length > 2 || inlineArm === null) {
+    if (
+      this.matchBundleIsMultiLine(bundle) || inlineFn.length > 80 ||
+      arms.length > 2 || inlineArm === null
+    ) {
       this.indent++;
       const armsParts = this.formatMatchArmsMultiline(arms);
       this.indent--;
@@ -1197,7 +1269,10 @@ class Formatter {
       inlineArm = this.formatMatchArmContent(arms[0]);
     }
     const inline = inlineArm !== null ? `match { ${inlineArm} }` : "";
-    if (inline.length <= 60 && arms.length <= 1 && inlineArm !== null) {
+    if (
+      !this.matchBundleIsMultiLine(bundle) && inline.length <= 60 &&
+      arms.length <= 1 && inlineArm !== null
+    ) {
       return inline;
     }
 
@@ -1237,15 +1312,18 @@ class Formatter {
 
   private formatCall(expr: Extract<Expr, { kind: "call" }>): string {
     const callee = this.formatExpr(expr.callee);
-    const args = expr.arguments.map((a) => this.formatExpr(a));
-    if (args.length === 0) {
+    const argInfos = expr.arguments.map((argument) => ({
+      expr: argument,
+      text: this.formatExpr(argument),
+    }));
+    if (argInfos.length === 0) {
       return `${callee}()`;
     }
-    if (this.shouldFormatCallMultiline(expr, args)) {
+    if (this.shouldFormatCallMultiline(expr, argInfos)) {
       this.indent++;
-      const lines = args.map((arg, index) => {
-        const comma = index < args.length - 1 ? "," : "";
-        const argLines = arg.split("\n");
+      const lines = argInfos.map((info, index) => {
+        const comma = index < argInfos.length - 1 ? "," : "";
+        const argLines = info.text.split("\n");
         const baseIndent = this.indentStr();
         const indented = argLines.map((line, lineIndex) => {
           const suffix = lineIndex === argLines.length - 1 ? comma : "";
@@ -1256,21 +1334,42 @@ class Formatter {
       this.indent--;
       return `${callee}(\n${lines.join("\n")}\n${this.indentStr()})`;
     }
-    return `${callee}(${args.join(", ")})`;
+    return `${callee}(${argInfos.map((info) => info.text).join(", ")})`;
   }
 
   private shouldFormatCallMultiline(
     expr: Extract<Expr, { kind: "call" }>,
-    formattedArgs: string[],
+    formattedArgs: { expr: Expr; text: string }[],
   ): boolean {
-    if (formattedArgs.some((arg) => arg.includes("\n"))) {
+    const hadOriginalNewline = this.source
+      ? /\r?\n/.test(this.source.slice(expr.callee.span.end, expr.span.end))
+      : false;
+    if (hadOriginalNewline) {
       return true;
     }
-    if (!this.source) {
-      return false;
+    if (
+      formattedArgs.some((info) =>
+        info.text.includes("\n") && !this.isInlineBlockArgument(info.expr)
+      )
+    ) {
+      return true;
     }
-    const slice = this.source.slice(expr.callee.span.end, expr.span.end);
-    return slice.includes("\n");
+    return false;
+  }
+
+  private isInlineBlockArgument(expr: Expr): boolean {
+    if (expr.kind === "arrow") {
+      return true;
+    }
+    if (expr.kind === "block") {
+      return true;
+    }
+    return false;
+  }
+
+  private normalizeNewlines(text: string): string {
+    const withoutCR = text.replace(/\r/g, "");
+    return this.newline === "\n" ? withoutCR : withoutCR.replace(/\n/g, this.newline);
   }
 
   private formatBinary(expr: Extract<Expr, { kind: "binary" }>): string {
@@ -1309,6 +1408,14 @@ class Formatter {
 
   private indentStr(): string {
     return " ".repeat(this.indent * this.options.indentSize);
+  }
+
+  private matchBundleIsMultiLine(bundle: MatchBundle): boolean {
+    if (!this.source) {
+      return false;
+    }
+    const text = this.source.slice(bundle.span.start, bundle.span.end);
+    return text.includes("\n");
   }
 }
 
@@ -1547,39 +1654,43 @@ function printDiffSnippets(
 ) {
   const originalLines = original.split(/\r?\n/);
   const formattedLines = formatted.split(/\r?\n/);
-  let i = 0;
-  let j = 0;
-  while (i < originalLines.length || j < formattedLines.length) {
-    const originalLine = i < originalLines.length ? originalLines[i] : undefined;
-    const formattedLine = j < formattedLines.length
-      ? formattedLines[j]
-      : undefined;
-    if (originalLine === formattedLine) {
-      i++;
-      j++;
-      continue;
-    }
-    const blockHeaderLine = Math.max(
-      1,
-      Math.min(i, originalLines.length - 1) + 1,
-    );
-    console.error(`--- ${filePath}:${blockHeaderLine}`);
-    while (
-      (i < originalLines.length || j < formattedLines.length) &&
-      (i >= originalLines.length || j >= formattedLines.length ||
-        originalLines[i] !== formattedLines[j])
-    ) {
-      if (i < originalLines.length) {
-        console.error(`- ${i + 1}| ${originalLines[i]}`);
-        i++;
-      }
-      if (j < formattedLines.length) {
-        console.error(`+ ${j + 1}| ${formattedLines[j]}`);
-        j++;
-      }
-    }
-    console.error("");
+
+  let prefix = 0;
+  while (
+    prefix < originalLines.length && prefix < formattedLines.length &&
+    originalLines[prefix] === formattedLines[prefix]
+  ) {
+    prefix++;
   }
+
+  if (prefix === originalLines.length && prefix === formattedLines.length) {
+    return;
+  }
+
+  let suffixOriginal = originalLines.length - 1;
+  let suffixFormatted = formattedLines.length - 1;
+  while (
+    suffixOriginal >= prefix && suffixFormatted >= prefix &&
+    originalLines[suffixOriginal] === formattedLines[suffixFormatted]
+  ) {
+    suffixOriginal--;
+    suffixFormatted--;
+  }
+
+  const blockStart = prefix + 1;
+  console.error(`--- ${filePath}:${blockStart}`);
+
+  for (let i = prefix; i <= suffixOriginal; i++) {
+    if (i < originalLines.length) {
+      console.error(`- ${i + 1}| ${originalLines[i]}`);
+    }
+  }
+  for (let j = prefix; j <= suffixFormatted; j++) {
+    if (j < formattedLines.length) {
+      console.error(`+ ${j + 1}| ${formattedLines[j]}`);
+    }
+  }
+  console.error("");
 }
 
 function printFullFormattedFile(filePath: string, formatted: string) {

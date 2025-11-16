@@ -38,9 +38,12 @@ export function lex(source: string, sourceName?: string): Token[] {
         value += source[index];
         index++;
       }
+      if (value.endsWith("\r")) {
+        value = value.slice(0, -1);
+      }
       tokens.push({
         kind: "comment",
-        value: value.trim(),
+        value,
         start: commentStart,
         end: index,
       });

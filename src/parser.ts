@@ -180,7 +180,10 @@ class SurfaceParser {
             commentToken.start,
           );
           if (!textBetween.includes("\n") && lastTopLevel) {
-            lastTopLevel.trailingComment = this.consume().value;
+            const consumed = this.consume();
+            lastTopLevel.trailingComment = this.source
+              ? this.source.slice(consumed.start, consumed.end)
+              : consumed.value;
             lastTokenEnd = this.previous().end;
           }
         }
@@ -2031,7 +2034,13 @@ class SurfaceParser {
         hasBlankLineAfter = newlineCount >= 2;
       }
 
-      comments.push({ text: commentText, hasBlankLineAfter });
+      comments.push({
+        text: commentText,
+        hasBlankLineAfter,
+        rawText: this.source
+          ? this.source.slice(commentToken.start, commentToken.end)
+          : undefined,
+      });
     }
     return comments;
   }
@@ -2057,6 +2066,9 @@ class SurfaceParser {
       text: commentToken.value,
       hasBlankLineAfter,
       span: this.spanFrom(commentToken.start, commentToken.end),
+      rawText: this.source
+        ? this.source.slice(commentToken.start, commentToken.end)
+        : undefined,
       id: nextNodeId(),
     };
   }
@@ -2074,7 +2086,7 @@ class SurfaceParser {
       return undefined;
     }
     this.consume();
-    return commentToken.value;
+    return this.source.slice(commentToken.start, commentToken.end);
   }
 
   private skipComments(): void {
