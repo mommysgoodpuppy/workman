@@ -18,7 +18,7 @@ let makeStep = (v, n) => {
 
 let charComma = char(",");
 let charCloseParen = char(")");
-let mulLiteral = stringToList("mul(");  -- String literal → List<Int>
+let mulLiteral = stringToList("mul("); -- String literal → List<Int>
 let mulLiteralLength = listLength(mulLiteral);
 
 -- Read exactly one digit or raise ExpectedDigit to the caller.
@@ -103,7 +103,7 @@ let rec scan = (chars, i, acc) => {
           print(stringConcat("skipping at ", intToString(i)));
           scan(chars, i + 1, acc)
         },
-        IErr(_)  => {
+        IErr(_) => {
           print(stringConcat("skipping at ", intToString(i)));
           scan(chars, i + 1, acc)
         }
