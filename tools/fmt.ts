@@ -680,7 +680,22 @@ class Formatter {
     }
 
     if (block.result) {
-      parts.push(this.indentStr() + this.formatExpr(block.result));
+      let resultLine = this.indentStr() + this.formatExpr(block.result);
+      if (block.resultTrailingComment) {
+        resultLine += this.formatInlineComment(block.resultTrailingComment);
+      }
+      parts.push(resultLine);
+      if (block.resultCommentStatements) {
+        for (const comment of block.resultCommentStatements) {
+          const commentText = comment.rawText
+            ? this.normalizeNewlines(comment.rawText)
+            : this.formatCommentLine(comment.text);
+          parts.push(`${this.indentStr()}${commentText}`);
+          if (comment.hasBlankLineAfter) {
+            parts.push("");
+          }
+        }
+      }
     }
 
     this.indent--;
@@ -1079,30 +1094,17 @@ class Formatter {
   }
 
   private blockHasComments(block: BlockExpr): boolean {
-    const hasStatements = block.statements.some((stmt) =>
+    const hasCommentStatements = block.statements.some((stmt) =>
       stmt.kind === "comment_statement"
     );
-    const hasTrailingComments = block.statements.some((stmt) => {
-      if (stmt.kind === "expr_statement") {
-        return Boolean(stmt.trailingComment);
-      }
-      if (stmt.kind === "let_statement") {
-        return Boolean(stmt.declaration.trailingComment);
-      }
-      return false;
-    });
-    const hasCommentData = hasStatements ||
-      hasTrailingComments ||
-      Boolean(block.resultTrailingComment) ||
-      Boolean(block.resultCommentStatements);
-    if (hasCommentData) {
+    if (hasCommentStatements) {
       return true;
     }
-    if (this.source) {
-      const snippet = this.source.slice(block.span.start, block.span.end);
-      if (snippet.includes("--")) {
-        return true;
-      }
+    if (
+      block.resultCommentStatements &&
+      block.resultCommentStatements.length > 0
+    ) {
+      return true;
     }
     return false;
   }
