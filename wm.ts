@@ -5,6 +5,7 @@ import { WorkmanError } from "./src/error.ts";
 import { HELP_TEXT } from "./cli/help.ts";
 import { compileToDirectory, parseCompileArgs } from "./cli/compile.ts";
 import { runProgramCommand } from "./cli/run_command.ts";
+import { startWorkmanLanguageServer } from "./lsp/server/src/server.ts";
 
 export {
   runFile,
@@ -39,6 +40,11 @@ async function runCli(): Promise<void> {
 
   if (command === "fmt") {
     await runFormatter(args.slice(1));
+    IO.exit(0);
+  }
+
+  if (command === "lsp") {
+    await startWorkmanLanguageServer();
     IO.exit(0);
   }
 

@@ -59,7 +59,7 @@ interface LSPMessage {
   error?: any;
 }
 
-class WorkmanLanguageServer {
+export class WorkmanLanguageServer {
   private documents = new Map<string, string>();
   private diagnostics = new Map<string, any[]>();
   private writeLock = false;
@@ -2029,7 +2029,11 @@ class WorkmanLanguageServer {
 }
 
 // Start the server
-if (import.meta.main) {
+export async function startWorkmanLanguageServer(): Promise<void> {
   const server = new WorkmanLanguageServer();
   await server.start();
+}
+
+if (import.meta.main) {
+  await startWorkmanLanguageServer();
 }

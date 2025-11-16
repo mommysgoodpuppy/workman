@@ -24,9 +24,16 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:wm"
+    "onLanguage:wm",
+    "onCommand:workman.restartLanguageServer"
   ],
   "contributes": {
+    "commands": [
+      {
+        "command": "workman.restartLanguageServer",
+        "title": "Workman: Restart Language Server"
+      }
+    ],
     "languages": [
       {
         "id": "wm",
