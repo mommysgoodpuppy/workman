@@ -1,7 +1,17 @@
 import * as path from "path";
 import * as fs from "fs";
-import { spawnSync } from "child_process";
-import { commands, type ExtensionContext, window, workspace } from "vscode";
+import * as os from "os";
+import { spawn, spawnSync } from "child_process";
+import {
+  commands,
+  type ExtensionContext,
+  languages,
+  Position,
+  Range,
+  TextEdit,
+  window,
+  workspace,
+} from "vscode";
 import {
   LanguageClient,
   type LanguageClientOptions,
@@ -13,7 +23,10 @@ let client: LanguageClient;
 
 export async function activate(context: ExtensionContext) {
   const outputChannel = window.createOutputChannel("Workman Language Server");
+  const formatterChannel = window.createOutputChannel("Workman Formatter");
+  context.subscriptions.push(outputChannel, formatterChannel);
   outputChannel.appendLine("Workman extension activating...");
+  formatterChannel.appendLine("Workman formatter logging initialized.");
 
   try {
     const systemWm = detectSystemWm(outputChannel);
@@ -136,6 +149,72 @@ export async function activate(context: ExtensionContext) {
       initializationOptions,
     };
 
+    const formattingRegistration = languages.registerDocumentFormattingEditProvider(
+      { language: "wm", scheme: "file" },
+      {
+        provideDocumentFormattingEdits: async (document) => {
+          if (!systemWm) {
+            const message =
+              "Workman formatter requires the 'wm' CLI to be available on PATH.";
+            formatterChannel.appendLine(message);
+            window.showErrorMessage(message);
+            return [];
+          }
+          if (document.uri.scheme !== "file") {
+            formatterChannel.appendLine(
+              `Skipping format for non-file document (${document.uri.toString()})`,
+            );
+            window.showWarningMessage(
+              "Workman formatter only supports file-backed documents.",
+            );
+            return [];
+          }
+          const sourceText = document.getText();
+          formatterChannel.appendLine(
+            `[${new Date().toISOString()}] Formatting request for ${
+              document.uri.fsPath
+            } (length=${sourceText.length})`,
+          );
+          try {
+            const folder = workspace.getWorkspaceFolder(document.uri);
+            const cwd = folder?.uri.fsPath ??
+              path.dirname(document.uri.fsPath);
+            const outputFile = createFormatterTempFilePath();
+            const formatted = await runFormatterCli(
+              systemWm,
+              document.uri.fsPath,
+              cwd,
+              sourceText,
+              formatterChannel,
+              outputFile,
+            );
+            if (formatted === sourceText) {
+              formatterChannel.appendLine(
+                "Formatter reported no changes (already formatted).",
+              );
+              return [];
+            }
+            const endPosition = document.lineCount > 0
+              ? document.lineAt(document.lineCount - 1).range.end
+              : new Position(0, 0);
+            const fullRange = new Range(new Position(0, 0), endPosition);
+            formatterChannel.appendLine(
+              `Formatter produced updated output (length=${formatted.length}).`,
+            );
+            return [TextEdit.replace(fullRange, formatted)];
+          } catch (error) {
+            const message = error instanceof Error
+              ? error.message
+              : String(error);
+            formatterChannel.appendLine(`Formatter failed: ${message}`);
+            window.showErrorMessage(`Workman formatter failed: ${message}`);
+            return [];
+          }
+        },
+      },
+    );
+    context.subscriptions.push(formattingRegistration);
+
     // Create the language client
     client = new LanguageClient(
       "workmanLanguageServer",
@@ -178,6 +257,112 @@ export function deactivate(): Thenable<void> | undefined {
     return undefined;
   }
   return client.stop();
+}
+
+function runFormatterCli(
+  wmCommand: string,
+  filePath: string,
+  cwd: string | undefined,
+  sourceText: string,
+  formatterChannel: import("vscode").OutputChannel,
+  outputFile: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      "fmt",
+      "--stdin-filepath",
+      filePath,
+      "--output",
+      outputFile,
+    ];
+    const start = Date.now();
+    formatterChannel.appendLine(
+      `> ${wmCommand} ${args.join(" ")} (cwd=${
+        cwd ?? "<workspace-root>"
+      }, input=${sourceText.length})`,
+    );
+    const child = spawn(wmCommand, args, {
+      cwd,
+      shell: process.platform === "win32",
+    });
+    let stdout = "";
+    let stderr = "";
+    if (child.stdout) {
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+    }
+    if (child.stderr) {
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (data) => {
+        const chunk = data.toString();
+        stderr += chunk;
+        formatterChannel.append(chunk);
+      });
+    }
+    child.on("error", (error) => {
+      formatterChannel.appendLine(`Formatter process error: ${error}`);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      const duration = Date.now() - start;
+      const finalize = async () => {
+        if (code === 0) {
+          let formatted = "";
+          try {
+            formatted = await fs.promises.readFile(outputFile, "utf8");
+          } catch (error) {
+            throw new Error(
+              `Formatter completed but failed to read output: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          } finally {
+            await cleanupOutputFile(outputFile);
+          }
+          formatterChannel.appendLine(
+            `Formatter completed (exit=0, output=${formatted.length}, ${duration}ms).`,
+          );
+          resolve(formatted);
+        } else {
+          await cleanupOutputFile(outputFile);
+          const message = (stderr || "").trim() ||
+            `Formatter exited with code ${code ?? "unknown"}`;
+          formatterChannel.appendLine(
+            `Formatter failed (exit=${code}, ${duration}ms): ${message}`,
+          );
+          reject(new Error(message));
+        }
+      };
+      finalize().catch((error) => {
+        cleanupOutputFile(outputFile).finally(() => reject(error));
+      });
+    });
+    if (child.stdin) {
+      child.stdin.setDefaultEncoding("utf8");
+      child.stdin.write(sourceText);
+      child.stdin.end();
+    } else {
+      child.kill();
+      const error = new Error("Formatter stdin is not writable.");
+      formatterChannel.appendLine(error.message);
+      reject(error);
+    }
+  });
+}
+
+function createFormatterTempFilePath(): string {
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return path.join(os.tmpdir(), `workman-fmt-${unique}.wm`);
+}
+
+async function cleanupOutputFile(target: string): Promise<void> {
+  try {
+    await fs.promises.unlink(target);
+  } catch {
+    // Ignore cleanup errors
+  }
 }
 
 function detectSystemWm(outputChannel: import("vscode").OutputChannel): string | null {

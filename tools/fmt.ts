@@ -8,6 +8,7 @@ import {
 import { WorkmanError } from "../src/error.ts";
 import { FormatContext } from "../tests/fixtures/format/format_context.ts";
 import { loadModuleGraph } from "../src/module_loader.ts";
+import { isAbsolute, resolve } from "../src/io.ts";
 import type {
   BlockExpr,
   BlockStatement,
@@ -35,8 +36,10 @@ type Declaration = import("../src/ast.ts").TopLevel;
 
 interface FormatOptions {
   indentSize: number;
-  mode: "write" | "check" | "check-full";
+  mode: "write" | "check" | "check-full" | "stdout";
   doubleCheck?: boolean;
+  sourceOverrides?: Map<string, string>;
+  outputPath?: string;
 }
 
 function isStdCoreModule(path: string): boolean {
@@ -55,11 +58,15 @@ function isStdCoreModule(path: string): boolean {
 
 async function computeOperatorEnvironment(
   entryPath: string,
+  sourceOverrides?: Map<string, string>,
 ): Promise<{
   operators: Map<string, OperatorInfo>;
   prefixOperators: Set<string>;
 }> {
-  const graph = await loadModuleGraph(entryPath, { skipEvaluation: true });
+  const graph = await loadModuleGraph(entryPath, {
+    skipEvaluation: true,
+    sourceOverrides,
+  });
   const entry = graph.entry;
   const node = graph.nodes.get(entry);
   if (!node) {
@@ -1702,21 +1709,29 @@ async function formatFile(
   options: FormatOptions,
 ): Promise<boolean> {
   let source: string;
-  try {
-    source = await Deno.readTextFile(filePath);
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
-      console.error(`File not found: ${filePath}`);
-      return false;
+  const overrideSource = options.sourceOverrides?.get(filePath);
+  if (overrideSource !== undefined) {
+    source = overrideSource;
+  } else {
+    try {
+      source = await Deno.readTextFile(filePath);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        console.error(`File not found: ${filePath}`);
+        return false;
+      }
+      throw error;
     }
-    throw error;
   }
 
   try {
     let operators: Map<string, OperatorInfo> = new Map();
     let prefixOperators: Set<string> = new Set();
     try {
-      const env = await computeOperatorEnvironment(filePath);
+      const env = await computeOperatorEnvironment(
+        filePath,
+        options.sourceOverrides,
+      );
       operators = env.operators;
       prefixOperators = env.prefixOperators;
     } catch (error) {
@@ -1774,6 +1789,13 @@ async function formatFile(
           console.error(`${filePath} is not formatted`);
           printFullFormattedFile(filePath, formatted);
           return false;
+        }
+        return true;
+      case "stdout":
+        if (options.outputPath) {
+          await Deno.writeTextFile(options.outputPath, formatted);
+        } else {
+          console.log(formatted);
         }
         return true;
       case "write":
@@ -1840,8 +1862,11 @@ export async function runFormatter(args: string[]): Promise<void> {
   let mode: FormatOptions["mode"] = "write";
   let doubleCheck = false;
   const paths: string[] = [];
+  let stdinFilePath: string | null = null;
+  let outputPath: string | null = null;
 
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
     if (arg === "--check" || arg === "--check-full") {
       if (mode !== "write") {
         console.error("Only one of --check or --check-full may be provided.");
@@ -1854,6 +1879,50 @@ export async function runFormatter(args: string[]): Promise<void> {
       doubleCheck = true;
       continue;
     }
+    if (arg === "--output" || arg.startsWith("--output=")) {
+      if (outputPath !== null) {
+        console.error("Only one --output may be provided.");
+        Deno.exit(1);
+      }
+      if (arg === "--output") {
+        const next = args[i + 1];
+        if (!next) {
+          console.error("--output requires a path argument.");
+          Deno.exit(1);
+        }
+        outputPath = next;
+        i++;
+      } else {
+        outputPath = arg.slice("--output=".length);
+        if (!outputPath) {
+          console.error("--output requires a non-empty path.");
+          Deno.exit(1);
+        }
+      }
+      continue;
+    }
+    if (arg === "--stdin-filepath" || arg.startsWith("--stdin-filepath=")) {
+      if (stdinFilePath !== null) {
+        console.error("Only one --stdin-filepath may be provided.");
+        Deno.exit(1);
+      }
+      if (arg === "--stdin-filepath") {
+        const next = args[i + 1];
+        if (!next) {
+          console.error("--stdin-filepath requires a path argument.");
+          Deno.exit(1);
+        }
+        stdinFilePath = next;
+        i++;
+      } else {
+        stdinFilePath = arg.slice("--stdin-filepath=".length);
+        if (!stdinFilePath) {
+          console.error("--stdin-filepath requires a non-empty path.");
+          Deno.exit(1);
+        }
+      }
+      continue;
+    }
     if (arg.startsWith("--")) {
       console.error(`Unknown flag: ${arg}`);
       printFormatterUsage();
@@ -1862,8 +1931,38 @@ export async function runFormatter(args: string[]): Promise<void> {
     paths.push(arg);
   }
 
+  if (stdinFilePath) {
+    if (mode !== "write") {
+      console.error("--stdin-filepath cannot be combined with check modes.");
+      Deno.exit(1);
+    }
+    if (outputPath) {
+      outputPath = resolve(outputPath);
+    }
+    const entryPath = normalizeEntryPath(stdinFilePath);
+    const stdinText = await new Response(Deno.stdin.readable).text();
+    const sourceOverrides = new Map<string, string>([[entryPath, stdinText]]);
+    const stdinOptions: FormatOptions = {
+      indentSize: 2,
+      mode: "stdout",
+      doubleCheck,
+      sourceOverrides,
+      outputPath: outputPath ?? undefined,
+    };
+    const success = await formatFile(entryPath, stdinOptions);
+    if (!success) {
+      Deno.exit(1);
+    }
+    return;
+  }
+
   if (paths.length === 0) {
     printFormatterUsage();
+    Deno.exit(1);
+  }
+
+  if (outputPath !== null) {
+    console.error("--output is only supported with --stdin-filepath.");
     Deno.exit(1);
   }
 
@@ -1917,8 +2016,16 @@ if (import.meta.main) {
 
 function printFormatterUsage(): void {
   console.error(
-    "Usage: wm fmt [--check|--check-full] [--doublecheck] <file.wm|directory> [<file2.wm> ...]",
+    "Usage: wm fmt [--check|--check-full] [--doublecheck] <file.wm|directory> [<file2.wm> ...] | wm fmt --stdin-filepath <file.wm> [--output <path>]",
   );
+}
+
+function normalizeEntryPath(path: string): string {
+  const normalized = isAbsolute(path) ? path : resolve(path);
+  if (normalized.toLowerCase().endsWith(".wm")) {
+    return normalized;
+  }
+  return `${normalized}.wm`;
 }
 
 function printDiffSnippets(

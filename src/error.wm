@@ -5,8 +5,8 @@ from "std/nativeString" import { stringToList, stringConcat, intToString };
 record Location { line: Int, column: Int, };
 
 let charNewline = match(char("\n")) {
-  Ok(code) => { code },
-  Err(_) => { 10 },
+  IOk(code) => { code },
+  IErr(_) => { 10 },
 };
 
 export let getLineAndColumn = (source, position) => {
