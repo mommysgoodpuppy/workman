@@ -21,11 +21,12 @@ let produceOp = (in) => {
     intR => { R }
   };
   let num = posIntStringToInt(listFilter(isDigit, in));
-  ({ direction: stripErr(dir), distance: stripErr(num) })
+  ({ direction: dir, distance: num })
 };
 
 let rec walker = (opList:List<Operation>, orient, location) => {
   let (op, opList2) = stripErr(listUncons(opList));
+  
   let newOrient = match(op.direction, orient) {
     (L, N) => {W},
     (L, E) => {N},

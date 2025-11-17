@@ -848,7 +848,9 @@ export class WorkmanLanguageServer {
           const formatted = this.tryFormatDiagnosticValue(value);
           safeDetails[key] = formatted ?? value;
         }
-        base = `${base}. Details: ${JSON.stringify(safeDetails)}`;
+        base = `${base}
+        
+Details: ${JSON.stringify(safeDetails)}`;
       } catch {
         // Ignore stringify errors
       }
@@ -873,7 +875,7 @@ export class WorkmanLanguageServer {
     }
     const parts: string[] = [];
     if (expected) parts.push(`Expected: ${expected}`);
-    if (actual) parts.push(`Actual: ${actual}`);
+    if (actual)   parts.push(`---Actual: ${actual}`);
     return parts.join("\n");
   }
 
