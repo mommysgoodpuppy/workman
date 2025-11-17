@@ -7,12 +7,10 @@ let input = "L1, R3, R1, L5, L2, L5, R4, L2, R2, R2, L2, R1, L5, R3, L4, L1, L2,
 
 record Location { x: Int, y: Int };
 record Operation { direction: Direction, distance: Int };
-record Movement { orient: Orientation, distance: Int };
 type Direction = L | R;
 type Orientation = N | E | S | W;
 
 let start = ({ x: 0, y: 0 });
-
 let produceOp = (in) => {
   let intL = char("L");
   let intR = char("R");
@@ -28,6 +26,16 @@ let produceOp = (in) => {
   yoink
 };
 
+let move = (orient, distance) => {
+  (pos: Location) => {
+    match(orient) {
+      N => { ({ x: pos.x, y: pos.y + distance }) },
+      E => { ({ x: pos.x + distance, y: pos.y }) },
+      S => { ({ x: pos.x, y: pos.y - distance }) },
+      W => { ({ x: pos.x - distance, y: pos.y }) }
+    }
+  }
+};
 let rec walker = (opList: List<Operation>, orient, location) => {
   let (op, opList2) = stripErr(listUncons(opList));
   let newOrient = match((op.direction, orient)) {
@@ -35,14 +43,7 @@ let rec walker = (opList: List<Operation>, orient, location) => {
     (R, N) => {E}, (R, E) => {S}, (R, S) => {W}, (R, W) => {N}
   };
   let amount = op.distance;
-  let oX = location.x;
-  let oY = location.y;
-  let newLoc = match(newOrient) {
-    N => { ({ x: oX , y: oY + amount }) },
-    E => { ({ x: oX + amount, y: oY  }) },
-    S => { ({ x: oX , y: oY - amount }) },
-    W => { ({ x: oX - amount, y: oY  }) }
-  };
+  let newLoc = move(newOrient, amount)(location);
   match(listLength(opList2) > 0) {
     true => { walker(opList2, newOrient, newLoc) },
     false => { newLoc }
