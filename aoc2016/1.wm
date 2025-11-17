@@ -1,4 +1,4 @@
-from "std/list" import { listSlice, listFilter, listAt, listTake, listLength, listTakeUntil, listSplitBy, listMap, listUncons };
+from "std/list" import { listSlice, listFilter, listAt, listTake, listLength, listTakeUntil, listSplitBy, listMap, listUncons, listFoldr };
 from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
 from "std/nativeString" import { stringToList, stringConcat, intToString };
 from "std/result" import { stripErr };
@@ -56,15 +56,35 @@ let rec walker = (opList:List<Operation>, orient, location) => {
   }
 };
 
+let rec yoink = (infectedList) => {
+  match(listUncons(infectedList)) {
+    IOk((head, tail)) => {
+      match(head, yoink(tail)) {
+        (IOk(value), IOk(restList)) => { IOk(Link(value, restList)) },
+        (IErr(err), _) => { IErr(err) },
+        (_, IErr(err)) => { IErr(err) }
+      }
+    },
+    IErr(_) => { IOk(Empty) }
+  }
+};
+
+let abs = (n) => {
+  match(n < 0) {
+    true => { 0 - n },
+    false => { n }
+  }
+};
+
 let process = (in) => {
   let str = stringToList(in);
   let opStrList = listSplitBy(str, char(","));
   let strippedL = stripErr(opStrList);
   let opList = listMap(produceOp, strippedL);
-  let yoink = match(opList) {
-    true => {?}
-  };
-  walker(opList, N, start)
+  let yoinkedList = yoink(opList);
+  let cleanOpList = stripErr(yoinkedList);
+  let finalLoc = walker(cleanOpList, N, start);
+  abs(finalLoc.x) + abs(finalLoc.y)
 };
 
 let main = () =>{ 
