@@ -30,7 +30,6 @@ let produceOp = (in) => {
 
 let rec walker = (opList: List<Operation>, orient, location) => {
   let (op, opList2) = stripErr(listUncons(opList));
-  
   let newOrient = match(op.direction, orient) {
     (L, N) => { W },
     (L, E) => { N },
@@ -45,10 +44,10 @@ let rec walker = (opList: List<Operation>, orient, location) => {
   let oX = location.x;
   let oY = location.y;
   let newLoc = match(newOrient) {
-    N => { ({ x: oX + amount, y: oY }) },
-    E => { ({ x: oX, y: oY + amount }) },
-    S => { ({ x: oX - amount, y: oY }) },
-    W => { ({ x: oX, y: oY - amount }) }
+    N => { ({ x: oX , y: oY + amount }) },
+    E => { ({ x: oX + amount, y: oY  }) },
+    S => { ({ x: oX , y: oY - amount }) },
+    W => { ({ x: oX - amount, y: oY  }) }
   };
   match(listLength(opList2) > 0) {
     true => { walker(opList2, newOrient, newLoc) },
@@ -66,13 +65,6 @@ let rec yoink = (infectedList) => {
       }
     },
     IErr(_) => { IOk(Empty) }
-  }
-};
-
-let abs = (n) => {
-  match(n < 0) {
-    true => { 0 - n },
-    false => { n }
   }
 };
 
