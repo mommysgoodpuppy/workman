@@ -1,4 +1,4 @@
-from "std/list" import { listSlice, listFilter, listAt, listTake, listLength, listTakeUntil, listSplitBy, listMap };
+from "std/list" import { listSlice, listFilter, listAt, listTake, listLength, listTakeUntil, listSplitBy, listMap, listUncons };
 from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
 from "std/nativeString" import { stringToList, stringConcat, intToString };
 from "std/result" import { stripErr };
@@ -6,41 +6,59 @@ from "std/result" import { stripErr };
 let input = "L1, R3, R1, L5, L2, L5, R4, L2, R2, R2, L2, R1, L5, R3, L4, L1, L2, R3, R5, L2, R5, L1, R2, L5, R4, R2, R2, L1, L1, R1, L3, L1, R1, L3, R5, R3, R3, L4, R4, L2, L4, R1, R1, L193, R2, L1, R54, R1, L1, R71, L4, R3, R191, R3, R2, L4, R3, R2, L2, L4, L5, R4, R1, L2, L2, L3, L2, L1, R4, R1, R5, R3, L5, R3, R4, L2, R3, L1, L3, L3, L5, L1, L3, L3, L1, R3, L3, L2, R1, L3, L1, R5, R4, R3, R2, R3, L1, L2, R4, L3, R1, L1, L1, R5, R2, R4, R5, L1, L1, R1, L2, L4, R3, L1, L3, R5, R4, R3, R3, L2, R2, L1, R4, R2, L3, L4, L2, R2, R2, L4, R3, R5, L2, R2, R4, R5, L2, L3, L2, R5, L4, L2, R3, L5, R2, L1, R1, R3, R3, L5, L2, L2, R5";
 
 record Location { x: Int, y: Int };
-record Operation { direction: Direction, distance: List<Int> };
+record Operation { direction: Direction, distance: Int };
 record Movement { orient: Orientation, distance: Int };
 type Direction = L | R;
 type Orientation = N | E | S | W;
 
+let start = ({ x: 0, y: 0 });
 
-let endCoord: Location = () => {
-  let x: Location = ({ x: 1, y: 2 });
-  x
-};
-
-let produceOp = (in: List<Int>): Operation => {
+let produceOp = (in) => {
   let intL = char("L");
   let intR = char("R");
-
   let dir = match(listAt(in, 0)) {
     intL => { L },
     intR => { R }
   };
-
   let num = posIntStringToInt(listFilter(isDigit, in));
-
-  ({ direction: dir, distance: num })
+  ({ direction: stripErr(dir), distance: stripErr(num) })
 };
 
-let walker = (opL: List<Operation>): Location => {
-
- --for operaion in opL 
-?
+let rec walker = (opList:List<Operation>, orient, location) => {
+  let (op, opList2) = stripErr(listUncons(opList));
+  let newOrient = match(op.direction, orient) {
+    (L, N) => {W},
+    (L, E) => {N},
+    (L, S) => {E},
+    (L, W) => {S},
+    (R, N) => {E},
+    (R, E) => {S},
+    (R, S) => {W},
+    (R, W) => {N}
+  };
+  let amount = op.distance;
+  let oX = location.x;
+  let oY = location.y;
+  let newLoc = match(newOrient) {
+    N => {({ x:oX + amount, y:oY })},
+    E => {({ x:oX, y:oY + amount })},
+    S => {({ x:oX - amount, y:oY })},
+    W => {({ x:oX, y:oY - amount })}
+  };
+  match(listLength(opList2) > 0) {
+    true => {walker(opList2, newOrient, newLoc)},
+    false => {newLoc}
+  }
 };
 
-let process = (in: String): List<Operation> => {
+let process = (in) => {
   let str = stringToList(in);
-  let opStrLists = listSplitBy(str, char(","));
-  listMap(produceOp, opStrLists)
+  let opStrList = listSplitBy(str, char(","));
+  let strippedL = stripErr(opStrList);
+  let opList = listMap(produceOp, strippedL);
+  walker(opList, N, start)
 };
 
-let main = process(input);
+let main = () =>{ 
+  print(process(input));
+}
