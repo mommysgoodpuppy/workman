@@ -21,7 +21,7 @@ import {
 } from "../../../src//error.ts";
 import { formatScheme } from "../../../src//type_printer.ts";
 import { ModuleLoaderError } from "../../../src//module_loader.ts";
-import { dirname, fromFileUrl, isAbsolute, join } from "std/path/mod.ts";
+import { dirname, fromFileUrl, isAbsolute, join, toFileUrl } from "std/path/mod.ts";
 import { resolve } from "std/path/resolve.ts";
 import {
   getProvenance,
@@ -43,9 +43,14 @@ import {
   compileWorkmanGraph,
 } from "../../../backends/compiler/frontends/workman.ts";
 import type {
+  WorkmanModuleArtifacts,
+} from "../../../backends/compiler/frontends/workman.ts";
+import type { ModuleGraph } from "../../../src//module_loader.ts";
+import type {
   MBlockExpr,
   MExpr,
   MLetDeclaration,
+  MMatchBundle,
   MProgram,
   MTopLevel,
 } from "../../../src//ast_marked.ts";
@@ -79,6 +84,8 @@ export class WorkmanLanguageServer {
       program: MProgram;
       adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>;
       entryPath: string;
+      graph: ModuleGraph;
+      modules: ReadonlyMap<string, WorkmanModuleArtifacts>;
     }
   >();
   private validationInProgress = new Map<string, Promise<void>>();
@@ -290,6 +297,9 @@ export class WorkmanLanguageServer {
       case "textDocument/definition":
         return await this.handleDefinition(message);
 
+      case "textDocument/references":
+        return await this.handleReferences(message);
+
       case "textDocument/inlayHint":
         return await this.handleInlayHint(message);
 
@@ -353,6 +363,7 @@ export class WorkmanLanguageServer {
           },
           hoverProvider: true,
           definitionProvider: true,
+          referencesProvider: true,
           inlayHintProvider: true,
           workspace: {
             fileOperations: {
@@ -1394,34 +1405,159 @@ export class WorkmanLanguageServer {
         }
       }
 
-      const decl = this.findTopLevelLet(context.program, word);
-      if (!decl) {
-        return { jsonrpc: "2.0", id: message.id, result: null };
-      }
-
-      const span = context.layer3.spanIndex.get(decl.id);
-      if (!span) {
-        return { jsonrpc: "2.0", id: message.id, result: null };
-      }
-
-      const range = {
-        start: this.offsetToPosition(text, span.start),
-        end: this.offsetToPosition(text, span.end),
+      const locations: Array<{
+        uri: string;
+        span: { start: number; end: number };
+        sourceText: string;
+      }> = [];
+      const seen = new Set<string>();
+      const pushLocation = (
+        targetUri: string,
+        span: { start: number; end: number },
+        sourceText: string,
+      ) => {
+        const key = `${targetUri}:${span.start}:${span.end}`;
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        locations.push({ uri: targetUri, span, sourceText });
       };
+
+      const localDecl = this.findLetDeclaration(
+        context.program,
+        context.layer3,
+        word,
+        offset,
+      );
+      if (localDecl) {
+        const localSpan = context.layer3.spanIndex.get(localDecl.id);
+        if (localSpan) {
+          pushLocation(uri, localSpan, text);
+        }
+      }
+
+      const topDecl = this.findTopLevelLet(context.program, word);
+      if (topDecl) {
+        const topSpan = context.layer3.spanIndex.get(topDecl.id);
+        if (topSpan) {
+          pushLocation(uri, topSpan, text);
+        }
+      }
+
+      const moduleNode = context.graph.nodes.get(context.entryPath);
+      if (moduleNode) {
+        for (const record of moduleNode.imports) {
+          if (record.kind !== "workman") continue;
+          for (const spec of record.specifiers) {
+            if (spec.local !== word) continue;
+            const moduleLocations = this.findModuleDefinitionLocations(
+              record.sourcePath,
+              spec.imported,
+              context.modules,
+            );
+            for (const loc of moduleLocations) {
+              pushLocation(loc.uri, loc.span, loc.sourceText);
+            }
+          }
+        }
+      }
+
+      if (locations.length === 0 && context.graph.prelude) {
+        const preludeLocations = this.findModuleDefinitionLocations(
+          context.graph.prelude,
+          word,
+          context.modules,
+        );
+        for (const loc of preludeLocations) {
+          pushLocation(loc.uri, loc.span, loc.sourceText);
+        }
+      }
+
+      if (locations.length === 0) {
+        return { jsonrpc: "2.0", id: message.id, result: null };
+      }
 
       return {
         jsonrpc: "2.0",
         id: message.id,
-        result: [
-          {
-            uri,
-            range,
-          },
-        ],
+        result: locations.map((loc) => ({
+          uri: loc.uri,
+          range: this.spanToRange(loc.sourceText, loc.span),
+        })),
       };
     } catch (error) {
       this.log(`[LSP] Definition error: ${error}`);
       return { jsonrpc: "2.0", id: message.id, result: null };
+    }
+  }
+
+  private async handleReferences(
+    message: LSPMessage,
+  ): Promise<LSPMessage> {
+    const { textDocument, position, context: requestContext } = message.params;
+    const uri = textDocument.uri;
+    const text = this.documents.get(uri);
+
+    if (!text) {
+      return { jsonrpc: "2.0", id: message.id, result: [] };
+    }
+
+    try {
+      const entryPath = this.uriToFsPath(uri);
+      const stdRoots = this.computeStdRoots(entryPath);
+      let moduleContext = this.moduleContexts.get(uri);
+      if (!moduleContext) {
+        const sourceOverrides = new Map([[entryPath, text]]);
+        moduleContext = await this.buildModuleContext(
+          entryPath,
+          stdRoots,
+          this.preludeModule,
+          sourceOverrides,
+        );
+        this.moduleContexts.set(uri, moduleContext);
+      }
+      const offset = this.positionToOffset(text, position);
+      const { word } = this.getWordAtOffset(text, offset);
+      if (!word) {
+        return { jsonrpc: "2.0", id: message.id, result: [] };
+      }
+      const decl = this.findTopLevelLet(moduleContext.program, word);
+      if (!decl) {
+        return { jsonrpc: "2.0", id: message.id, result: [] };
+      }
+
+      const spans = this.collectIdentifierReferences(
+        moduleContext.program,
+        word,
+      );
+      const includeDeclaration = requestContext?.includeDeclaration !== false;
+      const results: Array<{ uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } }> = [];
+      const seen = new Set<string>();
+      const addSpan = (span: { start: number; end: number }) => {
+        const key = `${span.start}:${span.end}`;
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        results.push({
+          uri,
+          range: this.spanToRange(text, span),
+        });
+      };
+      if (includeDeclaration) {
+        const declSpan = moduleContext.layer3.spanIndex.get(decl.id);
+        if (declSpan) {
+          addSpan(declSpan);
+        }
+      }
+      for (const span of spans) {
+        addSpan(span);
+      }
+      return { jsonrpc: "2.0", id: message.id, result: results };
+    } catch (error) {
+      this.log(`[LSP] References error: ${error}`);
+      return { jsonrpc: "2.0", id: message.id, result: [] };
     }
   }
 
@@ -1543,6 +1679,16 @@ export class WorkmanLanguageServer {
     return offset;
   }
 
+  private spanToRange(
+    text: string,
+    span: { start: number; end: number },
+  ): { start: { line: number; character: number }; end: { line: number; character: number } } {
+    return {
+      start: this.offsetToPosition(text, span.start),
+      end: this.offsetToPosition(text, span.end),
+    };
+  }
+
   private getWordAtOffset(
     text: string,
     offset: number,
@@ -1603,6 +1749,8 @@ export class WorkmanLanguageServer {
     program: MProgram;
     adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>;
     entryPath: string;
+    graph: ModuleGraph;
+    modules: ReadonlyMap<string, WorkmanModuleArtifacts>;
   }> {
     const compileResult = await compileWorkmanGraph(entryPath, {
       loader: {
@@ -1637,6 +1785,8 @@ export class WorkmanLanguageServer {
       program: entryArtifact.analysis.layer1.markedProgram,
       adtEnv,
       entryPath: entryModulePath,
+      graph: compileResult.loader,
+      modules: compileResult.modules,
     };
   }
 
@@ -1697,6 +1847,20 @@ export class WorkmanLanguageServer {
     // Fallback: assume it's a normal path and normalize it
     const normalized = isAbsolute(uri) ? uri : resolve(uri);
     return this.ensureWmExtension(normalized);
+  }
+
+  private pathToUri(fsPath: string): string {
+    try {
+      const normalized = isAbsolute(fsPath) ? fsPath : resolve(fsPath);
+      return toFileUrl(normalized).href;
+    } catch {
+      const normalized = isAbsolute(fsPath) ? fsPath : resolve(fsPath);
+      const unixish = normalized.replace(/\\/g, "/");
+      if (unixish.startsWith("/")) {
+        return `file://${unixish}`;
+      }
+      return `file:///${unixish}`;
+    }
   }
 
   private ensureWmExtension(path: string): string {
@@ -1762,6 +1926,159 @@ export class WorkmanLanguageServer {
       }
     }
     return undefined;
+  }
+
+  private findModuleDefinitionLocations(
+    modulePath: string,
+    name: string,
+    modules: ReadonlyMap<string, WorkmanModuleArtifacts>,
+  ): Array<{
+    uri: string;
+    span: { start: number; end: number };
+    sourceText: string;
+  }> {
+    const artifact = modules.get(modulePath);
+    if (!artifact) {
+      return [];
+    }
+    const program = artifact.analysis.layer1.markedProgram;
+    const decl = this.findTopLevelLet(program, name);
+    if (!decl) {
+      return [];
+    }
+    const span = artifact.analysis.layer3.spanIndex.get(decl.id);
+    if (!span) {
+      return [];
+    }
+    return [
+      {
+        uri: this.pathToUri(modulePath),
+        span,
+        sourceText: artifact.node.source,
+      },
+    ];
+  }
+
+  private collectIdentifierReferences(
+    program: MProgram,
+    name: string,
+  ): Array<{ start: number; end: number }> {
+    const spans: Array<{ start: number; end: number }> = [];
+    const visitedDecls = new Set<number>();
+
+    const visitExpr = (expr?: MExpr): void => {
+      if (!expr) return;
+      switch (expr.kind) {
+        case "identifier":
+          if (expr.name === name) {
+            spans.push(expr.span);
+          }
+          break;
+        case "constructor":
+          for (const arg of expr.args) visitExpr(arg);
+          break;
+        case "tuple":
+          for (const element of expr.elements) visitExpr(element);
+          break;
+        case "record_literal":
+          for (const field of expr.fields) visitExpr(field.value);
+          break;
+        case "call":
+          visitExpr(expr.callee);
+          for (const arg of expr.arguments) visitExpr(arg);
+          break;
+        case "record_projection":
+          visitExpr(expr.target);
+          break;
+        case "binary":
+          visitExpr(expr.left);
+          visitExpr(expr.right);
+          break;
+        case "unary":
+          visitExpr(expr.operand);
+          break;
+        case "arrow":
+          visitBlock(expr.body);
+          break;
+        case "block":
+          visitBlock(expr);
+          break;
+        case "match":
+          visitExpr(expr.scrutinee);
+          visitMatchBundle(expr.bundle);
+          break;
+        case "match_fn":
+          for (const param of expr.parameters) {
+            visitExpr(param);
+          }
+          visitMatchBundle(expr.bundle);
+          break;
+        case "match_bundle_literal":
+          visitMatchBundle(expr.bundle);
+          break;
+        case "mark_free_var":
+          if (expr.name === name) {
+            spans.push(expr.span);
+          }
+          break;
+        case "mark_not_function":
+          visitExpr(expr.callee);
+          for (const arg of expr.args) visitExpr(arg);
+          break;
+        case "mark_occurs_check":
+          visitExpr(expr.subject);
+          break;
+        case "mark_inconsistent":
+        case "mark_unfillable_hole":
+          visitExpr(expr.subject);
+          break;
+        default:
+          break;
+      }
+    };
+
+    const visitMatchBundle = (bundle: MMatchBundle): void => {
+      for (const arm of bundle.arms) {
+        if (arm.kind === "match_pattern") {
+          visitExpr(arm.body);
+        }
+      }
+    };
+
+    const visitBlock = (block?: MBlockExpr): void => {
+      if (!block) return;
+      for (const stmt of block.statements) {
+        if (stmt.kind === "let_statement") {
+          visitLet(stmt.declaration);
+        } else if (stmt.kind === "expr_statement") {
+          visitExpr(stmt.expression);
+        }
+      }
+      if (block.result) {
+        visitExpr(block.result);
+      }
+    };
+
+    const visitLet = (decl: MLetDeclaration): void => {
+      if (visitedDecls.has(decl.id)) {
+        return;
+      }
+      visitedDecls.add(decl.id);
+      visitBlock(decl.body);
+      if (decl.mutualBindings) {
+        for (const binding of decl.mutualBindings) {
+          visitLet(binding);
+        }
+      }
+    };
+
+    for (const decl of program.declarations ?? []) {
+      if (decl.kind === "let") {
+        visitLet(decl);
+      }
+    }
+
+    return spans;
   }
 
   private findLetDeclaration(
