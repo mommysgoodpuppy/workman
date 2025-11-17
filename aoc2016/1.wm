@@ -2,7 +2,7 @@ from "std/list" import { listSlice, listFilter, listAt, listTake, listLength, li
 from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
 from "std/nativeString" import { stringToList, stringConcat, intToString };
 from "std/result" import { stripErr };
- 
+
 let input = "L1, R3, R1, L5, L2, L5, R4, L2, R2, R2, L2, R1, L5, R3, L4, L1, L2, R3, R5, L2, R5, L1, R2, L5, R4, R2, R2, L1, L1, R1, L3, L1, R1, L3, R5, R3, R3, L4, R4, L2, L4, R1, R1, L193, R2, L1, R54, R1, L1, R71, L4, R3, R191, R3, R2, L4, R3, R2, L2, L4, L5, R4, R1, L2, L2, L3, L2, L1, R4, R1, R5, R3, L5, R3, R4, L2, R3, L1, L3, L3, L5, L1, L3, L3, L1, R3, L3, L2, R1, L3, L1, R5, R4, R3, R2, R3, L1, L2, R4, L3, R1, L1, L1, R5, R2, R4, R5, L1, L1, R1, L2, L4, R3, L1, L3, R5, R4, R3, R3, L2, R2, L1, R4, R2, L3, L4, L2, R2, R2, L4, R3, R5, L2, R2, R4, R5, L2, L3, L2, R5, L4, L2, R3, L5, R2, L1, R1, R3, R3, L5, L2, L2, R5";
 
 record Location { x: Int, y: Int };
@@ -22,37 +22,37 @@ let produceOp = (in) => {
   };
   let num = posIntStringToInt(listFilter(isDigit, in));
   let yoink = match(dir, num) {
-    (IOk(dir),IOk(num)) => {IOk(({ direction: dir, distance: num }))},
-    (IErr(dir), IErr(num)) => {IErr((dir,num))}
+    (IOk(dir), IOk(num)) => { IOk(({ direction: dir, distance: num })) },
+    (IErr(dir), IErr(num)) => { IErr((dir, num)) }
   };
   yoink
 };
 
-let rec walker = (opList:List<Operation>, orient, location) => {
+let rec walker = (opList: List<Operation>, orient, location) => {
   let (op, opList2) = stripErr(listUncons(opList));
   
   let newOrient = match(op.direction, orient) {
-    (L, N) => {W},
-    (L, E) => {N},
-    (L, S) => {E},
-    (L, W) => {S},
-    (R, N) => {E},
-    (R, E) => {S},
-    (R, S) => {W},
-    (R, W) => {N}
+    (L, N) => { W },
+    (L, E) => { N },
+    (L, S) => { E },
+    (L, W) => { S },
+    (R, N) => { E },
+    (R, E) => { S },
+    (R, S) => { W },
+    (R, W) => { N }
   };
   let amount = op.distance;
   let oX = location.x;
   let oY = location.y;
   let newLoc = match(newOrient) {
-    N => {({ x:oX + amount, y:oY })},
-    E => {({ x:oX, y:oY + amount })},
-    S => {({ x:oX - amount, y:oY })},
-    W => {({ x:oX, y:oY - amount })}
+    N => { ({ x: oX + amount, y: oY }) },
+    E => { ({ x: oX, y: oY + amount }) },
+    S => { ({ x: oX - amount, y: oY }) },
+    W => { ({ x: oX, y: oY - amount }) }
   };
   match(listLength(opList2) > 0) {
-    true => {walker(opList2, newOrient, newLoc)},
-    false => {newLoc}
+    true => { walker(opList2, newOrient, newLoc) },
+    false => { newLoc }
   }
 };
 
@@ -79,14 +79,12 @@ let abs = (n) => {
 let process = (in) => {
   let str = stringToList(in);
   let opStrList = listSplitBy(str, char(","));
-  let strippedL = stripErr(opStrList);
-  let opList = listMap(produceOp, strippedL);
-  let yoinkedList = yoink(opList);
-  let cleanOpList = stripErr(yoinkedList);
+  let opList = listMap(produceOp, opStrList);
+  let cleanOpList = stripErr(yoink(opList));
   let finalLoc = walker(cleanOpList, N, start);
   abs(finalLoc.x) + abs(finalLoc.y)
 };
 
-let main = () =>{ 
+let main = () => {
   print(process(input));
 }
