@@ -122,6 +122,42 @@ Deno.test("infers constructors and ADT match", () => {
   assertEquals(binding.type, "(T -> U) -> Option<T> -> Option<U>");
 });
 
+Deno.test("arrow return annotation constrains inferred type", () => {
+  const source = `
+    type Direction = L | R;
+    record Operation { direction: Direction, distance: Int };
+
+    let produce = (dir: Direction): Operation => {
+      { direction: dir, distance: 0 }
+    };
+  `;
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
+  const binding = summaries.find((entry) => entry.name === "produce");
+  assertExists(binding);
+  assertEquals(
+    binding?.type,
+    "Direction -> { direction: Direction, distance: Int }",
+  );
+});
+
+Deno.test("arrow return annotation mismatch reports error", () => {
+  const source = `
+    let bad = (flag: Bool): Int => {
+      true
+    };
+  `;
+  const analysis = analyzeSource(source);
+  const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
+  assert(
+    reasons.includes("type_mismatch"),
+    `expected type_mismatch, got ${JSON.stringify(reasons)}`,
+  );
+});
+
 Deno.test("rejects non-exhaustive match", () => {
   const source = `
     type Option<T> = None | Some<T>;

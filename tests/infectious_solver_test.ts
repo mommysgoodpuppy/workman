@@ -132,10 +132,11 @@ Deno.test("match with empty error branch still discharges", () => {
   const analysis = analyzeSource(`
     type ParseError = Missing;
 
-    let stripErr = (value: IResult<Int, ParseError>) => {
+    let stripErr = (value) => {
       match(value) {
         IOk(x) => { x },
         IErr(_) => {
+        --noop
         }
       }
     };
@@ -147,8 +148,13 @@ Deno.test("match with empty error branch still discharges", () => {
   );
   assertExists(binding);
   const typeStr = formatScheme(binding.scheme);
+  assert(typeStr === "IResult<T, U> -> T", `stripErr type is wrong, got ${typeStr} instead of IResult<T, U> -> T`)
   assert(
-    typeStr.includes("IResult<Int, ParseError> -> Int"),
+    typeStr.includes("IResult"),
+    `expected stripErr to accept an infectious argument, got ${typeStr}`,
+  );
+  assert(
+    !typeStr.includes("-> IResult"),
     `expected stripErr to return bare Int, got ${typeStr}`,
   );
 });

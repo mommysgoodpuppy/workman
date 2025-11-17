@@ -2521,6 +2521,7 @@ export function inferMatchBranches(
 
   let resolvedResult = applyCurrentSubst(ctx, resultType);
   const scrutineeInfo = flattenResultType(resolvedScrutinee);
+  const scrutineeCarrier = splitCarrier(resolvedScrutinee);
 
   const dischargeEffectRow = () => {
     const currentInfo = flattenResultType(resolvedResult);
@@ -2635,6 +2636,30 @@ export function inferMatchBranches(
         effectRowCoverage,
       },
     );
+  }
+
+  if (scrutineeCarrier && handledErrorConstructors.size === 0) {
+    const resultCarrier = splitCarrier(resolvedResult);
+    const baseValue = resultCarrier ? resultCarrier.value : resolvedResult;
+    let combinedState = scrutineeCarrier.state;
+    if (
+      resultCarrier && resultCarrier.domain === scrutineeCarrier.domain
+    ) {
+      const unioned = unionCarrierStates(
+        scrutineeCarrier.domain,
+        resultCarrier.state,
+        scrutineeCarrier.state,
+      );
+      combinedState = unioned ?? resultCarrier.state;
+    }
+    const rejoined = joinCarrier(
+      scrutineeCarrier.domain,
+      baseValue,
+      combinedState,
+    );
+    if (rejoined) {
+      resolvedResult = applyCurrentSubst(ctx, rejoined);
+    }
   }
 
   const resultVars = freeTypeVars(resolvedResult);

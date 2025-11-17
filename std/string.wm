@@ -393,3 +393,25 @@ export let rec strJoin = match(sep, strings) {
   (sep, Link(s, Empty)) => { s },
   (sep, Link(s, rest)) => { strConcat(s, strConcat(sep, strJoin(sep, rest))) }
 };
+
+-- Convert positive integer string to int
+export let posIntStringToInt = (s) => {
+  let rec helper = match(chars, acc) {
+    (Empty, acc) => { IOk(acc) },
+    (Link(c, rest), acc) => {
+      match(charToDigit(c, "Invalid digit")) {
+        IErr(err) => { IErr(err) },
+        IOk(digit) => { helper(rest, add(mul(acc, 10), digit)) }
+      }
+    }
+  };
+  match(strIsEmpty(s)) {
+    true => { IErr("Empty string") },
+    false => { helper(s, 0) }
+  }
+};
+
+-- convert charactercode to a string
+export let charCToString = (c) => {
+  Link(c, Empty)
+};

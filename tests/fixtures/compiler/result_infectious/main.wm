@@ -9,6 +9,11 @@ let addOne = (value) => {
   value + 1
 };
 
+let stripErr = match(result) {
+  IOk(value) => { value },
+  IErr(_) => { 0 }
+};
+
 export let okFlow = () => {
   addOne(parseMaybe(true))
 };
@@ -19,4 +24,8 @@ export let missingFlow = () => {
 
 export let badFlow = () => {
   addOne(IErr(BadDigit))
+};
+
+export let stripped = () => {
+  stripErr(parseMaybe(false))
 };
