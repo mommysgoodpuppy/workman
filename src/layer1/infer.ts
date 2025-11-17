@@ -621,8 +621,9 @@ function inferLetBinding(
         annotationScope,
       );
       storeAnnotationType(ctx, returnAnnotation, returnType);
-      if (unify(ctx, bodyType, returnType)) {
-        bodyType = applyCurrentSubst(ctx, returnType);
+      const alignedReturn = alignAnnotationWithCarrier(bodyType, returnType);
+      if (unify(ctx, bodyType, alignedReturn)) {
+        bodyType = applyCurrentSubst(ctx, alignedReturn);
       } else {
         const failure = ctx.lastUnifyFailure;
         const subject = materializeExpr(ctx, body.result ?? body);
@@ -636,7 +637,7 @@ function inferLetBinding(
           );
           bodyType = mark.type;
         } else {
-          const expected = applyCurrentSubst(ctx, returnType);
+          const expected = applyCurrentSubst(ctx, alignedReturn);
           const actual = applyCurrentSubst(ctx, bodyType);
           const mark = markInconsistent(ctx, body, subject, expected, actual);
           bodyType = mark.type;
@@ -750,8 +751,9 @@ function inferArrowFunction(
     if (returnAnnotation) {
       const annotated = convertTypeExpr(ctx, returnAnnotation, annotationScope);
       storeAnnotationType(ctx, returnAnnotation, annotated);
-      if (unify(ctx, bodyType, annotated)) {
-        bodyType = applyCurrentSubst(ctx, annotated);
+      const aligned = alignAnnotationWithCarrier(bodyType, annotated);
+      if (unify(ctx, bodyType, aligned)) {
+        bodyType = applyCurrentSubst(ctx, aligned);
       } else {
         const failure = ctx.lastUnifyFailure;
         const subject = materializeExpr(ctx, body.result ?? body);
@@ -765,7 +767,7 @@ function inferArrowFunction(
           );
           bodyType = mark.type;
         } else {
-          const expected = applyCurrentSubst(ctx, annotated);
+          const expected = applyCurrentSubst(ctx, aligned);
           const actual = applyCurrentSubst(ctx, bodyType);
           const mark = markInconsistent(ctx, body, subject, expected, actual);
           bodyType = mark.type;
@@ -788,6 +790,51 @@ function inferArrowFunction(
       to: acc,
     }), bodyType);
   });
+}
+
+function alignAnnotationWithCarrier(actual: Type, annotation: Type): Type {
+  const actualCarrier = splitCarrier(actual);
+  if (!actualCarrier) {
+    if (actual.kind === "record" && annotation.kind === "record") {
+      const alignedFields = new Map<string, Type>();
+      for (const [name, annField] of annotation.fields.entries()) {
+        const actualField = actual.fields.get(name);
+        if (actualField) {
+          alignedFields.set(
+            name,
+            alignAnnotationWithCarrier(actualField, annField),
+          );
+        } else {
+          alignedFields.set(name, annField);
+        }
+      }
+      return { kind: "record", fields: alignedFields };
+    }
+    return annotation;
+  }
+  const annotationCarrier = splitCarrier(annotation);
+  if (annotationCarrier && annotationCarrier.domain === actualCarrier.domain) {
+    const alignedValue = alignAnnotationWithCarrier(
+      actualCarrier.value,
+      annotationCarrier.value,
+    );
+    const rejoined = joinCarrier(
+      actualCarrier.domain,
+      alignedValue,
+      actualCarrier.state,
+    );
+    return rejoined ?? annotation;
+  }
+  const alignedInner = alignAnnotationWithCarrier(
+    actualCarrier.value,
+    annotation,
+  );
+  const rejoined = joinCarrier(
+    actualCarrier.domain,
+    alignedInner,
+    actualCarrier.state,
+  );
+  return rejoined ?? annotation;
 }
 
 function mergeBindings(target: Map<string, Type>, source: Map<string, Type>) {

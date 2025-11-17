@@ -144,6 +144,38 @@ Deno.test("arrow return annotation constrains inferred type", () => {
   );
 });
 
+Deno.test("return annotation keeps infectious carrier when errors ignored", () => {
+  const source = `
+    type Direction = L | R;
+    record Operation { direction: Direction, distance: Int };
+    type ParseError = Missing;
+
+    let parseDirection = match(flag) {
+      true => { IOk(L) },
+      false => { IErr(Missing) }
+    };
+
+    let produce = (flag: Bool): Operation => {
+      let op = match(parseDirection(flag)) {
+        direction => { { direction: direction, distance: 0 } }
+      };
+      op
+    };
+  `;
+  const result = inferTypes(source);
+  const summaries = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  }));
+  const binding = summaries.find((entry) => entry.name === "produce");
+  assertExists(binding);
+  console.log(binding.type)
+  assert(
+    binding.type.includes("IResult"),
+    `expected produce to remain infectious, got ${binding.type}`,
+  );
+});
+
 Deno.test("arrow return annotation mismatch reports error", () => {
   const source = `
     let bad = (flag: Bool): Int => {
