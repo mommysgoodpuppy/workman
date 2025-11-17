@@ -1,4 +1,7 @@
-import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
+import {
+  compileWorkmanGraph,
+  type WorkmanModuleArtifacts,
+} from "../backends/compiler/frontends/workman.ts";
 import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import {
   collectCompiledValues,
@@ -7,12 +10,31 @@ import {
 import { formatScheme } from "../src/type_printer.ts";
 import { cloneType } from "../src/types.ts";
 import type { Type } from "../src/types.ts";
-import { IO, resolve, toFileUrl } from "../src/io.ts";
-import { WorkmanError } from "../src/error.ts";
+import { IO, relative, resolve, toFileUrl } from "../src/io.ts";
+import {
+  RuntimeError as WorkmanRuntimeError,
+  WorkmanError,
+} from "../src/error.ts";
 import { substituteHoleSolutionsInType } from "./type_utils.ts";
+import type { SourceSpan } from "../src/ast.ts";
 
 const RUN_USAGE =
   "Usage: wm [fmt|type|err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)";
+
+interface NodeLocationEntry {
+  path: string;
+  source: string;
+  span: SourceSpan;
+}
+
+interface NonExhaustiveMatchMetadata {
+  kind: "non_exhaustive_match";
+  nodeId: number | null;
+  span: SourceSpan | null;
+  patterns: string[];
+  valueDescription?: string;
+  modulePath?: string | null;
+}
 
 export async function runProgramCommand(
   args: string[],
@@ -83,7 +105,13 @@ export async function runProgramCommand(
     }
 
     if (!skipEvaluation) {
-      await executeModule(coreModule, compileResult.coreGraph, debugMode);
+      const nodeLocations = buildNodeLocationIndex(compileResult.modules);
+      await executeModule(
+        coreModule,
+        compileResult.coreGraph,
+        debugMode,
+        nodeLocations,
+      );
     }
   } catch (error) {
     if (error instanceof WorkmanError) {
@@ -428,10 +456,31 @@ async function reportErrorsOnly(
   }
 }
 
+function buildNodeLocationIndex(
+  modules: ReadonlyMap<string, WorkmanModuleArtifacts>,
+): Map<string, Map<number, NodeLocationEntry>> {
+  const index = new Map<string, Map<number, NodeLocationEntry>>();
+  for (const artifact of modules.values()) {
+    const { path, source } = artifact.node;
+    const spans = artifact.analysis.layer3.spanIndex;
+    let moduleMap = index.get(path);
+    if (!moduleMap) {
+      moduleMap = new Map<number, NodeLocationEntry>();
+      index.set(path, moduleMap);
+    }
+    for (const [nodeId, span] of spans.entries()) {
+      if (!span) continue;
+      moduleMap.set(nodeId, { path, source, span });
+    }
+  }
+  return index;
+}
+
 async function executeModule(
   coreModule: any,
   coreGraph: any,
   debugMode: boolean,
+  nodeLocations: Map<string, Map<number, NodeLocationEntry>>,
 ): Promise<void> {
   const tempDir = await IO.makeTempDir({ prefix: "workman-cli-" });
   try {
@@ -439,19 +488,23 @@ async function executeModule(
       outDir: tempDir,
     });
     const moduleUrl = toFileUrl(emitResult.entryPath).href;
-    const moduleExports = await import(moduleUrl) as Record<string, unknown>;
-    await invokeMainIfPresent(moduleExports);
-    const forcedValueNames = coreModule.values.map((binding: any) =>
-      binding.name
-    );
-    const values = collectCompiledValues(moduleExports, coreModule, {
-      forcedValueNames,
-    });
-    if (debugMode && values.length > 0) {
-      console.log("");
-      for (const { name, value } of values) {
-        console.log(`${name} = ${value}`);
+    try {
+      const moduleExports = await import(moduleUrl) as Record<string, unknown>;
+      await invokeMainIfPresent(moduleExports);
+      const forcedValueNames = coreModule.values.map((binding: any) =>
+        binding.name
+      );
+      const values = collectCompiledValues(moduleExports, coreModule, {
+        forcedValueNames,
+      });
+      if (debugMode && values.length > 0) {
+        console.log("");
+        for (const { name, value } of values) {
+          console.log(`${name} = ${value}`);
+        }
       }
+    } catch (runtimeError) {
+      throw enhanceRuntimeError(runtimeError, nodeLocations);
     }
   } finally {
     try {
@@ -460,4 +513,55 @@ async function executeModule(
       // ignore cleanup errors
     }
   }
+}
+
+function enhanceRuntimeError(
+  error: unknown,
+  nodeLocations: Map<string, Map<number, NodeLocationEntry>>,
+): Error {
+  if (!(error instanceof Error)) {
+    return new Error(String(error));
+  }
+  const metadata = (error as { workmanMetadata?: NonExhaustiveMatchMetadata })
+    .workmanMetadata;
+  if (!metadata || metadata.kind !== "non_exhaustive_match") {
+    return error;
+  }
+  const patterns = metadata.patterns.length > 0
+    ? metadata.patterns.join(", ")
+    : "unknown patterns";
+  const valueDesc = metadata.valueDescription ?? "value";
+  const nodeId = typeof metadata.nodeId === "number" ? metadata.nodeId : null;
+  let location: NodeLocationEntry | undefined;
+  if (nodeId !== null) {
+    if (metadata.modulePath && nodeLocations.has(metadata.modulePath)) {
+      location = nodeLocations.get(metadata.modulePath)!.get(nodeId);
+    }
+    if (!location) {
+      for (const moduleMap of nodeLocations.values()) {
+        const candidate = moduleMap.get(nodeId);
+        if (candidate) {
+          location = candidate;
+          break;
+        }
+      }
+    }
+  }
+  const locationLabel = location
+    ? `at node ${nodeId}`
+    : "at unknown location";
+  const message =
+    `Non-exhaustive match ${locationLabel}. Value ${valueDesc} is not handled. Patterns: ${patterns}.`;
+  if (location) {
+    const runtimeError = new WorkmanRuntimeError(
+      message,
+      location.span,
+      location.source,
+    );
+    (runtimeError as { cause?: Error }).cause = error;
+    return runtimeError;
+  }
+  const runtimeError = new WorkmanRuntimeError(message);
+  (runtimeError as { cause?: Error }).cause = error;
+  return runtimeError;
 }

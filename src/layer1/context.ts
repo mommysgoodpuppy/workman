@@ -59,7 +59,10 @@ import type {
   ConstraintDiagnostic,
   ConstraintDiagnosticReason,
 } from "../diagnostics.ts";
-import type { MatchBranchesResult, MatchEffectRowCoverage } from "./infer_types.ts";
+import type {
+  MatchBranchesResult,
+  MatchEffectRowCoverage,
+} from "./infer_types.ts";
 import type {
   HoleId,
   HoleOrigin,
@@ -1001,7 +1004,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
         subst,
       );
       if (!valueUnify.success) return valueUnify;
-      if (leftCarrier.domain === "error") {
+      if (leftCarrier.domain === "effect") {
         const leftStateRow = coerceToEffectRow(leftCarrier.state);
         const rightStateRow = coerceToEffectRow(rightCarrier.state);
         if (leftStateRow && rightStateRow) {

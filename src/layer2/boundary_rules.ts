@@ -6,11 +6,7 @@
 // at function return positions.
 
 import type { ConstraintLabel, Type } from "../types.ts";
-import {
-  flattenResultType,
-  formatIdentity,
-  splitCarrier,
-} from "../types.ts";
+import { flattenResultType, formatIdentity, splitCarrier } from "../types.ts";
 
 export interface BoundaryRule {
   check: (labels: Set<ConstraintLabel>, returnType: Type) => string | null;
@@ -21,12 +17,12 @@ function errorBoundary(
   labels: Set<ConstraintLabel>,
   returnType: Type,
 ): string | null {
-  const errorLabels = Array.from(labels).filter((l) => l.domain === "error");
+  const errorLabels = Array.from(labels).filter((l) => l.domain === "effect");
   if (errorLabels.length === 0) return null; // No errors, OK
 
   // Check if return type is ANY carrier type in the error domain (generic check)
   const carrierInfo = splitCarrier(returnType);
-  if (carrierInfo && carrierInfo.domain === "error") {
+  if (carrierInfo && carrierInfo.domain === "effect") {
     // Error is reified in an error-domain carrier type (Result, IResult, etc.) - OK
     return null;
   }
@@ -40,7 +36,7 @@ function errorBoundary(
 
   // Errors not captured!
   const errorConstructors = errorLabels.flatMap((l) =>
-    l.domain === "error" ? Array.from(l.row.cases.keys()) : []
+    l.domain === "effect" ? Array.from(l.row.cases.keys()) : []
   );
   const errorNames = errorConstructors.join(", ");
   return `Undischarged errors: <${errorNames}>. Return type must be Result<T, E> or errors must be handled with pattern matching.`;
@@ -110,7 +106,7 @@ function holeBoundary(
 
 // Export boundary rules per domain
 export const BOUNDARY_RULES = new Map<string, BoundaryRule>([
-  ["error", { check: errorBoundary }],
+  ["effect", { check: errorBoundary }],
   ["taint", { check: taintBoundary }],
   ["mem", { check: memBoundary }],
   ["hole", { check: holeBoundary }],

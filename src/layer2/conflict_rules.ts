@@ -104,7 +104,7 @@ function holeConflictMessage(
 
 // Export conflict rules per domain
 export const CONFLICT_RULES = new Map<string, ConflictRule>([
-  ["error", { check: errorConflict, message: errorConflictMessage }],
+  ["effect", { check: errorConflict, message: errorConflictMessage }],
   ["taint", { check: taintConflict, message: taintConflictMessage }],
   ["mem", { check: memConflict, message: memConflictMessage }],
   ["hole", { check: holeConflict, message: holeConflictMessage }],

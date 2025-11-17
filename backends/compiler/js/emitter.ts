@@ -30,6 +30,7 @@ interface EmitContext {
   extraExports: { local: string; exported: string }[];
   forcedValueExports: Set<string>;
   options: EmitModuleOptions;
+  modulePath: string;
 }
 
 export interface EmitModuleOptions {
@@ -80,6 +81,7 @@ export function emitModule(
     extraExports: [],
     forcedValueExports: new Set(options.forcedValueExports ?? []),
     options: { extension, runtimeModule },
+    modulePath: module.path,
   };
 
   preallocateNames(module, coreGraphImports(module), ctx);
@@ -613,7 +615,13 @@ function emitMatch(
   expr: CoreExpr & { kind: "match" },
   ctx: EmitContext,
 ): string {
-  if (isCarrierType(expr.scrutinee.type)) {
+  const scrutineeIsCarrier = isCarrierType(expr.scrutinee.type);
+  const dischargesCarrier = Boolean(expr.effectRowCoverage?.dischargesResult);
+  const patternsHandleCarrier = expr.cases.some((kase) =>
+    hasResultConstructorPattern(kase.pattern) ||
+    kase.pattern.kind === "all_errors"
+  );
+  if (scrutineeIsCarrier && dischargesCarrier && patternsHandleCarrier) {
     const paramName = allocateTempName(ctx.state, "res");
     const innerScope = new Map(ctx.scope);
     innerScope.set("res", paramName);
@@ -639,6 +647,30 @@ function emitMatch(
     const lambda = `(${paramName}) => {\n${body}\n}`;
     const marker = resolveVar("markResultHandler", ctx);
     return `${marker}(${lambda}, [0])`;
+  } else if (scrutineeIsCarrier) {
+    const paramName = allocateTempName(ctx.state, "__match_value");
+    const scrutineeTemp = allocateTempName(ctx.state, "__match_scrutinee");
+    const baseScope = new Map(ctx.scope);
+    const lines: string[] = [];
+    lines.push(`const ${scrutineeTemp} = ${paramName};`);
+    for (const kase of expr.cases) {
+      lines.push(...emitMatchCase(kase, scrutineeTemp, ctx, baseScope));
+    }
+    if (expr.fallback) {
+      const fallbackExpr = emitExprWithScope(
+        expr.fallback,
+        ctx,
+        new Map(ctx.scope),
+      );
+      lines.push(`return ${fallbackExpr};`);
+    } else {
+      const helper = resolveVar("nonExhaustiveMatch", ctx);
+      const metadataLiteral = serializeMatchMetadata(expr);
+      lines.push(`${helper}(${scrutineeTemp}, ${metadataLiteral});`);
+    }
+    const body = lines.map((line) => indent(line)).join("\n");
+    const lambda = `(${paramName}) => {\n${body}\n}`;
+    return lambda;
   } else {
     const scrutineeCode = emitExpr(expr.scrutinee, ctx);
     const scrutineeTemp = allocateTempName(ctx.state, "__match_scrutinee");
@@ -657,7 +689,7 @@ function emitMatch(
       lines.push(`return ${fallbackExpr};`);
     } else {
       const helper = resolveVar("nonExhaustiveMatch", ctx);
-      const metadataLiteral = serializeMatchMetadata(expr);
+      const metadataLiteral = serializeMatchMetadata(expr, ctx);
       lines.push(`${helper}(${scrutineeTemp}, ${metadataLiteral});`);
     }
     const body = lines.map((line) => indent(line)).join("\n");

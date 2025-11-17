@@ -25,10 +25,10 @@ import {
   cloneTypeScheme,
   collapseCarrier,
   collapseResultType,
+  effectLabel,
   type EffectRowType,
   effectRowUnion,
   ensureRow,
-  effectLabel,
   flattenResultType,
   freeTypeVars,
   freshTypeVar,
@@ -83,8 +83,8 @@ import {
   recordBranchJoinConstraint,
   recordCallConstraint,
   recordHasFieldConstraint,
-  recordNumericConstraint,
   recordLayer1Diagnostic,
+  recordNumericConstraint,
   registerHoleForType,
   unify,
   withScopedEnv,
@@ -263,7 +263,7 @@ function refineInfectiousConstructor(
 ): Type {
   // Check if this type is an infectious carrier type
   const carrierInfo = splitCarrier(type);
-  if (!carrierInfo || carrierInfo.domain !== "error") {
+  if (!carrierInfo || carrierInfo.domain !== "effect") {
     return type;
   }
 
@@ -1347,7 +1347,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (finalCarrierInfo) {
         // Emit constraint source with the carrier's state
         if (
-          finalCarrierInfo.domain === "error" &&
+          finalCarrierInfo.domain === "effect" &&
           finalCarrierInfo.state.kind === "effect_row"
         ) {
           emitConstraintSource(
@@ -1391,7 +1391,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       return recordExprType(
         ctx,
         expr,
-        inferArrowFunction(ctx, expr.parameters, expr.body, expr.returnAnnotation),
+        inferArrowFunction(
+          ctx,
+          expr.parameters,
+          expr.body,
+          expr.returnAnnotation,
+        ),
       );
     case "block": {
       const type = inferBlockExpr(ctx, expr);
@@ -2116,25 +2121,25 @@ export function inferPattern(
             break;
           }
         }
-      mergeBindings(bindings, info.bindings);
-      markedArgs.push(info.marked);
-      current = fnType.to;
-    }
-    if (!unify(ctx, expected, current)) {
-      recordLayer1Diagnostic(
-        ctx,
-        pattern.id,
-        "type_mismatch",
-        {
-          expected: applyCurrentSubst(ctx, expected),
-          actual: applyCurrentSubst(ctx, current),
-        },
-      );
-      const markType = createUnknownAndRegister(
-        ctx,
-        holeOriginFromPattern(pattern),
-        { kind: "incomplete", reason: "pattern.constructor.unify_failed" },
-      );
+        mergeBindings(bindings, info.bindings);
+        markedArgs.push(info.marked);
+        current = fnType.to;
+      }
+      if (!unify(ctx, expected, current)) {
+        recordLayer1Diagnostic(
+          ctx,
+          pattern.id,
+          "type_mismatch",
+          {
+            expected: applyCurrentSubst(ctx, expected),
+            actual: applyCurrentSubst(ctx, current),
+          },
+        );
+        const markType = createUnknownAndRegister(
+          ctx,
+          holeOriginFromPattern(pattern),
+          { kind: "incomplete", reason: "pattern.constructor.unify_failed" },
+        );
         const mark: MMarkPattern = {
           kind: "mark_pattern",
           span: pattern.span,
@@ -2242,7 +2247,7 @@ function extractErrConstructorCoverage(
   if (pattern.kind !== "constructor") {
     return undefined;
   }
-  const carrier = getCarrier("error", final);
+  const carrier = getCarrier("effect", final);
   if (!carrier || !carrier.effectConstructors?.includes(pattern.name)) {
     return undefined;
   }
@@ -2473,7 +2478,7 @@ export function inferMatchBranches(
       // If the scrutinee is an error-domain carrier, mark it as having error handling
       if (expected.kind === "constructor") {
         const carrierInfo = splitCarrier(expected);
-        if (carrierInfo && carrierInfo.domain === "error") {
+        if (carrierInfo && carrierInfo.domain === "effect") {
           // Find the error constructor name for this carrier type
           const typeInfo = ctx.adtEnv.get(expected.name);
           if (typeInfo) {
@@ -2556,7 +2561,7 @@ export function inferMatchBranches(
     // mark the error constructor as covered
     if (hasAllErrors && resolvedScrutinee.kind === "constructor") {
       const carrierInfo = splitCarrier(resolvedScrutinee);
-      if (carrierInfo && carrierInfo.domain === "error") {
+      if (carrierInfo && carrierInfo.domain === "effect") {
         const typeInfo = ctx.adtEnv.get(resolvedScrutinee.name);
         if (typeInfo) {
           // Find the error constructor (heuristic: has arity 1)
@@ -2773,7 +2778,7 @@ function classifyBranchKind(info: PatternInfo): MatchBranchKind {
     return "all_errors";
   }
   if (coverage.kind === "constructor") {
-    const carrier = getCarrier("error", info.type);
+    const carrier = getCarrier("effect", info.type);
     if (carrier) {
       if (coverage.ctor === carrier.valueConstructor) {
         return "ok";

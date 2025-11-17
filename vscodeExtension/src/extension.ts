@@ -301,7 +301,7 @@ function runFormatterCli(
         formatterChannel.append(chunk);
       });
     }
-    child.on("error", (error) => {
+    child.on("effect", (error) => {
       formatterChannel.appendLine(`Formatter process error: ${error}`);
       reject(error);
     });

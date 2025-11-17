@@ -85,9 +85,22 @@ export function nonExhaustiveMatch(scrutinee, info = {}) {
     ? info.patterns.join(", ")
     : "unknown patterns";
   const valueDesc = describeValue(scrutinee);
-  throw new Error(
+  const error = new Error(
     `Non-exhaustive match at ${location}. Value ${valueDesc} is not handled. Patterns: ${patterns}.`,
   );
+  const metadata = {
+    kind: "non_exhaustive_match",
+    nodeId: typeof info.nodeId === "number" ? info.nodeId : null,
+    span: (info.span && typeof info.span === "object") ? info.span : null,
+    patterns: Array.isArray(info.patterns) ? info.patterns : [],
+    valueDescription: valueDesc,
+  };
+  Object.defineProperty(error, "workmanMetadata", {
+    value: metadata,
+    enumerable: false,
+    configurable: true,
+  });
+  throw error;
 }
 
 const HANDLED_RESULT_PARAMS = Symbol.for("workmanHandledResultParams");
