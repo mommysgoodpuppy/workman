@@ -54,6 +54,10 @@ import type {
   MProgram,
   MTopLevel,
 } from "../../../src//ast_marked.ts";
+import type {
+  ConstructorAlias,
+  TypeDeclaration,
+} from "../../../src//ast.ts";
 
 interface LSPMessage {
   jsonrpc: string;
@@ -736,6 +740,12 @@ export class WorkmanLanguageServer {
         break;
       case "type_mismatch":
         base = "Conflicting type requirements";
+        {
+          const comparison = this.formatTypeComparisonDetails(diag);
+          if (comparison) {
+            base += `\n${comparison}`;
+          }
+        }
         break;
       case "arity_mismatch":
         base = "Function arity does not match the call";
@@ -835,16 +845,8 @@ export class WorkmanLanguageServer {
         // Safely stringify details, avoiding circular references
         const safeDetails: Record<string, any> = {};
         for (const [key, value] of Object.entries(diag.details)) {
-          if (typeof value === "object" && value !== null) {
-            // Don't include complex objects that might have circular refs
-            if (Array.isArray(value)) {
-              safeDetails[key] = `[Array with ${value.length} items]`;
-            } else {
-              safeDetails[key] = "[Object]";
-            }
-          } else {
-            safeDetails[key] = value;
-          }
+          const formatted = this.tryFormatDiagnosticValue(value);
+          safeDetails[key] = formatted ?? value;
         }
         base = `${base}. Details: ${JSON.stringify(safeDetails)}`;
       } catch {
@@ -852,6 +854,80 @@ export class WorkmanLanguageServer {
       }
     }
     return base;
+  }
+
+  private formatTypeComparisonDetails(
+    diag: ConstraintDiagnosticWithSpan,
+  ): string | null {
+    if (diag.reason !== "type_mismatch") {
+      return null;
+    }
+    const details = diag.details as Record<string, unknown> | undefined;
+    if (!details) {
+      return null;
+    }
+    const expected = this.tryFormatDiagnosticValue(details.expected);
+    const actual = this.tryFormatDiagnosticValue(details.actual);
+    if (!expected && !actual) {
+      return null;
+    }
+    const parts: string[] = [];
+    if (expected) parts.push(`Expected: ${expected}`);
+    if (actual) parts.push(`Actual: ${actual}`);
+    return parts.join("\n");
+  }
+
+  private tryFormatDiagnosticValue(value: unknown): string | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    if (typeof value === "object") {
+      if (Array.isArray(value)) {
+        return `[Array with ${value.length} items]`;
+      }
+      const typeStr = this.tryFormatType(value);
+      if (typeStr) {
+        return typeStr;
+      }
+      return "[Object]";
+    }
+    return String(value);
+  }
+
+  private tryFormatType(value: unknown): string | null {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const kind = (value as { kind?: string }).kind;
+    if (typeof kind !== "string") {
+      return null;
+    }
+    switch (kind) {
+      case "var":
+      case "func":
+      case "constructor":
+      case "tuple":
+      case "record":
+      case "effect_row":
+      case "unit":
+      case "int":
+      case "bool":
+      case "char":
+      case "string":
+        try {
+          return typeToString(value as Type);
+        } catch {
+          return null;
+        }
+      default:
+        return null;
+    }
   }
 
   private renderNodeView(
@@ -1424,12 +1500,20 @@ export class WorkmanLanguageServer {
         locations.push({ uri: targetUri, span, sourceText });
       };
 
-      const localDecl = this.findLetDeclaration(
+      let localDecl = this.findLetDeclaration(
         context.program,
         context.layer3,
         word,
         offset,
       );
+      if (!localDecl) {
+        localDecl = this.findNearestLetBeforeOffset(
+          context.program,
+          context.layer3,
+          word,
+          offset,
+        );
+      }
       if (localDecl) {
         const localSpan = context.layer3.spanIndex.get(localDecl.id);
         if (localSpan) {
@@ -1443,6 +1527,19 @@ export class WorkmanLanguageServer {
         if (topSpan) {
           pushLocation(uri, topSpan, text);
         }
+      }
+
+      const typeDecl = this.findTypeDeclaration(context.program, word);
+      if (typeDecl) {
+        pushLocation(uri, typeDecl.span, text);
+      }
+
+      const ctorDecl = this.findConstructorDeclaration(
+        context.program,
+        word,
+      );
+      if (ctorDecl) {
+        pushLocation(uri, ctorDecl.member.span, text);
       }
 
       const moduleNode = context.graph.nodes.get(context.entryPath);
@@ -1470,6 +1567,16 @@ export class WorkmanLanguageServer {
           context.modules,
         );
         for (const loc of preludeLocations) {
+          pushLocation(loc.uri, loc.span, loc.sourceText);
+        }
+      }
+
+      if (locations.length === 0) {
+        const globalLocations = this.findGlobalDefinitionLocations(
+          word,
+          context.modules,
+        );
+        for (const loc of globalLocations) {
           pushLocation(loc.uri, loc.span, loc.sourceText);
         }
       }
@@ -1928,6 +2035,33 @@ export class WorkmanLanguageServer {
     return undefined;
   }
 
+  private findTypeDeclaration(
+    program: MProgram,
+    name: string,
+  ): TypeDeclaration | undefined {
+    for (const decl of program.declarations ?? []) {
+      if (decl.kind === "type" && decl.node.name === name) {
+        return decl.node;
+      }
+    }
+    return undefined;
+  }
+
+  private findConstructorDeclaration(
+    program: MProgram,
+    name: string,
+  ): { declaration: TypeDeclaration; member: ConstructorAlias } | undefined {
+    for (const decl of program.declarations ?? []) {
+      if (decl.kind !== "type") continue;
+      for (const member of decl.node.members) {
+        if (member.kind === "constructor" && member.name === name) {
+          return { declaration: decl.node, member };
+        }
+      }
+    }
+    return undefined;
+  }
+
   private findModuleDefinitionLocations(
     modulePath: string,
     name: string,
@@ -1941,22 +2075,83 @@ export class WorkmanLanguageServer {
     if (!artifact) {
       return [];
     }
+    return this.collectDefinitionLocationsFromArtifact(
+      artifact,
+      modulePath,
+      name,
+    );
+  }
+
+  private findGlobalDefinitionLocations(
+    name: string,
+    modules: ReadonlyMap<string, WorkmanModuleArtifacts>,
+  ): Array<{
+    uri: string;
+    span: { start: number; end: number };
+    sourceText: string;
+  }> {
+    const results: Array<{
+      uri: string;
+      span: { start: number; end: number };
+      sourceText: string;
+    }> = [];
+    for (const [modulePath, artifact] of modules.entries()) {
+      results.push(
+        ...this.collectDefinitionLocationsFromArtifact(
+          artifact,
+          modulePath,
+          name,
+        ),
+      );
+    }
+    return results;
+  }
+
+  private collectDefinitionLocationsFromArtifact(
+    artifact: WorkmanModuleArtifacts,
+    modulePath: string,
+    name: string,
+  ): Array<{
+    uri: string;
+    span: { start: number; end: number };
+    sourceText: string;
+  }> {
+    const results: Array<{
+      uri: string;
+      span: { start: number; end: number };
+      sourceText: string;
+    }> = [];
     const program = artifact.analysis.layer1.markedProgram;
-    const decl = this.findTopLevelLet(program, name);
-    if (!decl) {
-      return [];
-    }
-    const span = artifact.analysis.layer3.spanIndex.get(decl.id);
-    if (!span) {
-      return [];
-    }
-    return [
-      {
-        uri: this.pathToUri(modulePath),
+    const layer3 = artifact.analysis.layer3;
+    const sourceText = artifact.node.source;
+    const uri = this.pathToUri(modulePath);
+    const pushSpan = (span: { start: number; end: number }) => {
+      results.push({
+        uri,
         span,
-        sourceText: artifact.node.source,
-      },
-    ];
+        sourceText,
+      });
+    };
+
+    const letDecl = this.findTopLevelLet(program, name);
+    if (letDecl) {
+      const span = layer3.spanIndex.get(letDecl.id);
+      if (span) {
+        pushSpan(span);
+      }
+    }
+
+    const typeDecl = this.findTypeDeclaration(program, name);
+    if (typeDecl) {
+      pushSpan(typeDecl.span);
+    }
+
+    const ctorDecl = this.findConstructorDeclaration(program, name);
+    if (ctorDecl) {
+      pushSpan(ctorDecl.member.span);
+    }
+
+    return results;
   }
 
   private collectIdentifierReferences(
@@ -2188,6 +2383,136 @@ export class WorkmanLanguageServer {
     };
 
     return findInTopLevels(program.declarations ?? []);
+  }
+
+  private findNearestLetBeforeOffset(
+    program: MProgram,
+    layer3: Layer3Result,
+    name: string,
+    offset: number,
+  ): MLetDeclaration | undefined {
+    let best:
+      | { decl: MLetDeclaration; spanStart: number }
+      | undefined;
+
+    const considerDecl = (decl: MLetDeclaration | undefined) => {
+      if (!decl || decl.name !== name) {
+        return;
+      }
+      const span = layer3.spanIndex.get(decl.id);
+      if (!span || span.start > offset) {
+        return;
+      }
+      if (!best || span.start >= best.spanStart) {
+        best = { decl, spanStart: span.start };
+      }
+    };
+
+    const visitTopLevels = (decls: MTopLevel[]) => {
+      for (const decl of decls) {
+        if (decl.kind === "let") {
+          considerDecl(decl);
+          if (decl.mutualBindings) {
+            for (const binding of decl.mutualBindings) {
+              considerDecl(binding);
+              visitBlock(binding.body);
+            }
+          }
+          visitBlock(decl.body);
+        }
+      }
+    };
+
+    const visitBlock = (block?: MBlockExpr) => {
+      if (!block) return;
+      for (const stmt of block.statements) {
+        if (stmt.kind === "let_statement") {
+          const decl = stmt.declaration;
+          considerDecl(decl);
+          if (decl.mutualBindings) {
+            for (const binding of decl.mutualBindings) {
+              considerDecl(binding);
+              visitBlock(binding.body);
+            }
+          }
+          visitBlock(decl.body);
+        } else if (stmt.kind === "expr_statement") {
+          visitExpr(stmt.expression);
+        }
+      }
+      if (block.result) {
+        visitExpr(block.result);
+      }
+    };
+
+    const visitExpr = (expr: MExpr) => {
+      switch (expr.kind) {
+        case "block":
+          visitBlock(expr);
+          break;
+        case "arrow":
+          visitBlock(expr.body);
+          break;
+        case "call":
+          visitExpr(expr.callee);
+          for (const arg of expr.arguments) {
+            visitExpr(arg);
+          }
+          break;
+        case "constructor":
+          for (const arg of expr.args) {
+            visitExpr(arg);
+          }
+          break;
+        case "tuple":
+          for (const element of expr.elements) {
+            visitExpr(element);
+          }
+          break;
+        case "record_literal":
+          for (const field of expr.fields) {
+            visitExpr(field.value);
+          }
+          break;
+        case "record_projection":
+          visitExpr(expr.target);
+          break;
+        case "binary":
+          visitExpr(expr.left);
+          visitExpr(expr.right);
+          break;
+        case "unary":
+          visitExpr(expr.operand);
+          break;
+        case "match":
+          visitExpr(expr.scrutinee);
+          visitMatchBundle(expr.bundle);
+          break;
+        case "match_fn":
+          for (const param of expr.parameters) {
+            visitExpr(param);
+          }
+          visitMatchBundle(expr.bundle);
+          break;
+        case "match_bundle_literal":
+          visitMatchBundle(expr.bundle);
+          break;
+        default:
+          break;
+      }
+    };
+
+    const visitMatchBundle = (bundle: MMatchBundle) => {
+      for (const arm of bundle.arms) {
+        if (arm.kind === "match_pattern") {
+          visitExpr(arm.body);
+        }
+      }
+    };
+
+    visitTopLevels(program.declarations ?? []);
+
+    return best?.decl;
   }
 
   private async getPreludeOperatorSets(

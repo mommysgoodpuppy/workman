@@ -4,21 +4,29 @@ from "std/result/core" import { IOk, IErr };
 from "std/core/ordering" import { LT, EQ, GT };
 from "std/option/core" import { Some, None };
 
+type ListErr =
+  | OutOfBounds
+  | UErr;
+
+-- Returns the number of elements in the list
 export let rec listLength = match(list) {
   Empty => { 0 },
   Link(_, rest) => { intAdd(1, listLength(rest)) }
 };
 
+-- Appends two lists together
 export let rec listAppend = match(xs, ys) {
   (Empty, ys) => { ys },
   (Link(x, rest), ys) => { Link(x, listAppend(rest, ys)) }
 };
 
+-- Applies a function to each element of the list and returns a new list with the results
 export let rec listMap = match(f, list) {
   (f, Empty) => { Empty },
   (f, Link(x, rest)) => { Link(f(x), listMap(f, rest)) }
 };
 
+-- Filters the list to include only elements that satisfy the predicate function
 export let rec listFilter = match(predicate, list) {
   (predicate, Empty) => { Empty },
   (predicate, Link(x, rest)) => {
@@ -29,34 +37,40 @@ export let rec listFilter = match(predicate, list) {
   }
 };
 
+-- Takes the first 'count' elements from the list
 export let rec listTake = match(list, count) {
   (Empty, _) => { Empty },
   (_, 0) => { Empty },
   (Link(x, rest), count) => { Link(x, listTake(rest, intSub(count, 1))) }
 };
 
+-- Drops the first 'count' elements from the list and returns the rest
 export let rec listDrop = match(list, count) {
   (list, 0) => { list },
   (Empty, _) => { Empty },
   (Link(_, rest), count) => { listDrop(rest, intSub(count, 1)) }
 };
 
+-- Returns a sublist from index 'start' to 'end' (exclusive)
 export let listSlice = (list, start, end) => {
   let dropped = listDrop(list, start);
   listTake(dropped, intSub(end, start))
 };
 
-export let rec listAt = match(list, index, error) {
-  (Empty, _, error) => { IErr(error) },
-  (Link(x, _), 0, _) => { IOk(x) },
-  (Link(_, rest), index, error) => { listAt(rest, intSub(index, 1), error) }
+-- Returns the element at the specified index, or an error if out of bounds
+export let rec listAt = match(list, index) {
+  (Empty, _) => { IErr(OutOfBounds) },
+  (Link(x, _), 0) => { IOk(x) },
+  (Link(_, rest), index) => { listAt(rest, intSub(index, 1), OutOfBounds) }
 };
 
+-- Folds the list from the left using the function and accumulator
 export let rec listFoldl = match(f, acc, list) {
   (f, acc, Empty) => { acc },
   (f, acc, Link(x, rest)) => { listFoldl(f, f(acc, x), rest) }
 };
 
+-- Folds the list from the right using the function and accumulator
 export let rec listFoldr = match(f, acc, list) {
   (f, acc, Empty) => { acc },
   (f, acc, Link(x, rest)) => { f(x, listFoldr(f, acc, rest)) }
@@ -67,10 +81,12 @@ let rec reverseAcc = match(list, acc) {
   (Link(x, rest), acc) => { reverseAcc(rest, Link(x, acc)) }
 };
 
+-- Reverses the order of elements in the list
 export let listReverse = (list) => {
   reverseAcc(list, Empty)
 };
 
+-- Creates a list of integers from 'start' to 'finish' (inclusive)
 export let rec listRange = match(start, finish) {
   (start, finish) => {
     match(intCompare(start, finish)) {
@@ -80,6 +96,7 @@ export let rec listRange = match(start, finish) {
   }
 };
 
+-- Inserts a value into the list in sorted order using the comparison function
 export let rec listInsertBy = match(cmp, value, list) {
   (cmp, value, list) => {
     match(list) {
@@ -94,6 +111,7 @@ export let rec listInsertBy = match(cmp, value, list) {
   }
 };
 
+-- Sorts the list using insertion sort with the given comparison function
 export let rec listInsertionSortBy = match(cmp, list) {
   (cmp, list) => {
     match(list) {
@@ -103,10 +121,12 @@ export let rec listInsertionSortBy = match(cmp, list) {
   }
 };
 
+-- Sorts a list of integers in ascending order
 export let listSortInt = (list) => {
   listInsertionSortBy(intCompare, list)
 };
 
+-- Joins a list of lists with a separator between them
 -- Join a list of lists with a separator
 -- For strings: listJoin(separator, listOfStrings)
 export let rec listJoin = match(sep, list) {
@@ -115,6 +135,7 @@ export let rec listJoin = match(sep, list) {
   (sep, Link(x, rest)) => { listAppend(x, listAppend(sep, listJoin(sep, rest))) }
 };
 
+-- Applies a function to each element for side effects
 -- Execute a function for each element (for side effects)
 export let rec listForEach = match(f, list) {
   (f, Empty) => { () },
@@ -124,12 +145,14 @@ export let rec listForEach = match(f, list) {
   }
 };
 
+-- Maps each element to a list and flattens the result into a single list
 -- Map and flatten: f returns a list for each element
 export let rec listFlatMap = match(f, list) {
   (f, Empty) => { Empty },
   (f, Link(x, rest)) => { listAppend(f(x), listFlatMap(f, rest)) }
 };
 
+-- Finds the first element that satisfies the predicate, returning Some(value) or None
 -- Find first element matching predicate
 export let rec listFind = match(predicate, list) {
   (predicate, Empty) => { None },
@@ -141,6 +164,7 @@ export let rec listFind = match(predicate, list) {
   }
 };
 
+-- Checks if any element in the list satisfies the predicate
 -- Check if any element matches predicate
 export let rec listAny = match(predicate, list) {
   (predicate, Empty) => { false },
@@ -152,6 +176,7 @@ export let rec listAny = match(predicate, list) {
   }
 };
 
+-- Checks if all elements in the list satisfy the predicate
 -- Check if all elements match predicate
 export let rec listAll = match(predicate, list) {
   (predicate, Empty) => { true },
@@ -163,6 +188,7 @@ export let rec listAll = match(predicate, list) {
   }
 };
 
+-- Combines two lists into a list of pairs
 -- Zip two lists into pairs
 export let rec listZip = match(xs, ys) {
   (Empty, _) => { Empty },
@@ -170,6 +196,7 @@ export let rec listZip = match(xs, ys) {
   (Link(x, restX), Link(y, restY)) => { Link((x, y), listZip(restX, restY)) }
 };
 
+-- Splits the list into two lists: one with elements that satisfy the predicate, one with those that don't
 -- Partition list into two based on predicate (true, false)
 -- Returns a record with 'trues' and 'falses' fields
 export let rec listPartition = match(predicate, list) {
