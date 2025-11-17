@@ -7,6 +7,7 @@ import {
 } from "../../../src/io.ts";
 import type {
   CoreExpr,
+  CoreLiteral,
   CoreMatchCase,
   CoreModule,
   CoreModuleGraph,
@@ -453,33 +454,25 @@ function detectHandledResultParams(
   expr: CoreExpr & { kind: "lambda" },
   originalParams: readonly string[],
 ): number[] {
-  if (expr.body.kind !== "match") {
-    return [];
-  }
-
-  // Handle direct parameter: match(param) { Ok(...) => ..., Err(...) => ... }
-  if (expr.body.scrutinee.kind === "var") {
-    const paramIndex = originalParams.indexOf(expr.body.scrutinee.name);
-    if (paramIndex === -1) {
-      return [];
+  const directMatch = resolveMatchInLambda(expr.body, originalParams);
+  if (directMatch) {
+    const { matchExpr, paramIndex } = directMatch;
+    if (paramIndex !== -1) {
+      const hasResultPatterns = matchExpr.cases.some((c) =>
+        hasResultConstructorPattern(c.pattern)
+      );
+      if (hasResultPatterns) {
+        return [paramIndex];
+      }
+      const coverage = matchExpr.effectRowCoverage;
+      if (coverage?.dischargesResult) {
+        return [paramIndex];
+      }
     }
-    // Check if patterns contain Ok/Err constructors
-    const hasResultPatterns = expr.body.cases.some((c) =>
-      hasResultConstructorPattern(c.pattern)
-    );
-    if (hasResultPatterns) {
-      return [paramIndex];
-    }
-    // Fall back to coverage check
-    const coverage = expr.body.effectRowCoverage;
-    if (coverage?.dischargesResult) {
-      return [paramIndex];
-    }
-    return [];
   }
 
   // Handle tuple of parameters: match((param1, param2)) { (_, Ok(...)) => ... }
-  if (expr.body.scrutinee.kind === "tuple") {
+  if (expr.body.kind === "match" && expr.body.scrutinee.kind === "tuple") {
     const handledIndices: number[] = [];
 
     // Check each pattern to see which tuple positions have Result constructors
@@ -523,11 +516,31 @@ function detectHandledResultParams(
   return [];
 }
 
+function resolveMatchInLambda(
+  body: CoreExpr,
+  params: readonly string[],
+): { matchExpr: CoreExpr & { kind: "match" }; paramIndex: number } | null {
+  if (body.kind === "match" && body.scrutinee.kind === "var") {
+    const paramIndex = params.indexOf(body.scrutinee.name);
+    if (paramIndex === -1) return null;
+    return { matchExpr: body, paramIndex };
+  }
+  if (
+    body.kind === "call" && body.args.length === 1 &&
+    body.args[0].kind === "var" && body.callee.kind === "match"
+  ) {
+    const paramIndex = params.indexOf(body.args[0].name);
+    if (paramIndex === -1) return null;
+    return { matchExpr: body.callee, paramIndex };
+  }
+  return null;
+}
+
 // Helper to check if a pattern contains Ok or Err constructors
 function hasResultConstructorPattern(pattern: CorePattern): boolean {
   switch (pattern.kind) {
     case "constructor":
-      return pattern.constructor === "Ok" || pattern.constructor === "Err";
+      return isCarrierType(pattern.type);
     case "tuple":
       return pattern.elements.some(hasResultConstructorPattern);
     case "wildcard":
@@ -618,13 +631,14 @@ function emitMatch(
       );
       lines.push(`return ${fallbackExpr};`);
     } else {
-      // improve debug msg
-      lines.push(
-        `throw new Error("Non-exhaustive patterns at runtime");`,
-      );
+      const helper = resolveVar("nonExhaustiveMatch", ctx);
+      const metadataLiteral = serializeMatchMetadata(expr);
+      lines.push(`${helper}(${scrutineeTemp}, ${metadataLiteral});`);
     }
     const body = lines.map((line) => indent(line)).join("\n");
-    return `(${paramName}) => {\n${body}\n}`;
+    const lambda = `(${paramName}) => {\n${body}\n}`;
+    const marker = resolveVar("markResultHandler", ctx);
+    return `${marker}(${lambda}, [0])`;
   } else {
     const scrutineeCode = emitExpr(expr.scrutinee, ctx);
     const scrutineeTemp = allocateTempName(ctx.state, "__match_scrutinee");
@@ -642,12 +656,67 @@ function emitMatch(
       );
       lines.push(`return ${fallbackExpr};`);
     } else {
-      lines.push(
-        `throw new Error("Non-exhaustive patterns at runtime" + JSON.stringify(${scrutineeTemp}));`,
-      );
+      const helper = resolveVar("nonExhaustiveMatch", ctx);
+      const metadataLiteral = serializeMatchMetadata(expr);
+      lines.push(`${helper}(${scrutineeTemp}, ${metadataLiteral});`);
     }
     const body = lines.map((line) => indent(line)).join("\n");
     return `(() => {\n${body}\n})()`;
+  }
+}
+
+function serializeMatchMetadata(
+  expr: CoreExpr & { kind: "match" },
+): string {
+  const metadata = {
+    nodeId: expr.origin ?? null,
+    span: expr.span ?? null,
+    patterns: expr.cases.map((kase) => describePattern(kase.pattern)),
+  };
+  return JSON.stringify(metadata);
+}
+
+function describePattern(pattern: CorePattern): string {
+  switch (pattern.kind) {
+    case "wildcard":
+      return "_";
+    case "binding":
+      return pattern.name;
+    case "literal":
+      return describeLiteral(pattern.literal);
+    case "tuple":
+      return `(${pattern.elements.map(describePattern).join(", ")})`;
+    case "constructor": {
+      const renderedFields = pattern.fields.map(describePattern).join(", ");
+      if (!renderedFields) {
+        return pattern.constructor;
+      }
+      return `${pattern.constructor}(${renderedFields})`;
+    }
+    case "all_errors":
+      return "<all_errors>";
+    default:
+      return pattern.kind;
+  }
+}
+
+function describeLiteral(literal: CoreLiteral): string {
+  switch (literal.kind) {
+    case "unit":
+      return "()";
+    case "int":
+      return literal.value.toString();
+    case "bool":
+      return literal.value ? "true" : "false";
+    case "char": {
+      const char = String.fromCharCode(literal.value);
+      const escaped = char === "'" ? "\\'" : char === "\\" ? "\\\\" : char;
+      return `'${escaped}'`;
+    }
+    case "string":
+      return JSON.stringify(literal.value);
+    default:
+      return literal.kind;
   }
 }
 

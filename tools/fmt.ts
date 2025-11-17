@@ -948,7 +948,10 @@ class Formatter {
         // Always use parentheses for consistency
         const paramsStr = `(${params})`;
         const body = this.formatBlock(expr.body, true);
-        return `${paramsStr} => ${body}`;
+        const returnAnn = expr.returnAnnotation
+          ? `: ${this.formatTypeExpr(expr.returnAnnotation)}`
+          : "";
+        return `${paramsStr}${returnAnn} => ${body}`;
       case "block":
         return this.formatBlock(expr);
       case "match":

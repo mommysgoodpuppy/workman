@@ -216,6 +216,7 @@ export interface ArrowFunctionExpr extends NodeBase {
   kind: "arrow";
   parameters: Parameter[];
   body: BlockExpr;
+  returnAnnotation?: TypeExpr;
 }
 
 export interface MatchExpr extends NodeBase {
@@ -345,6 +346,7 @@ export interface LetDeclaration extends NodeBase {
   name: string;
   parameters: Parameter[];
   annotation?: TypeExpr;
+  returnAnnotation?: TypeExpr;
   body: BlockExpr;
   isRecursive: boolean;
   isFirstClassMatch?: boolean; // True if originally written as `let f = match(x) { ... }`

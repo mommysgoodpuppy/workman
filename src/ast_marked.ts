@@ -97,6 +97,7 @@ export interface MArrowFunctionExpr extends MTypedNode {
   kind: "arrow";
   parameters: MParameter[];
   body: MBlockExpr;
+  returnAnnotation?: MTypeExpr;
 }
 
 export interface MBlockExpr extends MTypedNode {
@@ -366,6 +367,7 @@ export interface MLetDeclaration extends MTypedNode {
   name: string;
   parameters: MParameter[];
   annotation?: MTypeExpr;
+  returnAnnotation?: MTypeExpr;
   body: MBlockExpr;
   isRecursive: boolean;
   isFirstClassMatch?: boolean;

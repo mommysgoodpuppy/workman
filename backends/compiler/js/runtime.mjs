@@ -52,6 +52,44 @@ export function nativePrint(value) {
   return undefined;
 }
 
+function describeValue(value) {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value && typeof value === "object") {
+    if (typeof value.type === "string" && typeof value.tag === "string") {
+      return `${value.type}.${value.tag}`;
+    }
+    try {
+      const json = JSON.stringify(value);
+      if (json !== undefined) {
+        return json;
+      }
+    } catch {
+      // Fall through to default string coercion
+    }
+  }
+  return String(value);
+}
+
+export function nonExhaustiveMatch(scrutinee, info = {}) {
+  const location = info.nodeId != null
+    ? `nodeId ${info.nodeId}`
+    : info.span
+    ? `span ${info.span.start ?? "?"}-${info.span.end ?? "?"}`
+    : "unknown location";
+  const patterns = Array.isArray(info.patterns) && info.patterns.length > 0
+    ? info.patterns.join(", ")
+    : "unknown patterns";
+  const valueDesc = describeValue(scrutinee);
+  throw new Error(
+    `Non-exhaustive match at ${location}. Value ${valueDesc} is not handled. Patterns: ${patterns}.`,
+  );
+}
+
 const HANDLED_RESULT_PARAMS = Symbol.for("workmanHandledResultParams");
 
 export function callInfectious(target, ...args) {

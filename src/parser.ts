@@ -483,12 +483,13 @@ class SurfaceParser {
     }
 
     if (initializer.kind === "arrow") {
-      const { parameters, body } = initializer;
+      const { parameters, body, returnAnnotation } = initializer;
       return {
         kind: "let",
         name: nameToken.value,
         parameters,
         annotation,
+        returnAnnotation,
         body,
         isRecursive,
         isArrowSyntax: true,
@@ -1196,23 +1197,26 @@ class SurfaceParser {
     const token = this.peek();
     if (token.kind === "symbol" && token.value === "(") {
       const snapshot = this.index;
-      let params: Parameter[] | null = null;
+      let arrowInfo:
+        | { parameters: Parameter[]; returnAnnotation?: TypeExpr; start: number }
+        | null = null;
       try {
-        params = this.tryParseArrowParameters();
+        arrowInfo = this.tryParseArrowParameters();
       } catch (_error) {
         // Only failures while scanning arrow parameters should backtrack.
         this.index = snapshot;
       }
-      // If params is null, tryParseArrowParameters either restored the index itself
+      // If arrowInfo is null, tryParseArrowParameters either restored the index
       // or we restored it in the catch above. In that case, fall through.
-      if (params) {
+      if (arrowInfo) {
         const body = this.parseBlockExpr();
         return {
           kind: "arrow",
-          parameters: params,
+          parameters: arrowInfo.parameters,
+          returnAnnotation: arrowInfo.returnAnnotation,
           body,
           span: this.spanFrom(
-            params[0]?.span.start ?? this.previous().start,
+            arrowInfo.parameters[0]?.span.start ?? arrowInfo.start,
             body.span.end,
           ),
           id: nextNodeId(),
@@ -1222,15 +1226,28 @@ class SurfaceParser {
     return this.parseBinaryExpression();
   }
 
-  private tryParseArrowParameters(): Parameter[] | null {
+  private tryParseArrowParameters(): {
+    parameters: Parameter[];
+    returnAnnotation?: TypeExpr;
+    start: number;
+  } | null {
     const startIndex = this.index;
     try {
+      const startToken = this.peek();
       const params = this.parseParameterList();
+      let returnAnnotation: TypeExpr | undefined;
+      if (this.matchSymbol(":")) {
+        returnAnnotation = this.parseTypeExpr();
+      }
       if (!this.matchSymbol("=>")) {
         this.index = startIndex;
         return null;
       }
-      return params;
+      return {
+        parameters: params,
+        returnAnnotation,
+        start: startToken.start,
+      };
     } catch (_error) {
       this.index = startIndex;
       return null;

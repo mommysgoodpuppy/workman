@@ -83,7 +83,6 @@ Deno.test({
 Deno.test({
   name: "JS emitter preserves infectious Result semantics",
   permissions: { read: true, write: true, env: true },
-  ignore: true
 }, async () => {
   const { coreGraph } = await compileWorkmanGraph(
     "./tests/fixtures/compiler/result_infectious/main.wm",
@@ -108,6 +107,7 @@ Deno.test({
     assertEquals(mod.okFlow()._0, 42);
     assertEquals(mod.missingFlow().tag, "IErr");
     assertEquals(mod.badFlow().tag, "IErr");
+    assertEquals(mod.stripped(), 0);
   } finally {
     // Clean up temp directory
     await Deno.remove(tempDir, { recursive: true });

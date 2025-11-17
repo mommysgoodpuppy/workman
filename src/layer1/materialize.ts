@@ -291,6 +291,9 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
         id: expr.id,
         parameters,
         body,
+        returnAnnotation: expr.returnAnnotation
+          ? materializeTypeExpr(ctx, expr.returnAnnotation)
+          : undefined,
         type: getExprTypeOrUnknown(ctx, expr, "expr.arrow"),
       };
     }
@@ -365,6 +368,9 @@ export function materializeMarkedLet(
     parameters,
     annotation: decl.annotation
       ? materializeTypeExpr(ctx, decl.annotation)
+      : undefined,
+    returnAnnotation: decl.returnAnnotation
+      ? materializeTypeExpr(ctx, decl.returnAnnotation)
       : undefined,
     body,
     isRecursive: decl.isRecursive,

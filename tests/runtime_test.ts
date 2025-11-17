@@ -9,7 +9,9 @@ import {
   assert,
   assertEquals,
   assertExists,
+  assertThrows,
 } from "https://deno.land/std/assert/mod.ts";
+import { nonExhaustiveMatch } from "../backends/compiler/js/runtime.mjs";
 
 function evaluateSource(source: string) {
   const tokens = lex(source);
@@ -140,6 +142,18 @@ Deno.test("throws on non-exhaustive runtime match", () => {
   assert(
     reasons.includes("non_exhaustive_match"),
     `expected non_exhaustive_match diagnostic, got ${JSON.stringify(reasons)}`,
+  );
+});
+
+Deno.test("nonExhaustiveMatch helper includes metadata", () => {
+  assertThrows(
+    () =>
+      nonExhaustiveMatch(
+        { tag: "Link", type: "List", _0: 76, _1: { tag: "Empty", type: "List" } },
+        { nodeId: 42, patterns: ["L", "R"] },
+      ),
+    Error,
+    "nodeId 42",
   );
 });
 

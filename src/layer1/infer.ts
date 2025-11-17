@@ -475,6 +475,7 @@ function inferLetDeclaration(
       decl.parameters,
       decl.body,
       decl.annotation,
+      decl.returnAnnotation,
     );
 
     // Zero-parameter arrow functions () => { ... } should have type Unit -> T
@@ -521,6 +522,7 @@ function inferLetDeclaration(
       binding.parameters,
       binding.body,
       binding.annotation,
+      binding.returnAnnotation,
     );
     inferredTypes.set(binding.name, inferredType);
   }
@@ -592,6 +594,7 @@ function inferLetBinding(
   parameters: Parameter[],
   body: BlockExpr,
   annotation: TypeExpr | undefined,
+  returnAnnotation?: TypeExpr,
 ): Type {
   const annotationScope = new Map<string, Type>();
   const paramTypes = parameters.map((param) => (
@@ -609,7 +612,37 @@ function inferLetBinding(
       });
     });
 
-    const bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
+    let bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
+
+    if (returnAnnotation) {
+      const returnType = convertTypeExpr(
+        ctx,
+        returnAnnotation,
+        annotationScope,
+      );
+      storeAnnotationType(ctx, returnAnnotation, returnType);
+      if (unify(ctx, bodyType, returnType)) {
+        bodyType = applyCurrentSubst(ctx, returnType);
+      } else {
+        const failure = ctx.lastUnifyFailure;
+        const subject = materializeExpr(ctx, body.result ?? body);
+        if (failure?.kind === "occurs_check") {
+          const mark = markOccursCheck(
+            ctx,
+            body,
+            subject,
+            failure.left,
+            failure.right,
+          );
+          bodyType = mark.type;
+        } else {
+          const expected = applyCurrentSubst(ctx, returnType);
+          const actual = applyCurrentSubst(ctx, bodyType);
+          const mark = markInconsistent(ctx, body, subject, expected, actual);
+          bodyType = mark.type;
+        }
+      }
+    }
 
     let fnType: Type;
     // Note: Zero-parameter bindings are NOT treated as functions here
@@ -694,10 +727,14 @@ function inferArrowFunction(
   ctx: Context,
   parameters: Parameter[],
   body: BlockExpr,
+  returnAnnotation?: TypeExpr,
 ): Type {
   return withScopedEnv(ctx, () => {
+    const annotationScope = new Map<string, Type>();
     const paramTypes = parameters.map((param) => (
-      param.annotation ? convertTypeExpr(ctx, param.annotation) : freshTypeVar()
+      param.annotation
+        ? convertTypeExpr(ctx, param.annotation, annotationScope)
+        : freshTypeVar()
     ));
 
     parameters.forEach((param, index) => {
@@ -708,7 +745,33 @@ function inferArrowFunction(
       });
     });
 
-    const bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
+    let bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
+
+    if (returnAnnotation) {
+      const annotated = convertTypeExpr(ctx, returnAnnotation, annotationScope);
+      storeAnnotationType(ctx, returnAnnotation, annotated);
+      if (unify(ctx, bodyType, annotated)) {
+        bodyType = applyCurrentSubst(ctx, annotated);
+      } else {
+        const failure = ctx.lastUnifyFailure;
+        const subject = materializeExpr(ctx, body.result ?? body);
+        if (failure?.kind === "occurs_check") {
+          const mark = markOccursCheck(
+            ctx,
+            body,
+            subject,
+            failure.left,
+            failure.right,
+          );
+          bodyType = mark.type;
+        } else {
+          const expected = applyCurrentSubst(ctx, annotated);
+          const actual = applyCurrentSubst(ctx, bodyType);
+          const mark = markInconsistent(ctx, body, subject, expected, actual);
+          bodyType = mark.type;
+        }
+      }
+    }
 
     if (parameters.length === 0) {
       // Zero-parameter function: () => body has type Unit -> bodyType
@@ -1270,7 +1333,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       return recordExprType(
         ctx,
         expr,
-        inferArrowFunction(ctx, expr.parameters, expr.body),
+        inferArrowFunction(ctx, expr.parameters, expr.body, expr.returnAnnotation),
       );
     case "block": {
       const type = inferBlockExpr(ctx, expr);

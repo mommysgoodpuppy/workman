@@ -127,3 +127,28 @@ Deno.test("solver flags infectious annotations expecting bare types", () => {
   const reasons = analysis.layer2.diagnostics.map((diag) => diag.reason);
   assertArrayIncludes(reasons, ["infectious_call_result_mismatch"]);
 });
+
+Deno.test("match with empty error branch still discharges", () => {
+  const analysis = analyzeSource(`
+    type ParseError = Missing;
+
+    let stripErr = (value: IResult<Int, ParseError>) => {
+      match(value) {
+        IOk(x) => { x },
+        IErr(_) => {
+        }
+      }
+    };
+  `);
+
+  assertEquals(analysis.layer2.diagnostics.length, 0);
+  const binding = analysis.layer1.summaries.find((entry) =>
+    entry.name === "stripErr"
+  );
+  assertExists(binding);
+  const typeStr = formatScheme(binding.scheme);
+  assert(
+    typeStr.includes("IResult<Int, ParseError> -> Int"),
+    `expected stripErr to return bare Int, got ${typeStr}`,
+  );
+});
