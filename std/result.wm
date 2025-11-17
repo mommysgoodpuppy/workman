@@ -25,3 +25,10 @@ export let fold = match(onErr, onOk, result) {
   (onErr, onOk, IOk(value)) => { onOk(value) },
   (onErr, onOk, IErr(error)) => { onErr(error) }
 };
+
+export let stripErr = match(in) {
+  IOk(x) => { x },
+  IErr(_) => {
+    --nop
+  }
+};

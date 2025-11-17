@@ -209,3 +209,45 @@ export let rec listPartition = match(predicate, list) {
     }
   }
 };
+
+-- Takes elements from the list until the specified element is found (inclusive), or returns None if not found
+export let listTakeUntil = (list, elem) => {
+  let rec helper = match(lst, acc) {
+    (Empty, _) => { None },
+    (Link(x, rest), acc) => {
+      match(eq(x, elem)) {
+        true => { Some(listReverse(Link(x, acc))) },
+        false => { helper(rest, Link(x, acc)) }
+      }
+    }
+  };
+  helper(list, Empty)
+};
+
+let rec listSplitByHelper = (lst, sep, acc) => {
+  match(lst) {
+    Empty => { listReverse(acc) },
+    _ => {
+      let option = listTakeUntil(lst, sep);
+      handleSplitOption(option, lst, sep, acc)
+    }
+  }
+}and
+
+-- Splits the list into sublists separated by the specified separator element
+handleSplitOption = (option, lst, sep, acc) => {
+  match(option) {
+    None => { listReverse(Link(lst, acc)) },
+    Some(prefx) => {
+      let prefixLen = listLength(prefx);
+      let part = listTake(prefx, intSub(prefixLen, 1));
+      let nextLst = listDrop(lst, prefixLen);
+      listSplitByHelper(nextLst, sep, Link(part, acc))
+    }
+  }
+};
+
+
+export let listSplitBy = (list, sep) => {
+  listSplitByHelper(list, sep, Empty)
+};
