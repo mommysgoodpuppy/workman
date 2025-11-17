@@ -10,6 +10,7 @@ import {
   assertEquals,
   assertExists,
   assertThrows,
+  fail,
 } from "https://deno.land/std/assert/mod.ts";
 import { nonExhaustiveMatch } from "../backends/compiler/js/runtime.mjs";
 
@@ -146,15 +147,25 @@ Deno.test("throws on non-exhaustive runtime match", () => {
 });
 
 Deno.test("nonExhaustiveMatch helper includes metadata", () => {
-  assertThrows(
-    () =>
-      nonExhaustiveMatch(
-        { tag: "Link", type: "List", _0: 76, _1: { tag: "Empty", type: "List" } },
-        { nodeId: 42, patterns: ["L", "R"] },
-      ),
-    Error,
-    "nodeId 42",
-  );
+  try {
+    nonExhaustiveMatch(
+      { tag: "Link", type: "List", _0: 76, _1: { tag: "Empty", type: "List" } },
+      { nodeId: 42, patterns: ["L", "R"] },
+    );
+    fail("nonExhaustiveMatch should throw");
+  } catch (error) {
+    assert(error instanceof Error, "expected an Error to be thrown");
+    assert(
+      error.message.includes("nodeId 42"),
+      `expected message to mention nodeId 42, got '${error.message}'`,
+    );
+    const metadata = (error as { workmanMetadata?: unknown }).workmanMetadata as
+      | { nodeId?: number; patterns?: string[] }
+      | undefined;
+    assertExists(metadata, "expected metadata to be attached to the error");
+    assertEquals(metadata?.nodeId, 42);
+    assertEquals(metadata?.patterns, ["L", "R"]);
+  }
 });
 
 Deno.test("evaluates tuple parameter destructuring", () => {

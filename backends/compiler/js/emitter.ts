@@ -368,10 +368,13 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
       const matchCode = emitMatch(expr, ctx);
       if (isCarrierType(expr.scrutinee.type)) {
         const scrutineeCode = emitExpr(expr.scrutinee, ctx);
-        return `(${matchCode})(${scrutineeCode})`;
-      } else {
-        return matchCode;
+        if (expr.effectRowCoverage?.dischargesResult) {
+          return `(${matchCode})(${scrutineeCode})`;
+        }
+        const helper = resolveVar("callInfectious", ctx);
+        return `${helper}(${matchCode}, ${scrutineeCode})`;
       }
+      return matchCode;
     default:
       throw new CoreLoweringError(
         `Unsupported expression kind '${(expr as CoreExpr).kind}'`,
@@ -670,6 +673,10 @@ function emitMatch(
     }
     const body = lines.map((line) => indent(line)).join("\n");
     const lambda = `(${paramName}) => {\n${body}\n}`;
+    if (patternsHandleCarrier) {
+      const marker = resolveVar("markResultHandler", ctx);
+      return `${marker}(${lambda}, [0])`;
+    }
     return lambda;
   } else {
     const scrutineeCode = emitExpr(expr.scrutinee, ctx);

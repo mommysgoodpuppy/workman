@@ -115,6 +115,34 @@ Deno.test({
 });
 
 Deno.test({
+  name: "JS emitter keeps infection for partial Result matches",
+  permissions: { read: true, write: true, env: true },
+}, async () => {
+  const { coreGraph } = await compileWorkmanGraph(
+    "./tests/fixtures/compiler/result_partial/main.wm",
+  );
+  const { emitModuleGraph } = await import(
+    "../backends/compiler/js/graph_emitter.ts"
+  );
+  const tempDir = await Deno.makeTempDir();
+  try {
+    const { moduleFiles } = await emitModuleGraph(coreGraph, {
+      outDir: tempDir,
+      runtimeFileName: "runtime.mjs",
+    });
+    const entryFile = moduleFiles.get(coreGraph.entry);
+    if (!entryFile) throw new Error("Entry file not found");
+    const mod = await import(pathToFileURL(entryFile).href);
+    assertEquals(mod.okDirection.tag, "L");
+    assertEquals(mod.okDirection.type, "Direction");
+    assertEquals(mod.propagatesErr.tag, "IErr");
+    assertEquals(mod.propagatesErr.type, "IResult");
+  } finally {
+    await Deno.remove(tempDir, { recursive: true });
+  }
+});
+
+Deno.test({
   name: "JS emitter lowers AllErrors patterns",
   permissions: { read: true },
   ignore: true
