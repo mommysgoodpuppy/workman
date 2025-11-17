@@ -2265,7 +2265,11 @@ export function inferMatchBranches(
   const bodyTypes: Type[] = [];
   const branchBodies: Expr[] = [];
   let effectRowCoverage: MatchEffectRowCoverage | undefined;
-  const branchMetadata: { kind: MatchBranchKind; type: Type }[] = [];
+  const branchMetadata: {
+    kind: MatchBranchKind;
+    type: Type;
+    skipJoin?: boolean;
+  }[] = [];
   let dischargedResult = false;
 
   for (const arm of bundle.arms) {
@@ -2313,9 +2317,6 @@ export function inferMatchBranches(
     const expected = applyCurrentSubst(ctx, scrutineeType);
     const patternInfo = inferPattern(ctx, arm.pattern, expected);
     patternInfos.push(patternInfo);
-    if (arm.kind === "match_pattern") {
-      branchBodies.push(arm.body);
-    }
     const branchKind = classifyBranchKind(patternInfo);
 
     // Populate handledErrorConstructors from effectRow if present
@@ -2394,14 +2395,19 @@ export function inferMatchBranches(
       return inferExpr(ctx, arm.body);
     });
     const resolvedBodyType = applyCurrentSubst(ctx, bodyType);
+    const skipJoin = (branchKind === "err" || branchKind === "all_errors") &&
+      arm.body.kind === "block" && !arm.body.result;
     bodyTypes.push(resolvedBodyType);
-    branchMetadata.push({ kind: branchKind, type: resolvedBodyType });
+    branchMetadata.push({ kind: branchKind, type: resolvedBodyType, skipJoin });
 
-    if (!resultType) {
-      resultType = bodyType;
-    } else {
-      unify(ctx, resultType, bodyType);
-      resultType = applyCurrentSubst(ctx, resultType);
+    if (!skipJoin) {
+      branchBodies.push(arm.body);
+      if (!resultType) {
+        resultType = bodyType;
+      } else {
+        unify(ctx, resultType, bodyType);
+        resultType = applyCurrentSubst(ctx, resultType);
+      }
     }
   }
 

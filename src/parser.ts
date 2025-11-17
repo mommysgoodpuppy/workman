@@ -1855,15 +1855,7 @@ class SurfaceParser {
         const patternStart = this.peek();
         const pattern = this.parsePattern();
         this.expectSymbol("=>");
-        const body = this.parseExpression();
-
-        // Enforce that match arm bodies must be block expressions
-        if (body.kind !== "block") {
-          throw this.error(
-            "Match arm body must be a block expression (use { })",
-            this.previous(),
-          );
-        }
+        const body = this.parseBlockExpr();
 
         const trailingComment = this.consumeInlineCommentAfter(body.span.end);
         const hasComma = this.matchSymbol(",");
