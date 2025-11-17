@@ -21,7 +21,11 @@ let produceOp = (in) => {
     intR => { R }
   };
   let num = posIntStringToInt(listFilter(isDigit, in));
-  ({ direction: dir, distance: num })
+  let yoink = match(dir, num) {
+    (IOk(dir),IOk(num)) => {IOk(({ direction: dir, distance: num }))},
+    (IErr(dir), IErr(num)) => {IErr((dir,num))}
+  };
+  yoink
 };
 
 let rec walker = (opList:List<Operation>, orient, location) => {
@@ -57,6 +61,9 @@ let process = (in) => {
   let opStrList = listSplitBy(str, char(","));
   let strippedL = stripErr(opStrList);
   let opList = listMap(produceOp, strippedL);
+  let yoink = match(opList) {
+    true => {?}
+  };
   walker(opList, N, start)
 };
 
