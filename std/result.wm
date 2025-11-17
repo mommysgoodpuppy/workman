@@ -27,7 +27,7 @@ export let fold = match(onErr, onOk, result) {
 };
 
 export let stripErr = match(in) {
-  IOk(x) => { x },
+  IOk(stripped) => { stripped },
   IErr(_) => {
     --nop
   }

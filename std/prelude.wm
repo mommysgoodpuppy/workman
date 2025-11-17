@@ -91,3 +91,10 @@ export prefix ! = not;
 export let print = (value) => {
   nativePrint(value)
 };
+
+export let abs = (n) => {
+  match(n < 0) {
+    true => { 0 - n },
+    false => { n }
+  }
+};

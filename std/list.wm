@@ -251,3 +251,11 @@ handleSplitOption = (option, lst, sep, acc) => {
 export let listSplitBy = (list, sep) => {
   listSplitByHelper(list, sep, Empty)
 };
+
+-- Returns the first element and the rest of the list as a tuple, or None if the list is empty
+export let listUncons = (list) => {
+  match(list) {
+    Empty => { IErr(OutOfBounds) },
+    Link(x, rest) => { IOk((x, rest)) }
+  }
+};
