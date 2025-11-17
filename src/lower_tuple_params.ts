@@ -51,6 +51,9 @@ function lowerBlockExpr(block: BlockExpr, ctx: LoweringContext): void {
       case "let_statement":
         lowerLetDeclaration(statement.declaration, ctx);
         break;
+      case "pattern_let_statement":
+        lowerExpr(statement.initializer, ctx);
+        break;
       case "expr_statement":
         lowerExpr(statement.expression, ctx);
         break;

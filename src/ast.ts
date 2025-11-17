@@ -91,11 +91,21 @@ export interface CommentStatement extends NodeBase {
   rawText?: string;
 }
 
-export type BlockStatement = LetStatement | ExprStatement | CommentStatement;
+export type BlockStatement =
+  | LetStatement
+  | PatternLetStatement
+  | ExprStatement
+  | CommentStatement;
 
 export interface LetStatement extends NodeBase {
   kind: "let_statement";
   declaration: LetDeclaration;
+}
+
+export interface PatternLetStatement extends NodeBase {
+  kind: "pattern_let_statement";
+  pattern: Pattern;
+  initializer: Expr;
 }
 
 export interface ExprStatement extends NodeBase {

@@ -14,6 +14,7 @@ import type {
   ImportSpecifier,
   InfixDeclaration,
   LetDeclaration,
+  PatternLetStatement,
   MatchArm,
   MatchBundle,
   ModuleImport,
@@ -202,6 +203,36 @@ class SurfaceParser {
       declarations,
       trailingComments: trailingComments.length > 0 ? trailingComments : undefined,
     };
+  }
+
+  private tryParseTupleLetStatement(
+    letToken: Token,
+    statements: BlockStatement[],
+  ): boolean {
+    if (this.checkKeyword("rec") || !this.checkSymbol("(")) {
+      return false;
+    }
+
+    const pattern = this.parsePattern();
+    if (pattern.kind !== "tuple") {
+      throw this.error(
+        "Tuple destructuring requires a tuple pattern on the left-hand side",
+        this.previous(),
+      );
+    }
+
+    this.expectSymbol("=");
+    const initializer = this.parseExpression();
+    const statement: PatternLetStatement = {
+      kind: "pattern_let_statement",
+      pattern,
+      initializer,
+      span: this.spanFrom(letToken.start, initializer.span.end),
+      id: nextNodeId(),
+    };
+    statements.push(statement);
+    this.expectSymbol(";");
+    return true;
   }
 
   private parseImportDeclaration(): ModuleImport {
@@ -657,6 +688,9 @@ class SurfaceParser {
       }
       if (this.checkKeyword("let")) {
         const letToken = this.expectKeyword("let");
+        if (this.tryParseTupleLetStatement(letToken, statements)) {
+          continue;
+        }
         const isRecursive = this.matchKeyword("rec");
         // For let statements inside blocks, pass isTopLevel = false
         // This limits first-class match transformation to recursive helpers

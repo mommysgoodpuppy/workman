@@ -1340,6 +1340,9 @@ function remarkBlockStatement(
 ): void {
   if (statement.kind === "let_statement") {
     remarkLetDeclaration(statement.declaration, resolved);
+  } else if (statement.kind === "pattern_let_statement") {
+    remarkPattern(statement.pattern, resolved);
+    remarkExpr(statement.initializer, resolved);
   } else if (statement.kind === "expr_statement") {
     remarkExpr(statement.expression, resolved);
   }

@@ -75,6 +75,10 @@ function canonicalizeStatement(statement: BlockStatement): void {
     case "let_statement":
       canonicalizeLetDeclaration(statement.declaration);
       break;
+    case "pattern_let_statement":
+      canonicalizePattern(statement.pattern);
+      statement.initializer = canonicalizeExpr(statement.initializer);
+      break;
     case "expr_statement":
       statement.expression = canonicalizeExpr(statement.expression);
       break;

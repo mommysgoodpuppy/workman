@@ -84,6 +84,7 @@ import {
   recordCallConstraint,
   recordHasFieldConstraint,
   recordNumericConstraint,
+  recordLayer1Diagnostic,
   registerHoleForType,
   unify,
   withScopedEnv,
@@ -712,6 +713,16 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
     case "let_statement": {
       const { declaration } = statement;
       inferLetDeclaration(ctx, declaration);
+      break;
+    }
+    case "pattern_let_statement": {
+      const valueType = inferExpr(ctx, statement.initializer);
+      const patternInfo = inferPattern(ctx, statement.pattern, valueType);
+      for (const [name, type] of patternInfo.bindings.entries()) {
+        const scheme = generalizeInContext(ctx, type);
+        ctx.env.set(name, scheme);
+        ctx.allBindings.set(name, scheme);
+      }
       break;
     }
     case "expr_statement": {
@@ -2105,16 +2116,25 @@ export function inferPattern(
             break;
           }
         }
-        mergeBindings(bindings, info.bindings);
-        markedArgs.push(info.marked);
-        current = fnType.to;
-      }
-      if (!unify(ctx, expected, current)) {
-        const markType = createUnknownAndRegister(
-          ctx,
-          holeOriginFromPattern(pattern),
-          { kind: "incomplete", reason: "pattern.constructor.unify_failed" },
-        );
+      mergeBindings(bindings, info.bindings);
+      markedArgs.push(info.marked);
+      current = fnType.to;
+    }
+    if (!unify(ctx, expected, current)) {
+      recordLayer1Diagnostic(
+        ctx,
+        pattern.id,
+        "type_mismatch",
+        {
+          expected: applyCurrentSubst(ctx, expected),
+          actual: applyCurrentSubst(ctx, current),
+        },
+      );
+      const markType = createUnknownAndRegister(
+        ctx,
+        holeOriginFromPattern(pattern),
+        { kind: "incomplete", reason: "pattern.constructor.unify_failed" },
+      );
         const mark: MMarkPattern = {
           kind: "mark_pattern",
           span: pattern.span,

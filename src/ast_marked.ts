@@ -107,7 +107,10 @@ export interface MBlockExpr extends MTypedNode {
   isMultiLine?: boolean;
 }
 
-export type MBlockStatement = MLetStatement | MExprStatement;
+export type MBlockStatement =
+  | MLetStatement
+  | MPatternLetStatement
+  | MExprStatement;
 
 export function blockStatementFrom(expr: MExpr): MExprStatement {
   return {
@@ -121,6 +124,12 @@ export function blockStatementFrom(expr: MExpr): MExprStatement {
 export interface MLetStatement extends MNodeBase {
   kind: "let_statement";
   declaration: MLetDeclaration;
+}
+
+export interface MPatternLetStatement extends MNodeBase {
+  kind: "pattern_let_statement";
+  pattern: MPattern;
+  initializer: MExpr;
 }
 
 export interface MExprStatement extends MNodeBase {

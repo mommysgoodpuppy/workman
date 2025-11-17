@@ -627,7 +627,7 @@ export function inferError(
   return new InferError(message, span, source);
 }
 
-function recordLayer1Diagnostic(
+export function recordLayer1Diagnostic(
   ctx: Context,
   origin: NodeId,
   reason: ConstraintDiagnosticReason,
@@ -1050,6 +1050,31 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
     for (let i = 0; i < left.elements.length; i++) {
       const res = unifyTypes(left.elements[i], right.elements[i], current);
       if (!res.success) return res;
+      current = res.subst;
+    }
+    return { success: true, subst: current };
+  }
+
+  if (left.kind === "record" && right.kind === "record") {
+    if (left.fields.size !== right.fields.size) {
+      return {
+        success: false,
+        reason: { kind: "arity_mismatch", left, right },
+      };
+    }
+    let current = subst;
+    for (const [field, leftType] of left.fields.entries()) {
+      const rightType = right.fields.get(field);
+      if (!rightType) {
+        return {
+          success: false,
+          reason: { kind: "type_mismatch", left, right },
+        };
+      }
+      const res = unifyTypes(leftType, rightType, current);
+      if (!res.success) {
+        return res;
+      }
       current = res.subst;
     }
     return { success: true, subst: current };

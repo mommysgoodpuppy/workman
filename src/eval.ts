@@ -8,6 +8,7 @@ import type {
   InfixDeclaration,
   LetDeclaration,
   LetStatement,
+  PatternLetStatement,
   Literal,
   MatchArm,
   MatchBundle,
@@ -189,6 +190,9 @@ function evaluateBlockStatement(
     case "let_statement":
       evaluateLetStatement(env, statement);
       break;
+    case "pattern_let_statement":
+      evaluatePatternLetStatement(env, statement);
+      break;
     case "expr_statement":
       evaluateExpr(env, statement.expression);
       break;
@@ -216,6 +220,24 @@ function evaluateLetStatement(env: Environment, statement: LetStatement): void {
     : createClosure(env, declaration, env);
 
   bindValue(env, declaration.name, value);
+}
+
+function evaluatePatternLetStatement(
+  env: Environment,
+  statement: PatternLetStatement,
+): void {
+  const value = evaluateExpr(env, statement.initializer);
+  const bindings = matchPattern(env, value, statement.pattern);
+  if (!bindings) {
+    throw new RuntimeError(
+      "Tuple destructuring let pattern did not match the value",
+      statement.span,
+      currentSource,
+    );
+  }
+  for (const [name, bound] of bindings.entries()) {
+    bindValue(env, name, bound);
+  }
 }
 
 function evaluateExpr(env: Environment, expr: Expr): RuntimeValue {

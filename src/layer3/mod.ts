@@ -374,6 +374,8 @@ function collectCoverageFromStatement(
         collectCoverageFromBlock(binding.body, coverages, partials);
       }
     }
+  } else if (statement.kind === "pattern_let_statement") {
+    collectCoverageFromExpr(statement.initializer, coverages, partials);
   } else if (statement.kind === "expr_statement") {
     collectCoverageFromExpr(statement.expression, coverages, partials);
   }

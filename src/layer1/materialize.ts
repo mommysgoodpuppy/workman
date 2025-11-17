@@ -140,6 +140,14 @@ export function materializeBlockStatement(
           undefined,
         ),
       } satisfies MLetStatement;
+    case "pattern_let_statement":
+      return {
+        kind: "pattern_let_statement",
+        span: statement.span,
+        id: statement.id,
+        pattern: materializePattern(ctx, statement.pattern),
+        initializer: materializeExpr(ctx, statement.initializer),
+      };
     case "expr_statement":
       return {
         kind: "expr_statement",

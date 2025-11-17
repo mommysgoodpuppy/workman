@@ -232,6 +232,37 @@ function lowerBlockExpr(block: MBlockExpr, state: LoweringState): CoreExpr {
         false,
         blockType,
       );
+    } else if (statement.kind === "pattern_let_statement") {
+      const initializer = lowerExpr(statement.initializer, state);
+      const tempName = freshTemp(state, "__pattern");
+      const matchExpr: CoreExpr = {
+        kind: "match",
+        scrutinee: {
+          kind: "var",
+          name: tempName,
+          type: resolveNodeType(
+            state,
+            statement.initializer.id,
+            statement.initializer.type,
+          ),
+        },
+        cases: [
+          {
+            pattern: lowerPattern(statement.pattern, state),
+            body: current,
+          },
+        ],
+        type: blockType,
+        origin: statement.id,
+        span: statement.span,
+      };
+      current = createLetExpression(
+        tempName,
+        initializer,
+        matchExpr,
+        false,
+        blockType,
+      );
     } else {
       const _exhaustive: never = statement;
       void _exhaustive;
@@ -374,6 +405,8 @@ function lowerMatchExpr(
     scrutinee: loweredScrutinee,
     cases,
     type: resolveNodeType(state, expr.id, expr.type),
+    origin: expr.id,
+    span: expr.span,
     effectRowCoverage: effectRowCoverage,
   };
 }
