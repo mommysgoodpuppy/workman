@@ -1,20 +1,20 @@
-infectious error type Tainted<T, E> = 
-| @value Pure<T> 
-| @effect Impure<E>;
+infectious error type Tainted<T, E> =
+  | @value Pure<T>
+  | @effect Impure<E>;
 
 let x = ?;
 
 let fun = () => {
   match(true) {
-    true => {Impure(1)},
-    false => {Impure(2)}
+    true => { Impure(1) },
+    false => { Impure(2) }
   }
 };
 
-let fun2 = (in:Int) => {
+let fun2 = (in: Int) => {
   match(true) {
-    true => {Pure(in)},
-    false =>{Impure(2)}
+    true => { Pure(in) },
+    false => { Impure(2) }
   }
 };
 
@@ -25,12 +25,10 @@ let puref = (in) => {
 let main = () => {
   let a = fun();
 
-  let checd = (
-    match(a) {
-      Pure(a) => {a},
-      Impure(_) => {2}
-    }
-  );
+  let checd = (match(a) {
+    Pure(a) => { a },
+    Impure(_) => { 2 }
+  });
 
   let res = puref(a);
 

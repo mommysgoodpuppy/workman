@@ -3,7 +3,7 @@ from "./api.js" import { fetchUser };
 
 let useIt = () => { fetchUser(42) };
 
-let natGreet : String = () => {
+let natGreet: String = () => {
   greet()
 };
 

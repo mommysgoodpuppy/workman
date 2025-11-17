@@ -12,13 +12,13 @@ let identity = (x) => { x };
 -- ============================================================================
 -- Multiple constraints that agree
 let multipleCompatible = (x) => {
-  let a = x;      -- Constraint: x is T
-  let b = a;       -- Constraint: x is T
-  let c = a;       -- Constraint: x is T
-  let a: Int = x;      -- Constraint: x is Int
-  let b = x + 1;       -- Constraint: x is Int
-  let c = x * 2;       -- Constraint: x is Int
-  a + b + c            -- All constraints agree: x is Int
+  let a = x; -- Constraint: x is T
+  let b = a; -- Constraint: x is T
+  let c = a; -- Constraint: x is T
+  let a: Int = x; -- Constraint: x is Int
+  let b = x + 1; -- Constraint: x is Int
+  let c = x * 2; -- Constraint: x is Int
+  a + b + c -- All constraints agree: x is Int
 };
 
 -- ============================================================================
@@ -26,8 +26,8 @@ let multipleCompatible = (x) => {
 -- ============================================================================
 -- The solver infers that 'f' must be a function
 let applyTwice = (f, x) => {
-  let y = f(x);    -- Constraint: f is (T1 -> T2)
-  f(y)             -- Constraint: f is (T2 -> T3)
+  let y = f(x); -- Constraint: f is (T1 -> T2)
+  f(y) -- Constraint: f is (T2 -> T3)
   -- Solver infers: f is (T -> T) for some type T
 };
 
@@ -47,12 +47,12 @@ let partiallyKnown = (mystery) => {
 -- ============================================================================
 -- Constraints from record field access
 let getName = (person) => {
-  person.name  -- Constraint: person has field 'name'
+  person.name -- Constraint: person has field 'name'
   -- Partial type: person is { name: ?, ... }
 };
 
 let getAge = (person) => {
-  person.age  -- Constraint: person has field 'age'
+  person.age -- Constraint: person has field 'age'
   -- Partial type: person is { age: ?, ... }
 };
 
@@ -61,8 +61,8 @@ let getAge = (person) => {
 -- ============================================================================
 -- Explicit type annotations create constraints
 let annotated = (x) => {
-  let typed: Int = x;  -- Constraint: x must be Int
-  x + 1                -- Constraint: x must be Int
+  let typed: Int = x; -- Constraint: x must be Int
+  x + 1 -- Constraint: x must be Int
   -- Both constraints agree
 };
 
@@ -72,8 +72,9 @@ let annotated = (x) => {
 -- All branches must return the same type
 let conditional = (flag) => {
   match(flag) {
-    true => { 42 },      -- Branch 1: Int
-    false => { 0 }       -- Branch 2: Int
+    true => { 42 },
+    -- Branch 1: Int
+    false => { 0 } -- Branch 2: Int
   }
   -- Constraint: both branches must unify
   -- Result type: Int
@@ -86,9 +87,9 @@ let conditional = (flag) => {
 
 -- Each use creates fresh type variables
 let useIdentity = () => {
-  let a = identity(42);      -- Instantiate: Int -> Int
-  let b = identity(true);    -- Instantiate: Bool -> Bool
-  let c = identity("hi");    -- Instantiate: String -> String
+  let a = identity(42); -- Instantiate: Int -> Int
+  let b = identity(true); -- Instantiate: Bool -> Bool
+  let c = identity("hi"); -- Instantiate: String -> String
   (a, b, c)
 };
 
@@ -151,7 +152,7 @@ let rec factorial = (n) => {
 
 -- Example: Conflicting Constraints
 -- Uncomment to see conflict detection in action:
---
+-- 
 -- let conflicted = (x) => {
 --   let a: Int = x;      -- Constraint: x is Int
 --   let b: Bool = x;     -- Constraint: x is Bool
@@ -162,7 +163,7 @@ let rec factorial = (n) => {
 
 -- Example: Branch Type Mismatch
 -- Uncomment to see branch conflict:
---
+-- 
 -- let branchConflict = (flag) => {
 --   match(flag) {
 --     true => { 42 },      -- Branch 1: Int
@@ -174,28 +175,28 @@ let rec factorial = (n) => {
 -- ============================================================================
 -- NOTES ON CONSTRAINT SOLVING
 -- ============================================================================
---
+-- 
 -- Layer 2 constraint solving works as follows:
---
+-- 
 -- 1. Layer 1 (Bidirectional Typing) generates constraints during type checking
 --    - call constraints: f(x) generates constraint on f's type
 --    - field constraints: r.field generates constraint on r's type
 --    - annotation constraints: (x: T) generates constraint on x
 --    - numeric/boolean constraints: x + y generates Int constraints
 --    - branch join constraints: match arms must unify
---
+-- 
 -- 2. Layer 2 (Constraint Solving) processes these constraints:
 --    - Groups constraints by the holes (unknowns) they reference
 --    - Attempts to unify all constraints for each hole
 --    - Detects conflicts when constraints are incompatible
 --    - Builds partial solutions when constraints are compatible but incomplete
---
+-- 
 -- 3. Layer 3 (Presentation) surfaces the results:
 --    - Shows solved types in LSP hover
 --    - Shows partial types when available
 --    - Reports conflicts as diagnostics
 --    - Provides hole solutions for tooling
---
+-- 
 -- This approach follows the Hazel paper's design:
 -- "Constraint solving as a type-hole-filling layer atop this gradual
 --  bidirectionally typed core."

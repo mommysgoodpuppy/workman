@@ -2,18 +2,14 @@ from "std/list" import { listFoldl, listTake };
 from "std/string" import { char };
 from "std/nativeString" import { stringToList, stringConcat, intToString };
 
-record Location {
-  line: Int,
-  column: Int,
-};
+record Location { line: Int, column: Int, };
 
 let charNewline = match(char("\n")) {
   Ok(code) => { code },
   Err(_) => { 10 },
 };
 
-export let getLineAndColumn
-  = (source, position) => {
+export let getLineAndColumn = (source, position) => {
   let sourceText = listTake(stringToList(source), position);
   let initial = { line: 1, column: 1 };
   listFoldl((state, code) => {

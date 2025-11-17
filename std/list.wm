@@ -52,7 +52,6 @@ export let rec listAt = match(list, index, error) {
   (Link(_, rest), index, error) => { listAt(rest, intSub(index, 1), error) }
 };
 
-
 export let rec listFoldl = match(f, acc, list) {
   (f, acc, Empty) => { acc },
   (f, acc, Link(x, rest)) => { listFoldl(f, f(acc, x), rest) }

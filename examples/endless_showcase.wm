@@ -1,6 +1,5 @@
 -- endless_showcase.wm
 -- Demonstrates Workman language features in a non-halting loop.
-
 from "std/option/core" import { Some, None };
 from "std/list" import { listJoin, listMap, listFoldl, listRange, listLength };
 from "std/string" import { fromLiteral, intToString };
@@ -8,14 +7,12 @@ from "std/string" import { fromLiteral, intToString };
 -- ============================================================================
 -- Domain Types
 -- ============================================================================
-
 type Phase = Counting | Sampling | Narrating;
 type State = State<Phase, Int, List<Int>>;
 
 -- ============================================================================
 -- Helpers
 -- ============================================================================
-
 let windowWidth = () => {
   6
 };

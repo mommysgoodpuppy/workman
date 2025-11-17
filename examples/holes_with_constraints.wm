@@ -12,8 +12,8 @@ let applyToInt = (f) => { f(?) };
 -- Example 3: Multiple constraints on same hole
 let multiConstrained = () => {
   let h = ?;
-  let a = h(42);     -- Constraint: h is (Int -> T1)
-  let b = h(true);   -- Constraint: h is (Bool -> T2)
+  let a = h(42); -- Constraint: h is (Int -> T1)
+  let b = h(true); -- Constraint: h is (Bool -> T2)
   (a, b)
   -- CONFLICT: h cannot be both (Int -> ?) and (Bool -> ?)
 };

@@ -1,20 +1,11 @@
 -- Deno File System API for Workman
 -- Wraps denoshim.js with proper types and error handling
-
-from "../../denoshim.js" import {
-  readTextFile as nativeReadTextFile,
-  writeTextFile as nativeWriteTextFile,
-  fileExists as nativeFileExists,
-  readDir as nativeReadDir,
-  mkdir as nativeMkdir,
-  remove as nativeRemove,
-  cwd as nativeCwd
-};
+from "../../denoshim.js" import { readTextFile as nativeReadTextFile, writeTextFile as nativeWriteTextFile, fileExists as nativeFileExists, readDir as nativeReadDir, mkdir as nativeMkdir, remove as nativeRemove, cwd as nativeCwd };
 
 from "std/option/core" import { Some, None };
 
 -- File system error types
-export type FsError = 
+export type FsError =
   | NotFound
   | PermissionDenied
   | AlreadyExists

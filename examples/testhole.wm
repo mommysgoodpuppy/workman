@@ -2,6 +2,6 @@ from "std/string" import { fromLiteral };
 
 let x = ?;
 
-let y = x+2;
+let y = x + 2;
 
 let a = fromLiteral(x);

@@ -1,5 +1,4 @@
 -- Demonstrates multiple diagnostics surfaced by the new solver layer.
-
 type Option<T> = None | Some<T>;
 
 -- Layer 2: not_function diagnostic
@@ -10,7 +9,7 @@ let callNonFunction = () => {
 
 -- Layer 2: branch_mismatch diagnostic
 let branchMismatch = (flag) => {
-  match (flag) {
+  match(flag) {
     true => { 1 },
     -- Returns Bool instead of Int, triggering branch_mismatch
     false => { false }

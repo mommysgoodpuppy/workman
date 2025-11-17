@@ -1,7 +1,6 @@
 -- String library for Workman
 -- Strings are represented as List<Int> where each Int is a character code
 -- ASCII character codes: 'A' = 65, 'a' = 97, '0' = 48, ' ' = 32, etc.
-
 from "std/core/string" import { strFromLiteral };
 from "std/option/core" import { Some, None };
 from "std/list/core" import { Empty, Link };
@@ -11,8 +10,7 @@ from "std/result/core" import { IOk, IErr };
 
 -- Type alias for clarity (just documentation, not enforced)
 -- type String = List<Int>;
-
-export type CharErr  =
+export type CharErr =
   | EmptyLiteral
   | MultiCharLiteral;
 
@@ -119,15 +117,15 @@ export let rec strConcat = match(s1, s2) {
 export let isDigit = (c) => {
   let ge0 = () => {
     match(cmpInt(c, char0())) {
-        LT => { false },
-        _ => { true }
-      }
+      LT => { false },
+      _ => { true }
+    }
   };
   let le9 = () => {
     match(cmpInt(c, char9())) {
-        GT => { false },
-        _ => { true }
-      }
+      GT => { false },
+      _ => { true }
+    }
   };
   match(ge0()) {
     false => { false },
@@ -139,15 +137,15 @@ export let isDigit = (c) => {
 export let isUppercase = (c) => {
   let geA = () => {
     match(cmpInt(c, charA())) {
-        LT => { false },
-        _ => { true }
-      }
+      LT => { false },
+      _ => { true }
+    }
   };
   let leZ = () => {
     match(cmpInt(c, charZ())) {
-        GT => { false },
-        _ => { true }
-      }
+      GT => { false },
+      _ => { true }
+    }
   };
   match(geA()) {
     false => { false },
@@ -159,15 +157,15 @@ export let isUppercase = (c) => {
 export let isLowercase = (c) => {
   let gea = () => {
     match(cmpInt(c, charLowerA())) {
-        LT => { false },
-        _ => { true }
-      }
+      LT => { false },
+      _ => { true }
+    }
   };
   let lez = () => {
     match(cmpInt(c, charLowerZ())) {
-        GT => { false },
-        _ => { true }
-      }
+      GT => { false },
+      _ => { true }
+    }
   };
   match(gea()) {
     false => { false },

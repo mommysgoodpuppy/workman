@@ -1,19 +1,8 @@
 -- String operations (dual representation)
 -- All operations implemented in Workman using only 3 native primitives:
 --   nativeStringFromLiteral, nativeStringToList, nativeListToString
-
-from "std/core/string" import { 
-  stringFromLiteral as stringFromLit, 
-  stringToList as strToList, 
-  listToString as listToStr 
-};
-from "std/string" import { 
-  strConcat as listConcat,
-  strLength as listLength,
-  strSlice as listSlice,
-  strEq as listEq,
-  intToString as listIntToString
-};
+from "std/core/string" import { stringFromLiteral as stringFromLit, stringToList as strToList, listToString as listToStr };
+from "std/string" import { strConcat as listConcat, strLength as listLength, strSlice as listSlice, strEq as listEq, intToString as listIntToString };
 
 -- Re-export conversion functions (the only natives)
 export let stringFromLiteral = stringFromLit;
@@ -21,7 +10,6 @@ export let stringToList = strToList;
 export let listToString = listToStr;
 
 -- String operations (implemented via List<Int> operations)
-
 export let stringConcat = (a, b) => {
   -- Convert to List<Int>, concat, convert back
   listToStr(listConcat(strToList(a), strToList(b)))

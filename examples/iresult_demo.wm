@@ -8,7 +8,7 @@ infectious error IResult<T, E>;
 type IResult<T, E> = IOk<T> | IErr<E>;
 
 -- Define a unified error type that can hold all errors
-type AppError = 
+type AppError =
   | InvalidFormat
   | EmptyInput
   | TooSmall
@@ -98,7 +98,7 @@ let main = () => {
   let valid = testValid();
   let small = testTooSmall();
   let empty = testEmpty();
-  
+
   match(valid) {
     IOk(value) => { print(value) },
     IErr(_) => { print(0) }

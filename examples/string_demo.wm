@@ -1,31 +1,27 @@
 -- Demo of improved string stdlib
 from "std/nativeString" import { stringToList, listToString };
-from "std/string" import { 
-  strStartsWith, strEndsWith, strContains, 
-  strSplit, strTrim, strLines, strJoin,
-  fromLiteral
-};
+from "std/string" import { strStartsWith, strEndsWith, strContains, strSplit, strTrim, strLines, strJoin, fromLiteral };
 from "std/list" import { listMap, listFilter, listFoldl };
 
 let main = () => {
   -- String operations without manual list conversion
   let text = stringToList("  Hello, Workman!  ");
   let trimmed = strTrim(text);
-  
+
   -- Check prefixes/suffixes
   let hasHello = strStartsWith(trimmed, fromLiteral("Hello"));
-  
+
   -- Split and process
   let csv = stringToList("apple,banana,cherry");
   let items = strSplit(csv, fromLiteral(","));
-  
+
   -- Count non-empty items using fold
   let count = listFoldl(
     (acc, item) => { acc + 1 },
     0,
     items
   );
-  
+
   -- Multi-line processing
   let document = stringToList("line1\nline2\nline3");
   let lines = strLines(document);
@@ -33,7 +29,7 @@ let main = () => {
     (line) => { strContains(line, fromLiteral("line")) },
     lines
   );
-  
+
   print(count);
   print(listToString(strJoin(fromLiteral(" | "), nonEmpty)))
 };

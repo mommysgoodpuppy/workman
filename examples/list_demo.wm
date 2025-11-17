@@ -1,49 +1,45 @@
 -- Demo of list combinators replacing manual recursion
-from "std/list" import { 
-  listMap, listFilter, listFoldl, listRange,
-  listAny, listAll, listFind, listZip,
-  listFlatMap, listPartition
-};
+from "std/list" import { listMap, listFilter, listFoldl, listRange, listAny, listAll, listFind, listZip, listFlatMap, listPartition };
 from "std/option" import { withDefault };
 from "std/core/int" import { intIsEven };
 
 let main = () => {
   -- Generate range instead of manual recursion
   let numbers = listRange(1, 10);
-  
+
   -- Map/filter instead of recursive pattern matching
   let doubled = listMap((x) => { x * 2 }, numbers);
   let evens = listFilter((x) => { intIsEven(x) }, doubled);
-  
+
   -- Fold for accumulation
   let sum = listFoldl((acc, x) => { acc + x }, 0, evens);
-  
+
   -- Predicates
   let isLarge = (x) => { x > 15 };
   let hasLarge = listAny(isLarge, evens);
   let isPositive = (x) => { x > 0 };
   let allPositive = listAll(isPositive, evens);
-  
+
   -- Find first match
   let isBig = (x) => { x > 10 };
   let firstBig = listFind(isBig, evens);
   let result = withDefault(0, firstBig);
-  
+
   -- FlatMap for nested operations
   let pairs = listFlatMap(
     (x) => { listMap((y) => { (x, y) }, listRange(1, 3)) },
     listRange(1, 3)
   );
-  
+
   -- Partition into two groups
   let isSmall = (x) => { x < 10 };
   let partitioned = listPartition(isSmall, evens);
   let small = partitioned.trues;
   let large = partitioned.falses;
-  
+
   -- Zip two lists
   let zipped = listZip(evens, doubled);
-  
+
   print(sum);
   print(result)
 };

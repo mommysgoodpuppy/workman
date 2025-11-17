@@ -1,6 +1,5 @@
 -- Simple File System Demo
 -- Shows proper Result handling with std/deno/fs
-
 from "std/deno/fs" import { readTextFile, writeTextFile, exists, cwd };
 from "std/deno/console" import { log };
 from "std/string" import { fromLiteral, strConcat };
@@ -8,7 +7,7 @@ from "std/string" import { fromLiteral, strConcat };
 export let main = () => {
   log(fromLiteral("=== File System Demo ==="));
   log(fromLiteral(""));
-  
+
   -- Get current directory and handle Result
   match(cwd()) {
     Ok(dir) => {
@@ -18,13 +17,13 @@ export let main = () => {
       log(fromLiteral("Error getting current directory"));
     }
   };
-  
+
   log(fromLiteral(""));
-  
+
   -- Write a file
   let testFile = fromLiteral("./test.txt");
   let content = fromLiteral("Hello from Workman!");
-  
+
   let writeResult = writeTextFile(testFile, content);
   match(writeResult) {
     Ok(unit) => {
@@ -34,7 +33,7 @@ export let main = () => {
       log(fromLiteral("Error writing file"));
     }
   };
-  
+
   -- Read it back
   match(readTextFile(testFile)) {
     Ok(text) => {
@@ -45,7 +44,7 @@ export let main = () => {
       log(fromLiteral("Error reading file"));
     }
   };
-  
+
   log(fromLiteral(""));
   log(fromLiteral("Demo complete!"))
 };

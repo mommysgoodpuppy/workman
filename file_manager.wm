@@ -1,13 +1,6 @@
 -- File Manager: A practical IO program in Workman
 -- Demonstrates file operations, string manipulation, and control flow
-
-from "std/deno/fs" import { 
-  readTextFile, 
-  writeTextFile, 
-  exists,
-  readDir,
-  cwd
-};
+from "std/deno/fs" import { readTextFile, writeTextFile, exists, readDir, cwd };
 
 from "std/deno/console" import { log };
 from "std/string" import { fromLiteral, intToString, strConcat };
@@ -64,43 +57,46 @@ export let showTodos = (filename) => {
 export let main = () => {
   log(fromLiteral("=== Workman File Manager Demo ==="));
   log(fromLiteral(""));
-  
+
   -- Get current directory (Result type, infection spreads)
   let currentDir = cwd();
   log(strConcat(fromLiteral("Current directory: "), currentDir));
   log(fromLiteral(""));
-  
+
   -- Create a todo list
   let todoFile = fromLiteral("./my_todos.txt");
   log(fromLiteral("Creating todo list..."));
   createTodoList(todoFile);
-  
+
   -- Add some tasks
   log(fromLiteral("Adding tasks..."));
   addTodo(todoFile, fromLiteral("Fix operator bug"));
   addTodo(todoFile, fromLiteral("Add comparison operators"));
   addTodo(todoFile, fromLiteral("Build IO library"));
   addTodo(todoFile, fromLiteral("Create demo program"));
-  
+
   -- Show the todo list
   log(fromLiteral(""));
   log(fromLiteral("Your todo list:"));
   log(fromLiteral("---"));
   showTodos(todoFile);
   log(fromLiteral("---"));
-  
+
   -- Check if file exists (Result<Bool, FsError>)
   let fileCheck = checkFile(todoFile);
   log(fromLiteral(""));
-  log(strConcat(fromLiteral("File exists: "), 
-    match(fileCheck) {
-      IOk(true) => { fromLiteral("yes") },
-      IOk(false) => { fromLiteral("no") },
-      IErr(_) => { fromLiteral("error checking file") },
-      ?(_) => { fromLiteral("unknown result") }
-    }
-  ));
-  
+  log(
+    strConcat(
+      fromLiteral("File exists: "),
+      match(fileCheck) {
+        IOk(true) => { fromLiteral("yes") },
+        IOk(false) => { fromLiteral("no") },
+        IErr(_) => { fromLiteral("error checking file") },
+        ?(_) => { fromLiteral("unknown result") }
+      }
+    )
+  );
+
   log(fromLiteral(""));
   log(fromLiteral("Demo complete!"))
 };

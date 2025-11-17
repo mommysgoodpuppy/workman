@@ -58,16 +58,16 @@ let twice = (f) => {
 
 -- NOTES:
 -- Layer 2 constraint solving works as follows:
---
+-- 
 -- 1. Layer 1 generates constraints during bidirectional typing
 -- 2. Layer 2 groups constraints by holes and attempts unification
 -- 3. Layer 3 surfaces results (solved, partial, or conflicted)
---
+-- 
 -- For example, in 'callMystery', Layer 2 knows:
 --   - mystery is called with an Int (42)
 --   - So mystery must be a function: (Int -> ?)
 --   - This is a PARTIAL solution (we know it's a function)
---
+-- 
 -- In 'compose', Layer 2 infers:
 --   - g is called with x, so g: (T1 -> T2)
 --   - f is called with g(x), so f: (T2 -> T3)

@@ -35,13 +35,13 @@ let doubleValue = (x) => {
 let pipeline = () => {
   let userValue = readUserInput();
   -- userValue: Tainted<Int, UserInput>
-  
+
   let processed = processInput(userValue);
   -- processed: Tainted<Int, UserInput> (taint propagated!)
-  
+
   let doubled = doubleValue(processed);
   -- doubled: Tainted<Int, UserInput> (still tainted!)
-  
+
   print(doubled)
 };
 
