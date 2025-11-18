@@ -55,10 +55,10 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
         .join(", ");
       return `{ ${fields} }`;
     }
-    case "error_row": {
+    case "effect_row": {
       // Flatten nested error_rows before displaying
       let flattenedType = type;
-      if (type.tail?.kind === "error_row") {
+      if (type.tail?.kind === "effect_row") {
         flattenedType = ensureRow(type);
       }
       

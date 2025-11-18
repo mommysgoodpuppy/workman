@@ -354,6 +354,7 @@ export interface TypeDeclaration extends NodeBase {
 export interface LetDeclaration extends NodeBase {
   kind: "let";
   name: string;
+  nameSpan: SourceSpan;
   parameters: Parameter[];
   annotation?: TypeExpr;
   returnAnnotation?: TypeExpr;

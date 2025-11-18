@@ -80,7 +80,7 @@ export interface Context {
   nonGeneralizable: Set<number>;
   marks: Map<Expr, MExpr>;
   typeExprMarks: Map<TypeExpr, MTypeExpr>;
-  nodeTypes: Map<Expr, Type>;
+  nodeTypes: Map<NodeId, Type>;
   annotationTypes: Map<NodeId, Type>;
   matchResults: Map<MatchBundle, MatchBranchesResult>;
   topLevelMarks: MTopLevelMark[];

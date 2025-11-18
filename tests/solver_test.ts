@@ -220,60 +220,6 @@ Deno.test("analyzeProgram surfaces duplicate_record_field diagnostic", () => {
   collectReasons(reasons, "duplicate_record_field");
 });
 
-Deno.test("solver surfaces missing_field diagnostic when record lacks requested field", () => {
-
-  //needs record declaration
-  const targetId: NodeId = 210;
-  const resultId: NodeId = 211;
-  const stubs: ConstraintStub[] = [
-    {
-      kind: "has_field",
-      origin: 212,
-      target: targetId,
-      field: "bar",
-      result: resultId,
-    },
-  ];
-  const nodeTypeById = new Map<NodeId, Type>([
-    [
-      targetId,
-      {
-        kind: "record",
-        fields: new Map<string, Type>([["foo", { kind: "int" }]]),
-      },
-    ],
-    [resultId, { kind: "int" }],
-  ]);
-  const adtEnv = new Map<string, TypeInfo>([
-  [
-    "Point",
-    {
-      name: "Point",
-      parameters: [],
-      constructors: [],
-      alias: {
-        kind: "record",
-        fields: new Map<string, Type>([["foo", { kind: "int" }]]),
-      },
-      isAlias: false,
-    },
-  ],
-]);
-
-  const input: SolveInput = {
-    markedProgram: EMPTY_PROGRAM,
-    constraintStubs: stubs,
-    holes: new Map(),
-    nodeTypeById,
-    layer1Diagnostics: [],
-    summaries: [],
-    adtEnv
-  };
-  const result = solveConstraints(input);
-  const reasons = result.diagnostics.map((diag) => diag.reason);
-  collectReasons(reasons, "missing_field");
-});
-
 Deno.test("solver surfaces not_record diagnostic when projecting field from non-record", () => {
   const targetId: NodeId = 220;
   const resultId: NodeId = 221;

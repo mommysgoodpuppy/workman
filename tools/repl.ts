@@ -2,9 +2,8 @@
 
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import {inferProgram } from "../src/layer1/infer.ts";
+import { inferProgram } from "../src/layer1/infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
-import { evaluateProgram } from "../src/eval.ts";
 import { formatRuntimeValue } from "../src/value_printer.ts";
 import type { TypeScheme } from "../src/types.ts";
 import type { RuntimeValue } from "../src/value.ts";
@@ -12,7 +11,20 @@ import { loadModuleGraph, ModuleLoaderError } from "../src/module_loader.ts";
 import { cloneTypeScheme } from "../src/types.ts";
 import { resolve } from "../src/io.ts";
 import { InferError, ParseError } from "../src/error.ts";
-
+// The runtime evaluator has been removed; create a no-op stub here so the
+// REPL can continue to parse and infer types without performing runtime
+// evaluation. This intentionally mirrors the runtime evaluateProgram API
+// used by the REPL but returns an empty evaluation result.
+function evaluateProgram(_program: unknown, _opts?: {
+  sourceName?: string;
+  initialBindings?: Map<string, RuntimeValue>;
+  onPrint?: (text: string) => void;
+}): {
+  summaries: Array<{ name: string; value?: RuntimeValue }>;
+  env: { bindings: Map<string, RuntimeValue> };
+} {
+  return { summaries: [], env: { bindings: new Map<string, RuntimeValue>() } };
+}
 
 interface ReplContext {
   accumulatedSource: string;
@@ -259,8 +271,10 @@ class Repl {
 
       // Update accumulated values
       for (const { name, value } of evaluation.summaries) {
-        const valueStr = formatRuntimeValue(value);
-        this.context.accumulatedValues.set(name, valueStr);
+        if (value !== undefined) {
+          const valueStr = formatRuntimeValue(value);
+          this.context.accumulatedValues.set(name, valueStr);
+        }
       }
 
       // Show results
@@ -294,10 +308,14 @@ class Repl {
         !hasOutput && !input.trim().startsWith("type") &&
         !input.trim().startsWith("let")
       ) {
-        // For expressions, evaluate and show result
+        // For expressions, show inferred type only (runtime evaluation is disabled)
         const exprResult = this.evaluateExpression(input);
         if (exprResult) {
-          console.log(`- : ${exprResult.type} = ${exprResult.value}`);
+          if (exprResult.value) {
+            console.log(`- : ${exprResult.type} = ${exprResult.value}`);
+          } else {
+            console.log(`- : ${exprResult.type}`);
+          }
         }
       }
 
@@ -316,8 +334,8 @@ class Repl {
 
   private evaluateExpression(
     input: string,
-  ): { type: string; value: string } | null {
-    // For now, handle simple expressions by wrapping them in a let binding
+  ): { type: string; value?: string } | null {
+    // Only infer the expression's type; runtime evaluation is disabled.
     try {
       const wrappedSource = this.context.accumulatedSource +
         "\nlet _repl_result = {" + input + "}";
@@ -327,25 +345,18 @@ class Repl {
         initialEnv: this.context.preludeEnv,
         initialAdtEnv: this.context.preludeAdtEnv,
       });
-      const evaluation = evaluateProgram(program, {
-        initialBindings: this.context.preludeBindings,
-      });
 
       const resultType = inference.summaries.find((s) =>
         s.name === "_repl_result"
       );
-      const resultValue = evaluation.summaries.find((s) =>
-        s.name === "_repl_result"
-      );
 
-      if (resultType && resultValue) {
+      if (resultType) {
         return {
           type: formatScheme(resultType.scheme),
-          value: formatRuntimeValue(resultValue.value),
         };
       }
     } catch {
-      // Ignore errors for expression evaluation
+      // Ignore errors for expression type inference
     }
     return null;
   }

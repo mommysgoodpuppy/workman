@@ -447,6 +447,7 @@ class SurfaceParser {
     isTopLevel: boolean = false,
   ): LetDeclaration {
     const nameToken = this.expectIdentifier();
+    const nameSpan = this.spanFrom(nameToken.start, nameToken.end);
     const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
     this.expectSymbol("=");
     const initializer = this.parseExpression();
@@ -484,6 +485,7 @@ class SurfaceParser {
       return {
         kind: "let",
         name: nameToken.value,
+        nameSpan,
         parameters,
         annotation,
         body,
@@ -504,6 +506,7 @@ class SurfaceParser {
       return {
         kind: "let",
         name: nameToken.value,
+        nameSpan,
         parameters: [],
         annotation,
         body: initializer,
@@ -518,6 +521,7 @@ class SurfaceParser {
       return {
         kind: "let",
         name: nameToken.value,
+        nameSpan,
         parameters,
         annotation,
         returnAnnotation,
@@ -547,6 +551,7 @@ class SurfaceParser {
     return {
       kind: "let",
       name: nameToken.value,
+      nameSpan,
       parameters: [],
       annotation,
       body,

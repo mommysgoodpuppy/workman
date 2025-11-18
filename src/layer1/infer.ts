@@ -164,7 +164,7 @@ function recordExprType(ctx: Context, expr: Expr, type: Type): Type {
   if (isHoleType(resolved)) {
     registerHoleForType(ctx, holeOriginFromExpr(expr), resolved);
   }
-  ctx.nodeTypes.set(expr, resolved);
+  ctx.nodeTypes.set(expr.id, resolved);
   return resolved;
 }
 
@@ -563,6 +563,8 @@ function inferLetDeclaration(
       };
     }
 
+    const resolvedType = applyCurrentSubst(ctx, fnType);
+    ctx.nodeTypes.set(decl.id, resolvedType);
     const scheme = generalizeInContext(ctx, fnType);
     ctx.env.set(decl.name, scheme);
     ctx.allBindings.set(decl.name, scheme); // Track in allBindings
@@ -644,6 +646,7 @@ function inferLetDeclaration(
       };
     }
 
+    ctx.nodeTypes.set(binding.id, resolvedType);
     const scheme = generalizeInContext(ctx, resolvedType);
     ctx.env.set(binding.name, scheme);
     ctx.allBindings.set(binding.name, scheme); // Track in allBindings
@@ -773,8 +776,8 @@ function inferBlockExpr(ctx: Context, block: BlockExpr): Type {
     if (block.result) {
       const resultType = inferExpr(ctx, block.result);
       const resolved = applyCurrentSubst(ctx, resultType);
-      ctx.nodeTypes.set(block.result, resolved);
-      ctx.nodeTypes.set(block, resolved);
+      ctx.nodeTypes.set(block.result.id, resolved);
+      ctx.nodeTypes.set(block.id, resolved);
       return resolved;
     }
 
@@ -945,7 +948,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const scheme = ctx.env.get(expr.name);
       if (!scheme) {
         const mark = markFreeVariable(ctx, expr, expr.name);
-        ctx.nodeTypes.set(expr, mark.type);
+        ctx.nodeTypes.set(expr.id, mark.type);
         return mark.type;
       }
       if (
@@ -1209,9 +1212,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             kind: "incomplete",
             reason: "free_variable",
           });
-          ctx.nodeTypes.set(expr, markType);
+          ctx.nodeTypes.set(expr.id, markType);
           markFreeVariable(ctx, targetExpr, targetExpr.name);
-          ctx.nodeTypes.set(targetExpr, markType);
+          ctx.nodeTypes.set(targetExpr.id, markType);
           registerHoleForType(ctx, holeOriginFromExpr(targetExpr), markType);
           registerHoleForType(ctx, holeOriginFromExpr(expr), markType);
           return recordExprType(ctx, expr, markType);
@@ -1252,7 +1255,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               expr,
               projectedValueType,
             );
-            ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+            ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
             registerHoleForType(
               ctx,
               holeOriginFromExpr(targetExpr),
@@ -1285,7 +1288,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             expr,
             fieldType,
           );
-          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+          ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
           registerHoleForType(
             ctx,
             holeOriginFromExpr(targetExpr),
@@ -1332,7 +1335,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               expr,
               projectedValueType,
             );
-            ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+            ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
             registerHoleForType(
               ctx,
               holeOriginFromExpr(targetExpr),
@@ -1365,7 +1368,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             expr,
             projectedValueType,
           );
-          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+          ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
           registerHoleForType(
             ctx,
             holeOriginFromExpr(targetExpr),
@@ -2153,8 +2156,8 @@ export function inferProgram(
   }));
 
   const nodeTypeById: Map<NodeId, Type> = new Map();
-  for (const [expr, type] of ctx.nodeTypes.entries()) {
-    nodeTypeById.set(expr.id, applyCurrentSubst(ctx, type));
+  for (const [nodeId, type] of ctx.nodeTypes.entries()) {
+    nodeTypeById.set(nodeId, applyCurrentSubst(ctx, type));
   }
 
   const markedProgram: MProgram = {

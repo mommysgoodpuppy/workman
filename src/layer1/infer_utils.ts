@@ -13,7 +13,7 @@ export function getExprTypeOrUnknown(
   expr: Expr,
   reason: string,
 ): Type {
-  return ctx.nodeTypes.get(expr) ?? unknownFromReason(reason);
+  return ctx.nodeTypes.get(expr.id) ?? unknownFromReason(reason);
 }
 
 export function unknownFromReason(reason: string): Type {

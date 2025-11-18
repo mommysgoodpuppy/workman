@@ -111,7 +111,7 @@ export function materializeBlockExpr(
     materializeBlockStatement(ctx, statement)
   );
   const result = block.result ? materializeExpr(ctx, block.result) : undefined;
-  const type = ctx.nodeTypes.get(block) ??
+  const type = ctx.nodeTypes.get(block.id) ??
     (result ? result.type : { kind: "unit" as const });
   return {
     kind: "block",
@@ -373,6 +373,7 @@ export function materializeMarkedLet(
     span: decl.span,
     id: decl.id,
     name: decl.name,
+    nameSpan: decl.nameSpan,
     parameters,
     annotation: decl.annotation
       ? materializeTypeExpr(ctx, decl.annotation)

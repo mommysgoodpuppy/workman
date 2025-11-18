@@ -10,8 +10,7 @@ let main = () => {
   g({ x: 10 })
 };
 
-record R { foo: Int };
-let dup = {
+record R { foo: Int, bar:Int };
+let thing = {
   foo: 1,
-  foo: 2,
 };

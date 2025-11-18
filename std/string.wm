@@ -226,10 +226,10 @@ export let digitToChar = (n) => {
 };
 
 -- Convert character code to digit (returns Option<Int>)
-export let charToDigit = (c, error) => {
+export let charToDigit = (c) => {
   match(isDigit(c)) {
-    false => { IErr(error) },
-    true => { IOk(sub(c, char0())) }
+    false => { None },
+    true => { Some(sub(c, char0())) }
   }
 };
 
@@ -397,16 +397,16 @@ export let rec strJoin = match(sep, strings) {
 -- Convert positive integer string to int
 export let posIntStringToInt = (s) => {
   let rec helper = match(chars, acc) {
-    (Empty, acc) => { IOk(acc) },
+    (Empty, acc) => { Some(acc) },
     (Link(c, rest), acc) => {
-      match(charToDigit(c, "Invalid digit")) {
-        IErr(err) => { IErr(err) },
-        IOk(digit) => { helper(rest, add(mul(acc, 10), digit)) }
+      match(charToDigit(c)) {
+        None => { None },
+        Some(digit) => { helper(rest, add(mul(acc, 10), digit)) }
       }
     }
   };
   match(strIsEmpty(s)) {
-    true => { IErr("Empty string") },
+    true => { None },
     false => { helper(s, 0) }
   }
 };

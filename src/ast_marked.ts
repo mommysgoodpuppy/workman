@@ -374,6 +374,7 @@ export interface MMarkPattern extends MTypedNode {
 export interface MLetDeclaration extends MTypedNode {
   kind: "let";
   name: string;
+  nameSpan: SourceSpan;
   parameters: MParameter[];
   annotation?: MTypeExpr;
   returnAnnotation?: MTypeExpr;

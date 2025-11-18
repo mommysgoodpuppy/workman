@@ -13,7 +13,6 @@ import type {
 import type { TypeInfo, TypeScheme } from "./types.ts";
 import { cloneTypeInfo, cloneTypeScheme, unknownType } from "./types.ts";
 import { inferProgram } from "./layer1/infer.ts";
-import { evaluateProgram } from "./eval.ts";
 import type { RuntimeValue } from "./value.ts";
 import { lookupValue } from "./value.ts";
 import { formatScheme } from "./type_printer.ts";

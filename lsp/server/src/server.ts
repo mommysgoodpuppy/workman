@@ -7,17 +7,13 @@
 
 // Redirect console.log to stderr to prevent polluting LSP stdout with debug messages
 console.log = console.error;
-
-import { lex } from "../../../src/lexer.ts";
-import {
-  type OperatorInfo,
-  parseSurfaceProgram,
+import type {
+  OperatorInfo,
 } from "../../../src//parser.ts";
 import {
   InferError,
   LexError,
-  ParseError,
-  type WorkmanError,
+  ParseError
 } from "../../../src//error.ts";
 import { formatScheme } from "../../../src//type_printer.ts";
 import { ModuleLoaderError } from "../../../src//module_loader.ts";
@@ -116,7 +112,90 @@ export class WorkmanLanguageServer {
     });
   }
 
-  private async writeMessage(message: any) {
+  // Replace top-level IResult<A, B> occurrences with a prettier form.
+  // Handles nested angle brackets, braces, parens and quoted strings so that
+  // commas inside nested types (like records) don't break the split.
+  private replaceIResultFormats(input: string): string {
+    if (!input || input.indexOf("IResult<") === -1) return input;
+    let out = "";
+    let idx = 0;
+    const needle = "IResult<";
+    while (true) {
+      const pos = input.indexOf(needle, idx);
+      if (pos === -1) {
+        out += input.slice(idx);
+        break;
+      }
+      out += input.slice(idx, pos);
+      let i = pos + needle.length;
+
+      // Stack to track nested delimiters. Start with the initial '<'.
+      const stack: string[] = ["<"];
+      let commaIndex = -1;
+      let foundClosing = false;
+
+      for (; i < input.length; i++) {
+        const ch = input[i];
+        if (ch === "<" || ch === "{" || ch === "(" || ch === "[") {
+          stack.push(ch);
+        } else if (ch === ">") {
+          if (stack.length > 0 && stack[stack.length - 1] === "<") {
+            stack.pop();
+            if (stack.length === 0) {
+              foundClosing = true;
+              break;
+            }
+          } else {
+            // attempt to recover
+            stack.pop();
+          }
+        } else if (ch === "}") {
+          if (stack.length > 0 && stack[stack.length - 1] === "{") stack.pop();
+        } else if (ch === ")") {
+          if (stack.length > 0 && stack[stack.length - 1] === "(") stack.pop();
+        } else if (ch === "]") {
+          if (stack.length > 0 && stack[stack.length - 1] === "[") stack.pop();
+        } else if (ch === ",") {
+          // top-level comma separating IResult args when only the initial '<' remains
+          if (stack.length === 1 && commaIndex === -1) {
+            commaIndex = i;
+          }
+        } else if (ch === '"' || ch === "'") {
+          // skip quoted strings
+          const quote = ch;
+          i++;
+          while (i < input.length && input[i] !== quote) {
+            if (input[i] === "\\") i++; // skip escaped char
+            i++;
+          }
+        }
+      }
+
+      if (!foundClosing) {
+        // Couldn't parse properly; copy remainder and bail
+        out += input.slice(pos);
+        break;
+      }
+
+      if (commaIndex === -1) {
+        // No top-level comma found; copy matched region as-is
+        out += input.slice(pos, i + 1);
+        idx = i + 1;
+        continue;
+      }
+
+      const first = input.slice(pos + needle.length, commaIndex).trim();
+      const second = input.slice(commaIndex + 1, i).trim();
+
+      // Desired display: ⚡<first>, <second>
+      out += `⚡${first} (${second})`;
+
+      idx = i + 1;
+    }
+    return out;
+  }
+
+  private writeMessage(message: any) {
     // Simple mutex-based queue to prevent interleaving
     return new Promise<void>((resolve, reject) => {
       this.writeQueue.push(async () => {
@@ -318,7 +397,7 @@ export class WorkmanLanguageServer {
 
       case "exit":
         Deno.exit(0);
-
+      break
       default:
         this.log(`[LSP] Unhandled method: ${message.method}`);
         return null;
@@ -332,7 +411,9 @@ export class WorkmanLanguageServer {
       if (typeof params.rootUri === "string") {
         try {
           roots.push(fromFileUrl(params.rootUri));
-        } catch {}
+        } catch {
+          //noop
+        }
       } else if (typeof params.rootPath === "string") {
         roots.push(params.rootPath);
       }
@@ -341,7 +422,9 @@ export class WorkmanLanguageServer {
           if (wf && typeof wf.uri === "string") {
             try {
               roots.push(fromFileUrl(wf.uri));
-            } catch {}
+            } catch {
+              //noop
+            }
           }
         }
       }
@@ -1086,8 +1169,8 @@ Details: ${JSON.stringify(safeDetails)}`;
           layer3,
         );
         let str = substituted ? typeToString(substituted) : "?";
-        // Post-process to format Result types
-        str = str.replace(/IResult<([^,]+),\s*([^>]+)>/g, "⚡$1 <$2>");
+        // Post-process to format Result types using a robust replacer
+        str = this.replaceIResultFormats(str);
         return str;
       }
       case "concrete": {
@@ -1095,8 +1178,8 @@ Details: ${JSON.stringify(safeDetails)}`;
           ? typeToString(this.substituteTypeWithLayer3(partial.type, layer3))
           : null;
         if (str) {
-          // Post-process to format Result types
-          str = str.replace(/IResult<([^,]+),\s*([^>]+)>/g, "⚡$1 <$2>");
+          // Post-process to format Result types using a robust replacer
+          str = this.replaceIResultFormats(str);
         }
         return str;
       }
@@ -1158,8 +1241,8 @@ Details: ${JSON.stringify(safeDetails)}`;
     );
     let typeStr = formatScheme(substitutedScheme);
 
-    // Post-process to format Result types
-    typeStr = typeStr.replace(/IResult<([^,]+),\s*([^>]+)>/g, "⚡$1 <$2>");
+    // Post-process to format Result types using a robust replacer
+    typeStr = this.replaceIResultFormats(typeStr);
 
     // Check if this binding has partial type information from Layer 3
     const holeId = this.extractHoleId(scheme);
@@ -1389,59 +1472,7 @@ Details: ${JSON.stringify(safeDetails)}`;
           },
         };
       }
-      // Try to find local binding
-      const decl = this.findLetDeclaration(
-        context.program,
-        context.layer3,
-        word,
-        offset,
-      );
-      if (decl) {
-        // For let x = expr, the type is the type of expr
-        // Get the node view of the expression
-        const expr = decl.body.result; // assuming simple let
-        if (expr) {
-          const view = layer3.nodeViews.get(expr.id);
-          if (view) {
-            const rendered = this.renderNodeView(
-              view,
-              layer3,
-              undefined,
-              context.adtEnv,
-            );
-            if (rendered) {
-              this.log(`[LSP] Found local type for ${word}: rendered`);
-              return {
-                jsonrpc: "2.0",
-                id: message.id,
-                result: {
-                  contents: {
-                    kind: "markdown",
-                    value: rendered,
-                  },
-                },
-              };
-            }
-          }
-        }
-        // Fallback to decl.type
-        const resolvedType = this.substituteTypeWithLayer3(decl.type, layer3);
-        const typeStr = typeToString(resolvedType);
-        this.log(`[LSP] Found local type for ${word}: ${typeStr}`);
 
-        const hoverText = `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``;
-
-        return {
-          jsonrpc: "2.0",
-          id: message.id,
-          result: {
-            contents: {
-              kind: "markdown",
-              value: hoverText,
-            },
-          },
-        };
-      }
       this.log(`[LSP] No type found for '${word}'`);
     } catch (error) {
       this.log(`[LSP] Hover error: ${error}`);
@@ -1742,11 +1773,37 @@ Details: ${JSON.stringify(safeDetails)}`;
           const endPos = match.index + match[0].length;
           const position = this.offsetToPosition(text, endPos);
           // Use Layer 3 partial types for accurate display
-          const typeStr = this.formatSchemeWithPartials(
+          let typeStr = this.formatSchemeWithPartials(
             scheme,
             layer3,
             context.adtEnv,
           );
+          // For inlay hints prefer a compact form for Result types: show only the
+          // Ok type with the ⚡ prefix (no effect summary). Keep hover unchanged.
+          try {
+            const substitutedScheme = this.applyHoleSolutionsToScheme(
+              scheme,
+              layer3,
+            );
+            let returnType = substitutedScheme.type;
+            while (returnType.kind === "func") {
+              returnType = returnType.to;
+            }
+            if (
+              returnType.kind === "constructor" && returnType.args.length > 0
+            ) {
+              // Recognize both named Result and IResult forms by checking name
+              const name = (returnType as { name?: string }).name;
+              if (
+                name === "Result" || name === "IResult" ||
+                typeStr.includes("IResult<") || typeStr.startsWith("⚡")
+              ) {
+                typeStr = `⚡${typeToString(returnType.args[0])}`;
+              }
+            }
+          } catch {
+            // ignore errors and fall back to full string
+          }
           // Truncate the label if too long
           const MAX_LABEL_LENGTH = 40;
           let label = `: ${typeStr}`;
@@ -2543,129 +2600,6 @@ Details: ${JSON.stringify(safeDetails)}`;
     visitTopLevels(program.declarations ?? []);
 
     return best?.decl;
-  }
-
-  private async getPreludeOperatorSets(
-    entryPath: string,
-    stdRoots: string[],
-  ): Promise<{
-    operators: Map<string, OperatorInfo>;
-    prefixOperators: Set<string>;
-  }> {
-    const emptyResult = {
-      operators: new Map<string, OperatorInfo>(),
-      prefixOperators: new Set<string>(),
-    };
-
-    if (!this.preludeModule) {
-      return emptyResult;
-    }
-
-    const cacheKey = `${[...stdRoots].sort().join(";")}::${this.preludeModule}`;
-    const cached = this.preludeOperatorCache.get(cacheKey);
-    if (cached) {
-      return {
-        operators: new Map(cached.operators),
-        prefixOperators: new Set(cached.prefixOperators),
-      };
-    }
-
-    const preludePath = this.resolvePreludePath(entryPath, stdRoots);
-    if (!preludePath) {
-      this.log(
-        `[LSP] Unable to resolve prelude module '${this.preludeModule}' for '${entryPath}'`,
-      );
-      return emptyResult;
-    }
-
-    let source: string;
-    try {
-      source = await Deno.readTextFile(preludePath);
-    } catch (error) {
-      this.log(
-        `[LSP] Failed to read prelude '${preludePath}': ${
-          error instanceof Error ? error.message : error
-        }'`,
-      );
-      return emptyResult;
-    }
-
-    let program;
-    try {
-      const tokens = lex(source, preludePath);
-      program = parseSurfaceProgram(tokens, source);
-    } catch (error) {
-      this.log(
-        `[LSP] Failed to parse prelude '${preludePath}': ${
-          error instanceof Error ? error.message : error
-        }'`,
-      );
-      return emptyResult;
-    }
-
-    const operators = new Map<string, OperatorInfo>();
-    const prefixOperators = new Set<string>();
-    for (const decl of program.declarations ?? []) {
-      if (decl.kind === "infix") {
-        operators.set(decl.operator, {
-          precedence: decl.precedence,
-          associativity: decl.associativity,
-        });
-      } else if (decl.kind === "prefix") {
-        prefixOperators.add(decl.operator);
-      }
-    }
-
-    this.preludeOperatorCache.set(cacheKey, {
-      operators: new Map(operators),
-      prefixOperators: new Set(prefixOperators),
-    });
-
-    return { operators, prefixOperators };
-  }
-
-  private resolvePreludePath(
-    entryPath: string,
-    stdRoots: string[],
-  ): string | null {
-    if (!this.preludeModule) {
-      return null;
-    }
-
-    const ensureExists = (candidate: string): string | null => {
-      const withExt = this.ensureWmExtension(candidate);
-      try {
-        const stat = Deno.statSync(withExt);
-        if (stat.isFile) {
-          return withExt;
-        }
-      } catch {
-        return null;
-      }
-      return null;
-    };
-
-    const spec = this.preludeModule;
-    if (spec.startsWith("./") || spec.startsWith("../")) {
-      const candidate = ensureExists(join(dirname(entryPath), spec));
-      if (candidate) return candidate;
-    } else if (isAbsolute(spec)) {
-      const candidate = ensureExists(spec);
-      if (candidate) return candidate;
-    } else if (spec.startsWith("std/")) {
-      const remainder = spec.slice(4);
-      for (const root of stdRoots) {
-        const candidate = ensureExists(join(root, remainder));
-        if (candidate) return candidate;
-      }
-    } else {
-      for (const root of this.workspaceRoots) {
-        const candidate = ensureExists(join(root, spec));
-        if (candidate) return candidate;
-      }
-    }
-
-    return null;
   }
 
   private estimateRangeFromMessage(text: string, msg: string) {

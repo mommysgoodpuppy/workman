@@ -1,7 +1,6 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { formatScheme } from "../src/type_printer.ts";
-import { evaluateProgram } from "../src/eval.ts";
 import { formatRuntimeValue } from "../src/value_printer.ts";
 import { analyzeAndPresent } from "../src/pipeline.ts";
 import { LexError, ParseError } from "../src/error.ts";
@@ -105,7 +104,7 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
     const runtimeLogs: string[] = [];
 
     if (!options.skipEvaluation) {
-      const evaluation = evaluateProgram(program, {
+      /* const evaluation = evaluateProgram(program, {
         sourceName: options.sourceName,
         source,
         onPrint: (text: string) => {
@@ -118,7 +117,7 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
       ) => ({
         name: summary.name,
         value: formatRuntimeValue(summary.value),
-      }));
+      })); */
     }
 
     return { types, values, runtimeLogs };

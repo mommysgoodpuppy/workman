@@ -347,7 +347,7 @@ async function displayTopLevelSummaries(artifact: any): Promise<void> {
   }
 
   type ErrorRow = {
-    kind: "error_row";
+    kind: "effect_row";
     cases: Map<string, Type | null>;
     tail?: Type | null;
   };
@@ -360,11 +360,11 @@ async function displayTopLevelSummaries(artifact: any): Promise<void> {
     const errArg = type.args[1];
     const ensureRow = (input: Type): ErrorRow => {
       const rowLike = input as unknown as Partial<ErrorRow>;
-      if (rowLike.kind === "error_row") {
+      if (rowLike.kind === "effect_row") {
         return rowLike as ErrorRow;
       }
       return {
-        kind: "error_row",
+        kind: "effect_row",
         cases: new Map(),
         tail: input,
       };

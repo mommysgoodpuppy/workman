@@ -271,7 +271,7 @@ function typeToString(type: Type): string {
         .join(", ");
       return `{ ${fields} }`;
     }
-    case "error_row": {
+    case "effect_row": {
       // Ergonomic printing: tail-only rows render as the tail type directly
       if (type.cases.size === 0 && type.tail) {
         return typeToString(type.tail);
@@ -568,8 +568,9 @@ function traverse(
 
   const maybeId = (node as { id?: NodeId }).id;
   const maybeSpan = (node as { span?: SourceSpan }).span;
-  if (maybeId !== undefined && maybeSpan !== undefined) {
-    spans.set(maybeId, maybeSpan);
+  const maybeNameSpan = (node as { nameSpan?: SourceSpan }).nameSpan;
+  if (maybeId !== undefined && (maybeSpan !== undefined || maybeNameSpan !== undefined)) {
+    spans.set(maybeId, maybeNameSpan ?? maybeSpan);
   }
 
   if (Array.isArray(node)) {

@@ -2,6 +2,7 @@ from "std/nativeString" import { stringToList, stringConcat, intToString };
 from "std/string" import { strEq };
 from "std/list" import { listSlice, listAt, listLength };
 from "std/string" import { charToDigit, char };
+from "std/result" import { stripErr };
 
 type ParseResult =
   | NotMul
@@ -21,23 +22,32 @@ let charCloseParen = char(")");
 let mulLiteral = stringToList("mul("); -- String literal → List<Int>
 let mulLiteralLength = listLength(mulLiteral);
 
+let infectOption = (in) => {
+  match(in) {
+    Some(thing) => {IOk(thing)},
+    None => {IErr("none")}
+  }
+};
+
 -- Read exactly one digit or raise ExpectedDigit to the caller.
 let readRequiredDigit = (chars, i) => {
   makeStep(
-    charToDigit(listAt(chars, i, ExpectedDigit), ExpectedDigit),
+    infectOption(charToDigit(listAt(chars, i))),
     i + 1
   )
 };
+
+
 
 -- Extend up to three total digits, stopping cleanly if parsing fails.
 let rec extendDigits = (chars, step, count) => {
   match(count == 3) {
     true => { step },
     false => {
-      match(listAt(chars, step.next, ExpectedDigit)) {
+      match(listAt(chars, step.next)) {
         IErr(_) => { step },
         IOk(code) => {
-          match(charToDigit(code, ExpectedDigit)) {
+          match(infectOption(charToDigit(code))) {
             IErr(_) => { step },
             IOk(digit) => {
               let combined = makeStep(
@@ -55,7 +65,7 @@ let rec extendDigits = (chars, step, count) => {
 
 -- Require a specific delimiter at the cursor.
 let expectCharAt = (chars, i, expected, error) => {
-  match(listAt(chars, i, error)) {
+  match(listAt(chars, i)) {
     IOk(code) => {
       match(code == expected) {
         true => { IOk(i + 1) },
@@ -88,7 +98,7 @@ let parseMulAt = (chars, i) => {
 
 -- Walk the memory, summing successful multiplications.
 let rec scan = (chars, i, acc) => {
-  match(listAt(chars, i, NotMul)) {
+  match(listAt(chars, i)) {
     IErr(_) => { acc },
     IOk(_) => {
       match(parseMulAt(chars, i)) {
