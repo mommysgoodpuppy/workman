@@ -7,9 +7,6 @@
 
 // Redirect console.log to stderr to prevent polluting LSP stdout with debug messages
 console.log = console.error;
-import type {
-  OperatorInfo,
-} from "../../../src//parser.ts";
 import {
   InferError,
   LexError,
@@ -75,10 +72,6 @@ export class WorkmanLanguageServer {
   private workspaceRoots: string[] = [];
   private initStdRoots: string[] | undefined = undefined;
   private preludeModule: string | undefined = undefined;
-  private preludeOperatorCache = new Map<string, {
-    operators: Map<string, OperatorInfo>;
-    prefixOperators: Set<string>;
-  }>();
   private moduleContexts = new Map<
     string,
     {
