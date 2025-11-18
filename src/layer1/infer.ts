@@ -1094,42 +1094,73 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         fields.set(field.name, applyCurrentSubst(ctx, fieldType));
       }
 
-      // Check if this literal matches exactly one nominal record
-      const matchingRecords = Array.from(ctx.adtEnv.entries()).filter(([name, info]) =>
-        info.recordFields &&
-        info.recordFields.size === fields.size &&
-        Array.from(info.recordFields.keys()).every(fieldName =>
-          fields.has(fieldName) &&
-          fieldNames.has(fieldName)
-        )
-      );
+      const candidateRecords = Array.from(ctx.adtEnv.entries()).filter(([name, info]) => {
+        if (!info.recordFields) return false;
+        if (info.recordFields.size < fields.size) return false;
+        for (const fieldName of fieldNames) {
+          if (!info.recordFields.has(fieldName)) {
+            return false;
+          }
+        }
+        return true;
+      });
 
-      if (matchingRecords.length === 1) {
-        // Nominal record literal: exactly one record type matches the field set
-        const [recordName, recordInfo] = matchingRecords[0];
-        const args = Array(recordInfo.recordFields!.size).fill(null);
-        // Reorder fields to match record constructor argument order
+      if (candidateRecords.length === 1) {
+        const [recordName, recordInfo] = candidateRecords[0];
+        const args: (Type | null)[] = Array(recordInfo.recordFields!.size).fill(null);
         for (const [fieldName, fieldType] of fields.entries()) {
           const index = recordInfo.recordFields!.get(fieldName);
           if (index !== undefined) {
             args[index] = fieldType;
           }
         }
+        if (recordInfo.alias?.kind === "record") {
+          for (const [fieldName, index] of recordInfo.recordFields!.entries()) {
+            if (!args[index]) {
+              const aliasFieldType = recordInfo.alias.fields.get(fieldName);
+              if (aliasFieldType) {
+                args[index] = aliasFieldType;
+              }
+            }
+          }
+        }
+        for (let index = 0; index < args.length; index++) {
+          if (!args[index]) {
+            args[index] = unknownType({
+              kind: "incomplete",
+              reason: "record_missing_field",
+            });
+          }
+        }
         const constructorType: Type = {
           kind: "constructor",
           name: recordName,
-          args,
+          args: args.map((arg) => arg!),
         };
-        return recordExprType(ctx, expr, constructorType);
-      } else {
-        // Record literal must match exactly one nominal record type (HM requirement)
-        const mark = markUnsupportedExpr(
-          ctx,
-          expr,
-          `Record literal must match exactly one nominal record type. Found ${matchingRecords.length} matches.`,
+        const missingFields = Array.from(recordInfo.recordFields!.keys()).filter(
+          (fieldName) => !fields.has(fieldName),
         );
-        return recordExprType(ctx, expr, mark.type);
+        for (const missingField of missingFields) {
+          recordLayer1Diagnostic(ctx, expr.id, "missing_field", { field: missingField });
+        }
+        return recordExprType(ctx, expr, constructorType);
       }
+
+      const matches = candidateRecords.length;
+      const candidateNames = candidateRecords.map(([name]) => name);
+      const descriptor = matches === 0
+        ? "no nominal record matches these fields"
+        : `ambiguous among: ${candidateNames.join(", ")}`;
+      const mark = markUnsupportedExpr(
+        ctx,
+        expr,
+        `Record literal must match exactly one nominal record type; ${descriptor} (found ${matches} matches).`,
+        {
+          reason: "ambiguous_record",
+          details: { matches, candidates: candidateNames },
+        },
+      );
+      return recordExprType(ctx, expr, mark.type);
     }
     case "record_projection": {
       const targetExpr = expr.target;

@@ -4,6 +4,7 @@ export type ConstraintDiagnosticReason =
   | "not_function"
   | "branch_mismatch"
   | "missing_field"
+  | "ambiguous_record"
   | "not_record"
   | "occurs_cycle"
   | "type_mismatch"

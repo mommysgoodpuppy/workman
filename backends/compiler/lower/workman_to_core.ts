@@ -354,6 +354,17 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
         ? `Record is missing field '${field}'`
         : "Record is missing a required field";
     }
+    case "ambiguous_record": {
+      const matches = diagnostic.details?.matches as number | undefined;
+      const candidates = diagnostic.details?.candidates as string[] | undefined;
+      if (matches === 0) {
+        return "No nominal record matches this literal";
+      }
+      if (candidates && candidates.length > 0) {
+        return `Record literal is ambiguous among ${candidates.join(", ")}`;
+      }
+      return `Record literal must match exactly one nominal record type (found ${matches ?? 0} matches)`;
+    }
     case "not_record":
       return "Cannot project field from non-record type";
     case "occurs_cycle":

@@ -792,6 +792,7 @@ export function markInconsistent(
   return mark;
 }
 
+// treated as fatal
 export function markUnsupportedExpr(
   ctx: Context,
   expr: Expr,
