@@ -82,6 +82,7 @@ Deno.test("solver flags annotation mismatch when match discharges but annotation
 Deno.test("solver allows infectious record projections and spreads Result types", () => {
   const analysis = analyzeSource(`
     type ParseError = Missing;
+    record V { value: Int };
     let wrap = (value) => {
       { value: value }
     };
@@ -97,6 +98,7 @@ Deno.test("solver allows infectious record projections and spreads Result types"
   `);
 
   // Should have no errors - infection spreading is allowed
+  console.log(analysis.layer2.diagnostics);
   assertEquals(analysis.layer2.diagnostics.length, 0);
 
   // Verify that 'forcedField' has the infected return type

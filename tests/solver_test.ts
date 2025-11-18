@@ -5,7 +5,7 @@ import {
   solveConstraints,
   type SolveInput,
 } from "../src/layer2/mod.ts";
-import type { Type } from "../src/types.ts";
+import type { Type, TypeInfo } from "../src/types.ts";
 import { unknownType } from "../src/types.ts";
 import type {
   ConstraintStub,
@@ -210,6 +210,7 @@ Deno.test("analyzeProgram surfaces not_boolean diagnostic for boolean operators"
 
 Deno.test("analyzeProgram surfaces duplicate_record_field diagnostic", () => {
   const analysis = analyzeSource(`
+    record R { foo: Int };
     let dup = {
       foo: 1,
       foo: 2,
@@ -220,6 +221,8 @@ Deno.test("analyzeProgram surfaces duplicate_record_field diagnostic", () => {
 });
 
 Deno.test("solver surfaces missing_field diagnostic when record lacks requested field", () => {
+
+  //needs record declaration
   const targetId: NodeId = 210;
   const resultId: NodeId = 211;
   const stubs: ConstraintStub[] = [
@@ -241,6 +244,21 @@ Deno.test("solver surfaces missing_field diagnostic when record lacks requested 
     ],
     [resultId, { kind: "int" }],
   ]);
+  const adtEnv = new Map<string, TypeInfo>([
+  [
+    "Point",
+    {
+      name: "Point",
+      parameters: [],
+      constructors: [],
+      alias: {
+        kind: "record",
+        fields: new Map<string, Type>([["foo", { kind: "int" }]]),
+      },
+      isAlias: false,
+    },
+  ],
+]);
 
   const input: SolveInput = {
     markedProgram: EMPTY_PROGRAM,
@@ -249,6 +267,7 @@ Deno.test("solver surfaces missing_field diagnostic when record lacks requested 
     nodeTypeById,
     layer1Diagnostics: [],
     summaries: [],
+    adtEnv
   };
   const result = solveConstraints(input);
   const reasons = result.diagnostics.map((diag) => diag.reason);
@@ -284,6 +303,60 @@ Deno.test("solver surfaces not_record diagnostic when projecting field from non-
   const reasons = result.diagnostics.map((diag) => diag.reason);
   collectReasons(reasons, "not_record");
 });
+
+Deno.test(
+  "solver treats nominal record constructors as record values",
+  () => {
+    const targetId: NodeId = 240;
+    const resultId: NodeId = 241;
+    const stubs: ConstraintStub[] = [
+      {
+        kind: "has_field",
+        origin: 242,
+        target: targetId,
+        field: "foo",
+        result: resultId,
+      },
+    ];
+    const nodeTypeById = new Map<NodeId, Type>([
+      [
+        targetId,
+        {
+          kind: "constructor",
+          name: "Point",
+          args: [],
+        },
+      ],
+      [resultId, { kind: "int" }],
+    ]);
+    const adtEnv = new Map<string, TypeInfo>([
+      [
+        "Point",
+        {
+          name: "Point",
+          parameters: [],
+          constructors: [],
+          alias: {
+            kind: "record",
+            fields: new Map<string, Type>([["foo", { kind: "int" }]]),
+          },
+          isAlias: false,
+        },
+      ],
+    ]);
+    const input: SolveInput = {
+      markedProgram: EMPTY_PROGRAM,
+      constraintStubs: stubs,
+      holes: new Map(),
+      nodeTypeById,
+      layer1Diagnostics: [],
+      summaries: [],
+      adtEnv,
+    };
+    const result = solveConstraints(input);
+    assertStrictEquals(result.diagnostics.length, 0);
+  },
+);
 
 Deno.test("solver surfaces occurs_cycle diagnostic for recursive annotation", () => {
   const annotationId: NodeId = 230;

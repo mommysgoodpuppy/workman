@@ -1151,16 +1151,15 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const descriptor = matches === 0
         ? "no nominal record matches these fields"
         : `ambiguous among: ${candidateNames.join(", ")}`;
-      const mark = markUnsupportedExpr(
-        ctx,
-        expr,
-        `Record literal must match exactly one nominal record type; ${descriptor} (found ${matches} matches).`,
-        {
-          reason: "ambiguous_record",
-          details: { matches, candidates: candidateNames },
-        },
-      );
-      return recordExprType(ctx, expr, mark.type);
+      recordLayer1Diagnostic(ctx, expr.id, "ambiguous_record", {
+        matches,
+        candidates: candidateNames,
+      });
+      const structuralRecord: Type = {
+        kind: "record",
+        fields: new Map(fields),
+      };
+      return recordExprType(ctx, expr, structuralRecord);
     }
     case "record_projection": {
       const targetExpr = expr.target;
@@ -1219,12 +1218,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
             return recordExprType(ctx, expr, projectionType);
           } else {
-            const mark = markUnsupportedExpr(
-              ctx,
-              expr,
-              `field '${expr.field}' not found in record type '${resolvedTarget.name}'`,
-            );
-            return recordExprType(ctx, expr, mark.type);
+            recordLayer1Diagnostic(ctx, expr.id, "missing_field", {
+              field: expr.field,
+            });
+            const unknown = unknownType({
+              kind: "incomplete",
+              reason: "missing_field",
+            });
+            return recordExprType(ctx, expr, unknown);
           }
         }
       }
@@ -1266,25 +1267,32 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
           return recordExprType(ctx, expr, projectionType);
         } else {
-          // Field access must resolve to exactly one nominal record type (HM requirement)
-          const mark = markUnsupportedExpr(
-            ctx,
-            expr,
-            `Field access '${expr.field}' must resolve to exactly one nominal record type. Found ${possibleRecords.length} matches.`,
-          );
-          return recordExprType(ctx, expr, mark.type);
+          const matches = possibleRecords.length;
+          const candidateNames = possibleRecords.map(([name]) => name);
+          recordLayer1Diagnostic(ctx, expr.id, "ambiguous_record", {
+            matches,
+            candidates: candidateNames,
+          });
+          const unknown = unknownType({
+            kind: "incomplete",
+            reason: "ambiguous_record",
+          });
+          return recordExprType(ctx, expr, unknown);
         }
       }
 
       // Field projection must be on nominal record types (HM requirement)
-      const mark = markUnsupportedExpr(
+      recordLayer1Diagnostic(ctx, expr.id, "not_record", {
+        actual: resolvedTarget.kind,
+      });
+      return recordExprType(
         ctx,
         expr,
-        `cannot access field '${expr.field}' on type ${
-          typeToString(resolvedTarget)
-        }. Field access requires nominal record types.`,
+        unknownType({
+          kind: "incomplete",
+          reason: "not_record",
+        }),
       );
-      return recordExprType(ctx, expr, mark.type);
     }
     case "call": {
       const rawCalleeType = inferExpr(ctx, expr.callee);

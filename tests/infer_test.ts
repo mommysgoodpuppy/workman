@@ -190,6 +190,37 @@ Deno.test("arrow return annotation mismatch reports error", () => {
   );
 });
 
+Deno.test("partial record literal surfaces missing field diagnostics", () => {
+  const source = `
+    record Point { x: Int, y: Int };
+    let buildPoint = () => {
+      { x: 5 }
+    };
+  `;
+  const analysis = analyzeSource(source);
+  const reasons = analysis.layer1.layer1Diagnostics.map((diag) => diag.reason);
+  assert(
+    reasons.includes("missing_field"),
+    `expected missing_field diagnostic, got ${JSON.stringify(reasons)}`,
+  );
+});
+
+Deno.test("ambiguous record literal surfaces ambiguous_record diagnostic", () => {
+  const source = `
+    record Point { x: Int, y: Int };
+    record Pos { x: Int, y: Int };
+    let choose = () => {
+      { x: 1, y: 2 }
+    };
+  `;
+  const analysis = analyzeSource(source);
+  const reasons = analysis.layer1.layer1Diagnostics.map((diag) => diag.reason);
+  assert(
+    reasons.includes("ambiguous_record"),
+    `expected ambiguous_record diagnostic, got ${JSON.stringify(reasons)}`,
+  );
+});
+
 Deno.test("rejects non-exhaustive match", () => {
   const source = `
     type Option<T> = None | Some<T>;
