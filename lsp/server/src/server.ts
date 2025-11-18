@@ -471,13 +471,13 @@ export class WorkmanLanguageServer {
     };
   }
 
-  private async handleDidOpen(message: LSPMessage): Promise<LSPMessage | null> {
+  private handleDidOpen(message: LSPMessage): LSPMessage | null {
     const { textDocument } = message.params;
     const uri = textDocument.uri;
     const text = textDocument.text;
 
     this.documents.set(uri, text);
-    await this.ensureValidation(uri, text);
+    this.ensureValidation(uri, text);
 
     return null;
   }
