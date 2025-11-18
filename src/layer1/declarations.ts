@@ -37,6 +37,12 @@ function isAliasTypeDeclaration(
   return decl.members.length === 1 && decl.members[0]?.kind === "alias";
 }
 
+function isRecordTypeDeclaration(
+  decl: TypeDeclaration,
+): decl is TypeDeclaration & { members: [TypeAliasExprMember & { type: { kind: "type_record" } }] } {
+  return decl.members.length === 1 && decl.members[0].kind === "alias" && decl.members[0].type.kind === "type_record";
+}
+
 const typeParamsCache = new Map<string, Type[]>();
 
 export function resetTypeParamsCache(): void {
@@ -83,7 +89,10 @@ export function registerTypeConstructors(
   decl: TypeDeclaration,
   infectiousDecl?: import("../ast.ts").InfectiousDeclaration,
 ): RegisterConstructorsResult {
-  if (isAliasTypeDeclaration(decl)) {
+  if (isRecordTypeDeclaration(decl)) {
+    return registerTypeRecord(ctx, decl);
+  }
+  if (!isRecordTypeDeclaration(decl) && isAliasTypeDeclaration(decl)) {
     return registerTypeAlias(ctx, decl);
   }
   const adtInfo = ctx.adtEnv.get(decl.name);
@@ -200,47 +209,12 @@ export function registerTypeConstructors(
     stagedEnvEntries.push(member.name);
   }
 
+
   // All validations passed, commit changes
   for (const info of stagedConstructors) {
     ctx.env.set(info.name, info.scheme);
   }
   adtInfo.constructors.push(...stagedConstructors);
-
-  // For record types, set as nominal type with recordFields
-  if (decl.members.length === 0 && decl.typeExpr.kind === "type_record") {
-    const aliasType = convertTypeExpr(ctx, decl.typeExpr, typeScope, {
-      allowNewVariables: false,
-    });
-    if (aliasType.kind === "record") {
-      // Create recordFields map
-      const recordFields = new Map<string, number>();
-      Array.from(aliasType.fields.keys()).forEach((field, index) => {
-        recordFields.set(field, index);
-      });
-      adtInfo.recordFields = recordFields;
-
-      // Create implicit constructor for the record
-      const fieldTypes = Array.from(aliasType.fields.values());
-      const ctorScheme: TypeScheme = {
-        quantifiers: parameterIds,
-        type: fieldTypes.reduceRight<Type>((acc, fieldType) => ({
-          kind: "func",
-          from: fieldType,
-          to: acc,
-        }), makeDataConstructor(decl.name, parameterTypes)),
-      };
-
-      const ctorInfo: ConstructorInfo = {
-        name: decl.name,
-        arity: fieldTypes.length,
-        scheme: ctorScheme,
-      };
-
-      adtInfo.constructors.push(ctorInfo);
-      // Register the constructor in env
-      ctx.env.set(decl.name, ctorScheme);
-    }
-  }
 
   return { success: true };
 }
@@ -269,6 +243,65 @@ function registerTypeAlias(
   adtInfo.alias = cloneType(aliasType);
   adtInfo.constructors = [];
   adtInfo.isAlias = true;
+  return { success: true };
+}
+
+function registerTypeRecord(
+  ctx: Context,
+  decl: TypeDeclaration & { members: [TypeAliasExprMember & { type: { kind: "type_record" } }] },
+): RegisterConstructorsResult {
+  const adtInfo = ctx.adtEnv.get(decl.name);
+  const parameterTypes = typeParamsCache.get(decl.name);
+  if (!adtInfo || !parameterTypes) {
+    return {
+      success: false,
+      mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0]),
+    };
+  }
+
+  const parameterIds = parameterTypes
+    .map((type) => (type.kind === "var" ? type.id : -1))
+    .filter((id) => id >= 0);
+
+  const typeScope: TypeScope = new Map();
+  decl.typeParams.forEach((param, index) => {
+    typeScope.set(param.name, parameterTypes[index]);
+  });
+
+  const aliasType = convertTypeExpr(ctx, decl.members[0].type, typeScope, {
+    allowNewVariables: false,
+  });
+
+  if (aliasType.kind === "record") {
+    // Create recordFields map
+    const recordFields = new Map<string, number>();
+    Array.from(aliasType.fields.keys()).forEach((field, index) => {
+      recordFields.set(field, index);
+    });
+    adtInfo.recordFields = recordFields;
+
+    // Create implicit constructor for the record
+    const fieldTypes = Array.from(aliasType.fields.values());
+    const ctorScheme: TypeScheme = {
+      quantifiers: parameterIds,
+      type: fieldTypes.reduceRight<Type>((acc, fieldType) => ({
+        kind: "func",
+        from: fieldType,
+        to: acc,
+      }), makeDataConstructor(decl.name, parameterTypes)),
+    };
+
+    const ctorInfo: ConstructorInfo = {
+      name: decl.name,
+      arity: fieldTypes.length,
+      scheme: ctorScheme,
+    };
+
+    adtInfo.constructors.push(ctorInfo);
+    // Register the constructor in env
+    ctx.env.set(decl.name, ctorScheme);
+  }
+
   return { success: true };
 }
 
@@ -538,7 +571,7 @@ export function convertTypeExpr(
     }
     case "type_unit":
       return { kind: "unit" };
-    case "type_error_row": {
+    case "type_effect_row": {
       const cases = new Map<string, Type | null>();
       for (const entry of typeExpr.cases) {
         const payload = entry.payload

@@ -771,8 +771,6 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
-
-
 function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
   switch (statement.kind) {
     case "let_statement": {
@@ -1081,12 +1079,57 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
     }
     case "record_literal": {
       const fields = new Map<string, Type>();
+      const fieldNames = new Set<string>();
       for (const field of expr.fields) {
+        if (fieldNames.has(field.name)) {
+          const mark = markUnsupportedExpr(
+            ctx,
+            expr,
+            `duplicate field '${field.name}' in record literal`,
+          );
+          return recordExprType(ctx, expr, mark.type);
+        }
+        fieldNames.add(field.name);
         const fieldType = inferExpr(ctx, field.value);
         fields.set(field.name, applyCurrentSubst(ctx, fieldType));
       }
-      const recordType = { kind: "record" as const, fields };
-      return recordExprType(ctx, expr, recordType);
+
+      // Check if this literal matches exactly one nominal record
+      const matchingRecords = Array.from(ctx.adtEnv.entries()).filter(([name, info]) =>
+        info.recordFields &&
+        info.recordFields.size === fields.size &&
+        Array.from(info.recordFields.keys()).every(fieldName =>
+          fields.has(fieldName) &&
+          fieldNames.has(fieldName)
+        )
+      );
+
+      if (matchingRecords.length === 1) {
+        // Nominal record literal: exactly one record type matches the field set
+        const [recordName, recordInfo] = matchingRecords[0];
+        const args = Array(recordInfo.recordFields!.size).fill(null);
+        // Reorder fields to match record constructor argument order
+        for (const [fieldName, fieldType] of fields.entries()) {
+          const index = recordInfo.recordFields!.get(fieldName);
+          if (index !== undefined) {
+            args[index] = fieldType;
+          }
+        }
+        const constructorType: Type = {
+          kind: "constructor",
+          name: recordName,
+          args,
+        };
+        return recordExprType(ctx, expr, constructorType);
+      } else {
+        // Record literal must match exactly one nominal record type (HM requirement)
+        const mark = markUnsupportedExpr(
+          ctx,
+          expr,
+          `Record literal must match exactly one nominal record type. Found ${matchingRecords.length} matches.`,
+        );
+        return recordExprType(ctx, expr, mark.type);
+      }
     }
     case "record_projection": {
       const targetExpr = expr.target;
@@ -1094,7 +1137,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (targetExpr.kind === "identifier") {
         const scheme = ctx.env.get(targetExpr.name);
         if (!scheme) {
-          const markType = unknownType({ kind: "incomplete", reason: "free_variable" });
+          const markType = unknownType({
+            kind: "incomplete",
+            reason: "free_variable",
+          });
           ctx.nodeTypes.set(expr, markType);
           markFreeVariable(ctx, targetExpr, targetExpr.name);
           ctx.nodeTypes.set(targetExpr, markType);
@@ -1111,6 +1157,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       );
       const targetCarrierInfo = splitCarrier(resolvedTarget);
 
+      // First check if resolvedTarget is already a nominal record
       if (resolvedTarget.kind === "constructor") {
         const info = ctx.adtEnv.get(resolvedTarget.name);
         if (info && info.recordFields) {
@@ -1141,72 +1188,24 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
             return recordExprType(ctx, expr, projectionType);
           } else {
-            const mark = markUnsupportedExpr(ctx, expr, "record field not found");
+            const mark = markUnsupportedExpr(
+              ctx,
+              expr,
+              `field '${expr.field}' not found in record type '${resolvedTarget.name}'`,
+            );
             return recordExprType(ctx, expr, mark.type);
           }
         }
-      } else if (resolvedTarget.kind === "record") {
-        if (resolvedTarget.fields.has(expr.field)) {
-          const projectedValueType = resolvedTarget.fields.get(expr.field)!;
-          const projectionType = targetCarrierInfo
-            ? (joinCarrier(
-              targetCarrierInfo.domain,
-              projectedValueType,
-              targetCarrierInfo.state,
-            ) ?? projectedValueType)
-            : projectedValueType;
-          recordHasFieldConstraint(
-            ctx,
-            expr,
-            expr.target,
-            expr.field,
-            expr,
-            projectedValueType,
-          );
-          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
-          registerHoleForType(
-            ctx,
-            holeOriginFromExpr(targetExpr),
-            applyCurrentSubst(ctx, targetType),
-          );
-          registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
-          return recordExprType(ctx, expr, projectionType);
-        } else {
-          // Access new field - extend the record type
-          const projectedValueType = freshTypeVar();
-          const newFields = new Map(resolvedTarget.fields);
-          newFields.set(expr.field, projectedValueType);
-          const newRecordType = { kind: "record" as const, fields: newFields };
-          unify(ctx, resolvedTarget, newRecordType);
-          const projectionType = targetCarrierInfo
-            ? (joinCarrier(
-              targetCarrierInfo.domain,
-              projectedValueType,
-              targetCarrierInfo.state,
-            ) ?? projectedValueType)
-            : projectedValueType;
-          recordHasFieldConstraint(
-            ctx,
-            expr,
-            expr.target,
-            expr.field,
-            expr,
-            projectedValueType,
-          );
-          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
-          registerHoleForType(
-            ctx,
-            holeOriginFromExpr(targetExpr),
-            applyCurrentSubst(ctx, targetType),
-          );
-          registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
-          return recordExprType(ctx, expr, projectionType);
-        }
-      } else if (targetType.kind === "var") {
-        // Try to unify to nominal record
-        const possible = Array.from(ctx.adtEnv.entries()).filter(([name, info]) => info.recordFields?.has(expr.field));
-        if (possible.length === 1) {
-          const [name, info] = possible[0];
+      }
+
+      // If targetType is a type variable (so unresolved), unify to exactly one nominal record
+      if (targetType.kind === "var") {
+        const possibleRecords = Array.from(ctx.adtEnv.entries()).filter((
+          [name, info],
+        ) => info.recordFields?.has(expr.field));
+        if (possibleRecords.length === 1) {
+          // HM nominal record unification: exactly one record type has this field
+          const [name, info] = possibleRecords[0];
           const args = Array(info.recordFields!.size).fill(freshTypeVar());
           const constructorType: Type = { kind: "constructor", name, args };
           unify(ctx, targetType, constructorType);
@@ -1236,36 +1235,25 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
           return recordExprType(ctx, expr, projectionType);
         } else {
-          // Multiple or none - add constraint for structural
-          const projectedValueType = freshTypeVar();
-          recordHasFieldConstraint(
+          // Field access must resolve to exactly one nominal record type (HM requirement)
+          const mark = markUnsupportedExpr(
             ctx,
             expr,
-            expr.target,
-            expr.field,
-            expr,
-            projectedValueType,
+            `Field access '${expr.field}' must resolve to exactly one nominal record type. Found ${possibleRecords.length} matches.`,
           );
-          const projectionType = targetCarrierInfo
-            ? (joinCarrier(
-              targetCarrierInfo.domain,
-              projectedValueType,
-              targetCarrierInfo.state,
-            ) ?? projectedValueType)
-            : projectedValueType;
-          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
-          registerHoleForType(
-            ctx,
-            holeOriginFromExpr(targetExpr),
-            applyCurrentSubst(ctx, targetType),
-          );
-          registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
-          return recordExprType(ctx, expr, projectionType);
+          return recordExprType(ctx, expr, mark.type);
         }
-      } else {
-        const mark = markUnsupportedExpr(ctx, expr, "field access on non-record, non-var type");
-        return recordExprType(ctx, expr, mark.type);
       }
+
+      // Field projection must be on nominal record types (HM requirement)
+      const mark = markUnsupportedExpr(
+        ctx,
+        expr,
+        `cannot access field '${expr.field}' on type ${
+          typeToString(resolvedTarget)
+        }. Field access requires nominal record types.`,
+      );
+      return recordExprType(ctx, expr, mark.type);
     }
     case "call": {
       const rawCalleeType = inferExpr(ctx, expr.callee);
@@ -2652,6 +2640,10 @@ export function inferMatchBranches(
       }
       // Referenced bundles cover their own cases; treat as wildcard for exhaustiveness.
       hasWildcard = true;
+      continue;
+    }
+
+    if (arm.kind !== "match_pattern") {
       continue;
     }
 
