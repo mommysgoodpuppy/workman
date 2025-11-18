@@ -8,7 +8,7 @@ import {
 } from "../../../src/layer3/mod.ts";
 import { InferError, LexError, ParseError } from "../../../src/error.ts";
 import { ModuleLoaderError } from "../../../src/module_loader.ts";
-import { getWordAtOffset, offsetToPosition, positionToOffset } from "./util.ts";
+import { estimateRangeFromMessage, getWordAtOffset, offsetToPosition, positionToOffset } from "./util.ts";
 import type { WorkmanLanguageServer } from "./server.ts";
 import { computeStdRoots, uriToFsPath } from "./fsio.ts";
 type LspServerContext = WorkmanLanguageServer;
@@ -119,7 +119,7 @@ export async function validateDocument(
           start: offsetToPosition(text, error.span.start),
           end: offsetToPosition(text, error.span.end),
         }
-        : ctx.estimateRangeFromMessage(text, error.message);
+        : estimateRangeFromMessage(text, error.message);
       diagnostics.push({
         range,
         severity: 1,
@@ -155,7 +155,7 @@ export async function validateDocument(
             start: offsetToPosition(text, cause.span.start),
             end: offsetToPosition(text, cause.span.end),
           }
-          : ctx.estimateRangeFromMessage(text, cause.message);
+          : estimateRangeFromMessage(text, cause.message);
         message = cause.format(text);
         source = "workman-typechecker";
         code = "type-error";
@@ -187,7 +187,7 @@ export async function validateDocument(
             };
           }
         } else {
-          range = ctx.estimateRangeFromMessage(text, message);
+          range = estimateRangeFromMessage(text, message);
         }
       }
 
@@ -200,7 +200,7 @@ export async function validateDocument(
       });
     } else {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      const range = ctx.estimateRangeFromMessage(text, errorMsg) || {
+      const range = estimateRangeFromMessage(text, errorMsg) || {
         start: { line: 0, character: 0 },
         end: { line: 0, character: 1 },
       };

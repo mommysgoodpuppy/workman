@@ -10,6 +10,7 @@ import { renderNodeView } from "./render.ts";
 import { getWordAtOffset, offsetToPosition, positionToOffset, spanToRange } from "./util.ts";
 import { computeStdRoots, uriToFsPath } from "./fsio.ts";
 import type { WorkmanLanguageServer } from "./server.ts";
+import { collectIdentifierReferences, findConstructorDeclaration, findGlobalDefinitionLocations, findLetDeclaration, findModuleDefinitionLocations, findNearestLetBeforeOffset, findTopLevelLet, findTypeDeclaration } from "./findcollect.ts";
 type LspServerContext = WorkmanLanguageServer;
 
 export async function handleMessage(
@@ -347,14 +348,14 @@ async function handleDefinition(
       locations.push({ uri: targetUri, span, sourceText });
     };
 
-    let localDecl = ctx.findLetDeclaration(
+    let localDecl = findLetDeclaration(
       context.program,
       context.layer3,
       word,
       offset,
     );
     if (!localDecl) {
-      localDecl = ctx.findNearestLetBeforeOffset(
+      localDecl = findNearestLetBeforeOffset(
         context.program,
         context.layer3,
         word,
@@ -368,7 +369,7 @@ async function handleDefinition(
       }
     }
 
-    const topDecl = ctx.findTopLevelLet(context.program, word);
+    const topDecl = findTopLevelLet(context.program, word);
     if (topDecl) {
       const topSpan = context.layer3.spanIndex.get(topDecl.id);
       if (topSpan) {
@@ -376,12 +377,12 @@ async function handleDefinition(
       }
     }
 
-    const typeDecl = ctx.findTypeDeclaration(context.program, word);
+    const typeDecl = findTypeDeclaration(context.program, word);
     if (typeDecl) {
       pushLocation(uri, typeDecl.span, text);
     }
 
-    const ctorDecl = ctx.findConstructorDeclaration(
+    const ctorDecl = findConstructorDeclaration(
       context.program,
       word,
     );
@@ -395,7 +396,7 @@ async function handleDefinition(
         if (record.kind !== "workman") continue;
         for (const spec of record.specifiers) {
           if (spec.local !== word) continue;
-          const moduleLocations = ctx.findModuleDefinitionLocations(
+          const moduleLocations = findModuleDefinitionLocations(
             record.sourcePath,
             spec.imported,
             context.modules,
@@ -408,7 +409,7 @@ async function handleDefinition(
     }
 
     if (locations.length === 0 && context.graph.prelude) {
-      const preludeLocations = ctx.findModuleDefinitionLocations(
+      const preludeLocations = findModuleDefinitionLocations(
         context.graph.prelude,
         word,
         context.modules,
@@ -419,7 +420,7 @@ async function handleDefinition(
     }
 
     if (locations.length === 0) {
-      const globalLocations = ctx.findGlobalDefinitionLocations(
+      const globalLocations = findGlobalDefinitionLocations(
         word,
         context.modules,
       );
@@ -477,12 +478,12 @@ async function handleReferences(
     if (!word) {
       return { jsonrpc: "2.0", id: message.id, result: [] };
     }
-    const decl = ctx.findTopLevelLet(moduleContext.program, word);
+    const decl = findTopLevelLet(moduleContext.program, word);
     if (!decl) {
       return { jsonrpc: "2.0", id: message.id, result: [] };
     }
 
-    const spans = ctx.collectIdentifierReferences(
+    const spans = collectIdentifierReferences(
       moduleContext.program,
       word,
     );
