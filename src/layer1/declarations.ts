@@ -279,6 +279,7 @@ function registerTypeRecord(
       recordFields.set(field, index);
     });
     adtInfo.recordFields = recordFields;
+    adtInfo.alias = cloneType(aliasType);
 
     // Create implicit constructor for the record
     const fieldTypes = Array.from(aliasType.fields.values());
