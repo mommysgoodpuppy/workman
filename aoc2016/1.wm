@@ -27,7 +27,7 @@ let produceOp = (in) => {
 };
 
 let move = (orient, distance) => {
-  (pos: Location) => {
+  (pos) => {
     match(orient) {
       N => { ({ x: pos.x, y: pos.y + distance }) },
       E => { ({ x: pos.x + distance, y: pos.y }) },
@@ -36,7 +36,7 @@ let move = (orient, distance) => {
     }
   }
 };
-let rec walker = (opList: List<Operation>, orient, location) => {
+let rec walker = (opList, orient, location) => {
   let (op, opList2) = stripErr(listUncons(opList));
   let newOrient = match((op.direction, orient)) {
     (L, N) => { W },

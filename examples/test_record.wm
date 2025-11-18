@@ -1,0 +1,17 @@
+record Point { x: Int, y: Int, z: string };
+
+let test = () => {
+  let f = (p) => { ({ x: p.x, y: p.y }) };
+  f
+};
+
+let main = () => {
+  let g = test();
+  g({ x: 10 })
+};
+
+record R { foo: Int };
+let dup = {
+  foo: 1,
+  foo: 2,
+};
