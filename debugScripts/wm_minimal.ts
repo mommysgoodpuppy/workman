@@ -1,10 +1,10 @@
-import { IO, resolve, toFileUrl } from "./src/io.ts";
-import { compileWorkmanGraph } from "./backends/compiler/frontends/workman.ts";
-import { emitModuleGraph } from "./backends/compiler/js/graph_emitter.ts";
+import { IO, resolve, toFileUrl } from "../src/io.ts";
+import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
+import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import {
   collectCompiledValues,
   invokeMainIfPresent,
-} from "./src/runtime_display.ts";
+} from "../src/runtime_display.ts";
 
 // Minimal CLI: just compile and run aoc.wm with heavy logging
 async function main() {
