@@ -83,6 +83,7 @@ export interface SolveInput {
   nodeTypeById: Map<NodeId, Type>;
   layer1Diagnostics: ConstraintDiagnostic[];
   summaries: { name: string; scheme: import("../types.ts").TypeScheme }[];
+  adtEnv: Map<string, import("../types.ts").ADTInfo>;
 }
 
 export interface SolverResult {
@@ -119,6 +120,7 @@ export function solveConstraints(input: SolveInput): SolverResult {
     substitution: new Map(),
     diagnostics: [],
     nodeTypeById: input.nodeTypeById,
+    adtEnv: input.adtEnv,
   };
 
   // Solve constraints in phases to establish type information before
@@ -370,6 +372,7 @@ interface SolverState {
   substitution: Substitution;
   diagnostics: ConstraintDiagnostic[];
   nodeTypeById: Map<NodeId, Type>;
+  adtEnv: Map<string, import("../types.ts").ADTInfo>;
 }
 
 function solveCallConstraint(
@@ -434,6 +437,22 @@ function solveHasFieldConstraint(
     return;
   }
 
+  if (targetValue.kind === "constructor") {
+    const adtInfo = state.adtEnv.get(targetValue.name);
+    if (adtInfo && adtInfo.alias && adtInfo.alias.kind === "record") {
+      projectFieldFromRecord(
+        state,
+        stub,
+        adtInfo.alias,
+        result,
+        targetCarrierInfo,
+        projectedValue,
+      );
+      return;
+    }
+    // Fall through to not_record
+  }
+
   if (targetValue.kind === "var" || isHoleType(targetValue)) {
     const fields = new Map<string, Type>();
     fields.set(stub.field, projectedValue ?? result);
@@ -474,14 +493,11 @@ function projectFieldFromRecord(
   targetCarrierInfo: GenericCarrierInfo | null,
   projectedValue?: Type | null,
 ): void {
-  const fieldType = recordType.fields.get(stub.field);
+  let fieldType = recordType.fields.get(stub.field);
   if (!fieldType) {
-    state.diagnostics.push({
-      origin: stub.origin,
-      reason: "missing_field",
-      details: { field: stub.field },
-    });
-    return;
+    // For anonymous records, add the missing field
+    recordType.fields.set(stub.field, projectedValue ?? result);
+    fieldType = projectedValue ?? result;
   }
   const resolvedFieldType = applySubstitution(fieldType, state.substitution);
 
@@ -2139,14 +2155,7 @@ function extractConstrainedTypes(
       break;
     }
     case "has_field": {
-      if (nodeContainsHole(constraint.target)) {
-        const resultType = resolvedTypes.get(constraint.result);
-        if (resultType) {
-          const fields = new Map<string, Type>();
-          fields.set(constraint.field, resultType);
-          types.push({ kind: "record", fields });
-        }
-      }
+      // Handled separately in buildPartialSolution
       break;
     }
   }
@@ -2167,6 +2176,22 @@ function buildPartialSolution(
 
   if (relevantConstraints.length === 0) {
     return null;
+  }
+
+  // Special handling for has_field constraints: collect all fields into one record
+  const hasFieldConstraints = relevantConstraints.filter((
+    c,
+  ): c is ConstraintStub & { kind: "has_field" } => c.kind === "has_field");
+  if (hasFieldConstraints.length > 0) {
+    const fields = new Map<string, Type>();
+    for (const c of hasFieldConstraints) {
+      const resultType = resolvedTypes.get(c.result);
+      if (resultType) {
+        fields.set(c.field, resultType);
+      }
+    }
+    // Return the record type directly
+    return { kind: "concrete", type: { kind: "record", fields } };
   }
 
   // Try to extract what we know about this hole

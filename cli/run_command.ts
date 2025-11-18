@@ -19,7 +19,7 @@ import { substituteHoleSolutionsInType } from "./type_utils.ts";
 import type { SourceSpan } from "../src/ast.ts";
 
 const RUN_USAGE =
-  "Usage: wm [fmt|type|err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)";
+  "Usage: wm [fmt|type [--line <line>] |err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)";
 
 interface NodeLocationEntry {
   path: string;
@@ -41,15 +41,31 @@ export async function runProgramCommand(
   debugMode: boolean,
 ): Promise<void> {
   let filePath: string;
+  let lineNumber: number | undefined = undefined;
   let skipEvaluation = false;
   let showErrorsOnly = false;
 
   if (args[0] === "type") {
-    if (args.length !== 2) {
+    let index = 1;
+    if (args[index] === "--line") {
+      if (args.length < 4) {
+        console.error(RUN_USAGE);
+        IO.exit(1);
+      }
+      const lineStr = args[index + 1];
+      const parsed = parseInt(lineStr, 10);
+      if (isNaN(parsed) || parsed < 1) {
+        console.error("Invalid line number, must be a positive integer");
+        IO.exit(1);
+      }
+      lineNumber = parsed;
+      index += 2;
+    }
+    if (args.length !== index + 1) {
       console.error(RUN_USAGE);
       IO.exit(1);
     }
-    filePath = args[1];
+    filePath = args[index];
     skipEvaluation = true;
   } else if (args[0] === "err") {
     if (args.length !== 2) {
@@ -96,6 +112,7 @@ export async function runProgramCommand(
       await displayExpressionSummaries({
         filePath,
         artifact,
+        lineFilter: lineNumber,
       });
     }
 
@@ -127,9 +144,10 @@ async function displayExpressionSummaries(
   options: {
     filePath: string;
     artifact: any;
+    lineFilter?: number;
   },
 ): Promise<void> {
-  const { filePath, artifact } = options;
+  const { filePath, artifact, lineFilter } = options;
   const layer3 = artifact.analysis.layer3;
   const source = await IO.readTextFile(filePath);
 
@@ -185,15 +203,11 @@ async function displayExpressionSummaries(
     const excerpt = source.substring(span.start, span.end);
 
     let typeStr = "?";
-    if (view.finalType.kind === "concrete" && view.finalType.type) {
+    let resolvedType = view.finalType.kind === "concrete" && view.finalType.type ? view.finalType.type : (view.finalType.kind === "unknown" && view.finalType.type) ? substituteHoleSolutionsInType(view.finalType.type, layer3) : undefined;
+    if (resolvedType) {
       typeStr = formatScheme({
         quantifiers: [],
-        type: view.finalType.type,
-      });
-    } else if (view.finalType.kind === "unknown" && view.finalType.type) {
-      typeStr = formatScheme({
-        quantifiers: [],
-        type: view.finalType.type,
+        type: resolvedType,
       });
     }
 
@@ -293,9 +307,11 @@ async function displayExpressionSummaries(
     });
   }
 
-  for (const [lineNumber, expressions] of expressionsByLine.entries()) {
-    const lineText = source.split("\n")[lineNumber - 1] || "";
-    console.log(`Line ${lineNumber}: ${lineText}`);
+  for (const [lineNum, expressions] of expressionsByLine.entries()) {
+    if (lineFilter !== undefined && lineNum !== lineFilter) continue;
+
+    const lineText = source.split("\n")[lineNum - 1] || "";
+    console.log(`Line ${lineNum}: ${lineText}`);
 
     expressions.sort((left, right) => left.startPos.col - right.startPos.col);
 
@@ -316,7 +332,9 @@ async function displayExpressionSummaries(
     console.log();
   }
 
-  await displayTopLevelSummaries(artifact);
+  if (lineFilter === undefined) {
+    await displayTopLevelSummaries(artifact);
+  }
 }
 
 async function displayTopLevelSummaries(artifact: any): Promise<void> {
@@ -414,23 +432,28 @@ async function reportErrorsOnly(
       if (diag.span && source) {
         const lines = source.split("\n");
         const line = lines[diag.span.start] || "";
-        let message = `Type Error: ${diag.reason}`;
+        let message = `Type Error: `;
 
         if (diag.details && typeof diag.details === "object") {
           const details = diag.details as Record<string, unknown>;
-          if (
-            diag.reason === "type_mismatch" && details.left && details.right
-          ) {
-            const leftType = formatScheme({
+          if (details.expected && details.actual) {
+            const foundResolved = substituteHoleSolutionsInType(cloneType(details.actual as Type), layer3);
+            const expectedResolved = substituteHoleSolutionsInType(cloneType(details.expected as Type), layer3);
+            const foundType = formatScheme({
               quantifiers: [],
-              type: details.left as Type,
+              type: foundResolved,
             });
-            const rightType = formatScheme({
+            const expectedType = formatScheme({
               quantifiers: [],
-              type: details.right as Type,
+              type: expectedResolved,
             });
-            message += `\n    Expected: ${rightType}\n    Found: ${leftType}`;
+            message += "Type mismatch";
+            message += `\n    Expected: ${expectedType}\n    Found: ${foundType}`;
+          } else {
+            message += `${diag.reason}`;
           }
+        } else {
+          message += `${diag.reason}`;
         }
 
         errorMessage += `\n${message}\n`;

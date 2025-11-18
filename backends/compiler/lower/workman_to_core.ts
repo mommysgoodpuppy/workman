@@ -308,8 +308,9 @@ function simpleFormatType(type: Type): string {
     case "effect_row":
       return typeToString(type);
     case "record":
+      const fields = Array.from(type.fields.entries());
       return `{ ${
-        Object.entries(type.fields).map(([k, v]) =>
+        fields.map(([k, v]) =>
           `${k}: ${simpleFormatType(v)}`
         ).join(", ")
       } }`;

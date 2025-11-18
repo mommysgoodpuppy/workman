@@ -206,6 +206,15 @@ export function registerTypeConstructors(
   }
   adtInfo.constructors.push(...stagedConstructors);
 
+  // For record types, set the alias
+  if (decl.members.length === 0 && decl.typeExpr.kind === "type_record") {
+    const aliasType = convertTypeExpr(ctx, decl.typeExpr, typeScope, {
+      allowNewVariables: false,
+    });
+    adtInfo.alias = cloneType(aliasType);
+    adtInfo.isAlias = true;
+  }
+
   return { success: true };
 }
 

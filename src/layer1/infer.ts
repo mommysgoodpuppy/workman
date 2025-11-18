@@ -174,6 +174,61 @@ function storeAnnotationType(
   ctx.annotationTypes.set(annotation.id, applyCurrentSubst(ctx, type));
 }
 
+function typesEqual(a: Type, b: Type): boolean {
+  if (a === b) return true;
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case "var":
+      return b.kind === "var" && a.id === b.id;
+    case "func":
+      return typesEqual(a.from, (b as Type & { kind: "func" }).from) &&
+        typesEqual(a.to, (b as Type & { kind: "func" }).to);
+    case "constructor": {
+      if (
+        b.kind !== "constructor" || a.name !== b.name ||
+        a.args.length !== b.args.length
+      ) {
+        return false;
+      }
+      for (let i = 0; i < a.args.length; i++) {
+        if (!typesEqual(a.args[i], b.args[i])) return false;
+      }
+      return true;
+    }
+    case "tuple": {
+      if (b.kind !== "tuple" || a.elements.length !== b.elements.length) {
+        return false;
+      }
+      for (let i = 0; i < a.elements.length; i++) {
+        if (!typesEqual(a.elements[i], b.elements[i])) return false;
+      }
+      return true;
+    }
+    case "record": {
+      if (b.kind !== "record" || a.fields.size !== b.fields.size) {
+        return false;
+      }
+      for (const [field, typeA] of a.fields.entries()) {
+        const typeB = b.fields.get(field);
+        if (!typeB || !typesEqual(typeA, typeB)) return false;
+      }
+      return true;
+    }
+    case "effect_row": {
+      if (b.kind !== "effect_row" || a.cases.size !== b.cases.size) {
+        return false;
+      }
+      for (const [label, payloadA] of a.cases.entries()) {
+        const payloadB = b.cases.get(label);
+        if (!payloadB || !typesEqual(payloadA, payloadB)) return false;
+      }
+      return a.tail === b.tail;
+    }
+    default:
+      return true;
+  }
+}
+
 function resolveTypeForName(ctx: Context, name: string): Type | undefined {
   const scheme = ctx.env.get(name) ?? ctx.allBindings.get(name);
   if (!scheme) {
@@ -1018,18 +1073,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const fields = new Map<string, Type>();
       for (const field of expr.fields) {
         const fieldType = inferExpr(ctx, field.value);
-        const resolvedFieldType = applyCurrentSubst(ctx, fieldType);
-        if (fields.has(field.name)) {
-          ctx.layer1Diagnostics.push({
-            origin: field.id,
-            reason: "duplicate_record_field",
-            details: { field: field.name },
-          });
-          continue;
-        }
-        fields.set(field.name, resolvedFieldType);
+        fields.set(field.name, applyCurrentSubst(ctx, fieldType));
       }
-      return recordExprType(ctx, expr, { kind: "record", fields });
+      const recordType = { kind: "record" as const, fields };
+      return recordExprType(ctx, expr, recordType);
     }
     case "record_projection": {
       const targetType = inferExpr(ctx, expr.target);
@@ -1041,7 +1088,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const projectionType = targetCarrierInfo
         ? (joinCarrier(
           targetCarrierInfo.domain,
-          cloneType(projectedValueType),
+          projectedValueType,
           targetCarrierInfo.state,
         ) ?? projectedValueType)
         : projectedValueType;
@@ -1053,6 +1100,23 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         expr,
         projectedValueType,
       );
+      const currentTarget = applyCurrentSubst(ctx, targetType);
+      if (isHoleType(currentTarget)) {
+        const recordType = {
+          kind: "record" as const,
+          fields: new Map([[expr.field, projectedValueType]]),
+        };
+        unify(ctx, targetType, recordType);
+      } else if (currentTarget.kind === "record") {
+        const newFields = new Map(currentTarget.fields);
+        if (!newFields.has(expr.field)) {
+          newFields.set(expr.field, projectedValueType);
+          const newRecordType = { kind: "record" as const, fields: newFields };
+          if (targetType.kind === "var") {
+            ctx.subst.set(targetType.id, newRecordType);
+          }
+        }
+      }
       registerHoleForType(
         ctx,
         holeOriginFromExpr(expr.target),

@@ -28,6 +28,7 @@ export function analyzeProgram(
     nodeTypeById: layer1.nodeTypeById,
     layer1Diagnostics: layer1.layer1Diagnostics,
     summaries: layer1.summaries,
+    adtEnv: layer1.adtEnv,
   };
 
   const layer2 = solveConstraints(solveInput);

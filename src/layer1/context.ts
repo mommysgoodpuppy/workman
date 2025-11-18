@@ -971,7 +971,12 @@ export function markTypeExprUnsupported(
   return mark;
 }
 
-function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
+function unifyTypes(
+  a: Type,
+  b: Type,
+  subst: Substitution,
+  adtEnv: Map<string, import("../types.ts").TypeInfo>,
+): UnifyResult {
   const left = applySubstitution(a, subst);
   const right = applySubstitution(b, subst);
 
@@ -983,9 +988,9 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
   }
 
   if (left.kind === "func" && right.kind === "func") {
-    const subst1 = unifyTypes(left.from, right.from, subst);
+    const subst1 = unifyTypes(left.from, right.from, subst, adtEnv);
     if (!subst1.success) return subst1;
-    return unifyTypes(left.to, right.to, subst1.subst);
+    return unifyTypes(left.to, right.to, subst1.subst, adtEnv);
   }
 
   if (left.kind === "constructor" && right.kind === "constructor") {
@@ -1002,6 +1007,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
         leftCarrier.value,
         rightCarrier.value,
         subst,
+        adtEnv,
       );
       if (!valueUnify.success) return valueUnify;
       if (leftCarrier.domain === "effect") {
@@ -1012,6 +1018,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
             leftStateRow,
             rightStateRow,
             valueUnify.subst,
+            adtEnv,
           );
         }
       }
@@ -1019,6 +1026,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
         leftCarrier.state,
         rightCarrier.state,
         valueUnify.subst,
+        adtEnv,
       );
     }
 
@@ -1035,7 +1043,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
     }
     let current = subst;
     for (let i = 0; i < left.args.length; i++) {
-      const res = unifyTypes(left.args[i], right.args[i], current);
+      const res = unifyTypes(left.args[i], right.args[i], current, adtEnv);
       if (!res.success) return res;
       current = res.subst;
     }
@@ -1051,7 +1059,12 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
     }
     let current = subst;
     for (let i = 0; i < left.elements.length; i++) {
-      const res = unifyTypes(left.elements[i], right.elements[i], current);
+      const res = unifyTypes(
+        left.elements[i],
+        right.elements[i],
+        current,
+        adtEnv,
+      );
       if (!res.success) return res;
       current = res.subst;
     }
@@ -1074,7 +1087,7 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
           reason: { kind: "type_mismatch", left, right },
         };
       }
-      const res = unifyTypes(leftType, rightType, current);
+      const res = unifyTypes(leftType, rightType, current, adtEnv);
       if (!res.success) {
         return res;
       }
@@ -1083,8 +1096,30 @@ function unifyTypes(a: Type, b: Type, subst: Substitution): UnifyResult {
     return { success: true, subst: current };
   }
 
+  if (left.kind === "record" && right.kind === "constructor") {
+    const adtInfo = adtEnv.get(right.name);
+    if (adtInfo && adtInfo.alias && adtInfo.alias.kind === "record") {
+      return unifyTypes(left, adtInfo.alias, subst, adtEnv);
+    }
+    return {
+      success: false,
+      reason: { kind: "type_mismatch", left, right },
+    };
+  }
+
+  if (right.kind === "record" && left.kind === "constructor") {
+    const adtInfo = adtEnv.get(left.name);
+    if (adtInfo && adtInfo.alias && adtInfo.alias.kind === "record") {
+      return unifyTypes(adtInfo.alias, right, subst, adtEnv);
+    }
+    return {
+      success: false,
+      reason: { kind: "type_mismatch", left, right },
+    };
+  }
+
   if (left.kind === "effect_row" && right.kind === "effect_row") {
-    return unifyEffectRowTypes(left, right, subst);
+    return unifyEffectRowTypes(left, right, subst, adtEnv);
   }
 
   if (left.kind === right.kind) {
@@ -1121,6 +1156,7 @@ function unifyEffectRowTypes(
   left: EffectRowType,
   right: EffectRowType,
   subst: Substitution,
+  adtEnv: Map<string, import("../types.ts").TypeInfo>,
 ): UnifyResult {
   // Error domain uses UNION semantics, not exact match
   // Per INFECTION_REFACTOR_PLAN_V3.md: "Errors compose via union"
@@ -1166,6 +1202,7 @@ function unifyEffectRowTypes(
       resolvedLeft.tail,
       resolvedRight.tail,
       current,
+      adtEnv,
     );
     if (tailUnify.success) {
       current = tailUnify.subst;
@@ -1194,7 +1231,7 @@ function effectRowsEqual(left: EffectRowType, right: EffectRowType): boolean {
 }
 
 export function unify(ctx: Context, a: Type, b: Type): boolean {
-  const result = unifyTypes(a, b, ctx.subst);
+  const result = unifyTypes(a, b, ctx.subst, ctx.adtEnv);
   if (result.success) {
     ctx.subst = composeSubstitution(ctx.subst, result.subst);
     ctx.lastUnifyFailure = null;
