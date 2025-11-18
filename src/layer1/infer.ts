@@ -1079,7 +1079,23 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       return recordExprType(ctx, expr, recordType);
     }
     case "record_projection": {
-      const targetType = inferExpr(ctx, expr.target);
+      const targetExpr = expr.target;
+      let targetType: Type;
+      if (targetExpr.kind === "identifier") {
+        const scheme = ctx.env.get(targetExpr.name);
+        if (!scheme) {
+          const markType = unknownType({ kind: "incomplete", reason: "free_variable" });
+          ctx.nodeTypes.set(expr, markType);
+          markFreeVariable(ctx, targetExpr, targetExpr.name);
+          ctx.nodeTypes.set(targetExpr, markType);
+          registerHoleForType(ctx, holeOriginFromExpr(targetExpr), markType);
+          registerHoleForType(ctx, holeOriginFromExpr(expr), markType);
+          return recordExprType(ctx, expr, markType);
+        }
+        targetType = scheme.type;
+      } else {
+        targetType = inferExpr(ctx, targetExpr);
+      }
       const resolvedTarget = collapseCarrier(
         applyCurrentSubst(ctx, targetType),
       );
@@ -1100,26 +1116,31 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         expr,
         projectedValueType,
       );
-      const currentTarget = applyCurrentSubst(ctx, targetType);
-      if (isHoleType(currentTarget)) {
+    const scheme = targetExpr.kind === "identifier" ? ctx.env.get(targetExpr.name) : null;
+    const currentTarget = applyCurrentSubst(ctx, targetType);
+      if (currentTarget.kind === "record") {
+        const newFields = new Map(currentTarget.fields);
+        if (!newFields.has(expr.field)) {
+          newFields.set(expr.field, projectedValueType);
+          const newRecordType = { kind: "record" as const, fields: newFields };
+          if (scheme && scheme.type.kind === "var") {
+            ctx.subst.set(scheme.type.id, newRecordType);
+          }
+        }
+      } else if (targetType.kind === "var") {
+        // First field access on a type variable - unify to record
         const recordType = {
           kind: "record" as const,
           fields: new Map([[expr.field, projectedValueType]]),
         };
         unify(ctx, targetType, recordType);
-      } else if (currentTarget.kind === "record") {
-        const newFields = new Map(currentTarget.fields);
-        if (!newFields.has(expr.field)) {
-          newFields.set(expr.field, projectedValueType);
-          const newRecordType = { kind: "record" as const, fields: newFields };
-          if (targetType.kind === "var") {
-            ctx.subst.set(targetType.id, newRecordType);
-          }
-        }
+      } else {
+        // Cannot add field to non-record non-var type - perhaps it's a type error, but for now skip
       }
+      ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
       registerHoleForType(
         ctx,
-        holeOriginFromExpr(expr.target),
+        holeOriginFromExpr(targetExpr),
         applyCurrentSubst(ctx, targetType),
       );
       registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
