@@ -18,6 +18,7 @@ import type {
 import { lowerTupleParameters } from "../lower_tuple_params.ts";
 import { canonicalizeMatch } from "../passes/canonicalize_match.ts";
 import {
+  applySubstitution,
   applySubstitutionScheme,
   type CarrierInfo,
   type CarrierOperations,
@@ -40,6 +41,7 @@ import {
   registerCarrier,
   splitCarrier,
   type Type,
+  type TypeInfo,
   type TypeEnv,
   type TypeScheme,
   typeToString,
@@ -164,6 +166,23 @@ function recordExprType(ctx: Context, expr: Expr, type: Type): Type {
   }
   ctx.nodeTypes.set(expr, resolved);
   return resolved;
+}
+
+function instantiateRecordAlias(
+  info: TypeInfo,
+): Extract<Type, { kind: "record" }> | null {
+  if (!info.alias || info.alias.kind !== "record") {
+    return null;
+  }
+  const aliasClone = cloneType(info.alias);
+  if (info.parameters.length === 0) {
+    return aliasClone;
+  }
+  const substitution: Map<number, Type> = new Map();
+  for (const paramId of info.parameters) {
+    substitution.set(paramId, freshTypeVar());
+  }
+  return applySubstitution(aliasClone, substitution);
 }
 
 function storeAnnotationType(
@@ -1112,6 +1131,26 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       if (candidateRecords.length === 1) {
         const [recordName, recordInfo] = candidateRecords[0];
+        const missingFields = Array.from(recordInfo.recordFields!.keys()).filter(
+          (fieldName) => !fields.has(fieldName),
+        );
+        for (const missingField of missingFields) {
+          recordLayer1Diagnostic(ctx, expr.id, "missing_field", {
+            field: missingField,
+          });
+        }
+
+        const aliasInstance = instantiateRecordAlias(recordInfo);
+        if (aliasInstance) {
+          for (const [fieldName, fieldType] of fields.entries()) {
+            const aliasFieldType = aliasInstance.fields.get(fieldName);
+            if (aliasFieldType) {
+              unify(ctx, aliasFieldType, fieldType);
+            }
+          }
+          return recordExprType(ctx, expr, aliasInstance);
+        }
+
         const args: (Type | null)[] = Array(recordInfo.recordFields!.size).fill(null);
         for (const [fieldName, fieldType] of fields.entries()) {
           const index = recordInfo.recordFields!.get(fieldName);
@@ -1142,12 +1181,6 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           name: recordName,
           args: args.map((arg) => arg!),
         };
-        const missingFields = Array.from(recordInfo.recordFields!.keys()).filter(
-          (fieldName) => !fields.has(fieldName),
-        );
-        for (const missingField of missingFields) {
-          recordLayer1Diagnostic(ctx, expr.id, "missing_field", { field: missingField });
-        }
         return recordExprType(ctx, expr, constructorType);
       }
 
@@ -1279,11 +1312,43 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         ) => info.recordFields?.has(expr.field));
         if (possibleRecords.length === 1) {
           // HM nominal record unification: exactly one record type has this field
-          const [name, info] = possibleRecords[0];
-          const args = Array(info.recordFields!.size).fill(freshTypeVar());
+          const [, info] = possibleRecords[0];
+          const aliasInstance = instantiateRecordAlias(info);
+          if (aliasInstance) {
+            unify(ctx, subjectVar, aliasInstance);
+            const projectedValueType = aliasInstance.fields.get(expr.field)!;
+            const projectionType = targetCarrierInfo
+              ? (joinCarrier(
+                targetCarrierInfo.domain,
+                projectedValueType,
+                targetCarrierInfo.state,
+              ) ?? projectedValueType)
+              : projectedValueType;
+            recordHasFieldConstraint(
+              ctx,
+              expr,
+              expr.target,
+              expr.field,
+              expr,
+              projectedValueType,
+            );
+            ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+            registerHoleForType(
+              ctx,
+              holeOriginFromExpr(targetExpr),
+              applyCurrentSubst(ctx, targetType),
+            );
+            registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
+            return recordExprType(ctx, expr, projectionType);
+          }
+          const [name, fallbackInfo] = possibleRecords[0];
+          const args = Array.from(
+            { length: fallbackInfo.recordFields!.size },
+            () => freshTypeVar(),
+          );
           const constructorType: Type = { kind: "constructor", name, args };
           unify(ctx, subjectVar, constructorType);
-          const index = info.recordFields!.get(expr.field)!;
+          const index = fallbackInfo.recordFields!.get(expr.field)!;
           const projectedValueType = constructorType.args[index];
           const projectionType = targetCarrierInfo
             ? (joinCarrier(
