@@ -4,7 +4,18 @@
     "compile": "deno compile --allow-all --output=workman-lsp src/server.ts"
   },
   "imports": {
-    "@workman/": "../../src/",
     "std/": "https://deno.land/std@0.224.0/"
+  },
+  "compilerOptions": {
+    "noUnusedLocals": false,
+    "noUnusedParameters": true,
+    "strict": true
+  },
+  "lint": {
+    "rules": {
+      "exclude": [
+        "no-explicit-any"
+      ]
+    }
   }
 }

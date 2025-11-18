@@ -1,7 +1,4 @@
 {
-  "compilerOptions": {
-    "strict": true
-  },
   "imports": {
     "@mommysgoodpuppy/logchannel": "jsr:@mommysgoodpuppy/logchannel@^0.1.0",
     "std/": "https://deno.land/std@0.224.0/"
@@ -11,19 +8,17 @@
     "test": "deno test -A --no-check tests",
     "test-nova": "deno bundle -o wm_minimal.js ./wm_minimal.ts && andromeda run ./wm_minimal.js"
   },
+  "compilerOptions": {
+    "strict": true,
+    "noUnusedLocals": false
+  },
   "lint": {
     "rules": {
       "include": [
         "verbatim-module-syntax"
       ],
       "exclude": [
-        "no-explicit-any",
-        "no-empty",
-        "no-fallthrough",
-        "require-await",
-        "no-import-prefix",
-        "no-case-declarations",
-        "prefer-const"
+        "no-explicit-any"
       ]
     }
   }
