@@ -1082,12 +1082,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const fieldNames = new Set<string>();
       for (const field of expr.fields) {
         if (fieldNames.has(field.name)) {
-          const mark = markUnsupportedExpr(
+          recordLayer1Diagnostic(
             ctx,
-            expr,
-            `duplicate field '${field.name}' in record literal`,
+            expr.id,
+            "duplicate_record_field",
+            { field: field.name },
           );
-          return recordExprType(ctx, expr, mark.type);
+          const unknown = unknownType({
+            kind: "incomplete",
+            reason: "duplicate_record_field",
+          });
+          return recordExprType(ctx, expr, unknown);
         }
         fieldNames.add(field.name);
         const fieldType = inferExpr(ctx, field.value);
@@ -1186,21 +1191,26 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         applyCurrentSubst(ctx, targetType),
       );
       const targetCarrierInfo = splitCarrier(resolvedTarget);
+      const recordSubject = targetCarrierInfo?.value ?? resolvedTarget;
+      const wrapWithCarrier = (value: Type): Type => {
+        if (!targetCarrierInfo) {
+          return value;
+        }
+        return joinCarrier(
+          targetCarrierInfo.domain,
+          value,
+          targetCarrierInfo.state,
+        ) ?? value;
+      };
 
-      // First check if resolvedTarget is already a nominal record
-      if (resolvedTarget.kind === "constructor") {
-        const info = ctx.adtEnv.get(resolvedTarget.name);
+      // First check if the subject type (either direct or carrier payload) is a nominal record
+      if (recordSubject.kind === "constructor") {
+        const info = ctx.adtEnv.get(recordSubject.name);
         if (info && info.recordFields) {
           const index = info.recordFields.get(expr.field);
           if (index !== undefined) {
-            const projectedValueType = resolvedTarget.args[index];
-            const projectionType = targetCarrierInfo
-              ? (joinCarrier(
-                targetCarrierInfo.domain,
-                projectedValueType,
-                targetCarrierInfo.state,
-              ) ?? projectedValueType)
-              : projectedValueType;
+            const projectedValueType = recordSubject.args[index];
+            const projectionType = wrapWithCarrier(projectedValueType);
             recordHasFieldConstraint(
               ctx,
               expr,
@@ -1230,8 +1240,40 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         }
       }
 
-      // If targetType is a type variable (so unresolved), unify to exactly one nominal record
-      if (targetType.kind === "var") {
+      if (recordSubject.kind === "record") {
+        const fieldType = recordSubject.fields.get(expr.field);
+        if (fieldType) {
+          const projectionType = wrapWithCarrier(fieldType);
+          recordHasFieldConstraint(
+            ctx,
+            expr,
+            expr.target,
+            expr.field,
+            expr,
+            fieldType,
+          );
+          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+          registerHoleForType(
+            ctx,
+            holeOriginFromExpr(targetExpr),
+            applyCurrentSubst(ctx, targetType),
+          );
+          registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
+          return recordExprType(ctx, expr, projectionType);
+        }
+        recordLayer1Diagnostic(ctx, expr.id, "missing_field", {
+          field: expr.field,
+        });
+        const unknown = unknownType({
+          kind: "incomplete",
+          reason: "missing_field",
+        });
+        return recordExprType(ctx, expr, unknown);
+      }
+
+      // If targetType or carrier subject is a type variable (so unresolved), unify to exactly one nominal record
+      if (targetType.kind === "var" || recordSubject.kind === "var") {
+        const subjectVar = recordSubject.kind === "var" ? recordSubject : targetType;
         const possibleRecords = Array.from(ctx.adtEnv.entries()).filter((
           [name, info],
         ) => info.recordFields?.has(expr.field));
@@ -1240,7 +1282,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           const [name, info] = possibleRecords[0];
           const args = Array(info.recordFields!.size).fill(freshTypeVar());
           const constructorType: Type = { kind: "constructor", name, args };
-          unify(ctx, targetType, constructorType);
+          unify(ctx, subjectVar, constructorType);
           const index = info.recordFields!.get(expr.field)!;
           const projectedValueType = constructorType.args[index];
           const projectionType = targetCarrierInfo
