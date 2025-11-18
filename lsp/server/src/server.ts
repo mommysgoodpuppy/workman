@@ -21,7 +21,13 @@ import {
 } from "../../../src//error.ts";
 import { formatScheme } from "../../../src//type_printer.ts";
 import { ModuleLoaderError } from "../../../src//module_loader.ts";
-import { dirname, fromFileUrl, isAbsolute, join, toFileUrl } from "std/path/mod.ts";
+import {
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  toFileUrl,
+} from "std/path/mod.ts";
 import { resolve } from "std/path/resolve.ts";
 import {
   getProvenance,
@@ -54,10 +60,7 @@ import type {
   MProgram,
   MTopLevel,
 } from "../../../src//ast_marked.ts";
-import type {
-  ConstructorAlias,
-  TypeDeclaration,
-} from "../../../src//ast.ts";
+import type { ConstructorAlias, TypeDeclaration } from "../../../src//ast.ts";
 
 interface LSPMessage {
   jsonrpc: string;
@@ -673,9 +676,17 @@ export class WorkmanLanguageServer {
           end: { line: 0, character: 1 },
         };
       let message = "Conflicting type requirements";
-      if (conflict.details && conflict.details.expected && conflict.details.actual) {
-        const expected = this.substituteTypeWithLayer3(conflict.details.expected, layer3);
-        const actual = this.substituteTypeWithLayer3(conflict.details.actual, layer3);
+      if (
+        conflict.details && conflict.details.expected && conflict.details.actual
+      ) {
+        const expected = this.substituteTypeWithLayer3(
+          conflict.details.expected,
+          layer3,
+        );
+        const actual = this.substituteTypeWithLayer3(
+          conflict.details.actual,
+          layer3,
+        );
         const expectedStr = typeToString(expected);
         const actualStr = typeToString(actual);
         message = `Type mismatch: expected ${expectedStr}, got ${actualStr}`;
@@ -875,7 +886,7 @@ Details: ${JSON.stringify(safeDetails)}`;
     }
     const parts: string[] = [];
     if (expected) parts.push(`Expected: ${expected}`);
-    if (actual)   parts.push(`---Actual: ${actual}`);
+    if (actual) parts.push(`---Actual: ${actual}`);
     return parts.join("\n");
   }
 
@@ -1641,7 +1652,15 @@ Details: ${JSON.stringify(safeDetails)}`;
         word,
       );
       const includeDeclaration = requestContext?.includeDeclaration !== false;
-      const results: Array<{ uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } }> = [];
+      const results: Array<
+        {
+          uri: string;
+          range: {
+            start: { line: number; character: number };
+            end: { line: number; character: number };
+          };
+        }
+      > = [];
       const seen = new Set<string>();
       const addSpan = (span: { start: number; end: number }) => {
         const key = `${span.start}:${span.end}`;
@@ -1728,15 +1747,21 @@ Details: ${JSON.stringify(safeDetails)}`;
             layer3,
             context.adtEnv,
           );
+          // Truncate the label if too long
+          const MAX_LABEL_LENGTH = 40;
+          let label = `: ${typeStr}`;
+          if (label.length > MAX_LABEL_LENGTH) {
+            label = label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
+          }
           hints.push({
             position,
-            label: `: ${typeStr}`,
+            label,
             kind: 1,
             paddingLeft: true,
             paddingRight: false,
           });
           this.log(
-            `[LSP] Type hint: ${name} : ${typeStr} at line ${position.line}, char ${position.character}`,
+            `[LSP] Type hint: ${name} : ${label} at line ${position.line}, char ${position.character}`,
           );
         }
       }
@@ -1791,7 +1816,10 @@ Details: ${JSON.stringify(safeDetails)}`;
   private spanToRange(
     text: string,
     span: { start: number; end: number },
-  ): { start: { line: number; character: number }; end: { line: number; character: number } } {
+  ): {
+    start: { line: number; character: number };
+    end: { line: number; character: number };
+  } {
     return {
       start: this.offsetToPosition(text, span.start),
       end: this.offsetToPosition(text, span.end),

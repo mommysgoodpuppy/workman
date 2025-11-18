@@ -1,10 +1,7 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write
 
 import { lex } from "../src/lexer.ts";
-import {
-  parseSurfaceProgram,
-  type OperatorInfo,
-} from "../src/parser.ts";
+import { type OperatorInfo, parseSurfaceProgram } from "../src/parser.ts";
 import { WorkmanError } from "../src/error.ts";
 import { FormatContext } from "../tests/fixtures/format/format_context.ts";
 import { loadModuleGraph } from "../src/module_loader.ts";
@@ -16,6 +13,8 @@ import type {
   CommentStatement,
   Expr,
   ImportSpecifier,
+  InfectiousDeclaration,
+  InfixDeclaration,
   LetDeclaration,
   MatchArm,
   MatchBundle,
@@ -23,13 +22,11 @@ import type {
   ModuleReexport,
   Parameter,
   Pattern,
+  PrefixDeclaration,
   Program,
   TypeDeclaration,
-  TypeReexport,
-  InfixDeclaration,
-  PrefixDeclaration,
-  InfectiousDeclaration,
   TypeExpr,
+  TypeReexport,
 } from "../src/ast.ts";
 
 type Declaration = import("../src/ast.ts").TopLevel;
@@ -114,12 +111,130 @@ class Formatter {
   private source: string;
   private newline: string;
   private hadTrailingNewline: boolean;
+  private exprFormatters: Map<string, (expr: Expr) => string> = new Map();
+  private declarationFormatters: Map<string, (decl: Declaration) => string> =
+    new Map();
+  private patternFormatters: Map<string, (pattern: Pattern) => string> =
+    new Map();
 
   constructor(options: FormatOptions, source: string) {
     this.options = options;
     this.source = source;
     this.newline = source.includes("\r\n") ? "\r\n" : "\n";
     this.hadTrailingNewline = source.endsWith("\n") || source.endsWith("\r");
+    this.setupFormatters();
+  }
+
+  private setupFormatters() {
+    this.setupExprFormatters();
+    this.setupDeclarationFormatters();
+    this.setupPatternFormatters();
+  }
+
+  private setupExprFormatters() {
+    this.exprFormatters.set("identifier", (expr) => expr.name);
+    this.exprFormatters.set(
+      "literal",
+      (expr) => this.formatLiteral(expr.literal),
+    );
+    this.exprFormatters.set(
+      "constructor",
+      (expr) => this.formatConstructor(expr),
+    );
+    this.exprFormatters.set(
+      "record_literal",
+      (expr) => this.formatRecordLiteral(expr),
+    );
+    this.exprFormatters.set("tuple", (expr) => {
+      if (expr.isMultiLine && expr.elements.length > 1) {
+        const formattedElements = expr.elements.map((e) => this.formatExpr(e));
+        this.indent++;
+        const indentedElements = formattedElements.map((el) =>
+          `${this.indentStr()}${el}`
+        ).join(",\n");
+        this.indent--;
+        return `(\n${indentedElements}\n${this.indentStr()})`;
+      }
+      return `(${expr.elements.map((e) => this.formatExpr(e)).join(", ")})`;
+    });
+    this.exprFormatters.set("call", (expr) => this.formatCall(expr));
+    this.exprFormatters.set(
+      "record_projection",
+      (expr) => `${this.formatExpr(expr.target)}.${expr.field}`,
+    );
+    this.exprFormatters.set("binary", (expr) => this.formatBinary(expr));
+    this.exprFormatters.set(
+      "unary",
+      (expr) => `${expr.operator}${this.formatExpr(expr.operand)}`,
+    );
+    this.exprFormatters.set("arrow", (expr) => {
+      const paramsStr = this.formatParameterList(expr.parameters);
+      const body = this.formatBlock(expr.body, true);
+      const returnAnn = expr.returnAnnotation
+        ? `: ${this.formatTypeExpr(expr.returnAnnotation)}`
+        : "";
+      return `${paramsStr}${returnAnn} => ${body}`;
+    });
+    this.exprFormatters.set("block", (expr) => this.formatBlock(expr));
+    this.exprFormatters.set(
+      "match",
+      (expr) => this.formatMatch(expr.scrutinee, expr.bundle),
+    );
+    this.exprFormatters.set(
+      "match_fn",
+      (expr) => this.formatMatchFn(expr.parameters, expr.bundle),
+    );
+    this.exprFormatters.set(
+      "match_bundle_literal",
+      (expr) => this.formatMatchBundleLiteral(expr.bundle),
+    );
+    this.exprFormatters.set("hole", (expr) => "?");
+  }
+
+  private setupDeclarationFormatters() {
+    this.declarationFormatters.set(
+      "let",
+      (decl) => this.formatLetDeclaration(decl as LetDeclaration),
+    );
+    this.declarationFormatters.set(
+      "type",
+      (decl) => this.formatTypeDeclaration(decl as TypeDeclaration),
+    );
+    this.declarationFormatters.set(
+      "infix",
+      (decl) => this.formatInfixDeclaration(decl as InfixDeclaration),
+    );
+    this.declarationFormatters.set(
+      "prefix",
+      (decl) => this.formatPrefixDeclaration(decl as PrefixDeclaration),
+    );
+    this.declarationFormatters.set(
+      "infectious",
+      (decl) => this.formatInfectiousDeclaration(decl as InfectiousDeclaration),
+    );
+  }
+
+  private setupPatternFormatters() {
+    this.patternFormatters.set("wildcard", (pattern) => "_");
+    this.patternFormatters.set("variable", (pattern) => pattern.name);
+    this.patternFormatters.set(
+      "literal",
+      (pattern) => this.formatLiteral(pattern.literal),
+    );
+    this.patternFormatters.set(
+      "tuple",
+      (pattern) =>
+        `(${pattern.elements.map((e) => this.formatPattern(e)).join(", ")})`,
+    );
+    this.patternFormatters.set("constructor", (pattern) => {
+      if (pattern.args.length === 0) {
+        return pattern.name;
+      }
+      return `${pattern.name}(${
+        pattern.args.map((a) => this.formatPattern(a)).join(", ")
+      })`;
+    });
+    this.patternFormatters.set("all_errors", (pattern) => "AllErrors");
   }
 
   format(program: Program): string {
@@ -237,8 +352,9 @@ class Formatter {
       ", ",
     );
     let result = this.renderLeadingComments(imp.leadingComments);
-    result +=
-      `from "${imp.source}" import { ${specs} }${this.formatTerminator(imp)}`;
+    result += `from "${imp.source}" import { ${specs} }${
+      this.formatTerminator(imp)
+    }`;
     if (imp.trailingComment) {
       result += this.formatInlineComment(imp.trailingComment);
     }
@@ -259,8 +375,9 @@ class Formatter {
       ", ",
     );
     let result = this.renderLeadingComments(reexp.leadingComments);
-    result +=
-      `export from "${reexp.source}" type ${types}${this.formatTerminator(reexp)}`;
+    result += `export from "${reexp.source}" type ${types}${
+      this.formatTerminator(reexp)
+    }`;
     if (reexp.trailingComment) {
       result += this.formatInlineComment(reexp.trailingComment);
     }
@@ -277,24 +394,11 @@ class Formatter {
     // Add leading comments
     result += this.renderLeadingComments(decl.leadingComments);
 
-    switch (decl.kind) {
-      case "let":
-        result += this.formatLetDeclaration(decl as LetDeclaration);
-        break;
-      case "type":
-        result += this.formatTypeDeclaration(decl as TypeDeclaration);
-        break;
-      case "infix":
-        result += this.formatInfixDeclaration(decl as InfixDeclaration);
-        break;
-      case "prefix":
-        result += this.formatPrefixDeclaration(decl as PrefixDeclaration);
-        break;
-      case "infectious":
-        result += this.formatInfectiousDeclaration(decl as InfectiousDeclaration);
-        break;
-      default:
-        break;
+    const formatter = this.declarationFormatters.get(decl.kind);
+    if (formatter) {
+      result += formatter(decl);
+    } else {
+      result += this.source.slice(decl.span.start, decl.span.end);
     }
 
     // Add trailing comment on same line
@@ -312,6 +416,13 @@ class Formatter {
   private formatParameterList(params: Parameter[]): string {
     const inner = params.map((p) => this.formatParameter(p)).join(", ");
     return `(${inner})`;
+  }
+
+  private formatLetLeftSide(decl: LetDeclaration): string {
+    if (decl.pattern) {
+      return this.formatPattern(decl.pattern);
+    }
+    return decl.name;
   }
 
   private formatLetDeclaration(decl: LetDeclaration): string {
@@ -343,25 +454,29 @@ class Formatter {
         matchExpr.bundle,
         forceMultiLine,
       );
-      result =
-        `${exportPrefix}let ${recPrefix}${decl.name}${annotationSuffix} = ${formattedMatch}${semicolon}`;
+      result = `${exportPrefix}let ${recPrefix}${
+        this.formatLetLeftSide(decl)
+      }${annotationSuffix} = ${formattedMatch}${semicolon}`;
     } else if (decl.parameters.length > 0 || decl.isArrowSyntax) {
       // If there are parameters OR originally used arrow syntax, format as arrow function
       const paramsStr = this.formatParameterList(decl.parameters);
       const body = this.formatBlock(decl.body, true);
-      result =
-        `${exportPrefix}let ${recPrefix}${decl.name}${annotationSuffix} = ${paramsStr} => ${body}${semicolon}`;
+      result = `${exportPrefix}let ${recPrefix}${
+        this.formatLetLeftSide(decl)
+      }${annotationSuffix} = ${paramsStr} => ${body}${semicolon}`;
     } else {
       // No parameters and not arrow syntax - format body directly
       const body = this.formatBlockForLet(decl.body);
 
       if (body.startsWith("\n")) {
         // Body is already formatted with leading newline
-        result =
-          `${exportPrefix}let ${recPrefix}${decl.name}${annotationSuffix} =${body}${semicolon}`;
+        result = `${exportPrefix}let ${recPrefix}${
+          this.formatLetLeftSide(decl)
+        }${annotationSuffix} =${body}${semicolon}`;
       } else {
-        result =
-          `${exportPrefix}let ${recPrefix}${decl.name}${annotationSuffix} = ${body}${semicolon}`;
+        result = `${exportPrefix}let ${recPrefix}${
+          this.formatLetLeftSide(decl)
+        }${annotationSuffix} = ${body}${semicolon}`;
       }
     }
 
@@ -384,25 +499,31 @@ class Formatter {
           const mutualAnnotation = mutual.annotation
             ? `: ${this.formatTypeExpr(mutual.annotation)}`
             : "";
-          result +=
-            `\nand ${mutual.name}${mutualAnnotation} = ${formattedMatch};`;
+          result += `\nand ${
+            this.formatLetLeftSide(mutual)
+          }${mutualAnnotation} = ${formattedMatch};`;
         } else if (mutual.parameters.length > 0 || mutual.isArrowSyntax) {
           const mutualParamsStr = this.formatParameterList(mutual.parameters);
           const mutualAnnotation = mutual.annotation
             ? `: ${this.formatTypeExpr(mutual.annotation)}`
             : "";
           const mutualBody = this.formatBlock(mutual.body, true);
-          result +=
-            `\nand ${mutual.name}${mutualAnnotation} = ${mutualParamsStr} => ${mutualBody};`;
+          result += `\nand ${
+            this.formatLetLeftSide(mutual)
+          }${mutualAnnotation} = ${mutualParamsStr} => ${mutualBody};`;
         } else {
           const mutualBody = this.formatBlockForLet(mutual.body);
           const mutualAnnotation = mutual.annotation
             ? `: ${this.formatTypeExpr(mutual.annotation)}`
             : "";
           if (mutualBody.startsWith("\n")) {
-            result += `\nand ${mutual.name}${mutualAnnotation} =${mutualBody};`;
+            result += `\nand ${
+              this.formatLetLeftSide(mutual)
+            }${mutualAnnotation} =${mutualBody};`;
           } else {
-            result += `\nand ${mutual.name}${mutualAnnotation} = ${mutualBody};`;
+            result += `\nand ${
+              this.formatLetLeftSide(mutual)
+            }${mutualAnnotation} = ${mutualBody};`;
           }
         }
       }
@@ -469,9 +590,10 @@ class Formatter {
     const typeParams = decl.typeParams.length > 0
       ? `<${decl.typeParams.map((p) => p.name).join(", ")}>`
       : "";
-    const aliasMember = decl.members.length === 1 && decl.members[0].kind === "alias"
-      ? decl.members[0]
-      : undefined;
+    const aliasMember =
+      decl.members.length === 1 && decl.members[0].kind === "alias"
+        ? decl.members[0]
+        : undefined;
     if (
       decl.declarationKind === "record" &&
       aliasMember &&
@@ -504,8 +626,9 @@ class Formatter {
     const forceMultiline = !aliasMember && this.hasLeadingConstructorPipe(decl);
     if (forceMultiline && members.length > 0) {
       const lines = members.map((member) => `  | ${member}`);
-      lines[lines.length - 1] =
-        `${lines[lines.length - 1]}${this.formatTerminator(decl)}`;
+      lines[lines.length - 1] = `${lines[lines.length - 1]}${
+        this.formatTerminator(decl)
+      }`;
       return `${header}\n${lines.join("\n")}`;
     }
     const body = members.join(" | ");
@@ -565,9 +688,8 @@ class Formatter {
           typeExpr.typeArgs.map((a) => this.formatTypeExpr(a)).join(", ")
         }>`;
       case "type_fn": {
-        const params = typeExpr.parameters.map((p) =>
-          this.formatTypeExpr(p)
-        ).join(", ");
+        const params = typeExpr.parameters.map((p) => this.formatTypeExpr(p))
+          .join(", ");
         const result = this.formatTypeExpr(typeExpr.result);
         return `(${params}) => ${result}`;
       }
@@ -855,8 +977,9 @@ class Formatter {
             matchExpr.bundle,
             forceMultiLine,
           );
-          const line =
-            `let ${recPrefix}${decl.name}${annotationSuffix} = ${formattedMatch};`;
+          const line = `let ${recPrefix}${
+            this.formatLetLeftSide(decl)
+          }${annotationSuffix} = ${formattedMatch};`;
           return decl.trailingComment
             ? `${line}${this.formatInlineComment(decl.trailingComment)}`
             : line;
@@ -866,8 +989,9 @@ class Formatter {
         if (decl.parameters.length > 0 || decl.isArrowSyntax) {
           const paramsStr = this.formatParameterList(decl.parameters);
           const body = this.formatBlock(decl.body, true);
-          const line =
-            `let ${recPrefix}${decl.name}${annotationSuffix} = ${paramsStr} => ${body};`;
+          const line = `let ${recPrefix}${
+            this.formatLetLeftSide(decl)
+          }${annotationSuffix} = ${paramsStr} => ${body};`;
           return decl.trailingComment
             ? `${line}${this.formatInlineComment(decl.trailingComment)}`
             : line;
@@ -876,14 +1000,16 @@ class Formatter {
         // Simple let binding
         const body = this.formatBlockForLet(decl.body);
         if (body.startsWith("\n")) {
-          const line =
-            `let ${recPrefix}${decl.name}${annotationSuffix} =${body};`;
+          const line = `let ${recPrefix}${
+            this.formatLetLeftSide(decl)
+          }${annotationSuffix} =${body};`;
           return decl.trailingComment
             ? `${line}${this.formatInlineComment(decl.trailingComment)}`
             : line;
         } else {
-          const line =
-            `let ${recPrefix}${decl.name}${annotationSuffix} = ${body};`;
+          const line = `let ${recPrefix}${
+            this.formatLetLeftSide(decl)
+          }${annotationSuffix} = ${body};`;
           return decl.trailingComment
             ? `${line}${this.formatInlineComment(decl.trailingComment)}`
             : line;
@@ -895,6 +1021,10 @@ class Formatter {
           exprLine += ` -- ${stmt.trailingComment}`;
         }
         return exprLine;
+      case "pattern_let_statement":
+        const pattern = this.formatPattern(stmt.pattern);
+        const initializer = this.formatExpr(stmt.initializer);
+        return `let ${pattern} = ${initializer};`;
       default:
         return "";
     }
@@ -912,58 +1042,11 @@ class Formatter {
   }
 
   private formatExprWithoutParens(expr: Expr): string {
-    switch (expr.kind) {
-      case "identifier":
-        return expr.name;
-      case "literal":
-        return this.formatLiteral(expr.literal);
-      case "constructor":
-        return this.formatConstructor(expr);
-      case "record_literal":
-        return this.formatRecordLiteral(expr);
-      case "tuple":
-        // Check if tuple should be formatted multi-line
-        if (expr.isMultiLine && expr.elements.length > 1) {
-          const formattedElements = expr.elements.map((e) =>
-            this.formatExpr(e)
-          );
-          this.indent++;
-          const indentedElements = formattedElements.map((el) =>
-            `${this.indentStr()}${el}`
-          ).join(",\n");
-          this.indent--;
-          return `(\n${indentedElements}\n${this.indentStr()})`;
-        }
-        return `(${expr.elements.map((e) => this.formatExpr(e)).join(", ")})`;
-      case "call":
-        return this.formatCall(expr);
-      case "record_projection":
-        return `${this.formatExpr(expr.target)}.${expr.field}`;
-      case "binary":
-        return this.formatBinary(expr);
-      case "unary":
-        return `${expr.operator}${this.formatExpr(expr.operand)}`;
-      case "arrow":
-        const params = expr.parameters.map((p) => p.name || "_").join(", ");
-        // Always use parentheses for consistency
-        const paramsStr = `(${params})`;
-        const body = this.formatBlock(expr.body, true);
-        const returnAnn = expr.returnAnnotation
-          ? `: ${this.formatTypeExpr(expr.returnAnnotation)}`
-          : "";
-        return `${paramsStr}${returnAnn} => ${body}`;
-      case "block":
-        return this.formatBlock(expr);
-      case "match":
-        return this.formatMatch(expr.scrutinee, expr.bundle);
-      case "match_fn":
-        return this.formatMatchFn(expr.parameters, expr.bundle);
-      case "match_bundle_literal":
-        return this.formatMatchBundleLiteral(expr.bundle);
-      case "hole":
-        return "?";
-      default:
-        return "???";
+    const formatter = this.exprFormatters.get(expr.kind);
+    if (formatter) {
+      return formatter(expr);
+    } else {
+      return this.source.slice(expr.span.start, expr.span.end);
     }
   }
 
@@ -1070,7 +1153,7 @@ class Formatter {
     let depth = 0;
     for (let i = start; i < end; i++) {
       const ch = this.source[i];
-      if (ch === "\"" || ch === "'") {
+      if (ch === '"' || ch === "'") {
         i = this.skipQuotedText(i, end, ch);
         continue;
       }
@@ -1129,8 +1212,8 @@ class Formatter {
         case "\\":
           escaped += "\\\\";
           break;
-        case "\"":
-          escaped += "\\\"";
+        case '"':
+          escaped += '\\"';
           break;
         case "\n":
           escaped += "\\n";
@@ -1293,28 +1376,11 @@ class Formatter {
   }
 
   private formatPattern(pattern: Pattern): string {
-    switch (pattern.kind) {
-      case "wildcard":
-        return "_";
-      case "variable":
-        return pattern.name;
-      case "literal":
-        return this.formatLiteral(pattern.literal);
-      case "tuple":
-        return `(${
-          pattern.elements.map((e) => this.formatPattern(e)).join(", ")
-        })`;
-      case "constructor":
-        if (pattern.args.length === 0) {
-          return pattern.name;
-        }
-        return `${pattern.name}(${
-          pattern.args.map((a) => this.formatPattern(a)).join(", ")
-        })`;
-      case "all_errors":
-        return "AllErrors";
-      default:
-        return "???";
+    const formatter = this.patternFormatters.get(pattern.kind);
+    if (formatter) {
+      return formatter(pattern);
+    } else {
+      return this.source.slice(pattern.span.start, pattern.span.end);
     }
   }
 
@@ -1340,7 +1406,9 @@ class Formatter {
     return ctx.toString();
   }
 
-  private formatRecordLiteral(expr: Extract<Expr, { kind: "record_literal" }>): string {
+  private formatRecordLiteral(
+    expr: Extract<Expr, { kind: "record_literal" }>,
+  ): string {
     if (expr.fields.length === 0) {
       return "{}";
     }
@@ -1512,7 +1580,9 @@ class Formatter {
 
   private normalizeNewlines(text: string): string {
     const withoutCR = text.replace(/\r/g, "");
-    return this.newline === "\n" ? withoutCR : withoutCR.replace(/\n/g, this.newline);
+    return this.newline === "\n"
+      ? withoutCR
+      : withoutCR.replace(/\n/g, this.newline);
   }
 
   private formatBinary(expr: Extract<Expr, { kind: "binary" }>): string {
@@ -1559,9 +1629,8 @@ class Formatter {
 
   private indentMultiline(text: string, indent: string): string {
     const lines = text.split("\n");
-    return lines.map((line) =>
-      line.length === 0 ? indent : `${indent}${line}`
-    ).join("\n");
+    return lines.map((line) => line.length === 0 ? indent : `${indent}${line}`)
+      .join("\n");
   }
 
   private indentFirstLine(text: string, indent: string): string {

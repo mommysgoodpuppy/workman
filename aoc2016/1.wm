@@ -39,8 +39,14 @@ let move = (orient, distance) => {
 let rec walker = (opList: List<Operation>, orient, location) => {
   let (op, opList2) = stripErr(listUncons(opList));
   let newOrient = match((op.direction, orient)) {
-    (L, N) => {W}, (L, E) => {N}, (L, S) => {E}, (L, W) => {S},
-    (R, N) => {E}, (R, E) => {S}, (R, S) => {W}, (R, W) => {N}
+    (L, N) => { W },
+    (L, E) => { N },
+    (L, S) => { E },
+    (L, W) => { S },
+    (R, N) => { E },
+    (R, E) => { S },
+    (R, S) => { W },
+    (R, W) => { N }
   };
   let amount = op.distance;
   let newLoc = move(newOrient, amount)(location);
