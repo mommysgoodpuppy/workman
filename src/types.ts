@@ -854,6 +854,7 @@ export interface TypeInfo {
   constructors: ConstructorInfo[];
   alias?: Type;
   isAlias?: boolean;
+  recordFields?: Map<string, number>;
 }
 
 export type TypeEnvADT = Map<string, TypeInfo>;

@@ -206,13 +206,40 @@ export function registerTypeConstructors(
   }
   adtInfo.constructors.push(...stagedConstructors);
 
-  // For record types, set the alias
+  // For record types, set as nominal type with recordFields
   if (decl.members.length === 0 && decl.typeExpr.kind === "type_record") {
     const aliasType = convertTypeExpr(ctx, decl.typeExpr, typeScope, {
       allowNewVariables: false,
     });
-    adtInfo.alias = cloneType(aliasType);
-    adtInfo.isAlias = true;
+    if (aliasType.kind === "record") {
+      // Create recordFields map
+      const recordFields = new Map<string, number>();
+      Array.from(aliasType.fields.keys()).forEach((field, index) => {
+        recordFields.set(field, index);
+      });
+      adtInfo.recordFields = recordFields;
+
+      // Create implicit constructor for the record
+      const fieldTypes = Array.from(aliasType.fields.values());
+      const ctorScheme: TypeScheme = {
+        quantifiers: parameterIds,
+        type: fieldTypes.reduceRight<Type>((acc, fieldType) => ({
+          kind: "func",
+          from: fieldType,
+          to: acc,
+        }), makeDataConstructor(decl.name, parameterTypes)),
+      };
+
+      const ctorInfo: ConstructorInfo = {
+        name: decl.name,
+        arity: fieldTypes.length,
+        scheme: ctorScheme,
+      };
+
+      adtInfo.constructors.push(ctorInfo);
+      // Register the constructor in env
+      ctx.env.set(decl.name, ctorScheme);
+    }
   }
 
   return { success: true };
@@ -519,9 +546,9 @@ export function convertTypeExpr(
           : null;
         cases.set(entry.name, payload);
       }
-      const tail = typeExpr.hasTailWildcard ? freshTypeVar() : undefined;
+      const tail = typeExpr.hasTailWildcard ? freshTypeVar() : null;
       return {
-        kind: "error_row",
+        kind: "effect_row",
         cases,
         tail,
       };

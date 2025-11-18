@@ -763,6 +763,16 @@ function inferBlockExpr(ctx: Context, block: BlockExpr): Type {
   });
 }
 
+function setsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const item of a) {
+    if (!b.has(item)) return false;
+  }
+  return true;
+}
+
+
+
 function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
   switch (statement.kind) {
     case "let_statement": {
@@ -1100,51 +1110,162 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         applyCurrentSubst(ctx, targetType),
       );
       const targetCarrierInfo = splitCarrier(resolvedTarget);
-      const projectedValueType = freshTypeVar();
-      const projectionType = targetCarrierInfo
-        ? (joinCarrier(
-          targetCarrierInfo.domain,
-          projectedValueType,
-          targetCarrierInfo.state,
-        ) ?? projectedValueType)
-        : projectedValueType;
-      recordHasFieldConstraint(
-        ctx,
-        expr,
-        expr.target,
-        expr.field,
-        expr,
-        projectedValueType,
-      );
-    const scheme = targetExpr.kind === "identifier" ? ctx.env.get(targetExpr.name) : null;
-    const currentTarget = applyCurrentSubst(ctx, targetType);
-      if (currentTarget.kind === "record") {
-        const newFields = new Map(currentTarget.fields);
-        if (!newFields.has(expr.field)) {
-          newFields.set(expr.field, projectedValueType);
-          const newRecordType = { kind: "record" as const, fields: newFields };
-          if (scheme && scheme.type.kind === "var") {
-            ctx.subst.set(scheme.type.id, newRecordType);
+
+      if (resolvedTarget.kind === "constructor") {
+        const info = ctx.adtEnv.get(resolvedTarget.name);
+        if (info && info.recordFields) {
+          const index = info.recordFields.get(expr.field);
+          if (index !== undefined) {
+            const projectedValueType = resolvedTarget.args[index];
+            const projectionType = targetCarrierInfo
+              ? (joinCarrier(
+                targetCarrierInfo.domain,
+                projectedValueType,
+                targetCarrierInfo.state,
+              ) ?? projectedValueType)
+              : projectedValueType;
+            recordHasFieldConstraint(
+              ctx,
+              expr,
+              expr.target,
+              expr.field,
+              expr,
+              projectedValueType,
+            );
+            ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+            registerHoleForType(
+              ctx,
+              holeOriginFromExpr(targetExpr),
+              applyCurrentSubst(ctx, targetType),
+            );
+            registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
+            return recordExprType(ctx, expr, projectionType);
+          } else {
+            const mark = markUnsupportedExpr(ctx, expr, "record field not found");
+            return recordExprType(ctx, expr, mark.type);
           }
         }
+      } else if (resolvedTarget.kind === "record") {
+        if (resolvedTarget.fields.has(expr.field)) {
+          const projectedValueType = resolvedTarget.fields.get(expr.field)!;
+          const projectionType = targetCarrierInfo
+            ? (joinCarrier(
+              targetCarrierInfo.domain,
+              projectedValueType,
+              targetCarrierInfo.state,
+            ) ?? projectedValueType)
+            : projectedValueType;
+          recordHasFieldConstraint(
+            ctx,
+            expr,
+            expr.target,
+            expr.field,
+            expr,
+            projectedValueType,
+          );
+          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+          registerHoleForType(
+            ctx,
+            holeOriginFromExpr(targetExpr),
+            applyCurrentSubst(ctx, targetType),
+          );
+          registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
+          return recordExprType(ctx, expr, projectionType);
+        } else {
+          // Access new field - extend the record type
+          const projectedValueType = freshTypeVar();
+          const newFields = new Map(resolvedTarget.fields);
+          newFields.set(expr.field, projectedValueType);
+          const newRecordType = { kind: "record" as const, fields: newFields };
+          unify(ctx, resolvedTarget, newRecordType);
+          const projectionType = targetCarrierInfo
+            ? (joinCarrier(
+              targetCarrierInfo.domain,
+              projectedValueType,
+              targetCarrierInfo.state,
+            ) ?? projectedValueType)
+            : projectedValueType;
+          recordHasFieldConstraint(
+            ctx,
+            expr,
+            expr.target,
+            expr.field,
+            expr,
+            projectedValueType,
+          );
+          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+          registerHoleForType(
+            ctx,
+            holeOriginFromExpr(targetExpr),
+            applyCurrentSubst(ctx, targetType),
+          );
+          registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
+          return recordExprType(ctx, expr, projectionType);
+        }
       } else if (targetType.kind === "var") {
-        // First field access on a type variable - unify to record
-        const recordType = {
-          kind: "record" as const,
-          fields: new Map([[expr.field, projectedValueType]]),
-        };
-        unify(ctx, targetType, recordType);
+        // Try to unify to nominal record
+        const possible = Array.from(ctx.adtEnv.entries()).filter(([name, info]) => info.recordFields?.has(expr.field));
+        if (possible.length === 1) {
+          const [name, info] = possible[0];
+          const args = Array(info.recordFields!.size).fill(freshTypeVar());
+          const constructorType: Type = { kind: "constructor", name, args };
+          unify(ctx, targetType, constructorType);
+          const index = info.recordFields!.get(expr.field)!;
+          const projectedValueType = constructorType.args[index];
+          const projectionType = targetCarrierInfo
+            ? (joinCarrier(
+              targetCarrierInfo.domain,
+              projectedValueType,
+              targetCarrierInfo.state,
+            ) ?? projectedValueType)
+            : projectedValueType;
+          recordHasFieldConstraint(
+            ctx,
+            expr,
+            expr.target,
+            expr.field,
+            expr,
+            projectedValueType,
+          );
+          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+          registerHoleForType(
+            ctx,
+            holeOriginFromExpr(targetExpr),
+            applyCurrentSubst(ctx, targetType),
+          );
+          registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
+          return recordExprType(ctx, expr, projectionType);
+        } else {
+          // Multiple or none - add constraint for structural
+          const projectedValueType = freshTypeVar();
+          recordHasFieldConstraint(
+            ctx,
+            expr,
+            expr.target,
+            expr.field,
+            expr,
+            projectedValueType,
+          );
+          const projectionType = targetCarrierInfo
+            ? (joinCarrier(
+              targetCarrierInfo.domain,
+              projectedValueType,
+              targetCarrierInfo.state,
+            ) ?? projectedValueType)
+            : projectedValueType;
+          ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
+          registerHoleForType(
+            ctx,
+            holeOriginFromExpr(targetExpr),
+            applyCurrentSubst(ctx, targetType),
+          );
+          registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
+          return recordExprType(ctx, expr, projectionType);
+        }
       } else {
-        // Cannot add field to non-record non-var type - perhaps it's a type error, but for now skip
+        const mark = markUnsupportedExpr(ctx, expr, "field access on non-record, non-var type");
+        return recordExprType(ctx, expr, mark.type);
       }
-      ctx.nodeTypes.set(targetExpr, applyCurrentSubst(ctx, targetType));
-      registerHoleForType(
-        ctx,
-        holeOriginFromExpr(targetExpr),
-        applyCurrentSubst(ctx, targetType),
-      );
-      registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
-      return recordExprType(ctx, expr, projectionType);
     }
     case "call": {
       const rawCalleeType = inferExpr(ctx, expr.callee);
