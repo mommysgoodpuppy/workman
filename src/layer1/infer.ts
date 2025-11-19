@@ -2200,10 +2200,15 @@ export function inferPattern(
   ctx: Context,
   pattern: Pattern,
   expected: Type,
-  options: { allowPinning?: boolean; requireExplicitBinding?: boolean } = {},
+  options: {
+    allowPinning?: boolean;
+    requireExplicitBinding?: boolean;
+    autoPinBlacklist?: Set<string>;
+  } = {},
 ): PatternInfo {
   const allowAutoPin = options.allowPinning ?? false;
   const requireExplicitBinding = options.requireExplicitBinding ?? false;
+  const autoPinBlacklist = options.autoPinBlacklist ?? new Set<string>();
   switch (pattern.kind) {
     case "wildcard": {
       const target = applyCurrentSubst(ctx, expected);
@@ -2262,7 +2267,8 @@ export function inferPattern(
         };
       }
 
-      const shouldAutoPin = allowAutoPin && !!existingScheme;
+      const shouldAutoPin = allowAutoPin && !!existingScheme &&
+        !autoPinBlacklist.has(pattern.name);
       const shouldPin = pattern.isExplicitPin || shouldAutoPin;
       if (shouldPin && existingScheme) {
         const existingType = instantiateAndApply(ctx, existingScheme);
@@ -2879,6 +2885,10 @@ export function inferMatchBranches(
   }[] = [];
   let dischargedResult = false;
   let hasEqualityPattern = false;
+  const autoPinBlacklist = new Set<string>();
+  if (scrutineeExpr && scrutineeExpr.kind === "identifier") {
+    autoPinBlacklist.add(scrutineeExpr.name);
+  }
 
   for (const arm of bundle.arms) {
     if (arm.kind === "match_bundle_reference") {
@@ -2930,6 +2940,7 @@ export function inferMatchBranches(
     const patternInfo = inferPattern(ctx, arm.pattern, expected, {
       allowPinning: true,
       requireExplicitBinding: true,
+      autoPinBlacklist,
     });
     patternInfos.push(patternInfo);
     const branchKind = classifyBranchKind(patternInfo);

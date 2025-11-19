@@ -124,7 +124,6 @@ Deno.test("infers constructors and ADT match", () => {
 
 Deno.test("constructor pattern rebinds nested name even when outer exists", () => {
   const source = `
-    type Option<T> = None | Some<T>;
     let reuseName = (distance: Option<Int>) => {
       match(distance) {
         Some(distance) => { distance },
@@ -144,7 +143,6 @@ Deno.test("constructor pattern rebinds nested name even when outer exists", () =
 
 Deno.test("explicit pin matches nested constructor payloads", () => {
   const source = `
-    type Option<T> = None | Some<T>;
     let target = 5;
     let check = (value: Option<Int>) => {
       match(value) {
@@ -187,12 +185,14 @@ Deno.test("bare match arm variable requires Var binding", () => {
   const source = `
     let wrap = (value: Int) => {
       match(value) {
-        value => { value }
+        value => { value },
+        _ => { 0 }
       }
     };
   `;
   const result = inferTypes(source);
   const reasons = result.layer1Diagnostics.map((diag) => diag.reason);
+  console.log(reasons);
   assert(
     reasons.includes("pattern_binding_required"),
     `expected pattern_binding_required, got ${JSON.stringify(reasons)}`,
