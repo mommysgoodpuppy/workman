@@ -214,7 +214,7 @@ Deno.test("composes nested bundle references", () => {
       1 => { ("one", (1, false), (_) => { "one" }) }
     };
     let other = match {
-      value => { ("other", (value, false), (_) => { "other" }) }
+      Var(value) => { ("other", (value, false), (_) => { "other" }) }
     };
     let grouped = match {
       zero,

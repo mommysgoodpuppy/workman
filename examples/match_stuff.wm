@@ -5,7 +5,7 @@ let one = match {
   1 => { ("one", (1, false), (_) => { "one" }) }
 };
 let other = match {
-  value => { ("other", (value, false), (_) => { "other" }) }
+  Var(value) => { ("other", (value, false), (_) => { "other" }) }
 };
 let grouped = match {
   zero,

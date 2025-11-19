@@ -35,7 +35,7 @@ let describeList = match(list) {
 
 let buildDemo = (numbers) => {
   match(mapFactorial(numbers)) {
-    totals => {
+    Var(totals) => {
       (
         numbers,
         totals,

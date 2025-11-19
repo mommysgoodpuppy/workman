@@ -389,6 +389,14 @@ function formatSolverDiagnostic(
         : "This expression form is not supported here";
       break;
     }
+    case "pattern_binding_required": {
+      const name = typeof diag.details?.name === "string"
+        ? diag.details.name
+        : "value";
+      base =
+        `Pattern '${name}' would introduce a new binding. Use Var(${name}) to bind it.`;
+      break;
+    }
     case "non_exhaustive_match": {
       base = "Match expression is not exhaustive\n";
       const missing = Array.isArray(diag.details?.missingCases)

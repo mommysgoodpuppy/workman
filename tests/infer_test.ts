@@ -183,6 +183,40 @@ Deno.test("top-level bare names in match arms still pin existing bindings", () =
   assertEquals(binding.type, "Int -> Bool");
 });
 
+Deno.test("bare match arm variable requires Var binding", () => {
+  const source = `
+    let wrap = (value: Int) => {
+      match(value) {
+        value => { value }
+      }
+    };
+  `;
+  const result = inferTypes(source);
+  const reasons = result.layer1Diagnostics.map((diag) => diag.reason);
+  assert(
+    reasons.includes("pattern_binding_required"),
+    `expected pattern_binding_required, got ${JSON.stringify(reasons)}`,
+  );
+});
+
+Deno.test("Var pattern binds a fresh value", () => {
+  const source = `
+    let wrap = (value: Int) => {
+      match(value) {
+        Var(result) => { result }
+      }
+    };
+  `;
+  const result = inferTypes(source);
+  assertEquals(result.layer1Diagnostics.length, 0);
+  const binding = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  })).find((entry) => entry.name === "wrap");
+  assertExists(binding);
+  assertEquals(binding?.type, "Int -> Int");
+});
+
 Deno.test("matching Int literals without wildcard reports non-exhaustive match", () => {
   const source = `
     let classify = (value: Int) => {
@@ -254,7 +288,7 @@ Deno.test("return annotation keeps infectious carrier when errors ignored", () =
 
     let produce = (flag: Bool): Operation => {
       let op = match(parseDirection(flag)) {
-        direction => { { direction: direction, distance: 0 } }
+        Var(direction) => { { direction: direction, distance: 0 } }
       };
       op
     };

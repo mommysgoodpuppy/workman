@@ -10,8 +10,6 @@ export let charEq = (left, right) => {
   nativeCharEq(left, right)
 };
 
-export type Ordering = LT | EQ | GT;
-
 export let add = (left, right) => {
   intAdd(left, right)
 };

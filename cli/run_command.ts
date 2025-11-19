@@ -203,7 +203,11 @@ async function displayExpressionSummaries(
     const excerpt = source.substring(span.start, span.end);
 
     let typeStr = "?";
-    let resolvedType = view.finalType.kind === "concrete" && view.finalType.type ? view.finalType.type : (view.finalType.kind === "unknown" && view.finalType.type) ? substituteHoleSolutionsInType(view.finalType.type, layer3) : undefined;
+    let resolvedType = view.finalType.kind === "concrete" && view.finalType.type
+      ? view.finalType.type
+      : (view.finalType.kind === "unknown" && view.finalType.type)
+      ? substituteHoleSolutionsInType(view.finalType.type, layer3)
+      : undefined;
     if (resolvedType) {
       typeStr = formatScheme({
         quantifiers: [],
@@ -434,7 +438,14 @@ async function reportErrorsOnly(
         const line = lines[diag.span.start] || "";
         let message = `Type Error: `;
 
-        if (diag.reason === "non_exhaustive_match" && diag.details) {
+        if (diag.reason === "pattern_binding_required" && diag.details) {
+          const details = diag.details as Record<string, unknown>;
+          const name = typeof details.name === "string"
+            ? details.name
+            : "value";
+          message +=
+            `Pattern '${name}' would bind a new name. Use Var(${name}) to bind or ^${name} to pin an existing value.`;
+        } else if (diag.reason === "non_exhaustive_match" && diag.details) {
           const details = diag.details as Record<string, unknown>;
           message += "Match expression is not exhaustive";
           const missing = Array.isArray(details.missingCases)
@@ -467,7 +478,8 @@ async function reportErrorsOnly(
               type: expectedResolved,
             });
             message += "Type mismatch";
-            message += `\n    Expected: ${expectedType}\n    Found: ${foundType}`;
+            message +=
+              `\n    Expected: ${expectedType}\n    Found: ${foundType}`;
           } else {
             message += `${diag.reason}`;
           }
@@ -532,7 +544,7 @@ async function executeModule(
     const moduleUrl = toFileUrl(emitResult.entryPath).href;
     try {
       const moduleExports = await import(moduleUrl) as Record<string, unknown>;
-      await invokeMainIfPresent(moduleExports);
+      //await invokeMainIfPresent(moduleExports);
       const forcedValueNames = coreModule.values.map((binding: any) =>
         binding.name
       );
@@ -589,9 +601,7 @@ function enhanceRuntimeError(
       }
     }
   }
-  const locationLabel = location
-    ? `at node ${nodeId}`
-    : "at unknown location";
+  const locationLabel = location ? `at node ${nodeId}` : "at unknown location";
   const message =
     `Non-exhaustive match ${locationLabel}. Value ${valueDesc} is not handled. Patterns: ${patterns}.`;
   if (location) {

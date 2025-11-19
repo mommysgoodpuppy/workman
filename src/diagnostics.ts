@@ -13,6 +13,7 @@ export type ConstraintDiagnosticReason =
   | "not_boolean"
   | "free_variable"
   | "unsupported_expr"
+  | "pattern_binding_required"
   | "duplicate_record_field"
   | "non_exhaustive_match"
   | "all_errors_outside_result"

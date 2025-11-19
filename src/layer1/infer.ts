@@ -2200,9 +2200,10 @@ export function inferPattern(
   ctx: Context,
   pattern: Pattern,
   expected: Type,
-  options: { allowPinning?: boolean } = {},
+  options: { allowPinning?: boolean; requireExplicitBinding?: boolean } = {},
 ): PatternInfo {
   const allowAutoPin = options.allowPinning ?? false;
+  const requireExplicitBinding = options.requireExplicitBinding ?? false;
   switch (pattern.kind) {
     case "wildcard": {
       const target = applyCurrentSubst(ctx, expected);
@@ -2220,9 +2221,25 @@ export function inferPattern(
     }
     case "variable": {
       const target = applyCurrentSubst(ctx, expected);
-      
-      // Check if the variable is already bound in the environment
       const existingScheme = ctx.env.get(pattern.name);
+
+      if (pattern.isExplicitBinding) {
+        const bindings = new Map<string, Type>();
+        bindings.set(pattern.name, target);
+        return {
+          type: target,
+          bindings,
+          coverage: { kind: "wildcard" },
+          marked: {
+            kind: "variable",
+            span: pattern.span,
+            id: pattern.id,
+            type: target,
+            name: pattern.name,
+          },
+        };
+      }
+
       if (pattern.isExplicitPin && !existingScheme) {
         const markType = createUnknownAndRegister(
           ctx,
@@ -2245,10 +2262,9 @@ export function inferPattern(
         };
       }
 
-      const shouldPin = !!existingScheme &&
-        (pattern.isExplicitPin || allowAutoPin);
+      const shouldAutoPin = allowAutoPin && !!existingScheme;
+      const shouldPin = pattern.isExplicitPin || shouldAutoPin;
       if (shouldPin && existingScheme) {
-        // It's a pinned match against an existing variable
         const existingType = instantiateAndApply(ctx, existingScheme);
         if (!unify(ctx, target, existingType)) {
           const markType = createUnknownAndRegister(
@@ -2261,10 +2277,10 @@ export function inferPattern(
             span: pattern.span,
             id: pattern.id,
             reason: "other",
-            data: { 
+            data: {
               issue: "pinned_unify_failed",
               expected: typeToString(target),
-              actual: typeToString(existingType)
+              actual: typeToString(existingType),
             },
             type: markType,
           } satisfies MMarkPattern;
@@ -2278,8 +2294,8 @@ export function inferPattern(
 
         return {
           type: target,
-          bindings: new Map(), // No new bindings for pinned pattern
-          coverage: { kind: "none" }, // Pinned pattern doesn't contribute to coverage analysis yet
+          bindings: new Map(),
+          coverage: { kind: "none" },
           marked: {
             kind: "pinned",
             span: pattern.span,
@@ -2290,19 +2306,44 @@ export function inferPattern(
         };
       }
 
-      const bindings = new Map<string, Type>();
-      bindings.set(pattern.name, target);
-      return {
-        type: target,
-        bindings,
-        coverage: { kind: "wildcard" },
-        marked: {
-          kind: "variable",
-          span: pattern.span,
-          id: pattern.id,
+      if (!requireExplicitBinding) {
+        const bindings = new Map<string, Type>();
+        bindings.set(pattern.name, target);
+        return {
           type: target,
-          name: pattern.name,
-        },
+          bindings,
+          coverage: { kind: "wildcard" },
+          marked: {
+            kind: "variable",
+            span: pattern.span,
+            id: pattern.id,
+            type: target,
+            name: pattern.name,
+          },
+        };
+      }
+
+      const markType = createUnknownAndRegister(
+        ctx,
+        holeOriginFromPattern(pattern),
+        { kind: "incomplete", reason: "pattern.binding_required" },
+      );
+      const mark: MMarkPattern = {
+        kind: "mark_pattern",
+        span: pattern.span,
+        id: pattern.id,
+        reason: "other",
+        data: { issue: "binding_required", name: pattern.name },
+        type: markType,
+      } satisfies MMarkPattern;
+      recordLayer1Diagnostic(ctx, pattern.id, "pattern_binding_required", {
+        name: pattern.name,
+      });
+      return {
+        type: markType,
+        bindings: new Map(),
+        coverage: { kind: "none" },
+        marked: mark,
       };
     }
     case "literal": {
@@ -2888,6 +2929,7 @@ export function inferMatchBranches(
     const expected = applyCurrentSubst(ctx, scrutineeType);
     const patternInfo = inferPattern(ctx, arm.pattern, expected, {
       allowPinning: true,
+      requireExplicitBinding: true,
     });
     patternInfos.push(patternInfo);
     const branchKind = classifyBranchKind(patternInfo);

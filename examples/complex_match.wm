@@ -7,7 +7,7 @@ let one = match {
 };
 
 let other = match {
-  value => { ("other", (value, false), (_) => { "other" }) }
+  Var(value) => { ("other", (value, false), (_) => { "other" }) }
 };
 
 let grouped = match {
