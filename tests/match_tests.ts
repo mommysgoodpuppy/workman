@@ -1,11 +1,15 @@
+import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
+import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { InferError, inferProgram } from "../src/layer1/infer.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import {
+  assert,
   assertEquals,
   assertThrows,
 } from "https://deno.land/std/assert/mod.ts";
+import { toFileUrl } from "std/path/mod.ts";
 
 function parseSource(source: string) {
   const tokens = lex(source);
@@ -21,14 +25,44 @@ function inferTypes(source: string) {
   }));
 }
 
-function evaluateSource(source: string) {
-  const program = parseSource(source);
-  return evaluateProgram(program);
+async function evaluateSource(source: string) {
+  const tmpFile = await Deno.makeTempFile({ suffix: ".wm" });
+  try {
+    await Deno.writeTextFile(tmpFile, source);
+    const { coreGraph, modules } = await compileWorkmanGraph(tmpFile, {
+      loader: { preludeModule: "" },
+    });
+    const artifact = modules.get(coreGraph.entry);
+    if (!artifact) {
+      throw new Error("Failed to locate entry module artifact");
+    }
+    if (
+      artifact.analysis.layer2.diagnostics.length > 0 ||
+      artifact.analysis.layer3.diagnostics.solver.length > 0 ||
+      artifact.analysis.layer3.diagnostics.conflicts.length > 0 ||
+      artifact.analysis.layer3.diagnostics.flow.length > 0
+    ) {
+      throw new Error("Type errors detected when evaluating source");
+    }
+    const tmpDir = await Deno.makeTempDir({ prefix: "match-tests-" });
+    try {
+      const emitResult = await emitModuleGraph(coreGraph, {
+        outDir: tmpDir,
+        invokeEntrypoint: false,
+      });
+      const moduleUrl = toFileUrl(emitResult.entryPath).href;
+      const moduleExports = await import(moduleUrl) as Record<string, unknown>;
+      return { artifact, moduleExports };
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  } finally {
+    await Deno.remove(tmpFile);
+  }
 }
 
 Deno.test("parses match bundle literal", { ignore: false }, () => {
   const source = `
-    type Option<T> = None | Some<T>;
     let handler = match {
       Some(x) => { x },
       None => { 0 }
@@ -56,7 +90,6 @@ Deno.test("parses match bundle literal", { ignore: false }, () => {
 
 Deno.test("infers match bundle literal function type", { ignore: false }, () => {
   const source = `
-    type Option<T> = None | Some<T>;
     let bundle = match {
       Some(_) => { 0 },
       None => { 0 }
@@ -73,9 +106,8 @@ Deno.test("infers match bundle literal function type", { ignore: false }, () => 
   assertEquals(binding.type, "Option<T> -> Int");
 });
 
-Deno.test("evaluates match bundle literal to callable", { ignore: false }, () => {
+Deno.test("evaluates match bundle literal to callable", { ignore: false }, async () => {
   const source = `
-    type Option<T> = None | Some<T>;
     let handler = match {
       Some(x) => { x },
       None => { 0 }
@@ -84,39 +116,20 @@ Deno.test("evaluates match bundle literal to callable", { ignore: false }, () =>
 
   // Ensure the program type-checks before evaluation
   inferTypes(source);
-  const evaluation = evaluateSource(source);
-  const handler = evaluation.summaries.find((entry) =>
-    entry.name === "handler"
-  );
-  if (!handler) {
-    throw new Error("expected handler summary");
+  const { moduleExports } = await evaluateSource(source);
+  const handler = moduleExports.handler;
+  if (typeof handler !== "function") {
+    throw new Error("expected handler to evaluate to a callable function");
   }
 
-  const { value } = handler;
-  if (value.kind !== "native") {
-    throw new Error(
-      `expected handler to evaluate to native function, received ${value.kind}`,
-    );
-  }
-  assertEquals(value.arity, 1);
-  const applied = value.impl([
-    {
-      kind: "data",
-      constructor: "Some",
-      fields: [{ kind: "int", value: 3 }],
-    },
-  ], undefined);
-  if (applied.kind !== "int") {
-    throw new Error(
-      `expected handler application to produce Int, received ${applied.kind}`,
-    );
-  }
-  assertEquals(applied.value, 3);
+  const someValue = { tag: "Some", type: "Option", _0: 3 };
+  const noneValue = { tag: "None", type: "Option" };
+  assertEquals(handler(someValue), 3);
+  assertEquals(handler(noneValue), 0);
 });
 
-Deno.test("composes match bundles", { ignore: false }, () => {
+Deno.test("composes match bundles", { ignore: false }, async () => {
   const source = `
-    type Option<T> = None | Some<T>;
     let check = match {
       Some(_) => { 0 },
       None => { 1 }
@@ -142,25 +155,23 @@ Deno.test("composes match bundles", { ignore: false }, () => {
   assertEquals(formatBinding.type, "Int -> String");
   assertEquals(resultBinding.type, "String");
 
-  const evaluation = evaluateSource(source);
-  const resultValue = evaluation.summaries.find((entry) =>
-    entry.name === "result"
-  );
-  if (!resultValue) {
-    throw new Error("expected result binding in evaluation");
+  const { moduleExports } = await evaluateSource(source);
+  const check = moduleExports.check;
+  const format = moduleExports.format;
+  if (typeof check !== "function" || typeof format !== "function") {
+    throw new Error("expected check and format to evaluate to functions");
   }
-  const { value } = resultValue;
-  if (value.kind !== "string") {
-    throw new Error(
-      `expected result to evaluate to string, received ${value.kind}`,
-    );
-  }
-  assertEquals(value.value, "zero");
+  const someValue = { tag: "Some", type: "Option", _0: 0 };
+  const noneValue = { tag: "None", type: "Option" };
+  assertEquals(check(someValue), 0);
+  assertEquals(check(noneValue), 1);
+  assertEquals(format(0), "zero");
+  assertEquals(format(42), "nonzero");
+  assertEquals(moduleExports.result, "zero");
 });
 
-Deno.test("match expressions can reference bundle arms", { ignore: false }, () => {
+Deno.test("match expressions can reference bundle arms", { ignore: false }, async () => {
   const source = `
-    type Option<T> = None | Some<T>;
     let someOnly = match {
       Some(x) => { x }
     };
@@ -188,23 +199,12 @@ Deno.test("match expressions can reference bundle arms", { ignore: false }, () =
   assertEquals(someResultBinding.type, "Int");
   assertEquals(noneResultBinding.type, "Int");
 
-  const evaluation = evaluateSource(source);
-  const someResultValue = evaluation.summaries.find((entry) => entry.name === "someResult");
-  const noneResultValue = evaluation.summaries.find((entry) => entry.name === "noneResult");
-  if (!someResultValue || !noneResultValue) {
-    throw new Error("expected runtime values for someResult and noneResult");
-  }
-  if (someResultValue.value.kind !== "int") {
-    throw new Error(`expected someResult to evaluate to int, received ${someResultValue.value.kind}`);
-  }
-  if (noneResultValue.value.kind !== "int") {
-    throw new Error(`expected noneResult to evaluate to int, received ${noneResultValue.value.kind}`);
-  }
-  assertEquals(someResultValue.value.value, 5);
-  assertEquals(noneResultValue.value.value, 0);
+  const { moduleExports } = await evaluateSource(source);
+  assertEquals(moduleExports.someResult, 5);
+  assertEquals(moduleExports.noneResult, 0);
 });
 
-Deno.test("composes nested bundle references", () => {
+Deno.test("composes nested bundle references", async () => {
   const source = `
     let zero = match {
       0 => { ("zero", (0, true), (_) => { "zero" }) }
@@ -256,8 +256,8 @@ Deno.test("composes nested bundle references", () => {
     throw new Error("expected bindings for composed match bundles and derived results");
   }
 
-  const expectedBundleType = "Int -> (String, (Int, Bool), Int -> String)";
-  const expectedResultType = "(String, (Int, Bool), Int -> String)";
+  const expectedBundleType = "Int -> (String, (Int, Bool), T -> String)";
+  const expectedResultType = "(String, (Int, Bool), T -> String)";
 
   assertEquals(zeroBinding.type, expectedBundleType);
   assertEquals(oneBinding.type, expectedBundleType);
@@ -272,98 +272,89 @@ Deno.test("composes nested bundle references", () => {
   assertEquals(cExtractedBinding.type, "Int");
   assertEquals(bFormattedBinding.type, "String");
 
-  const evaluation = evaluateSource(source);
-  const aResult = evaluation.summaries.find((entry) => entry.name === "a");
-  const bResult = evaluation.summaries.find((entry) => entry.name === "b");
-  const cResult = evaluation.summaries.find((entry) => entry.name === "c");
-  const aLabelResult = evaluation.summaries.find((entry) => entry.name === "aLabel");
-  const cExtractedResult = evaluation.summaries.find((entry) => entry.name === "cExtracted");
-  const bFormattedResult = evaluation.summaries.find((entry) => entry.name === "bFormatted");
-  if (!aResult || !bResult || !cResult || !aLabelResult || !cExtractedResult || !bFormattedResult) {
-    throw new Error("expected runtime values for describeNumber results and derived bindings");
+  const { moduleExports } = await evaluateSource(source);
+  const { a, b, c, aLabel, cExtracted, bFormatted } = moduleExports;
+  if (!Array.isArray(a) || !Array.isArray(b) || !Array.isArray(c)) {
+    throw new Error("expected describeNumber results to be tuple arrays");
   }
-  if (aResult.value.kind !== "tuple" || bResult.value.kind !== "tuple" || cResult.value.kind !== "tuple") {
-    throw new Error("expected describeNumber results to be tuples");
-  }
-  const [aLabelRuntime, aPayloadRuntime, aFormatterRuntime] = aResult.value.elements;
-  const [bLabelRuntime, bPayloadRuntime, bFormatterRuntime] = bResult.value.elements;
-  const [cLabelRuntime, cPayloadRuntime, cFormatterRuntime] = cResult.value.elements;
+  const [aLabelRuntime, aPayloadRuntime, aFormatterRuntime] = a;
+  const [bLabelRuntime, bPayloadRuntime, bFormatterRuntime] = b;
+  const [cLabelRuntime, cPayloadRuntime, cFormatterRuntime] = c;
 
   if (
-    aLabelRuntime.kind !== "string" ||
-    bLabelRuntime.kind !== "string" ||
-    cLabelRuntime.kind !== "string"
+    typeof aLabelRuntime !== "string" ||
+    typeof bLabelRuntime !== "string" ||
+    typeof cLabelRuntime !== "string"
   ) {
     throw new Error("expected tuple labels to be strings");
   }
   if (
-    aPayloadRuntime.kind !== "tuple" ||
-    bPayloadRuntime.kind !== "tuple" ||
-    cPayloadRuntime.kind !== "tuple"
+    !Array.isArray(aPayloadRuntime) ||
+    !Array.isArray(bPayloadRuntime) ||
+    !Array.isArray(cPayloadRuntime)
   ) {
     throw new Error("expected tuple payloads to be nested tuples");
   }
 
-  const [aNumberRuntime, aFlagRuntime] = aPayloadRuntime.elements;
-  const [bNumberRuntime, bFlagRuntime] = bPayloadRuntime.elements;
-  const [cNumberRuntime, cFlagRuntime] = cPayloadRuntime.elements;
+  const [aNumberRuntime, aFlagRuntime] = aPayloadRuntime;
+  const [bNumberRuntime, bFlagRuntime] = bPayloadRuntime;
+  const [cNumberRuntime, cFlagRuntime] = cPayloadRuntime;
 
   if (
-    aNumberRuntime.kind !== "int" ||
-    bNumberRuntime.kind !== "int" ||
-    cNumberRuntime.kind !== "int"
+    typeof aNumberRuntime !== "number" ||
+    typeof bNumberRuntime !== "number" ||
+    typeof cNumberRuntime !== "number"
   ) {
-    throw new Error("expected tuple payload numbers to be ints");
+    throw new Error("expected tuple payload numbers to be numbers");
   }
   if (
-    aFlagRuntime.kind !== "bool" ||
-    bFlagRuntime.kind !== "bool" ||
-    cFlagRuntime.kind !== "bool"
+    typeof aFlagRuntime !== "boolean" ||
+    typeof bFlagRuntime !== "boolean" ||
+    typeof cFlagRuntime !== "boolean"
   ) {
-    throw new Error("expected tuple payload flags to be bools");
+    throw new Error("expected tuple payload flags to be booleans");
   }
   if (
-    aFormatterRuntime.kind !== "closure" ||
-    bFormatterRuntime.kind !== "closure" ||
-    cFormatterRuntime.kind !== "closure"
+    typeof aFormatterRuntime !== "function" ||
+    typeof bFormatterRuntime !== "function" ||
+    typeof cFormatterRuntime !== "function"
   ) {
-    throw new Error("expected tuple formatters to be closures");
+    throw new Error("expected tuple formatters to be functions");
   }
 
-  assertEquals(aLabelRuntime.value, "zero");
-  assertEquals(bLabelRuntime.value, "one");
-  assertEquals(cLabelRuntime.value, "other");
+  assertEquals(aLabelRuntime, "zero");
+  assertEquals(bLabelRuntime, "one");
+  assertEquals(cLabelRuntime, "other");
 
-  assertEquals(aNumberRuntime.value, 0);
-  assertEquals(bNumberRuntime.value, 1);
-  assertEquals(cNumberRuntime.value, 42);
+  assertEquals(aNumberRuntime, 0);
+  assertEquals(bNumberRuntime, 1);
+  assertEquals(cNumberRuntime, 42);
 
-  assertEquals(aFlagRuntime.value, true);
-  assertEquals(bFlagRuntime.value, false);
-  assertEquals(cFlagRuntime.value, false);
+  assertEquals(aFlagRuntime, true);
+  assertEquals(bFlagRuntime, false);
+  assertEquals(cFlagRuntime, false);
 
-  if (aLabelResult.value.kind !== "string" || bFormattedResult.value.kind !== "string") {
+  if (typeof aLabel !== "string" || typeof bFormatted !== "string") {
     throw new Error("expected derived string bindings to be strings");
   }
-  if (cExtractedResult.value.kind !== "int") {
-    throw new Error("expected extracted numeric binding to be an int");
+  if (typeof cExtracted !== "number") {
+    throw new Error("expected extracted numeric binding to be a number");
   }
 
-  assertEquals(aLabelResult.value.value, "zero");
-  assertEquals(cExtractedResult.value.value, 42);
-  assertEquals(bFormattedResult.value.value, "one");
+  assertEquals(aLabel, "zero");
+  assertEquals(cExtracted, 42);
+  assertEquals(bFormatted, "one");
 });
 
-Deno.test("supports recursive match bundles", { ignore: false }, () => {
+Deno.test("supports recursive match bundles", { ignore: false }, async () => {
   const source = `
-    type List<T> = Nil | Cons<T, List<T>>;
     let rec describeList = match(list) {
-      Nil => { "empty" },
-      Cons(_, Nil) => { "singleton" },
-      Cons(_, rest) => { describeList(rest) }
+      Empty => { "empty" },
+      Link(_, Empty) => { "singleton" },
+      Link(_, rest) => { describeList(rest) }
     };
-    let emptyDesc = describeList(Nil);
-    let nested = describeList(Cons(1, Cons(2, Nil)));
+    let emptyDesc = describeList(Empty);
+    let nested = describeList(Link(1, Link(2, Empty)));
   `;
 
   const summaries = inferTypes(source);
@@ -378,18 +369,9 @@ Deno.test("supports recursive match bundles", { ignore: false }, () => {
   assertEquals(emptyBinding.type, "String");
   assertEquals(nestedBinding.type, "String");
 
-  const evaluation = evaluateSource(source);
-  const emptyValue = evaluation.summaries.find((entry) => entry.name === "emptyDesc");
-  const nestedValue = evaluation.summaries.find((entry) => entry.name === "nested");
-  if (!emptyValue || !nestedValue) {
-    throw new Error("expected runtime values for emptyDesc and nested");
-  }
-  if (emptyValue.value.kind !== "string" || nestedValue.value.kind !== "string") {
-    throw new Error("expected recursive match bundle results to be strings");
-  }
-
-  assertEquals(emptyValue.value.value, "empty");
-  assertEquals(nestedValue.value.value, "singleton");
+  const { moduleExports } = await evaluateSource(source);
+  assertEquals(moduleExports.emptyDesc, "empty");
+  assertEquals(moduleExports.nested, "singleton");
 });
 
 Deno.test("rejects mutual bundle references without recursion", { ignore: false }, () => {
@@ -411,7 +393,6 @@ Deno.test("rejects mutual bundle references without recursion", { ignore: false 
 
 Deno.test("rejects non-exhaustive match expression", { ignore: false }, () => {
   const source = `
-    type Option<T> = None | Some<T>;
     let bad = (opt) => {
       match(opt) {
         Some(_) => { 1 }
