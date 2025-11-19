@@ -26,7 +26,7 @@ function evaluateSource(source: string) {
   return evaluateProgram(program);
 }
 
-Deno.test("parses match bundle literal", { ignore: true }, () => {
+Deno.test("parses match bundle literal", { ignore: false }, () => {
   const source = `
     type Option<T> = None | Some<T>;
     let handler = match {
@@ -54,7 +54,7 @@ Deno.test("parses match bundle literal", { ignore: true }, () => {
   assertEquals(patternArms.length, 2);
 });
 
-Deno.test("infers match bundle literal function type", { ignore: true }, () => {
+Deno.test("infers match bundle literal function type", { ignore: false }, () => {
   const source = `
     type Option<T> = None | Some<T>;
     let bundle = match {
@@ -73,7 +73,7 @@ Deno.test("infers match bundle literal function type", { ignore: true }, () => {
   assertEquals(binding.type, "Option<T> -> Int");
 });
 
-Deno.test("evaluates match bundle literal to callable", { ignore: true }, () => {
+Deno.test("evaluates match bundle literal to callable", { ignore: false }, () => {
   const source = `
     type Option<T> = None | Some<T>;
     let handler = match {
@@ -114,7 +114,7 @@ Deno.test("evaluates match bundle literal to callable", { ignore: true }, () => 
   assertEquals(applied.value, 3);
 });
 
-Deno.test("composes match bundles", { ignore: true }, () => {
+Deno.test("composes match bundles", { ignore: false }, () => {
   const source = `
     type Option<T> = None | Some<T>;
     let check = match {
@@ -158,7 +158,7 @@ Deno.test("composes match bundles", { ignore: true }, () => {
   assertEquals(value.value, "zero");
 });
 
-Deno.test("match expressions can reference bundle arms", { ignore: true }, () => {
+Deno.test("match expressions can reference bundle arms", { ignore: false }, () => {
   const source = `
     type Option<T> = None | Some<T>;
     let someOnly = match {
@@ -354,7 +354,7 @@ Deno.test("composes nested bundle references", () => {
   assertEquals(bFormattedResult.value.value, "one");
 });
 
-Deno.test("supports recursive match bundles", { ignore: true }, () => {
+Deno.test("supports recursive match bundles", { ignore: false }, () => {
   const source = `
     type List<T> = Nil | Cons<T, List<T>>;
     let rec describeList = match(list) {
@@ -392,7 +392,7 @@ Deno.test("supports recursive match bundles", { ignore: true }, () => {
   assertEquals(nestedValue.value.value, "singleton");
 });
 
-Deno.test("rejects mutual bundle references without recursion", { ignore: true }, () => {
+Deno.test("rejects mutual bundle references without recursion", { ignore: false }, () => {
   const source = `
     let first = match {
       second
@@ -409,7 +409,7 @@ Deno.test("rejects mutual bundle references without recursion", { ignore: true }
   );
 });
 
-Deno.test("rejects non-exhaustive match expression", { ignore: true }, () => {
+Deno.test("rejects non-exhaustive match expression", { ignore: false }, () => {
   const source = `
     type Option<T> = None | Some<T>;
     let bad = (opt) => {

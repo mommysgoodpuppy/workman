@@ -1,91 +1,64 @@
+import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
+import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
+import { nonExhaustiveMatch } from "../backends/compiler/js/runtime.mjs";
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { inferProgram } from "../src/layer1/infer.ts";
 import { analyzeProgram } from "../src/pipeline.ts";
-import type { TypeScheme } from "../src/types.ts";
-import type { NativeFunctionValue, RuntimeValue } from "../src/value.ts";
 import {
   assert,
   assertEquals,
   assertExists,
-  assertThrows,
   fail,
 } from "https://deno.land/std/assert/mod.ts";
-import { nonExhaustiveMatch } from "../backends/compiler/js/runtime.mjs";
+import { toFileUrl } from "std/path/mod.ts";
 
-function evaluateSource(source: string) {
-  const tokens = lex(source);
-  const program = parseSurfaceProgram(tokens);
-  const intBinScheme: TypeScheme = {
-    quantifiers: [],
-    type: {
-      kind: "func",
-      from: { kind: "int" },
-      to: { kind: "func", from: { kind: "int" }, to: { kind: "int" } },
-    },
-  };
-
-  const initialEnv = new Map<string, TypeScheme>([
-    ["add", intBinScheme],
-    ["sub", intBinScheme],
-    ["mul", intBinScheme],
-    ["div", intBinScheme],
-  ]);
-
-  const initialBindings = new Map<string, RuntimeValue>([
-    ["add", native2("add", (a, b) => a + b)],
-    ["sub", native2("sub", (a, b) => a - b)],
-    ["mul", native2("mul", (a, b) => a * b)],
-    [
-      "div",
-      native2("div", (a, b) => {
-        if (b === 0) throw new Error("Division by zero");
-        return Math.trunc(a / b);
-      }),
-    ],
-  ]);
-
-  inferProgram(program, { initialEnv });
-  return null
-}
-
-function native2(
-  name: string,
-  impl: (a: number, b: number) => number,
-): NativeFunctionValue {
-  return {
-    kind: "native",
-    name,
-    arity: 2,
-    collectedArgs: [],
-    impl: (args) => ({
-      kind: "int",
-      value: impl(expectInt(args[0]), expectInt(args[1])),
-    }),
-  };
-}
-
-function expectInt(value: RuntimeValue): number {
-  if (value.kind !== "int") {
-    throw new Error("Expected Int argument");
+async function evaluateSource(source: string) {
+  const tmpFile = await Deno.makeTempFile({ suffix: ".wm" });
+  try {
+    await Deno.writeTextFile(tmpFile, source);
+    const { coreGraph, modules } = await compileWorkmanGraph(tmpFile);
+    const artifact = modules.get(coreGraph.entry);
+    if (!artifact) {
+      throw new Error("Failed to locate entry module artifact");
+    }
+    if (
+      artifact.analysis.layer2.diagnostics.length > 0 ||
+      artifact.analysis.layer3.diagnostics.solver.length > 0 ||
+      artifact.analysis.layer3.diagnostics.conflicts.length > 0 ||
+      artifact.analysis.layer3.diagnostics.flow.length > 0
+    ) {
+      throw new Error("Type errors detected when evaluating source");
+    }
+    const tmpDir = await Deno.makeTempDir({ prefix: "runtime-test-" });
+    try {
+      const emitResult = await emitModuleGraph(coreGraph, {
+        outDir: tmpDir,
+        invokeEntrypoint: false,
+      });
+      const moduleUrl = toFileUrl(emitResult.entryPath).href;
+      const moduleExports = await import(moduleUrl) as Record<string, unknown>;
+      return { artifact, moduleExports };
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  } finally {
+    await Deno.remove(tmpFile);
   }
-  return value.value;
 }
 
-Deno.test("evaluates non-recursive let-binding", () => {
+Deno.test("evaluates non-recursive let-binding", async () => {
   const source = `
     let identity = (x) => {
       x
     };
   `;
-  const result = evaluateSource(source);
-  assertEquals(result.summaries.length, 1);
-  const identity = result.summaries[0];
-  assertEquals(identity.name, "identity");
-  assertEquals(identity.value.kind, "closure");
+  const { artifact, moduleExports } = await evaluateSource(source);
+  assertEquals(artifact.analysis.layer3.summaries.length, 1);
+  assertEquals(typeof moduleExports.identity, "function");
 });
 
-Deno.test("supports recursive factorial", () => {
+Deno.test("supports recursive factorial", async () => {
   const source = `
     let rec fact = (n) => {
       match(n) {
@@ -97,17 +70,10 @@ Deno.test("supports recursive factorial", () => {
       fact(5)
     };
   `;
-  const result = evaluateSource(source);
-  const five = result.summaries.find((entry) => entry.name === "five");
-  if (!five) {
-    throw new Error("Expected 'five' binding");
-  }
-  if (five.value.kind !== "int") {
-    throw new Error(
-      `Expected five to evaluate to an int, received ${five.value.kind}`,
-    );
-  }
-  assertEquals(five.value.value, 120);
+  const { moduleExports } = await evaluateSource(source);
+  const five = moduleExports.five;
+  assertEquals(typeof five, "number");
+  assertEquals(five, 120);
 });
 
 Deno.test("throws on constructor arity mismatch", () => {
@@ -167,7 +133,7 @@ Deno.test("nonExhaustiveMatch helper includes metadata", () => {
   }
 });
 
-Deno.test("evaluates tuple parameter destructuring", () => {
+Deno.test("evaluates tuple parameter destructuring", async () => {
   const source = `
     let swap = ((a, b)) => {
       (b, a)
@@ -176,19 +142,11 @@ Deno.test("evaluates tuple parameter destructuring", () => {
       swap((1, 2))
     };
   `;
-  const evaluation = evaluateSource(source);
-  const binding = evaluation.summaries.find((entry) => entry.name === "result");
-  if (!binding) {
-    throw new Error("expected result binding");
+  const { moduleExports } = await evaluateSource(source);
+  const value = moduleExports.result;
+  if (!Array.isArray(value)) {
+    throw new Error("expected tuple array result");
   }
-  const value = binding.value;
-  if (value.kind !== "tuple") {
-    throw new Error("expected tuple result");
-  }
-  const [first, second] = value.elements;
-  if (first.kind !== "int" || second.kind !== "int") {
-    throw new Error("expected tuple of ints");
-  }
-  assertEquals(first.value, 2);
-  assertEquals(second.value, 1);
+  assertEquals(value[0], 2);
+  assertEquals(value[1], 1);
 });
