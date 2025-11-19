@@ -12,16 +12,17 @@ type Orientation = N | E | S | W;
 let start = ({ x: 0, y: 0 });
 
 let produceOp = (in) => {
-  let intL = char("L");
-  let intR = char("R");
-  let dir = match(listAt(in, 0)) {
+  let intL = stripErr(char("L"));
+  let intR = stripErr(char("R"));
+  let val = stripErr(listAt(in, 0));
+  let dir = match(val) {
     intL => { L },
     intR => { R }
   };
   let distance = posIntStringToInt(listFilter(isDigit, in));
   let yoink = match(dir, distance) {
-    (IOk(dir), Some(distance)) => { IOk(({ direction: dir, distance: distance })) },
-    (IErr(dir), None) => { IErr((dir, distance)) }
+    (dir, Some(distance)) => { IOk(({ direction: dir, distance: distance })) },
+    (dir, None) => { IErr((dir, distance)) }
   };
   yoink
 };

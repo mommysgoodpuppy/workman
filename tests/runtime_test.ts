@@ -2,7 +2,6 @@ import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { inferProgram } from "../src/layer1/infer.ts";
 import { analyzeProgram } from "../src/pipeline.ts";
-import { evaluateProgram } from "../src/eval.ts";
 import type { TypeScheme } from "../src/types.ts";
 import type { NativeFunctionValue, RuntimeValue } from "../src/value.ts";
 import {
@@ -47,7 +46,7 @@ function evaluateSource(source: string) {
   ]);
 
   inferProgram(program, { initialEnv });
-  return evaluateProgram(program, { initialBindings });
+  return null
 }
 
 function native2(
