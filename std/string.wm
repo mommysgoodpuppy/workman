@@ -397,17 +397,17 @@ type Err = Fuck;
 -- Convert positive integer string to int
 export let posIntStringToInt = (s) => {
   let rec helper = match(chars, acc) {
-    (Empty, acc) => { IOk(acc) },
+    (Empty, acc) => { Some(acc) },
     (Link(c, rest), acc) => {
       match(charToDigit(c)) {
-        None => { IErr(Fuck) },
-        Some(digit) => { IOk(helper(rest, add(mul(acc, 10), digit)) )}
+        None => { None },
+        Some(digit) => { helper(rest, add(mul(acc, 10), digit)) }
       }
     }
   };
   match(strIsEmpty(s)) {
-    true => { IErr(Fuck) },
-    false => { IOk(helper(s, 0)) }
+    true => { None },
+    false => { helper(s, 0) }
   }
 };
 

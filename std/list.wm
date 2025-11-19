@@ -260,3 +260,10 @@ export let listUncons = (list) => {
     Link(x, rest) => { IOk((x, rest)) }
   }
 };
+
+export let listTakeHead = (list) => {
+  match(list) {
+    Empty => { None },
+    Link(x, _) => { Some(x) }
+  }
+};
