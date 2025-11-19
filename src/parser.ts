@@ -1755,6 +1755,18 @@ class SurfaceParser {
       };
     }
 
+    if (token.kind === "operator" && token.value === "^") {
+      const caret = this.consume();
+      const ident = this.expectIdentifier();
+      return {
+        kind: "variable",
+        name: ident.value,
+        isExplicitPin: true,
+        span: this.createSpan(caret, ident),
+        id: nextNodeId(),
+      };
+    }
+
     if (token.kind === "identifier") {
       const ident = this.consume();
       return {

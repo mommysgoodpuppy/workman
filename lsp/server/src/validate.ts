@@ -390,12 +390,18 @@ function formatSolverDiagnostic(
       break;
     }
     case "non_exhaustive_match": {
-      base = "Match expression is not exhaustive";
+      base = "Match expression is not exhaustive\n";
       const missing = Array.isArray(diag.details?.missingCases)
         ? (diag.details.missingCases as string[]).join(", ")
         : null;
       if (missing) {
         base += ` - missing cases: ${missing}`;
+      }
+      const hint = typeof diag.details?.hint === "string"
+        ? diag.details.hint
+        : null;
+      if (hint) {
+        base += `\nHint: ${hint}`;
       }
       // Add information about the scrutinee type if it's a Result (infectious)
       const scrutineeType = diag.details?.scrutineeType as Type | undefined;

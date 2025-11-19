@@ -122,6 +122,103 @@ Deno.test("infers constructors and ADT match", () => {
   assertEquals(binding.type, "(T -> U) -> Option<T> -> Option<U>");
 });
 
+Deno.test("constructor pattern rebinds nested name even when outer exists", () => {
+  const source = `
+    type Option<T> = None | Some<T>;
+    let reuseName = (distance: Option<Int>) => {
+      match(distance) {
+        Some(distance) => { distance },
+        None => { 0 }
+      }
+    };
+  `;
+  const result = inferTypes(source);
+  assertEquals(result.layer1Diagnostics.length, 0);
+  const binding = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  })).find((entry) => entry.name === "reuseName");
+  assertExists(binding);
+  assertEquals(binding.type, "Option<Int> -> Int");
+});
+
+Deno.test("explicit pin matches nested constructor payloads", () => {
+  const source = `
+    type Option<T> = None | Some<T>;
+    let target = 5;
+    let check = (value: Option<Int>) => {
+      match(value) {
+        Some(^target) => { true },
+        _ => { false }
+      }
+    };
+  `;
+  const result = inferTypes(source);
+  assertEquals(result.layer1Diagnostics.length, 0);
+  const binding = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  })).find((entry) => entry.name === "check");
+  assertExists(binding);
+  assertEquals(binding.type, "Option<Int> -> Bool");
+});
+
+Deno.test("top-level bare names in match arms still pin existing bindings", () => {
+  const source = `
+    let pin = 5;
+    let classify = (value: Int) => {
+      match(value) {
+        pin => { true },
+        _ => { false }
+      }
+    };
+  `;
+  const result = inferTypes(source);
+  assertEquals(result.layer1Diagnostics.length, 0);
+  const binding = result.summaries.map(({ name, scheme }) => ({
+    name,
+    type: formatScheme(scheme),
+  })).find((entry) => entry.name === "classify");
+  assertExists(binding);
+  assertEquals(binding.type, "Int -> Bool");
+});
+
+Deno.test("matching Int literals without wildcard reports non-exhaustive match", () => {
+  const source = `
+    let classify = (value: Int) => {
+      match(value) {
+        0 => { 0 },
+        1 => { 1 }
+      }
+    };
+  `;
+  const result = inferTypes(source);
+  const reasons = result.layer1Diagnostics.map((diag) => diag.reason);
+  assert(
+    reasons.includes("non_exhaustive_match"),
+    `expected non_exhaustive_match, got ${JSON.stringify(reasons)}`,
+  );
+});
+
+Deno.test("matching pinned Ints without wildcard reports non-exhaustive match", () => {
+  const source = `
+    let classify = (value: Int) => {
+      let zero = 0;
+      let one = 1;
+      match(value) {
+        zero => { zero },
+        one => { one }
+      };
+    };
+  `;
+  const result = inferTypes(source);
+  const reasons = result.layer1Diagnostics.map((diag) => diag.reason);
+  assert(
+    reasons.includes("non_exhaustive_match"),
+    `expected non_exhaustive_match, got ${JSON.stringify(reasons)}`,
+  );
+});
+
 Deno.test("arrow return annotation constrains inferred type", () => {
   const source = `
     type Direction = L | R;

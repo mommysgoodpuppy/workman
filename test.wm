@@ -6,12 +6,15 @@ from "std/result" import { stripErr };
 type Direction = L | R;
 
 let intL = stripErr(char("L"));
+let x = print(charCToString(intL));
 let intR = stripErr(char("R"));
+let x2 = print(charCToString(intR));
 
 let fn = (in) => {
   match(in) {
     intL => { L },
-    intR => { R }
+    intR => { R },
+    _ => { L }
   }
 };
 

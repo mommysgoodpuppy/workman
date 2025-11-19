@@ -37,6 +37,17 @@ export let rec listFilter = match(predicate, list) {
   }
 };
 
+-- Removes all occurrences of `value` from the list
+export let rec listRemove = match(value, list) {
+  (value, Empty) => { Empty },
+  (value, Link(x, rest)) => {
+    match(eq(x, value)) {
+      true => { listRemove(value, rest) },
+      false => { Link(x, listRemove(value, rest)) }
+    }
+  }
+};
+
 -- Takes the first 'count' elements from the list
 export let rec listTake = match(list, count) {
   (Empty, _) => { Empty },

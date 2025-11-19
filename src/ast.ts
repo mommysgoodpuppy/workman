@@ -19,7 +19,7 @@ export type Literal =
 
 export type Pattern =
   | ({ kind: "wildcard" } & NodeBase)
-  | ({ kind: "variable" } & NodeBase & { name: string })
+  | ({ kind: "variable" } & NodeBase & { name: string; isExplicitPin?: boolean })
   | ({ kind: "literal" } & NodeBase & { literal: Literal })
   | ({ kind: "constructor" } & NodeBase & { name: string; args: Pattern[] })
   | ({ kind: "tuple" } & NodeBase & { elements: Pattern[] })

@@ -434,11 +434,30 @@ async function reportErrorsOnly(
         const line = lines[diag.span.start] || "";
         let message = `Type Error: `;
 
-        if (diag.details && typeof diag.details === "object") {
+        if (diag.reason === "non_exhaustive_match" && diag.details) {
+          const details = diag.details as Record<string, unknown>;
+          message += "Match expression is not exhaustive";
+          const missing = Array.isArray(details.missingCases)
+            ? (details.missingCases as string[]).join(", ")
+            : null;
+          if (missing) {
+            message += ` - missing cases: ${missing}`;
+          }
+          const hint = typeof details.hint === "string" ? details.hint : null;
+          if (hint) {
+            message += `\n    Hint: ${hint}`;
+          }
+        } else if (diag.details && typeof diag.details === "object") {
           const details = diag.details as Record<string, unknown>;
           if (details.expected && details.actual) {
-            const foundResolved = substituteHoleSolutionsInType(cloneType(details.actual as Type), layer3);
-            const expectedResolved = substituteHoleSolutionsInType(cloneType(details.expected as Type), layer3);
+            const foundResolved = substituteHoleSolutionsInType(
+              cloneType(details.actual as Type),
+              layer3,
+            );
+            const expectedResolved = substituteHoleSolutionsInType(
+              cloneType(details.expected as Type),
+              layer3,
+            );
             const foundType = formatScheme({
               quantifiers: [],
               type: foundResolved,

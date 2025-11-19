@@ -929,6 +929,7 @@ export function markNonExhaustive(
   scrutineeSpan: SourceSpan,
   missingCases: string[],
   scrutineeType?: Type,
+  hint?: string,
 ): MMarkUnsupportedExpr {
   const origin = holeOriginFromExpr(expr);
   const mark: MMarkUnsupportedExpr = {
@@ -948,6 +949,7 @@ export function markNonExhaustive(
     missingCases,
     scrutineeSpan,
     scrutineeType,
+    hint,
   });
   return mark;
 }

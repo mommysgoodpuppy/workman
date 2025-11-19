@@ -2200,7 +2200,9 @@ export function inferPattern(
   ctx: Context,
   pattern: Pattern,
   expected: Type,
+  options: { allowPinning?: boolean } = {},
 ): PatternInfo {
+  const allowAutoPin = options.allowPinning ?? false;
   switch (pattern.kind) {
     case "wildcard": {
       const target = applyCurrentSubst(ctx, expected);
@@ -2221,7 +2223,31 @@ export function inferPattern(
       
       // Check if the variable is already bound in the environment
       const existingScheme = ctx.env.get(pattern.name);
-      if (existingScheme) {
+      if (pattern.isExplicitPin && !existingScheme) {
+        const markType = createUnknownAndRegister(
+          ctx,
+          holeOriginFromPattern(pattern),
+          { kind: "incomplete", reason: "pattern.pinned.not_found" },
+        );
+        const mark: MMarkPattern = {
+          kind: "mark_pattern",
+          span: pattern.span,
+          id: pattern.id,
+          reason: "other",
+          data: { issue: "pinned_not_found", name: pattern.name },
+          type: markType,
+        } satisfies MMarkPattern;
+        return {
+          type: markType,
+          bindings: new Map(),
+          coverage: { kind: "none" },
+          marked: mark,
+        };
+      }
+
+      const shouldPin = !!existingScheme &&
+        (pattern.isExplicitPin || allowAutoPin);
+      if (shouldPin && existingScheme) {
         // It's a pinned match against an existing variable
         const existingType = instantiateAndApply(ctx, existingScheme);
         if (!unify(ctx, target, existingType)) {
@@ -2676,6 +2702,7 @@ export function ensureExhaustive(
   hasWildcard: boolean,
   coverageMap: Map<string, Set<string>>,
   booleanCoverage: Set<"true" | "false">,
+  hasEqualityPattern: boolean,
 ): void {
   if (hasWildcard) return;
   const resolved = applyCurrentSubst(ctx, scrutineeType);
@@ -2690,6 +2717,21 @@ export function ensureExhaustive(
     return;
   }
   if (resolved.kind !== "constructor") {
+    if (hasEqualityPattern) {
+      const typeLabel = resolved.kind === "var"
+        ? "this type"
+        : typeToString(resolved);
+      const hint =
+        `Literal or pinned patterns only cover specific values of ${typeLabel}. Add a '_' arm (or equivalent catch-all) to handle the rest.`;
+      markNonExhaustive(
+        ctx,
+        expr,
+        expr.span,
+        ["_"],
+        resolved.kind === "var" ? undefined : resolved,
+        hint,
+      );
+    }
     return;
   }
   const info = ctx.adtEnv.get(resolved.name);
@@ -2795,6 +2837,7 @@ export function inferMatchBranches(
     skipJoin?: boolean;
   }[] = [];
   let dischargedResult = false;
+  let hasEqualityPattern = false;
 
   for (const arm of bundle.arms) {
     if (arm.kind === "match_bundle_reference") {
@@ -2843,9 +2886,17 @@ export function inferMatchBranches(
     }
 
     const expected = applyCurrentSubst(ctx, scrutineeType);
-    const patternInfo = inferPattern(ctx, arm.pattern, expected);
+    const patternInfo = inferPattern(ctx, arm.pattern, expected, {
+      allowPinning: true,
+    });
     patternInfos.push(patternInfo);
     const branchKind = classifyBranchKind(patternInfo);
+    if (
+      patternInfo.marked.kind === "literal" ||
+      patternInfo.marked.kind === "pinned"
+    ) {
+      hasEqualityPattern = true;
+    }
 
     // Populate handledErrorConstructors from effectRow if present
     if (
@@ -2977,6 +3028,7 @@ export function inferMatchBranches(
       hasWildcard,
       coverageMap,
       booleanCoverage,
+      hasEqualityPattern,
     );
   }
 
