@@ -334,6 +334,7 @@ export type MPattern =
   | MConstructorPattern
   | MTuplePattern
   | MAllErrorsPattern
+  | MPinnedPattern
   | MMarkPattern;
 
 export interface MWildcardPattern extends MTypedNode {
@@ -363,6 +364,11 @@ export interface MTuplePattern extends MTypedNode {
 
 export interface MAllErrorsPattern extends MTypedNode {
   kind: "all_errors";
+}
+
+export interface MPinnedPattern extends MTypedNode {
+  kind: "pinned";
+  name: string;
 }
 
 export interface MMarkPattern extends MTypedNode {

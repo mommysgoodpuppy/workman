@@ -126,6 +126,19 @@ export function emitModule(
     lines.splice(runtimeImportIndex, 0, runtimeImport);
   }
 
+  // Auto-call main if it's the entry module and main is exported
+  if (module.path === graph.entry) {
+    const mainExport = module.exports.find(
+      (exp) => exp.kind === "value" && exp.exported === "main"
+    );
+    const mainForced = ctx.forcedValueExports.has("main");
+    
+    if (mainExport || mainForced) {
+      lines.push("");
+      lines.push(`if (typeof main !== "undefined") { main(); }`);
+    }
+  }
+
   return `${lines.join("\n")}\n`;
 }
 
@@ -426,6 +439,18 @@ function emitData(expr: CoreExpr & { kind: "data" }, ctx: EmitContext): string {
       : "undefined";
     return `${wrapper}(${value})`;
   }
+
+  // Optimization: Reuse existing constants for 0-arity constructors
+  if (expr.fields.length === 0) {
+    // Check if the constructor name is available in scope and not shadowed/renamed
+    if (ctx.scope.has(expr.constructor)) {
+      const mapped = ctx.scope.get(expr.constructor);
+      if (mapped === expr.constructor) {
+        return mapped;
+      }
+    }
+  }
+
   const fieldEntries = expr.fields.map((field, index) =>
     `  _${index}: ${emitExpr(field, ctx)}`
   ).join(",\n");
@@ -818,6 +843,13 @@ function emitPattern(
       return {
         conditions: [],
         bindings: [`const ${name} = ${ref};`],
+      };
+    }
+    case "pinned": {
+      const name = resolveName(scope, pattern.name, ctx.state);
+      return {
+        conditions: [`${ref} === ${name}`],
+        bindings: [],
       };
     }
     case "literal": {

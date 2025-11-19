@@ -190,13 +190,19 @@ export interface CoreAllErrorsPattern extends CorePatternBase {
   readonly resultTypeName: string;
 }
 
+export interface CorePinnedPattern extends CorePatternBase {
+  readonly kind: "pinned";
+  readonly name: string;
+}
+
 export type CorePattern =
   | CoreWildcardPattern
   | CoreBindingPattern
   | CoreLiteralPattern
   | CoreTuplePattern
   | CoreConstructorPattern
-  | CoreAllErrorsPattern;
+  | CoreAllErrorsPattern
+  | CorePinnedPattern;
 
 export interface CoreMatchCase {
   readonly pattern: CorePattern;
@@ -576,6 +582,8 @@ function formatPattern(
         .join(", ");
       return `${pattern.typeName}.${pattern.constructor}(${parts})${suffix}`;
     }
+    case "pinned":
+      return `^${pattern.name}${suffix}`;
     default:
       return `<unknown pattern>${suffix}`;
   }

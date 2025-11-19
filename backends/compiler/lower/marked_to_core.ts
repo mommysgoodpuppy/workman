@@ -444,6 +444,12 @@ function lowerPattern(pattern: MPattern, state: LoweringState): CorePattern {
         name: pattern.name,
         type: resolveNodeType(state, pattern.id, pattern.type),
       };
+    case "pinned":
+      return {
+        kind: "pinned",
+        name: pattern.name,
+        type: resolveNodeType(state, pattern.id, pattern.type),
+      };
     case "literal":
       return {
         kind: "literal",

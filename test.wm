@@ -1,10 +1,18 @@
-from "./native.js" import { greet };
+from "std/list" import { listSlice, listFilter, listAt, listTake, listLength, listTakeUntil, listSplitBy, listMap, listUncons, listFoldr };
+from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
+from "std/nativeString" import { stringToList, stringConcat, intToString };
+from "std/result" import { stripErr };
 
---from "./api.js" import { fetchUser };
+type Direction = L | R;
 
--- let useIt = () => { fetchUser(42) };
-let natGreet: String = () => {
-  greet()
+let intL = stripErr(char("L"));
+let intR = stripErr(char("R"));
+
+let fn = (in) => {
+  match(in) {
+    intL => { L },
+    intR => { R }
+  }
 };
 
-let main = () => { print(natGreet()) };
+let main = print(fn(82));

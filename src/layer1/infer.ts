@@ -2218,6 +2218,52 @@ export function inferPattern(
     }
     case "variable": {
       const target = applyCurrentSubst(ctx, expected);
+      
+      // Check if the variable is already bound in the environment
+      const existingScheme = ctx.env.get(pattern.name);
+      if (existingScheme) {
+        // It's a pinned match against an existing variable
+        const existingType = instantiateAndApply(ctx, existingScheme);
+        if (!unify(ctx, target, existingType)) {
+          const markType = createUnknownAndRegister(
+            ctx,
+            holeOriginFromPattern(pattern),
+            { kind: "incomplete", reason: "pattern.pinned.unify_failed" },
+          );
+          const mark: MMarkPattern = {
+            kind: "mark_pattern",
+            span: pattern.span,
+            id: pattern.id,
+            reason: "other",
+            data: { 
+              issue: "pinned_unify_failed",
+              expected: typeToString(target),
+              actual: typeToString(existingType)
+            },
+            type: markType,
+          } satisfies MMarkPattern;
+          return {
+            type: markType,
+            bindings: new Map(),
+            coverage: { kind: "none" },
+            marked: mark,
+          };
+        }
+
+        return {
+          type: target,
+          bindings: new Map(), // No new bindings for pinned pattern
+          coverage: { kind: "none" }, // Pinned pattern doesn't contribute to coverage analysis yet
+          marked: {
+            kind: "pinned",
+            span: pattern.span,
+            id: pattern.id,
+            type: target,
+            name: pattern.name,
+          },
+        };
+      }
+
       const bindings = new Map<string, Type>();
       bindings.set(pattern.name, target);
       return {
