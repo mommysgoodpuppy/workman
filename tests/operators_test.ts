@@ -322,6 +322,7 @@ async function evaluateSource(source: string) {
   // with an in-memory source override so tests don't need to write files.
   const tmpFile = await Deno.makeTempFile({ suffix: ".wm" });
   try {
+    await Deno.writeTextFile(tmpFile, source);
     const result = await runEntryPath(tmpFile);
     return result;
   } finally {

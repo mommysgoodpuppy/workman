@@ -42,6 +42,7 @@ export interface EmitModuleOptions {
     specifier: string;
     names: readonly string[];
   };
+  readonly invokeEntrypoint?: boolean;
 }
 
 const PRELUDE_OPERATOR_ALIASES = new Map<string, string>([
@@ -127,7 +128,7 @@ export function emitModule(
   }
 
   // Auto-call main if it's the entry module and main is exported
-  if (module.path === graph.entry) {
+  if (module.path === graph.entry && (options.invokeEntrypoint ?? true)) {
     const mainExport = module.exports.find(
       (exp) => exp.kind === "value" && exp.exported === "main"
     );

@@ -16,8 +16,12 @@ import { inferProgram } from "./layer1/infer.ts";
 import type { RuntimeValue } from "./value.ts";
 import { lookupValue } from "./value.ts";
 import { formatScheme } from "./type_printer.ts";
-import { formatRuntimeValue } from "./value_printer.ts";
-import { IO, isNotFoundError } from "./io.ts";
+import { IO, isNotFoundError, toFileUrl } from "./io.ts";
+import {
+  compileWorkmanGraph,
+  type WorkmanCompilerOptions,
+} from "../backends/compiler/frontends/workman.ts";
+import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 
 export interface ModuleLoaderOptions {
   stdRoots?: string[];
@@ -237,36 +241,76 @@ export async function runEntryPath(
   values: { name: string; value: string }[];
   runtimeLogs: string[];
 }> {
-  const graph = await loadModuleGraph(entryPath, options);
-  const { moduleSummaries, runtimeLogs } = await summarizeGraph(graph, options);
-  const entryNode = graph.nodes.get(graph.entry);
-  const entrySummary = moduleSummaries.get(graph.entry);
-  if (!entryNode || !entrySummary) {
+  const compilerOptions: WorkmanCompilerOptions = {
+    loader: {
+      ...options,
+      skipEvaluation: options.skipEvaluation ?? true,
+    },
+  };
+
+  const { coreGraph, modules } = await compileWorkmanGraph(
+    entryPath,
+    compilerOptions,
+  );
+  const entryKey = coreGraph.entry;
+  const artifact = modules.get(entryKey);
+  if (!artifact) {
     throw moduleError(
-      `Internal error: failed to load entry module '${graph.entry}'`,
+      `Internal error: failed to locate entry module artifacts for '${entryKey}'`,
     );
   }
-  const types = entrySummary.letSchemeOrder.map((name) => {
-    const scheme = entrySummary.letSchemes.get(name);
-    if (!scheme) {
-      throw moduleError(
-        `Missing type information for '${name}' in '${graph.entry}'`,
-      );
-    }
-    return { name, type: formatScheme(scheme) };
-  });
 
-  const values = entrySummary.letValueOrder.map((name) => {
-    const value = entrySummary.letRuntime.get(name);
-    if (!value) {
-      throw moduleError(
-        `Missing runtime value for '${name}' in '${graph.entry}'`,
-      );
-    }
-    return { name, value: formatRuntimeValue(value) };
-  });
+  const hasTypeErrors =
+    artifact.analysis.layer2.diagnostics.length > 0 ||
+    artifact.analysis.layer3.diagnostics.solver.length > 0 ||
+    artifact.analysis.layer3.diagnostics.conflicts.length > 0 ||
+    artifact.analysis.layer3.diagnostics.flow.length > 0;
+  if (hasTypeErrors) {
+    throw moduleError(
+      `Type errors detected in '${artifact.node.path}'`,
+      artifact.node.path,
+    );
+  }
 
-  return { types, values, runtimeLogs };
+  const types = artifact.analysis.layer3.summaries.map((summary) => ({
+    name: summary.name,
+    type: formatScheme(summary.scheme),
+  }));
+
+  const tmpDir = await IO.makeTempDir({ prefix: "workman-run-" });
+  const runtimeLogs: string[] = [];
+  const originalConsoleLog = console.log;
+  console.log = (...args: unknown[]) => {
+    const message = args.map((arg) => safeToString(arg)).join(" ");
+    runtimeLogs.push(message);
+  };
+  try {
+    const emitResult = await emitModuleGraph(coreGraph, {
+      outDir: tmpDir,
+      invokeEntrypoint: false,
+    });
+    const moduleUrl = toFileUrl(emitResult.entryPath).href;
+    const moduleExports = await import(moduleUrl) as Record<string, unknown>;
+    const values = [];
+    for (const summary of artifact.analysis.layer3.summaries) {
+      const exportedName = summary.name;
+      if (!Object.prototype.hasOwnProperty.call(moduleExports, exportedName)) {
+        values.push({ name: exportedName, value: "<unavailable>" });
+        continue;
+      }
+      const rawValue = moduleExports[exportedName];
+      const evaluated = await evaluateExportedValue(rawValue);
+      values.push({
+        name: exportedName,
+        value: formatCompiledValueLegacy(evaluated),
+      });
+    }
+
+    return { types, values, runtimeLogs };
+  } finally {
+    console.log = originalConsoleLog;
+    await IO.remove(tmpDir, { recursive: true });
+  }
 }
 
 export async function loadModuleSummaries(
@@ -609,9 +653,129 @@ function normalizeOptions(options: ModuleLoaderOptions): ModuleLoaderOptions {
     ? options.stdRoots.map((root) => resolve(root))
     : [resolve("std")];
   const preludeModule = options.preludeModule ?? "std/prelude";
-  const skipEvaluation = options.skipEvaluation ?? false;
+  const skipEvaluation = options.skipEvaluation ?? true;
   const sourceOverrides = options.sourceOverrides;
   return { stdRoots, preludeModule, skipEvaluation, sourceOverrides };
+}
+
+async function evaluateExportedValue(value: unknown): Promise<unknown> {
+  if (typeof value !== "function") {
+    return value;
+  }
+  if (value.length > 0) {
+    return value;
+  }
+  const result = value();
+  if (isPromiseLike(result)) {
+    return await result;
+  }
+  return result;
+}
+
+function isPromiseLike(value: unknown): value is Promise<unknown> {
+  return typeof value === "object" && value !== null &&
+    typeof (value as PromiseLike<unknown>).then === "function";
+}
+
+function formatCompiledValueLegacy(
+  value: unknown,
+  seen: Set<unknown> = new Set(),
+): string {
+  if (value === undefined) return "()";
+  if (value === null) return "null";
+  const valueType = typeof value;
+  if (valueType === "number" || valueType === "bigint") {
+    return String(value);
+  }
+  if (valueType === "boolean") {
+    return value ? "true" : "false";
+  }
+  if (valueType === "string") {
+    return value;
+  }
+  if (valueType === "function") {
+    return "<function>";
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return "<cyclic>";
+    }
+    seen.add(value);
+    return `[${value.map((item) => formatCompiledValueLegacy(item, seen)).join(", ")}]`;
+  }
+  if (valueType === "object") {
+    if (seen.has(value)) {
+      return "<cyclic>";
+    }
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    if (isTaggedValue(record)) {
+      return formatTaggedValueLegacy(record, seen);
+    }
+    return formatPlainObjectLegacy(record, seen);
+  }
+  return String(value);
+}
+
+function isTaggedValue(value: Record<string, unknown>): boolean {
+  return typeof value.tag === "string" && typeof value.type === "string";
+}
+
+function formatTaggedValueLegacy(
+  value: Record<string, unknown>,
+  seen: Set<unknown>,
+): string {
+  const fieldNames = Object.keys(value)
+    .filter((name) => name.startsWith("_"))
+    .sort((a, b) => {
+      const left = Number.parseInt(a.slice(1), 10);
+      const right = Number.parseInt(b.slice(1), 10);
+      if (Number.isNaN(left) || Number.isNaN(right)) {
+        return a.localeCompare(b);
+      }
+      return left - right;
+    });
+  if (fieldNames.length === 0) {
+    return String(value.tag);
+  }
+  const rendered = fieldNames.map((name) =>
+    formatCompiledValueLegacy(value[name], seen)
+  );
+  return `${value.tag} ${rendered.join(" ")}`;
+}
+
+function formatPlainObjectLegacy(
+  value: Record<string, unknown>,
+  seen: Set<unknown>,
+): string {
+  const entries = Object.entries(value);
+  if (entries.length === 0) {
+    return "{ }";
+  }
+  const rendered = entries.map(([key, entry]) =>
+    `${key}: ${formatCompiledValueLegacy(entry, seen)}`
+  );
+  return `{ ${rendered.join(", ")} }`;
+}
+
+function safeToString(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value === undefined) {
+    return "undefined";
+  }
+  if (value === null) {
+    return "null";
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function resolveEntryPath(path: string): string {

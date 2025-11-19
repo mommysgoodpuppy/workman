@@ -8,7 +8,7 @@ function fixturePath(relative: string): string {
 
 Deno.test({
   name: "module loader executes basic imported function",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const entry = fixturePath("basic/main.wm");
   const result = await runEntryPath(entry);
@@ -22,7 +22,7 @@ Deno.test({
 
 Deno.test({
   name: "module loader reports unknown import names",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const entry = fixturePath("unknown/main.wm");
   await assertRejects(
@@ -34,7 +34,7 @@ Deno.test({
 
 Deno.test({
   name: "module loader detects circular imports",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const entry = fixturePath("cycle/a.wm");
   await assertRejects(
@@ -45,13 +45,13 @@ Deno.test({
 });
 
 Deno.test({
-  name: "module loader rejects JS imports when evaluation is required",
-  permissions: { read: true },
+  name: "module loader executes modules that import JavaScript helpers",
+  permissions: { read: true, write: true },
 }, async () => {
   const entry = fixturePath("js_import/main.wm");
-  await assertRejects(
-    () => runEntryPath(entry),
-    ModuleLoaderError,
-    "imports a JavaScript module",
-  );
+  const result = await runEntryPath(entry);
+  const typeSummary = result.types.find((entry) => entry.name === "main");
+  assertEquals(typeSummary?.type, "Unit -> Unit");
+  const valueSummary = result.values.find((entry) => entry.name === "main");
+  assertEquals(valueSummary?.value, "()");
 });

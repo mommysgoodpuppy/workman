@@ -16,6 +16,7 @@ export interface EmitGraphOptions {
   readonly extension?: string;
   readonly runtimeFileName?: string;
   readonly runtimeSourcePath?: string;
+  readonly invokeEntrypoint?: boolean;
 }
 
 export interface EmitGraphResult {
@@ -91,6 +92,7 @@ export async function emitModuleGraph(
         ? forcedEntryExports
         : undefined,
       preludeModule: preludeImport,
+      invokeEntrypoint: options.invokeEntrypoint ?? true,
     });
     await writeTextFile(outputPath, code);
     moduleFiles.set(module.path, outputPath);

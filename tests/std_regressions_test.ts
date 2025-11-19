@@ -20,7 +20,7 @@ function fixturePath(relative: string): string {
 
 Deno.test({
   name: "std option complex pipeline (map -> flatMap -> orElse)",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const result = await runEntryPath(failingFixture("std_option_complex.wm"));
   const types = new Map(result.types.map((e) => [e.name, e.type]));
@@ -54,7 +54,7 @@ Deno.test({
 // Not sure what these tests should expect, no longer stack overflows
 Deno.test({
   name: "repro: option map self-application is rejected",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const entry = failingFixture("std_option_self_apply.wm");
   await assertRejects(
@@ -66,7 +66,7 @@ Deno.test({
 
 Deno.test({
   name: "repro: result map self-application is rejected",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const entry = failingFixture("std_result_self_apply.wm");
   await assertRejects(
@@ -78,7 +78,7 @@ Deno.test({
 
 Deno.test({
   name: "std list utilities operate with tuple lowering",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const entry = fixturePath("main.wm");
   const result = await runEntryPath(entry);

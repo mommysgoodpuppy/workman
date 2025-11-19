@@ -17,7 +17,7 @@ function mapsFromResult<T>(
 
 Deno.test({
   name: "std list utilities operate with tuple lowering",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const result = await runEntryPath(fixturePath("std_list/main.wm"));
   const { types, values } = mapsFromResult(result);
@@ -36,7 +36,7 @@ Deno.test({
 
 Deno.test({
   name: "std option helpers compose results",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
 }, async () => {
   const result = await runEntryPath(fixturePath("std_option/main.wm"));
   const { types, values } = mapsFromResult(result);
@@ -59,7 +59,7 @@ Deno.test({
 
 Deno.test({
   name: "std result helpers propagate success and error info",
-  permissions: { read: true },
+  permissions: { read: true, write: true },
   ignore: true
 }, async () => {
   const result = await runEntryPath(fixturePath("std_result/main.wm"));

@@ -1,5 +1,6 @@
 from "std/core/int" import { intAdd, intSub, intMul, intDiv, intCompare, intEq, intNeq, intLt, intGt, intLte, intGte };
 from "std/core/bool" import { boolNot, boolAnd as boolAndImpl, boolOr as boolOrImpl };
+export from "std/core/ordering" type Ordering(..);
 export from "std/option/core" type Option(..);
 export from "std/result/core" type IResult(..);
 export from "std/list/core" type List(..);
