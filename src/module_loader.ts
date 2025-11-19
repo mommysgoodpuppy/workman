@@ -285,7 +285,7 @@ export async function loadModuleSummaries(
     //console.log("  [DEBUG] loadModuleSummaries: summaries created");
     return { graph, summaries: moduleSummaries };
   } catch (e) {
-    //console.log("  [DEBUG] Error in loadModuleSummaries:", e);
+    console.log("  [DEBUG] Error in loadModuleSummaries:", e);
     throw e;
   }
 }
@@ -552,7 +552,7 @@ async function summarizeGraph(
     let letValueOrder: string[] = [];
     let runtimeExports: Map<string, RuntimeValue>;
 
-    if (!skipEvaluation) {
+    if (false) {
       const evaluation = evaluateProgram(node.program, {
         sourceName: path,
         source: node.source,

@@ -393,21 +393,21 @@ export let rec strJoin = match(sep, strings) {
   (sep, Link(s, Empty)) => { s },
   (sep, Link(s, rest)) => { strConcat(s, strConcat(sep, strJoin(sep, rest))) }
 };
-
+type Err = Fuck;
 -- Convert positive integer string to int
 export let posIntStringToInt = (s) => {
   let rec helper = match(chars, acc) {
-    (Empty, acc) => { Some(acc) },
+    (Empty, acc) => { IOk(acc) },
     (Link(c, rest), acc) => {
       match(charToDigit(c)) {
-        None => { None },
-        Some(digit) => { helper(rest, add(mul(acc, 10), digit)) }
+        None => { IErr(Fuck) },
+        Some(digit) => { IOk(helper(rest, add(mul(acc, 10), digit)) )}
       }
     }
   };
   match(strIsEmpty(s)) {
-    true => { None },
-    false => { helper(s, 0) }
+    true => { IErr(Fuck) },
+    false => { IOk(helper(s, 0)) }
   }
 };
 
