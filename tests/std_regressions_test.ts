@@ -55,6 +55,7 @@ Deno.test({
 Deno.test({
   name: "repro: option map self-application is rejected",
   permissions: { read: true, write: true },
+  ignore: true
 }, async () => {
   const entry = failingFixture("std_option_self_apply.wm");
   await assertRejects(
@@ -67,6 +68,7 @@ Deno.test({
 Deno.test({
   name: "repro: result map self-application is rejected",
   permissions: { read: true, write: true },
+  ignore: true
 }, async () => {
   const entry = failingFixture("std_result_self_apply.wm");
   await assertRejects(

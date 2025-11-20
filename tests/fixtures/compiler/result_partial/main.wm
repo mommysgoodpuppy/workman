@@ -6,7 +6,8 @@ type Direction = L | R;
 
 let parseDir = match(result) {
   "L" => { L },
-  "R" => { R }
+  "R" => { R },
+  _ => { L }
 };
 
 export let okDirection = stripErr(parseDir(IOk("L")));
