@@ -24,6 +24,38 @@ export function findTopLevelLet(
   return undefined;
 }
 
+export function computeTopLevelVisibility(
+  program: MProgram,
+  layer3: Layer3Result,
+): Map<string, number> {
+  const visibility = new Map<string, number>();
+
+  const recordDecl = (decl: MLetDeclaration) => {
+    const span = layer3.spanIndex.get(decl.id);
+    if (!span) {
+      return;
+    }
+    const visibleFrom = decl.isRecursive ? span.start : span.end;
+    visibility.set(decl.name, visibleFrom);
+  };
+
+  const declarations = program.declarations ?? [];
+  for (const decl of declarations) {
+    if (decl.kind !== "let") {
+      continue;
+    }
+    recordDecl(decl);
+    if (decl.mutualBindings) {
+      for (const binding of decl.mutualBindings) {
+        recordDecl(binding);
+      }
+    }
+  }
+
+  return visibility;
+}
+
+
 export function findTypeDeclaration(
   program: MProgram,
   name: string,

@@ -5,8 +5,12 @@ from "std/result" import { stripErr };
 
 type Direction = L | R;
 
+let testfn = (in) => { stripErr(in) +1 };
+
+let printer = (in:String) => { print(in); in };
+
 let intL = "L" >> char >> 
-let intR = "R" >> char >> stripErr;
+let intR = "R" >> char >> ?;
 
 let fn = (in) => {
   match(in) {

@@ -2,7 +2,7 @@
 
 import { fromFileUrl } from "std/path/from_file_url.ts";
 import { LSPMessage } from "./server.ts";
-import {  typeToString } from "../../../src/types.ts";
+import { splitCarrier, typeToString, Type } from "../../../src/types.ts";
 
 import { findNodeAtOffset, } from "../../../src/layer3/mod.ts";
 
@@ -10,7 +10,7 @@ import { renderNodeView } from "./render.ts";
 import { getWordAtOffset, offsetToPosition, positionToOffset, spanToRange } from "./util.ts";
 import { computeStdRoots, uriToFsPath } from "./fsio.ts";
 import type { WorkmanLanguageServer } from "./server.ts";
-import { collectIdentifierReferences, findConstructorDeclaration, findGlobalDefinitionLocations, findLetDeclaration, findModuleDefinitionLocations, findNearestLetBeforeOffset, findTopLevelLet, findTypeDeclaration } from "./findcollect.ts";
+import { collectIdentifierReferences, computeTopLevelVisibility, findConstructorDeclaration, findGlobalDefinitionLocations, findLetDeclaration, findModuleDefinitionLocations, findNearestLetBeforeOffset, findTopLevelLet, findTypeDeclaration } from "./findcollect.ts";
 type LspServerContext = WorkmanLanguageServer;
 
 export async function handleMessage(
@@ -47,6 +47,9 @@ export async function handleMessage(
 
     case "textDocument/inlayHint":
       return await handleInlayHint(ctx, message);
+
+    case "textDocument/completion":
+      return await handleCompletion(ctx, message);
 
     case "workspace/didChangeWatchedFiles":
       return await handleDidChangeWatchedFiles(ctx, message);
@@ -117,6 +120,9 @@ function handleInitialize(
         definitionProvider: true,
         referencesProvider: true,
         inlayHintProvider: true,
+        completionProvider: {
+          triggerCharacters: [" ", ".", "(", ",", "+", "-", "*"]
+        },
         workspace: {
           fileOperations: {
             didChange: {
@@ -687,7 +693,7 @@ async function handleInlayHint(
       } catch {
         // keep fallback type string
       }
-      let label = `? ${typeStr}`;
+      let label = `🕳️ ${typeStr}`;
       if (summary && !label.includes("Errors:")) {
         label += ` · Errors: ${summary}`;
       }
@@ -709,4 +715,439 @@ async function handleInlayHint(
   }
 
   return { jsonrpc: "2.0", id: message.id, result: hints };
+}
+
+async function handleCompletion(
+  ctx: LspServerContext,
+  message: LSPMessage,
+): Promise<LSPMessage> {
+  const { textDocument, position } = message.params;
+  const uri = textDocument?.uri;
+  if (!uri) {
+    return emptyCompletionResult(message.id);
+  }
+
+  const text = ctx.documents.get(uri);
+  if (!text) {
+    return emptyCompletionResult(message.id);
+  }
+
+  try {
+    const entryPath = uriToFsPath(uri);
+    const stdRoots = computeStdRoots(ctx, entryPath);
+    let context = ctx.moduleContexts.get(uri);
+    if (!context) {
+      try {
+        const sourceOverrides = new Map([[entryPath, text]]);
+        context = await ctx.buildModuleContext(
+          entryPath,
+          stdRoots,
+          ctx.preludeModule,
+          sourceOverrides,
+          true,
+        );
+        ctx.moduleContexts.set(uri, context);
+      } catch (error) {
+        ctx.log(`[LSP] Failed to build module context for completion: ${error}`);
+        return emptyCompletionResult(message.id);
+      }
+    }
+
+    const offset = positionToOffset(text, position);
+    const { word } = getWordAtOffset(text, offset);
+    const filterWord = word ?? "";
+    let nodeId = findNodeAtOffset(context.layer3.spanIndex, offset);
+    if (!nodeId && offset > 0) {
+      nodeId = findNodeAtOffset(context.layer3.spanIndex, offset - 1);
+    }
+    const expectedInfo = extractExpectedFunctionInfo(
+      ctx,
+      context,
+      nodeId,
+    );
+    ctx.log(`[LSP] Expected info: ${JSON.stringify(expectedInfo)}`);
+
+    const topLevelVisibility = computeTopLevelVisibility(
+      context.program,
+      context.layer3,
+    );
+
+    const items: Array<any> = [];
+    for (const [name, scheme] of context.env.entries()) {
+      if (name.startsWith("__op_") || name.startsWith("__prefix_")) {
+        continue;
+      }
+      if (filterWord && !name.startsWith(filterWord)) {
+        continue;
+      }
+      const visibleFrom = topLevelVisibility.get(name);
+      if (visibleFrom !== undefined && offset < visibleFrom) {
+        continue;
+      }
+
+      const formattedType = ctx.formatSchemeWithPartials(
+        scheme,
+        context.layer3,
+        context.adtEnv,
+      );
+      const substitutedType = ctx.substituteTypeWithLayer3(
+        scheme.type,
+        context.layer3,
+      );
+      const compatibility = scoreFunctionCompatibility(
+        ctx,
+        context.layer3,
+        expectedInfo?.paramType ?? null,
+        substitutedType,
+      );
+      ctx.log(`[LSP] ${name} compatibility: ${compatibility}`);
+      ctx.log(`[LSP] ${name} expected type: ${expectedInfo}`);
+      ctx.log(`[LSP] ${name} substituted type: ${JSON.stringify(substitutedType)}`);
+      if (expectedInfo && compatibility >= 4) {
+        ctx.log(`[LSP] Skipping ${name} due to compatibility ${compatibility}`);
+        // Skip clearly incompatible functions when we know the expected type.
+        continue;
+      }
+
+      const documentationLines = [`**Type**: \`${formattedType}\``];
+      if (expectedInfo?.paramDisplay) {
+        documentationLines.push(
+          `**Argument matches**: \`${expectedInfo.paramDisplay}\``,
+        );
+      }
+      items.push({
+        label: name,
+        kind: 3,
+        detail: formattedType,
+        sortText: `${compatibility.toString().padStart(2, "0")}_${name}`,
+        filterText: name,
+        insertText: name,
+        preselect: compatibility === 0,
+        documentation: {
+          kind: "markdown",
+          value: documentationLines.join("\n\n"),
+        },
+      });
+    }
+
+    items.sort((a, b) => a.sortText.localeCompare(b.sortText));
+
+    return {
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        isIncomplete: false,
+        items,
+      },
+    };
+  } catch (error) {
+    ctx.log(`[LSP] Completion error: ${error}`);
+    return emptyCompletionResult(message.id);
+  }
+}
+
+function emptyCompletionResult(id: number | string | undefined): LSPMessage {
+  return {
+    jsonrpc: "2.0",
+    id,
+    result: {
+      isIncomplete: false,
+      items: [],
+    },
+  };
+}
+
+function extractExpectedFunctionInfo(
+  ctx: LspServerContext,
+  context: {
+    layer3: import("../../../src/layer3/mod.ts").Layer3Result;
+    program: import("../../../src/ast_marked.ts").MProgram;
+  },
+  nodeId: number | undefined,
+): {
+  paramType: Type | null;
+  paramDisplay: string | null;
+} | null {
+  if (nodeId === undefined) {
+    ctx.log(`[LSP] No node ID for expected function info`);
+    return null;
+  }
+
+  const layer3 = context.layer3;
+  const view = layer3.nodeViews.get(nodeId);
+  ctx.log(`[LSP] Node view for node ID ${nodeId}: ${JSON.stringify(view)}`);
+  if (!view) {
+    ctx.log(`[LSP] No node view for node ID ${nodeId}`);
+    return null;
+  }
+
+  const partial = view.expected ?? view.finalType;
+  if (partial?.type && partial.type.kind === "func") {
+    return buildExpectedInfo(ctx, layer3, partial.type);
+  }
+
+  const derived = deriveExpectedTypeFromParentCall(context, nodeId);
+  if (!derived) {
+    ctx.log(`[LSP] Unable to derive expected type for node ID ${nodeId}`);
+    return null;
+  }
+  return buildExpectedInfo(ctx, layer3, derived);
+}
+
+function deriveExpectedTypeFromParentCall(
+  context: {
+    layer3: import("../../../src/layer3/mod.ts").Layer3Result;
+    program: import("../../../src/ast_marked.ts").MProgram;
+  },
+  nodeId: number,
+): Type | null {
+  const parentIndex = buildParentIndex(context);
+  const parent = parentIndex.get(nodeId);
+  if (!parent) {
+    return null;
+  }
+  if (parent.kind === "call" && parent.node.arguments) {
+    const argumentIndex = parent.node.arguments.findIndex((arg) => arg.id === nodeId);
+    if (argumentIndex === -1) {
+      return null;
+    }
+    const calleeType = getNodeType(context.layer3.nodeViews, parent.node.callee.id);
+    if (!calleeType) {
+      return null;
+    }
+    return peelFuncType(calleeType, argumentIndex)?.from ?? null;
+  }
+
+  if (parent.kind === "binary") {
+    const operatorView = getNodeType(context.layer3.nodeViews, parent.node.id);
+    if (!operatorView || operatorView.kind !== "func") {
+      return null;
+    }
+    return operatorView.from;
+  }
+
+  return null;
+}
+
+function buildParentIndex(
+  context: {
+    layer3: import("../../../src/layer3/mod.ts").Layer3Result;
+    program: import("../../../src/ast_marked.ts").MProgram;
+  },
+): Map<number, { kind: string; node: any }> {
+  const cacheKey = Symbol.for("parentIndex");
+  const cached = (context.layer3 as Record<string, unknown>)[cacheKey] as
+    | Map<number, { kind: string; node: any }>
+    | undefined;
+  if (cached) {
+    return cached;
+  }
+  const parentMap = new Map<number, { kind: string; node: any }>();
+  const visit = (node: any, parent: { kind: string; node: any } | null) => {
+    if (!node || typeof node !== "object") {
+      return;
+    }
+    if (typeof node.id === "number" && parent) {
+      parentMap.set(node.id, parent);
+    }
+    switch (node.kind) {
+      case "call": {
+        visit(node.callee, { kind: "call", node });
+        for (const arg of node.arguments) {
+          visit(arg, { kind: "call", node });
+        }
+        break;
+      }
+      case "binary": {
+        visit(node.left, { kind: "binary", node });
+        visit(node.right, { kind: "binary", node });
+        break;
+      }
+      case "unary": {
+        visit(node.operand, { kind: "unary", node });
+        break;
+      }
+      case "block": {
+        for (const stmt of node.statements) {
+          visit(stmt, { kind: "block", node });
+        }
+        if (node.result) {
+          visit(node.result, { kind: "block", node });
+        }
+        break;
+      }
+      case "let_statement":
+        visit(node.declaration, { kind: "let_statement", node });
+        break;
+      case "let": {
+        for (const param of node.parameters) {
+          visit(param.pattern, { kind: "parameter", node: param });
+        }
+        visit(node.body, { kind: "let", node });
+        if (node.mutualBindings) {
+          for (const binding of node.mutualBindings) {
+            visit(binding, { kind: "let", node });
+          }
+        }
+        break;
+      }
+      default: {
+        for (const value of Object.values(node)) {
+          if (value && typeof value === "object") {
+            if (Array.isArray(value)) {
+              for (const item of value) {
+                visit(item, { kind: node.kind ?? "unknown", node });
+              }
+            } else {
+              visit(value, { kind: node.kind ?? "unknown", node });
+            }
+          }
+        }
+      }
+    }
+  };
+  for (const decl of context.program.declarations ?? []) {
+    visit(decl, null);
+  }
+  (context.layer3 as Record<string, unknown>)[cacheKey] = parentMap;
+  return parentMap;
+}
+
+function getNodeType(
+  views: Map<number, import("../../../src/layer3/mod.ts").NodeView>,
+  nodeId: number,
+): Type | null {
+  const view = views.get(nodeId);
+  if (!view) {
+    return null;
+  }
+  return view.finalType.type ?? null;
+}
+
+function peelFuncType(type: Type, argIndex: number): { from: Type; to: Type } | null {
+  let current: Type | null = type;
+  for (let i = 0; i <= argIndex; i++) {
+    if (!current || current.kind !== "func") {
+      return null;
+    }
+    if (i === argIndex) {
+      return current;
+    }
+    current = current.to;
+  }
+  return null;
+}
+
+function buildExpectedInfo(
+  ctx: LspServerContext,
+  layer3: import("../../../src/layer3/mod.ts").Layer3Result,
+  paramType: Type,
+) {
+  const substituted = ctx.substituteTypeWithLayer3(paramType, layer3) ?? paramType;
+  const display = ctx.replaceIResultFormats(
+    typeToString(normalizeCarrierType(substituted)),
+  );
+  return {
+    paramType: substituted,
+    paramDisplay: display,
+  };
+}
+
+function scoreFunctionCompatibility(
+  ctx: LspServerContext,
+  layer3: import("../../../src/layer3/mod.ts").Layer3Result,
+  expectedParam: Type | null,
+  candidateType: Type | null,
+): number {
+  if (!expectedParam) {
+    return 5;
+  }
+  if (!candidateType || candidateType.kind !== "func") {
+    return 8;
+  }
+  const expectedResolved = ctx.substituteTypeWithLayer3(
+    expectedParam,
+    layer3,
+  ) ?? expectedParam;
+  const candidateParam = candidateType.from;
+  const candidateResolved = ctx.substituteTypeWithLayer3(
+    candidateParam,
+    layer3,
+  ) ?? candidateParam;
+  if (!expectedResolved || !candidateResolved) {
+    return 6;
+  }
+
+  if (typeContainsTypeVar(candidateResolved)) {
+    return 2;
+  }
+
+  if (typesEqual(expectedResolved, candidateResolved)) {
+    return 0;
+  }
+
+  const expectedNormalized = normalizeCarrierType(expectedResolved);
+  const candidateNormalized = normalizeCarrierType(candidateResolved);
+  if (typesEqual(expectedNormalized, candidateNormalized)) {
+    return 1;
+  }
+
+  if (
+    expectedNormalized.kind === "constructor" &&
+    candidateNormalized.kind === "constructor" &&
+    expectedNormalized.name === candidateNormalized.name
+  ) {
+    return 1;
+  }
+
+  return 4;
+}
+
+function normalizeCarrierType(type: Type): Type {
+  let current: Type = type;
+  while (true) {
+    const carrier = splitCarrier(current);
+    if (!carrier) {
+      break;
+    }
+    current = carrier.value;
+  }
+  return current;
+}
+
+function typesEqual(a: Type, b: Type): boolean {
+  try {
+    return typeToString(a) === typeToString(b);
+  } catch {
+    return false;
+  }
+}
+
+function typeContainsTypeVar(type: Type): boolean {
+  switch (type.kind) {
+    case "var":
+      return true;
+    case "func":
+      return typeContainsTypeVar(type.from) || typeContainsTypeVar(type.to);
+    case "constructor":
+      return type.args.some(typeContainsTypeVar);
+    case "tuple":
+      return type.elements.some(typeContainsTypeVar);
+    case "record":
+      for (const field of type.fields.values()) {
+        if (typeContainsTypeVar(field)) {
+          return true;
+        }
+      }
+      return false;
+    case "effect_row":
+      for (const payload of type.cases.values()) {
+        if (payload && typeContainsTypeVar(payload)) {
+          return true;
+        }
+      }
+      return type.tail ? typeContainsTypeVar(type.tail) : false;
+    default:
+      return false;
+  }
 }
