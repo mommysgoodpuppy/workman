@@ -72,19 +72,112 @@ function deriveExpectedTypeFromPreviousValue(
     program: import("../../../src/ast_marked.ts").MProgram;
   },
   nodeId: number,
+  debugCtx?: LspServerContext,
 ): Type | null {
   const parentIndex = buildParentIndex(context);
+  const nodeIndex = buildNodeIndex(context);
   const visited = new Set<number>();
+  const startNodeId = nodeId;
   let currentId: number | undefined = nodeId;
+  let incomingChildId: number | undefined = undefined;
+  debugCtx?.log(`[LSP] Previous value type from node ${currentId}`);
 
-  while (currentId !== undefined) {
+  outer: while (currentId !== undefined) {
     if (visited.has(currentId)) {
+      debugCtx?.log(`[LSP] Previous value type from visited node ${currentId}`);
       return null;
     }
     visited.add(currentId);
+
+    const currentNode = nodeIndex.get(currentId);
+    debugCtx?.log(`[LSP] kind ${currentNode?.kind}`);
+    if (currentNode?.kind === "block") {
+      const blockNode = currentNode as import("../../../src/ast_marked.ts").MBlockExpr;
+      const candidateId = findPreviousValueInBlock(
+        blockNode,
+        incomingChildId,
+      );
+
+      if (typeof candidateId === "number" && !visited.has(candidateId)) {
+        currentId = candidateId;
+        incomingChildId = undefined;
+        continue outer;
+      }
+    }
+
+    if (currentNode?.kind === "let") {
+      const letNode = currentNode as import("../../../src/ast_marked.ts").MLetDeclaration;
+      if (typeof letNode.body?.id === "number" && !visited.has(letNode.body.id)) {
+        currentId = letNode.body.id;
+        incomingChildId = undefined;
+        continue;
+      }
+    }
+
+    if (currentNode?.kind === "call") {
+      const callNode = currentNode as import("../../../src/ast_marked.ts").MCallExpr;
+      if (callNode.arguments.length > 0) {
+        const firstArg = callNode.arguments[0];
+        if (typeof firstArg?.id === "number") {
+          const argType = getBestAvailableType(
+            context.layer3.nodeViews,
+            firstArg.id,
+          );
+          if (argType) {
+            debugCtx?.log(`[LSP] Previous value type from call arg ${firstArg.id}`);
+            return argType;
+          }
+          if (!visited.has(firstArg.id)) {
+            currentId = firstArg.id;
+            continue;
+          }
+        }
+      }
+    }
+
     const parent = parentIndex.get(currentId);
     if (!parent) {
+      debugCtx?.log(`[LSP] Previous value type reached root at node ${currentId}`);
       return null;
+    }
+
+    if (parent.kind === "call") {
+      const callNode = parent.node as import("../../../src/ast_marked.ts").MCallExpr;
+      if (callNode.callee?.id === currentId && callNode.arguments.length > 0) {
+        const firstArg = callNode.arguments[0];
+        if (typeof firstArg?.id === "number") {
+          const argType = getBestAvailableType(
+            context.layer3.nodeViews,
+            firstArg.id,
+          );
+          if (argType) {
+            debugCtx?.log(`[LSP] Previous value type from first arg ${firstArg.id}`);
+            return argType;
+          }
+          if (!visited.has(firstArg.id)) {
+            currentId = firstArg.id;
+            continue;
+          }
+        }
+      }
+      const argIndex = callNode.arguments.findIndex((arg) => arg?.id === currentId);
+      if (argIndex > 0) {
+        const predecessor = callNode.arguments[argIndex - 1];
+        if (typeof predecessor?.id === "number") {
+          const prevType = getBestAvailableType(
+            context.layer3.nodeViews,
+            predecessor.id,
+          );
+          if (prevType) {
+            debugCtx?.log(`[LSP] Previous value type from sibling arg ${predecessor.id}`);
+            return prevType;
+          }
+          if (!visited.has(predecessor.id)) {
+            currentId = predecessor.id;
+            continue;
+          }
+        }
+      }
     }
 
     if (parent.kind === "binary") {
@@ -92,17 +185,29 @@ function deriveExpectedTypeFromPreviousValue(
       if (binaryNode.right?.id === currentId) {
         const candidate = findRightmostValueNode(binaryNode.left);
         if (candidate?.id !== undefined) {
-          const candidateType = getNodeType(context.layer3.nodeViews, candidate.id);
+          const candidateType = getBestAvailableType(
+            context.layer3.nodeViews,
+            candidate.id,
+          );
           if (candidateType) {
+            debugCtx?.log(`[LSP] Previous value type from binary left ${candidate.id}`);
             return candidateType;
+          }
+          if (!visited.has(candidate.id)) {
+            currentId = candidate.id;
+            continue;
           }
         }
       }
     }
 
-    currentId = typeof parent.node.id === "number" ? parent.node.id : undefined;
+    incomingChildId = currentId;
+    currentId = typeof parent.node.id === "number"
+      ? parent.node.id
+      : undefined;
   }
 
+  debugCtx?.log(`[LSP] Unable to derive previous value type for node ${startNodeId}`);
   return null;
 }
 
@@ -119,6 +224,70 @@ function findRightmostValueNode(node: any): { id: number } | null {
     return null;
   }
   return null;
+}
+
+function findPreviousValueInBlock(
+  block: import("../../../src/ast_marked.ts").MBlockExpr,
+  incomingChildId: number | undefined,
+): number | undefined {
+  const sequence: Array<{ childId: number; valueId: number }> = [];
+
+  for (const stmt of block.statements) {
+    if (!stmt || typeof stmt.id !== "number") {
+      continue;
+    }
+    const valueId = extractValueNodeIdFromStatement(stmt);
+    if (typeof valueId === "number") {
+      sequence.push({ childId: stmt.id, valueId });
+    }
+  }
+
+  if (typeof block.result?.id === "number") {
+    sequence.push({ childId: block.result.id, valueId: block.result.id });
+  }
+
+  if (sequence.length === 0) {
+    return undefined;
+  }
+
+  if (incomingChildId === undefined) {
+    return sequence[sequence.length - 1]?.valueId;
+  }
+
+  let index = sequence.findIndex((entry) =>
+    entry.childId === incomingChildId || entry.valueId === incomingChildId
+  );
+  if (index === -1) {
+    index = sequence.length - 1;
+  }
+
+  if (index <= 0) {
+    return undefined;
+  }
+
+  return sequence[index - 1]?.valueId;
+}
+
+function extractValueNodeIdFromStatement(statement: any): number | undefined {
+  switch (statement?.kind) {
+    case "expr_statement":
+      return typeof statement.expression?.id === "number"
+        ? statement.expression.id
+        : undefined;
+    case "pattern_let_statement":
+      return typeof statement.initializer?.id === "number"
+        ? statement.initializer.id
+        : undefined;
+    case "let_statement": {
+      const decl = statement.declaration;
+      if (decl?.body?.result && typeof decl.body.result.id === "number") {
+        return decl.body.result.id;
+      }
+      return undefined;
+    }
+    default:
+      return undefined;
+  }
 }
 
 function handleInitialize(
@@ -946,7 +1115,7 @@ function extractExpectedFunctionInfo(
     return buildExpectedInfo(ctx, layer3, derived);
   }
 
-  const previousValueType = deriveExpectedTypeFromPreviousValue(context, nodeId);
+  const previousValueType = deriveExpectedTypeFromPreviousValue(context, nodeId, ctx);
   if (!previousValueType) {
     ctx.log(`[LSP] Unable to derive expected type for node ID ${nodeId}`);
     return null;
@@ -1074,7 +1243,63 @@ function buildParentIndex(
   return parentMap;
 }
 
+function buildNodeIndex(
+  context: {
+    layer3: import("../../../src/layer3/mod.ts").Layer3Result;
+    program: import("../../../src/ast_marked.ts").MProgram;
+  },
+): Map<number, any> {
+  const cacheKey = Symbol.for("nodeIndex");
+  const cached = (context.layer3 as Record<string, unknown>)[cacheKey] as
+    | Map<number, any>
+    | undefined;
+  if (cached) {
+    return cached;
+  }
+
+  const nodeMap = new Map<number, any>();
+  const seen = new Set<any>();
+  const visit = (node: any) => {
+    if (!node || typeof node !== "object" || seen.has(node)) {
+      return;
+    }
+    seen.add(node);
+
+    const maybeId = (node as { id?: number }).id;
+    if (typeof maybeId === "number" && !nodeMap.has(maybeId)) {
+      nodeMap.set(maybeId, node);
+    }
+
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      if (!value) {
+        continue;
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          visit(item);
+        }
+      } else if (typeof value === "object") {
+        visit(value);
+      }
+    }
+  };
+
+  for (const decl of context.program.declarations ?? []) {
+    visit(decl);
+  }
+
+  (context.layer3 as Record<string, unknown>)[cacheKey] = nodeMap;
+  return nodeMap;
+}
+
 function getNodeType(
+  views: Map<number, import("../../../src/layer3/mod.ts").NodeView>,
+  nodeId: number,
+): Type | null {
+  return getBestAvailableType(views, nodeId);
+}
+
+function getBestAvailableType(
   views: Map<number, import("../../../src/layer3/mod.ts").NodeView>,
   nodeId: number,
 ): Type | null {
@@ -1082,7 +1307,16 @@ function getNodeType(
   if (!view) {
     return null;
   }
-  return view.finalType.type ?? null;
+  if (view.expected?.type) {
+    return view.expected.type;
+  }
+  if (view.finalType?.type) {
+    return view.finalType.type;
+  }
+  if (view.observed?.type) {
+    return view.observed.type;
+  }
+  return null;
 }
 
 function peelFuncType(type: Type, argIndex: number): { from: Type; to: Type } | null {

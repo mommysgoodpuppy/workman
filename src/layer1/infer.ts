@@ -41,8 +41,8 @@ import {
   registerCarrier,
   splitCarrier,
   type Type,
-  type TypeInfo,
   type TypeEnv,
+  type TypeInfo,
   type TypeScheme,
   typeToString,
   unionCarrierStates,
@@ -1121,22 +1121,25 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         fields.set(field.name, applyCurrentSubst(ctx, fieldType));
       }
 
-      const candidateRecords = Array.from(ctx.adtEnv.entries()).filter(([name, info]) => {
-        if (!info.recordFields) return false;
-        if (info.recordFields.size < fields.size) return false;
-        for (const fieldName of fieldNames) {
-          if (!info.recordFields.has(fieldName)) {
-            return false;
+      const candidateRecords = Array.from(ctx.adtEnv.entries()).filter(
+        ([name, info]) => {
+          if (!info.recordFields) return false;
+          if (info.recordFields.size < fields.size) return false;
+          for (const fieldName of fieldNames) {
+            if (!info.recordFields.has(fieldName)) {
+              return false;
+            }
           }
-        }
-        return true;
-      });
+          return true;
+        },
+      );
 
       if (candidateRecords.length === 1) {
         const [recordName, recordInfo] = candidateRecords[0];
-        const missingFields = Array.from(recordInfo.recordFields!.keys()).filter(
-          (fieldName) => !fields.has(fieldName),
-        );
+        const missingFields = Array.from(recordInfo.recordFields!.keys())
+          .filter(
+            (fieldName) => !fields.has(fieldName),
+          );
         for (const missingField of missingFields) {
           recordLayer1Diagnostic(ctx, expr.id, "missing_field", {
             field: missingField,
@@ -1154,7 +1157,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           return recordExprType(ctx, expr, aliasInstance);
         }
 
-        const args: (Type | null)[] = Array(recordInfo.recordFields!.size).fill(null);
+        const args: (Type | null)[] = Array(recordInfo.recordFields!.size).fill(
+          null,
+        );
         for (const [fieldName, fieldType] of fields.entries()) {
           const index = recordInfo.recordFields!.get(fieldName);
           if (index !== undefined) {
@@ -1255,7 +1260,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               expr,
               projectedValueType,
             );
-            ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
+            ctx.nodeTypes.set(
+              targetExpr.id,
+              applyCurrentSubst(ctx, targetType),
+            );
             registerHoleForType(
               ctx,
               holeOriginFromExpr(targetExpr),
@@ -1309,7 +1317,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // If targetType or carrier subject is a type variable (so unresolved), unify to exactly one nominal record
       if (targetType.kind === "var" || recordSubject.kind === "var") {
-        const subjectVar = recordSubject.kind === "var" ? recordSubject : targetType;
+        const subjectVar = recordSubject.kind === "var"
+          ? recordSubject
+          : targetType;
         const possibleRecords = Array.from(ctx.adtEnv.entries()).filter((
           [name, info],
         ) => info.recordFields?.has(expr.field));
@@ -1335,7 +1345,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               expr,
               projectedValueType,
             );
-            ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
+            ctx.nodeTypes.set(
+              targetExpr.id,
+              applyCurrentSubst(ctx, targetType),
+            );
             registerHoleForType(
               ctx,
               holeOriginFromExpr(targetExpr),
@@ -2901,25 +2914,24 @@ export function inferMatchBranches(
         hasWildcard = true;
         continue;
       }
-      let instantiated = instantiate(scheme);
-      instantiated = applyCurrentSubst(ctx, instantiated);
-      if (instantiated.kind === "func" && scheme.quantifiers.length > 0) {
-        // Instantiate result with fresh variables so it can specialize per use.
-        const freshResult = freshTypeVar();
-        unify(ctx, instantiated.to, freshResult);
-        instantiated = {
-          kind: "func",
-          from: instantiated.from,
-          to: freshResult,
-        };
-      }
+      let instantiated = instantiateAndApply(ctx, scheme);
       const resultVar = freshTypeVar();
       // Ensure the referenced bundle accepts the current scrutinee type exactly
-      unify(ctx, instantiated, {
-        kind: "func",
-        from: applyCurrentSubst(ctx, scrutineeType),
-        to: resultVar,
-      });
+      if (
+        !unify(ctx, instantiated, {
+          kind: "func",
+          from: applyCurrentSubst(ctx, scrutineeType),
+          to: resultVar,
+        })
+      ) {
+        // If unification fails, it might be because the bundle is generic (e.g. T -> ...)
+        // and we are passing a concrete type (e.g. Int).
+        // We should try to unify the *from* type of the bundle with the scrutinee.
+        if (instantiated.kind === "func") {
+          unify(ctx, instantiated.from, scrutineeType);
+          unify(ctx, instantiated.to, resultVar);
+        }
+      }
       const bodyType = applyCurrentSubst(ctx, resultVar);
       if (!resultType) {
         resultType = bodyType;
