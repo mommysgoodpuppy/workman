@@ -9,15 +9,18 @@ let testfn = (in) => { stripErr(in) +1 };
 
 let printer = (in:String) => { print(in); in };
 
-let intL = "L" >> char >> 
-let intR = "R" >> char >> ?;
+let plus = (in) => {in +1}; 
 
-let fn = (in) => {
+let intL = stripErr(char("L")); 
+let intR = "R" >> char >> plus;
+
+
+
+let fn = (in) => { 
   match(in) {
     Var(b) => { print(b); L },
     intL => { L },
     intR => { R },
-    _ => { L }
   }
 };
 

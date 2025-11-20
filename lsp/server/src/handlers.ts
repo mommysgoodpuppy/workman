@@ -1348,6 +1348,90 @@ function buildExpectedInfo(
   };
 }
 
+function canSpecializeType(candidate: Type, expected: Type): boolean {
+  if (candidate.kind === "var" || expected.kind === "var") {
+    return true;
+  }
+
+  if (candidate.kind !== expected.kind) {
+    return false;
+  }
+
+  switch (candidate.kind) {
+    case "constructor": {
+      if (candidate.name !== (expected as Type & { name: string }).name) {
+        return false;
+      }
+      if (candidate.args.length !== expected.args.length) {
+        return false;
+      }
+      return candidate.args.every((candArg, index) =>
+        canSpecializeType(candArg, expected.args[index])
+      );
+    }
+    case "func":
+      return canSpecializeType(candidate.from, expected.from) &&
+        canSpecializeType(candidate.to, expected.to);
+    case "tuple":
+      if (candidate.elements.length !== expected.elements.length) {
+        return false;
+      }
+      return candidate.elements.every((candElement, index) =>
+        canSpecializeType(candElement, expected.elements[index])
+      );
+    case "record": {
+      if (candidate.fields.size !== expected.fields.size) {
+        return false;
+      }
+      for (const [name, candFieldType] of candidate.fields.entries()) {
+        const expectedFieldType = expected.fields.get(name);
+        if (!expectedFieldType) {
+          return false;
+        }
+        if (!canSpecializeType(candFieldType, expectedFieldType)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    case "effect_row": {
+      if (candidate.cases.size !== expected.cases.size) {
+        return false;
+      }
+      for (const [label, candPayload] of candidate.cases.entries()) {
+        const expectedPayload = expected.cases.get(label);
+        if (!expectedPayload && candPayload) {
+          return false;
+        }
+        if (!candPayload && expectedPayload) {
+          return false;
+        }
+        if (candPayload && expectedPayload) {
+          if (!canSpecializeType(candPayload, expectedPayload)) {
+            return false;
+          }
+        }
+      }
+      if (!candidate.tail && expected.tail) {
+        return false;
+      }
+      if (candidate.tail && expected.tail) {
+        return canSpecializeType(candidate.tail, expected.tail);
+      }
+      return true;
+    }
+    case "int":
+    case "bool":
+    case "string":
+    case "char":
+    case "unit":
+      return true;
+    default:
+      return false;
+  }
+}
+
+
 function scoreFunctionCompatibility(
   ctx: LspServerContext,
   layer3: import("../../../src/layer3/mod.ts").Layer3Result,
@@ -1373,18 +1457,28 @@ function scoreFunctionCompatibility(
     return 6;
   }
 
-  if (typeContainsTypeVar(candidateResolved)) {
-    return 2;
+  const expectedNormalized = normalizeCarrierType(expectedResolved);
+  const candidateNormalized = normalizeCarrierType(candidateResolved);
+
+  if (
+    expectedNormalized.kind !== candidateNormalized.kind &&
+    candidateNormalized.kind === "func" &&
+    expectedNormalized.kind !== "func" &&
+    expectedNormalized.kind !== "var"
+  ) {
+    return 9;
   }
 
   if (typesEqual(expectedResolved, candidateResolved)) {
     return 0;
   }
 
-  const expectedNormalized = normalizeCarrierType(expectedResolved);
-  const candidateNormalized = normalizeCarrierType(candidateResolved);
   if (typesEqual(expectedNormalized, candidateNormalized)) {
     return 1;
+  }
+
+  if (canSpecializeType(candidateNormalized, expectedNormalized)) {
+    return typeContainsTypeVar(candidateNormalized) ? 2 : 1;
   }
 
   if (
@@ -1392,10 +1486,23 @@ function scoreFunctionCompatibility(
     candidateNormalized.kind === "constructor" &&
     expectedNormalized.name === candidateNormalized.name
   ) {
+    if (
+      typeContainsTypeVar(candidateNormalized) &&
+      !typeContainsTypeVar(expectedNormalized)
+    ) {
+      return 2;
+    }
     return 1;
   }
 
-  return 4;
+  if (
+    typeContainsTypeVar(candidateNormalized) &&
+    !typeContainsTypeVar(expectedNormalized)
+  ) {
+    return 6;
+  }
+
+  return 5;
 }
 
 function normalizeCarrierType(type: Type): Type {
