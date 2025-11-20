@@ -1,7 +1,7 @@
 import type { Token } from "./token.ts";
 import {
   expectedTokenError,
-  type ParseError,
+  ParseError,
   unexpectedTokenError,
 } from "./error.ts";
 import { nextNodeId, resetNodeIds } from "./node_ids.ts";
@@ -40,12 +40,17 @@ import type { Pattern, SourceSpan } from "./ast.ts";
 
 export type OperatorInfo = { precedence: number; associativity: Associativity };
 
+export interface ParseSurfaceProgramOptions {
+  tolerant?: boolean;
+}
+
 export function parseSurfaceProgram(
   tokens: Token[],
   source?: string,
   preserveComments: boolean = false,
   initialOperators?: Map<string, OperatorInfo>,
   initialPrefixOperators?: Set<string>,
+  options?: ParseSurfaceProgramOptions,
 ): Program {
   resetNodeIds(0); // Reset IDs before parsing
   const parser = new SurfaceParser(
@@ -54,6 +59,7 @@ export function parseSurfaceProgram(
     preserveComments,
     initialOperators,
     initialPrefixOperators,
+    options?.tolerant ?? false,
   );
   return parser.parseProgram();
 }
@@ -74,6 +80,7 @@ class SurfaceParser {
     private readonly preserveComments: boolean = false,
     initialOperators?: Map<string, OperatorInfo>,
     initialPrefixOperators?: Set<string>,
+    private readonly tolerant: boolean = false,
   ) {
     // Start with default comparison operators (these are defined in std/core/int but need to be known at parse time)
     const defaultOperators = new Map<string, OperatorInfo>([
@@ -81,6 +88,7 @@ class SurfaceParser {
       [">", { precedence: 4, associativity: "none" }],
       ["<=", { precedence: 4, associativity: "none" }],
       [">=", { precedence: 4, associativity: "none" }],
+      [">>", { precedence: 1, associativity: "left" }],
     ]);
 
     this.operators = initialOperators
@@ -165,7 +173,11 @@ class SurfaceParser {
       if (this.matchSymbol(";")) {
         semicolonToken = this.previous();
       } else if (!this.isEOF()) {
-        semicolonToken = this.expectSymbol(";");
+        if (this.tolerant && this.canStartTopLevelDeclaration()) {
+          semicolonToken = null;
+        } else {
+          semicolonToken = this.expectSymbol(";");
+        }
       }
       if (semicolonToken) {
         lastTokenEnd = semicolonToken.end;
@@ -1313,7 +1325,25 @@ class SurfaceParser {
         ? opInfo.precedence + 1
         : opInfo.precedence;
 
-      const right = this.parseBinaryExpression(nextMinPrecedence);
+      let right: Expr;
+      try {
+        right = this.parseBinaryExpression(nextMinPrecedence);
+      } catch (error) {
+        if (
+          this.tolerant &&
+          error instanceof ParseError &&
+          this.isExpectedExpressionError(error)
+        ) {
+          right = this.createImplicitHoleBefore(error.token);
+        } else {
+          throw error;
+        }
+      }
+
+      if (operator === ">>") {
+        left = this.createPipeCall(left, right);
+        continue;
+      }
 
       left = {
         kind: "binary",
@@ -1326,6 +1356,26 @@ class SurfaceParser {
     }
 
     return left;
+  }
+
+  private createPipeCall(left: Expr, right: Expr): Expr {
+    if (right.kind === "call") {
+      return {
+        kind: "call",
+        callee: right.callee,
+        arguments: [left, ...right.arguments],
+        span: this.spanFrom(left.span.start, right.span.end),
+        id: nextNodeId(),
+      };
+    }
+
+    return {
+      kind: "call",
+      callee: right,
+      arguments: [left],
+      span: this.spanFrom(left.span.start, right.span.end),
+      id: nextNodeId(),
+    };
   }
 
   private parseCallExpression(): Expr {
@@ -1499,6 +1549,9 @@ class SurfaceParser {
         // Otherwise, it's an unexpected operator
         break;
       }
+    }
+    if (this.tolerant) {
+      return this.createImplicitHoleBefore(token);
     }
     throw this.error("Expected expression", token);
   }
@@ -2012,30 +2065,65 @@ class SurfaceParser {
   }
 
   private expectSymbol(value: string): Token {
-    const token = this.consume();
-    if (token.kind !== "symbol" || token.value !== value) {
-      throw expectedTokenError(`symbol '${value}'`, token, this.source);
-    }
-    return token;
+    return this.consumeSymbolToken(value);
   }
 
   private matchSymbol(value: string): boolean {
     const token = this.peek();
-    if (token.kind === "symbol" && token.value === value) {
-      this.consume();
+    if (this.isSymbolToken(token, value)) {
+      this.consumeSymbolToken(value);
       return true;
     }
     return false;
   }
 
   private checkSymbol(value: string): boolean {
-    const token = this.peek();
-    return token.kind === "symbol" && token.value === value;
+    return this.isSymbolToken(this.peek(), value);
   }
 
   private checkKeyword(value: string): boolean {
     const token = this.peek();
     return token.kind === "keyword" && token.value === value;
+  }
+
+  private isSymbolToken(token: Token, value: string): boolean {
+    if ((token.kind === "symbol" || token.kind === "operator") && token.value === value) {
+      return true;
+    }
+    if (value === ">" && token.kind === "operator" && token.value === ">>") {
+      return true;
+    }
+    return false;
+  }
+
+  private consumeSymbolToken(value: string): Token {
+    const token = this.consume();
+    if (!this.isSymbolToken(token, value)) {
+      throw expectedTokenError(`symbol '${value}'`, token, this.source);
+    }
+
+    if (value === ">" && token.kind === "operator" && token.value === ">>") {
+      const first: Token = {
+        kind: "symbol",
+        value: ">",
+        start: token.start,
+        end: token.start + 1,
+      };
+      const second: Token = {
+        kind: "symbol",
+        value: ">",
+        start: token.start + 1,
+        end: token.end,
+      };
+      this.tokens.splice(this.index, 0, second);
+      return first;
+    }
+
+    if (token.kind === "operator" && token.value === value) {
+      return { ...token, kind: "symbol" };
+    }
+
+    return token;
   }
 
   private consume(): Token {
@@ -2090,6 +2178,39 @@ class SurfaceParser {
 
   private error(message: string, token: Token = this.peek()): ParseError {
     return unexpectedTokenError(message, token, this.source);
+  }
+
+  private canStartTopLevelDeclaration(): boolean {
+    const token = this.peek();
+    if (token.kind === "keyword") {
+      return (
+        token.value === "let" ||
+        token.value === "type" ||
+        token.value === "record" ||
+        token.value === "from" ||
+        token.value === "infix" ||
+        token.value === "infixl" ||
+        token.value === "infixr" ||
+        token.value === "prefix" ||
+        token.value === "infectious" ||
+        token.value === "export"
+      );
+    }
+    return token.kind === "eof";
+  }
+
+  private createImplicitHoleBefore(token: Token): Expr {
+    const position = token.start;
+    const span = { start: position, end: position };
+    return {
+      kind: "hole",
+      span,
+      id: nextNodeId(),
+    } as Expr;
+  }
+
+  private isExpectedExpressionError(error: ParseError): boolean {
+    return error.message === "Expected expression";
   }
 
   private collectLeadingComments(): import("./ast.ts").CommentBlock[] {

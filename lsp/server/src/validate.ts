@@ -67,6 +67,7 @@ export async function validateDocument(
       stdRoots,
       ctx.preludeModule,
       sourceOverrides,
+      true,
     );
     ctx.moduleContexts.set(uri, context);
     ctx.log(`[LSP] Module analysis completed (${entryPath})`);

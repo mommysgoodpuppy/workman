@@ -15,6 +15,7 @@ export async function buildModuleContext(
   stdRoots: string[],
   preludeModule?: string,
   sourceOverrides?: Map<string, string>,
+  tolerantParsing: boolean = false,
 ): Promise<{
   env: Map<string, TypeScheme>;
   layer3: Layer3Result;
@@ -30,6 +31,7 @@ export async function buildModuleContext(
       preludeModule,
       skipEvaluation: true,
       sourceOverrides,
+      tolerantParsing,
     },
   });
 

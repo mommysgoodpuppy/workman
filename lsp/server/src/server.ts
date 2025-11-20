@@ -91,6 +91,7 @@ export class WorkmanLanguageServer {
     stdRoots: string[],
     preludeModule?: string,
     sourceOverrides?: Map<string, string>,
+    tolerantParsing: boolean = false,
   ) {
     return buildModuleContext(
       this,
@@ -98,6 +99,7 @@ export class WorkmanLanguageServer {
       stdRoots,
       preludeModule,
       sourceOverrides,
+      tolerantParsing,
     );
   }
 

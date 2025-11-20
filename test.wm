@@ -5,8 +5,8 @@ from "std/result" import { stripErr };
 
 type Direction = L | R;
 
-let intL = stripErr(char("L"));
-let intR = stripErr(char("R"));
+let intL = "L" >> char >> 
+let intR = "R" >> char >> stripErr;
 
 let fn = (in) => {
   match(in) {

@@ -85,7 +85,7 @@ export const operatorChars = new Set([
 // Multi-character operators need to be checked in order of length
 export const multiCharOperators = [
   "<=",
-  ">=", // Check these before < and >
+  ">=",
   "==",
   "!=",
   "&&",
@@ -94,4 +94,5 @@ export const multiCharOperators = [
   "--",
   "**",
   "//",
+  ">>",
 ];

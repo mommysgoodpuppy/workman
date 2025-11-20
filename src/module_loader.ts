@@ -29,6 +29,8 @@ export interface ModuleLoaderOptions {
   skipEvaluation?: boolean;
   /** Map of absolute file paths to their in-memory content (for LSP) */
   sourceOverrides?: Map<string, string>;
+  /** Enable tolerant parsing (used by LSP for incomplete code) */
+  tolerantParsing?: boolean;
 }
 
 export interface ModuleGraph {
@@ -655,7 +657,14 @@ function normalizeOptions(options: ModuleLoaderOptions): ModuleLoaderOptions {
   const preludeModule = options.preludeModule ?? "std/prelude";
   const skipEvaluation = options.skipEvaluation ?? true;
   const sourceOverrides = options.sourceOverrides;
-  return { stdRoots, preludeModule, skipEvaluation, sourceOverrides };
+  const tolerantParsing = options.tolerantParsing ?? false;
+  return {
+    stdRoots,
+    preludeModule,
+    skipEvaluation,
+    sourceOverrides,
+    tolerantParsing,
+  };
 }
 
 async function evaluateExportedValue(value: unknown): Promise<unknown> {
@@ -1004,7 +1013,9 @@ async function loadProgram(
       false,
       operators,
       prefixOperators,
+      { tolerant: ctx.options.tolerantParsing ?? false },
     );
+
     //console.log("  [DEBUG] loadProgram: parsed successfully");
   } catch (error) {
     //console.log("  [DEBUG] loadProgram: error during lex/parse", error);

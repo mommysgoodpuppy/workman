@@ -215,6 +215,7 @@ async function handleHover(
           stdRoots,
           ctx.preludeModule,
           sourceOverrides,
+          true,
         );
         ctx.moduleContexts.set(uri, context);
       } catch (error) {
@@ -308,6 +309,7 @@ async function handleDefinition(
           stdRoots,
           ctx.preludeModule,
           sourceOverrides,
+          true,
         );
         ctx.moduleContexts.set(uri, context);
       } catch (error) {
@@ -470,6 +472,7 @@ async function handleReferences(
         stdRoots,
         ctx.preludeModule,
         sourceOverrides,
+        true,
       );
       ctx.moduleContexts.set(uri, moduleContext);
     }
@@ -544,11 +547,13 @@ async function handleInlayHint(
     paddingLeft: boolean;
     paddingRight: boolean;
   }> = [];
+  const MAX_LABEL_LENGTH = 40;
 
   try {
     const entryPath = uriToFsPath(uri);
     const stdRoots = computeStdRoots(ctx, entryPath);
     let context = ctx.moduleContexts.get(uri);
+
     if (!context) {
       try {
         const sourceOverrides = new Map([[entryPath, text]]);
@@ -557,6 +562,7 @@ async function handleInlayHint(
           stdRoots,
           ctx.preludeModule,
           sourceOverrides,
+          true,
         );
         ctx.moduleContexts.set(uri, context);
       } catch (error) {
@@ -567,11 +573,13 @@ async function handleInlayHint(
       }
     }
     const { env, layer3 } = context;
+    const addedHoleHints = new Set<number>();
     for (const [name, scheme] of env.entries()) {
       if (name.startsWith("__op_") || name.startsWith("__prefix_")) {
         continue;
       }
       const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
       const regex = new RegExp(
         `\\blet\\s+(?:rec\\s+)?${escapedName}\\b`,
         "g",
@@ -593,6 +601,7 @@ async function handleInlayHint(
             scheme,
             layer3,
           );
+
           let returnType = substitutedScheme.type;
           while (returnType.kind === "func") {
             returnType = returnType.to;
@@ -612,8 +621,6 @@ async function handleInlayHint(
         } catch {
           // ignore errors and fall back to full string
         }
-        // Truncate the label if too long
-        const MAX_LABEL_LENGTH = 40;
         let label = `: ${typeStr}`;
         if (label.length > MAX_LABEL_LENGTH) {
           label = label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
@@ -629,6 +636,71 @@ async function handleInlayHint(
           `[LSP] Type hint: ${name} : ${label} at line ${position.line}, char ${position.character}`,
         );
       }
+    }
+
+    for (const view of layer3.nodeViews.values()) {
+      if (
+        view.finalType.kind !== "unknown" ||
+        !view.finalType.type ||
+        !view.sourceSpan
+      ) {
+        continue;
+      }
+      const holeId = ctx.extractHoleIdFromType(view.finalType.type);
+      if (holeId === undefined || holeId !== view.nodeId) {
+        continue;
+      }
+      if (addedHoleHints.has(holeId)) {
+        continue;
+      }
+      addedHoleHints.add(holeId);
+
+      let anchorOffset = view.sourceSpan.start;
+      if (anchorOffset > 0) {
+        const prevChar = text[anchorOffset - 1];
+        if (prevChar === "\n") {
+          anchorOffset -= 1;
+          if (anchorOffset > 0 && text[anchorOffset - 1] === "\r") {
+            anchorOffset -= 1;
+          }
+        }
+      }
+      const position = offsetToPosition(text, anchorOffset);
+
+      let typeStr = "?";
+      let summary: string | null = null;
+      try {
+        const substituted = ctx.substituteTypeWithLayer3(
+          view.finalType.type,
+          layer3,
+        );
+        if (substituted) {
+          typeStr = ctx.replaceIResultFormats(typeToString(substituted));
+          summary = ctx.summarizeEffectRowFromType(substituted, context.adtEnv);
+          if (
+            summary && substituted.kind === "constructor" &&
+            substituted.args.length > 0
+          ) {
+            typeStr = `⚡${typeToString(substituted.args[0])} <${summary}>`;
+          }
+        }
+      } catch {
+        // keep fallback type string
+      }
+      let label = `? ${typeStr}`;
+      if (summary && !label.includes("Errors:")) {
+        label += ` · Errors: ${summary}`;
+      }
+      if (label.length > MAX_LABEL_LENGTH) {
+        label = label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
+      }
+      hints.push({
+        position,
+        label,
+        kind: 1,
+        paddingLeft: false,
+        paddingRight: false,
+      });
     }
     ctx.log(`[LSP] Returning ${hints.length} inlay hints`);
   } catch (error) {
