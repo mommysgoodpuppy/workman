@@ -66,6 +66,61 @@ export async function handleMessage(
   }
 }
 
+function deriveExpectedTypeFromPreviousValue(
+  context: {
+    layer3: import("../../../src/layer3/mod.ts").Layer3Result;
+    program: import("../../../src/ast_marked.ts").MProgram;
+  },
+  nodeId: number,
+): Type | null {
+  const parentIndex = buildParentIndex(context);
+  const visited = new Set<number>();
+  let currentId: number | undefined = nodeId;
+
+  while (currentId !== undefined) {
+    if (visited.has(currentId)) {
+      return null;
+    }
+    visited.add(currentId);
+    const parent = parentIndex.get(currentId);
+    if (!parent) {
+      return null;
+    }
+
+    if (parent.kind === "binary") {
+      const binaryNode = parent.node as import("../../../src/ast_marked.ts").MBinaryExpr;
+      if (binaryNode.right?.id === currentId) {
+        const candidate = findRightmostValueNode(binaryNode.left);
+        if (candidate?.id !== undefined) {
+          const candidateType = getNodeType(context.layer3.nodeViews, candidate.id);
+          if (candidateType) {
+            return candidateType;
+          }
+        }
+      }
+    }
+
+    currentId = typeof parent.node.id === "number" ? parent.node.id : undefined;
+  }
+
+  return null;
+}
+
+function findRightmostValueNode(node: any): { id: number } | null {
+  let current: any = node;
+  while (current && typeof current === "object") {
+    if (current.kind === "binary" && current.right) {
+      current = current.right;
+      continue;
+    }
+    if (typeof current.id === "number") {
+      return current as { id: number };
+    }
+    return null;
+  }
+  return null;
+}
+
 function handleInitialize(
   ctx: LspServerContext,
   message: LSPMessage,
@@ -887,11 +942,17 @@ function extractExpectedFunctionInfo(
   }
 
   const derived = deriveExpectedTypeFromParentCall(context, nodeId);
-  if (!derived) {
+  if (derived) {
+    return buildExpectedInfo(ctx, layer3, derived);
+  }
+
+  const previousValueType = deriveExpectedTypeFromPreviousValue(context, nodeId);
+  if (!previousValueType) {
     ctx.log(`[LSP] Unable to derive expected type for node ID ${nodeId}`);
     return null;
   }
-  return buildExpectedInfo(ctx, layer3, derived);
+  ctx.log(`[LSP] Derived previous value type for node ID ${nodeId}`);
+  return buildExpectedInfo(ctx, layer3, previousValueType);
 }
 
 function deriveExpectedTypeFromParentCall(
