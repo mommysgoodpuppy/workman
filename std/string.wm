@@ -412,6 +412,6 @@ export let posIntStringToInt = (s) => {
 };
 
 -- convert charactercode to a string
-export let charCToString = (c) => {
+export let charCToString = (c: Int) => {
   Link(c, Empty)
 };
