@@ -16,7 +16,11 @@ import type {
   CoreTypeConstructor,
   CoreTypeDeclaration,
 } from "../ir/core.ts";
-import { flattenResultType, isCarrierType } from "../../../src/types.ts";
+import {
+  findCarrierDomain,
+  flattenResultType,
+  isCarrierType,
+} from "../../../src/types.ts";
 
 interface NameState {
   used: Set<string>;
@@ -130,10 +134,10 @@ export function emitModule(
   // Auto-call main if it's the entry module and main is exported
   if (module.path === graph.entry && (options.invokeEntrypoint ?? true)) {
     const mainExport = module.exports.find(
-      (exp) => exp.kind === "value" && exp.exported === "main"
+      (exp) => exp.kind === "value" && exp.exported === "main",
     );
     const mainForced = ctx.forcedValueExports.has("main");
-    
+
     if (mainExport || mainForced) {
       lines.push("");
       lines.push(`if (typeof main !== "undefined") { main(); }`);
@@ -322,7 +326,7 @@ function emitExports(module: CoreModule, ctx: EmitContext): string | undefined {
     }
     const local = exp.kind === "value"
       ? resolveName(ctx.scope, exp.local, ctx.state)
-      : exp.exported;  // For constructors, exported is already sanitized
+      : exp.exported; // For constructors, exported is already sanitized
     // For operators, the local name is already sanitized, so just export that
     // This avoids trying to export invalid JS identifiers like __op_++'
     specifiers.push(local);
@@ -596,6 +600,21 @@ function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
     const args = expr.args.map((arg) => emitExpr(arg, ctx));
     return `(${callee})(${args.join(", ")})`;
   }
+
+  // Check if we need async handling (Promise)
+  const isAsync = findCarrierDomain(expr.type) === "async" ||
+    findCarrierDomain(expr.callee.type) === "async" ||
+    expr.args.some((arg) => findCarrierDomain(arg.type) === "async");
+
+  if (isAsync) {
+    const helper = resolveVar("callAsync", ctx);
+    const segments = [
+      emitExpr(expr.callee, ctx),
+      ...expr.args.map((arg) => emitExpr(arg, ctx)),
+    ];
+    return `${helper}(${segments.join(", ")})`;
+  }
+
   const helper = resolveVar("callInfectious", ctx);
   const segments = [
     emitExpr(expr.callee, ctx),
@@ -645,6 +664,37 @@ function emitMatch(
   ctx: EmitContext,
 ): string {
   const scrutineeIsCarrier = isCarrierType(expr.scrutinee.type);
+
+  if (findCarrierDomain(expr.scrutinee.type) === "async") {
+    const helper = resolveVar("matchPromise", ctx);
+    const paramName = allocateTempName(ctx.state, "__match_async_val");
+    const innerScope = new Map(ctx.scope);
+
+    const lines: string[] = [];
+    for (const kase of expr.cases) {
+      lines.push(...emitMatchCase(kase, paramName, ctx, innerScope));
+    }
+
+    if (expr.fallback) {
+      const fallbackExpr = emitExprWithScope(
+        expr.fallback,
+        ctx,
+        innerScope,
+      );
+      lines.push(`return ${fallbackExpr};`);
+    } else {
+      const helper = resolveVar("nonExhaustiveMatch", ctx);
+      const metadataLiteral = serializeMatchMetadata(expr);
+      lines.push(`${helper}(${paramName}, ${metadataLiteral});`);
+    }
+
+    const body = lines.map((line) => indent(line)).join("\n");
+    const matcher = `(${paramName}) => {\n${body}\n}`;
+
+    const scrutineeCode = emitExpr(expr.scrutinee, ctx);
+    return `${helper}(${scrutineeCode}, ${matcher})`;
+  }
+
   const dischargesCarrier = Boolean(expr.effectRowCoverage?.dischargesResult);
   const patternsHandleCarrier = expr.cases.some((kase) =>
     hasResultConstructorPattern(kase.pattern) ||

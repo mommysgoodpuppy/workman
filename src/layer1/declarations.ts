@@ -39,8 +39,11 @@ function isAliasTypeDeclaration(
 
 function isRecordTypeDeclaration(
   decl: TypeDeclaration,
-): decl is TypeDeclaration & { members: [TypeAliasExprMember & { type: { kind: "type_record" } }] } {
-  return decl.members.length === 1 && decl.members[0].kind === "alias" && decl.members[0].type.kind === "type_record";
+): decl is TypeDeclaration & {
+  members: [TypeAliasExprMember & { type: { kind: "type_record" } }];
+} {
+  return decl.members.length === 1 && decl.members[0].kind === "alias" &&
+    decl.members[0].type.kind === "type_record";
 }
 
 const typeParamsCache = new Map<string, Type[]>();
@@ -209,7 +212,6 @@ export function registerTypeConstructors(
     stagedEnvEntries.push(member.name);
   }
 
-
   // All validations passed, commit changes
   for (const info of stagedConstructors) {
     ctx.env.set(info.name, info.scheme);
@@ -248,7 +250,9 @@ function registerTypeAlias(
 
 function registerTypeRecord(
   ctx: Context,
-  decl: TypeDeclaration & { members: [TypeAliasExprMember & { type: { kind: "type_record" } }] },
+  decl: TypeDeclaration & {
+    members: [TypeAliasExprMember & { type: { kind: "type_record" } }];
+  },
 ): RegisterConstructorsResult {
   const adtInfo = ctx.adtEnv.get(decl.name);
   const parameterTypes = typeParamsCache.get(decl.name);
