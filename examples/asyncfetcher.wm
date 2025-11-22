@@ -1,0 +1,53 @@
+from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
+from "std/nativeString" import { stringToList, stringConcat, intToString };
+from "std/result" import { stripErr };
+from "std/async/core" import { resolve, reject, Resolved, Rejected };
+from "./async.js" import {
+  fetch as fetchNative,
+  json as jsonNative
+};
+
+-- 1. Structural Types (What TS devs love)
+record GitHubUser { login: String, publicrepos: Int, followers: Int };
+record GitHubRepo { name: String, stargazerscount: Int };
+record retrec { status: String, handle:String, totalRepos:Int, topRepo:String,starsOnTop:Int};
+infectious effect type Result<T, E> = @value Ok<T> | @effect Err<E>;
+let fetch = (url: String): Promise<Response, String> => {fetchNative(url)};
+type JsonErr = UnknownError;
+type UnknownError = String;
+let json = (resp: Response): Promise<JsonValue, UnknownError>  => {jsonNative(resp)};
+
+let identity = (in) => {in};
+
+-- 2. The Logic
+let getUserSummary = (username) => {
+  let baseUrl = stringConcat("https://api.github.com/users/", username);
+  let profileRequest = fetch(baseUrl);
+  let reposRequest = fetch(stringConcat(baseUrl, "/repos?sort=pushed&per_page=5"));
+
+
+  let userx = profileRequest >> json;
+  let repos = reposRequest >> json;
+
+  let user = match (userx) {
+    Resolved(body) => { body},
+    Rejected(err) => { ?}
+  };
+
+  let mostPopularRepo = repos >> ;
+
+  ({
+    status:"success",
+    handle: user.login, 
+    totalRepos: user.publicrepos, 
+    topRepo:mostPopularRepo.name, 
+    starsOnTop: mostPopularRepo.stargazerscount
+  })
+
+};
+
+let main = () => {
+  print("Fetching...");
+  let result = getUserSummary("torvalds");
+  --print(result);
+};
