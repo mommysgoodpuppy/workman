@@ -585,23 +585,30 @@ function enhanceRuntimeError(
     ? metadata.patterns.join(", ")
     : "unknown patterns";
   const valueDesc = metadata.valueDescription ?? "value";
-  const nodeId = typeof metadata.nodeId === "number" ? metadata.nodeId : null;
+
+  const locationCandidates = [metadata.callSite, metadata].filter(Boolean) as
+    Array<{
+      nodeId: number | null | undefined;
+      modulePath?: string | null;
+      span?: SourceSpan | null;
+    }>;
+
   let location: NodeLocationEntry | undefined;
-  if (nodeId !== null) {
-    if (metadata.modulePath && nodeLocations.has(metadata.modulePath)) {
-      location = nodeLocations.get(metadata.modulePath)!.get(nodeId);
-    }
-    if (!location) {
-      for (const moduleMap of nodeLocations.values()) {
-        const candidate = moduleMap.get(nodeId);
-        if (candidate) {
-          location = candidate;
-          break;
-        }
+  let resolvedNodeId: number | null = null;
+  for (const candidate of locationCandidates) {
+    const nodeId = typeof candidate.nodeId === "number" ? candidate.nodeId : null;
+    if (nodeId !== null) {
+      location = findNodeLocation(nodeId, candidate.modulePath, nodeLocations);
+      if (location) {
+        resolvedNodeId = nodeId;
+        break;
       }
     }
   }
-  const locationLabel = location ? `at node ${nodeId}` : "at unknown location";
+
+  const locationLabel = location
+    ? `at node ${resolvedNodeId}`
+    : "at unknown location";
   const message =
     `Non-exhaustive match ${locationLabel}. Value ${valueDesc} is not handled. Patterns: ${patterns}.`;
   if (location) {
@@ -616,4 +623,24 @@ function enhanceRuntimeError(
   const runtimeError = new WorkmanRuntimeError(message);
   (runtimeError as { cause?: Error }).cause = error;
   return runtimeError;
+}
+
+function findNodeLocation(
+  nodeId: number,
+  modulePath: string | null | undefined,
+  nodeLocations: Map<string, Map<number, NodeLocationEntry>>,
+): NodeLocationEntry | undefined {
+  if (modulePath && nodeLocations.has(modulePath)) {
+    const exact = nodeLocations.get(modulePath)!.get(nodeId);
+    if (exact) {
+      return exact;
+    }
+  }
+  for (const moduleMap of nodeLocations.values()) {
+    const candidate = moduleMap.get(nodeId);
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return undefined;
 }

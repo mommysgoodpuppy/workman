@@ -715,7 +715,9 @@ function inferLetBinding(
       );
       storeAnnotationType(ctx, returnAnnotation, returnType);
       const alignedReturn = alignAnnotationWithCarrier(bodyType, returnType);
-      if (unify(ctx, bodyType, alignedReturn)) {
+      if (isHoleType(bodyType) && !isHoleType(alignedReturn)) {
+        bodyType = applyCurrentSubst(ctx, alignedReturn);
+      } else if (unify(ctx, bodyType, alignedReturn)) {
         bodyType = applyCurrentSubst(ctx, alignedReturn);
       } else {
         const failure = ctx.lastUnifyFailure;
@@ -863,7 +865,9 @@ function inferArrowFunction(
       const annotated = convertTypeExpr(ctx, returnAnnotation, annotationScope);
       storeAnnotationType(ctx, returnAnnotation, annotated);
       const aligned = alignAnnotationWithCarrier(bodyType, annotated);
-      if (unify(ctx, bodyType, aligned)) {
+      if (isHoleType(bodyType) && !isHoleType(aligned)) {
+        bodyType = applyCurrentSubst(ctx, aligned);
+      } else if (unify(ctx, bodyType, aligned)) {
         bodyType = applyCurrentSubst(ctx, aligned);
       } else {
         const failure = ctx.lastUnifyFailure;
@@ -922,6 +926,22 @@ function alignAnnotationWithCarrier(actual: Type, annotation: Type): Type {
       return { kind: "record", fields: alignedFields };
     }
     return annotation;
+  }
+  if (actualCarrier.domain === "hole") {
+    const alignedInner = alignAnnotationWithCarrier(
+      actualCarrier.value,
+      annotation,
+    );
+    const annotationCarrier = splitCarrier(annotation);
+    if (!annotationCarrier || annotationCarrier.domain !== "hole") {
+      return alignedInner;
+    }
+    const rejoinedHole = joinCarrier(
+      actualCarrier.domain,
+      alignedInner,
+      actualCarrier.state,
+    );
+    return rejoinedHole ?? alignedInner;
   }
   const annotationCarrier = splitCarrier(annotation);
   if (annotationCarrier && annotationCarrier.domain === actualCarrier.domain) {

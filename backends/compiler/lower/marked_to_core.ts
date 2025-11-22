@@ -302,6 +302,8 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
         callee: lowerExpr(expr.callee, state),
         args: expr.arguments.map((argument) => lowerExpr(argument, state)),
         type: resolveNodeType(state, expr.id, expr.type),
+        origin: expr.id,
+        span: expr.span,
       };
     case "arrow":
       return {

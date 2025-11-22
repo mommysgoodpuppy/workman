@@ -1,3 +1,33 @@
+const CALL_SITE_STACK = [];
+
+export function withCallSite(metadata, thunk) {
+  CALL_SITE_STACK.push(metadata ?? null);
+  try {
+    return thunk();
+  } finally {
+    CALL_SITE_STACK.pop();
+  }
+}
+
+function getPreferredCallSiteMetadata() {
+  for (let index = CALL_SITE_STACK.length - 1; index >= 0; index -= 1) {
+    const metadata = CALL_SITE_STACK[index];
+    if (!metadata) continue;
+    if (!isStdModulePath(metadata.modulePath)) {
+      return metadata;
+    }
+  }
+  return CALL_SITE_STACK.length > 0
+    ? CALL_SITE_STACK[CALL_SITE_STACK.length - 1]
+    : null;
+}
+
+function isStdModulePath(modulePath) {
+  if (typeof modulePath !== "string") return false;
+  const normalized = modulePath.replaceAll("\\", "/").toLowerCase();
+  return normalized.startsWith("std/") || normalized.includes("/std/");
+}
+
 export function nativeAdd(left, right) {
   return left + right;
 }
@@ -76,6 +106,7 @@ function describeValue(value) {
 }
 
 export function nonExhaustiveMatch(scrutinee, info = {}) {
+  const callSite = getPreferredCallSiteMetadata();
   const location = info.nodeId != null
     ? `nodeId ${info.nodeId}`
     : info.span
@@ -94,6 +125,18 @@ export function nonExhaustiveMatch(scrutinee, info = {}) {
     span: (info.span && typeof info.span === "object") ? info.span : null,
     patterns: Array.isArray(info.patterns) ? info.patterns : [],
     valueDescription: valueDesc,
+    modulePath: typeof info.modulePath === "string" ? info.modulePath : null,
+    callSite: callSite
+      ? {
+        nodeId: typeof callSite.nodeId === "number" ? callSite.nodeId : null,
+        span: (callSite.span && typeof callSite.span === "object")
+          ? callSite.span
+          : null,
+        modulePath: typeof callSite.modulePath === "string"
+          ? callSite.modulePath
+          : null,
+      }
+      : null,
   };
   Object.defineProperty(error, "workmanMetadata", {
     value: metadata,

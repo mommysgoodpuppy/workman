@@ -592,6 +592,16 @@ function hasResultConstructorPattern(pattern: CorePattern): boolean {
 }
 
 function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
+  const callExpr = emitCallInternal(expr, ctx);
+  const tracker = resolveVar("withCallSite", ctx);
+  const metadataLiteral = serializeNodeMetadata(expr, ctx);
+  return `${tracker}(${metadataLiteral}, () => (${callExpr}))`;
+}
+
+function emitCallInternal(
+  expr: CoreExpr & { kind: "call" },
+  ctx: EmitContext,
+): string {
   // Check if the result, callee, or any argument has an infectious type
   const resultIsInfectious = isCarrierType(expr.type);
   const calleeIsInfectious = isCarrierType(expr.callee.type);
@@ -689,7 +699,7 @@ function emitMatch(
       lines.push(`return ${fallbackExpr};`);
     } else {
       const helper = resolveVar("nonExhaustiveMatch", ctx);
-      const metadataLiteral = serializeMatchMetadata(expr);
+      const metadataLiteral = serializeMatchMetadata(expr, ctx);
       lines.push(`${helper}(${paramName}, ${metadataLiteral});`);
     }
 
@@ -724,7 +734,7 @@ function emitMatch(
       lines.push(`return ${fallbackExpr};`);
     } else {
       const helper = resolveVar("nonExhaustiveMatch", ctx);
-      const metadataLiteral = serializeMatchMetadata(expr);
+      const metadataLiteral = serializeMatchMetadata(expr, ctx);
       lines.push(`${helper}(${scrutineeTemp}, ${metadataLiteral});`);
     }
     const body = lines.map((line) => indent(line)).join("\n");
@@ -749,7 +759,7 @@ function emitMatch(
       lines.push(`return ${fallbackExpr};`);
     } else {
       const helper = resolveVar("nonExhaustiveMatch", ctx);
-      const metadataLiteral = serializeMatchMetadata(expr);
+      const metadataLiteral = serializeMatchMetadata(expr, ctx);
       lines.push(`${helper}(${scrutineeTemp}, ${metadataLiteral});`);
     }
     const body = lines.map((line) => indent(line)).join("\n");
@@ -787,11 +797,25 @@ function emitMatch(
 
 function serializeMatchMetadata(
   expr: CoreExpr & { kind: "match" },
+  ctx: EmitContext,
 ): string {
   const metadata = {
     nodeId: expr.origin ?? null,
     span: expr.span ?? null,
     patterns: expr.cases.map((kase) => describePattern(kase.pattern)),
+    modulePath: ctx.modulePath ?? null,
+  };
+  return JSON.stringify(metadata);
+}
+
+function serializeNodeMetadata(
+  node: { origin?: number; span?: unknown },
+  ctx: EmitContext,
+): string {
+  const metadata = {
+    nodeId: node.origin ?? null,
+    span: node.span ?? null,
+    modulePath: ctx.modulePath ?? null,
   };
   return JSON.stringify(metadata);
 }
