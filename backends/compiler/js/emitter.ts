@@ -385,6 +385,11 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
     case "match":
       const matchCode = emitMatch(expr, ctx);
       if (isCarrierType(expr.scrutinee.type)) {
+        const scrutineeDomain = findCarrierDomain(expr.scrutinee.type);
+        if (scrutineeDomain === "async") {
+          // Async matches are handled entirely inside matchPromise
+          return matchCode;
+        }
         const scrutineeCode = emitExpr(expr.scrutinee, ctx);
         if (expr.effectRowCoverage?.dischargesResult) {
           return `(${matchCode})(${scrutineeCode})`;

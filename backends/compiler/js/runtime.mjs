@@ -79,8 +79,8 @@ export function nonExhaustiveMatch(scrutinee, info = {}) {
   const location = info.nodeId != null
     ? `nodeId ${info.nodeId}`
     : info.span
-    ? `span ${info.span.start ?? "?"}-${info.span.end ?? "?"}`
-    : "unknown location";
+      ? `span ${info.span.start ?? "?"}-${info.span.end ?? "?"}`
+      : "unknown location";
   const patterns = Array.isArray(info.patterns) && info.patterns.length > 0
     ? info.patterns.join(", ")
     : "unknown patterns";
@@ -104,6 +104,7 @@ export function nonExhaustiveMatch(scrutinee, info = {}) {
 }
 
 const HANDLED_RESULT_PARAMS = Symbol.for("workmanHandledResultParams");
+const DEFAULT_ASYNC_TYPE = "Promise";
 
 export function callInfectious(target, ...args) {
   const calleeInfo = unwrapResultForCall(target);
@@ -112,7 +113,7 @@ export function callInfectious(target, ...args) {
   }
   let callable = calleeInfo.value;
   let infected = calleeInfo.infected;
-  let infectiousTypeName = null; // Track which infectious type is propagating
+  let infectiousTypeName = calleeInfo.typeName ?? null; // Track which infectious type is propagating
   const handledParams = callable?.[HANDLED_RESULT_PARAMS];
 
   const processedArgs = new Array(args.length);
@@ -128,8 +129,8 @@ export function callInfectious(target, ...args) {
     if (argInfo.infected) {
       infected = true;
       // Remember the infectious type name from the first infected argument
-      if (!infectiousTypeName && args[i]?.type) {
-        infectiousTypeName = args[i].type;
+      if (!infectiousTypeName) {
+        infectiousTypeName = argInfo.typeName ?? (args[i]?.type ?? null);
       }
     }
     processedArgs[i] = argInfo.value;
@@ -158,6 +159,127 @@ export function callInfectious(target, ...args) {
   }
 
   // No infection, return plain result
+  return result;
+}
+
+function shouldWrapAsyncWithType(typeName) {
+  if (!typeName) return null;
+  if (INFECTIOUS_TYPE_REGISTRY.has(typeName)) {
+    return typeName;
+  }
+  return null;
+}
+
+async function unwrapAsyncForCall(value) {
+  const resolved = await value;
+  const info = unwrapResultForCall(resolved);
+  if (info.shortCircuit) {
+    return {
+      shortCircuit: info.shortCircuit,
+      infected: true,
+      typeName: info.typeName ?? (resolved?.type ?? null),
+    };
+  }
+  return {
+    value: info.value,
+    infected: info.infected,
+    typeName: info.typeName ?? (info.infected ? (resolved?.type ?? null) : null),
+  };
+}
+
+export async function callAsync(target, ...args) {
+  const calleeInfo = await unwrapAsyncForCall(target);
+  if (calleeInfo.shortCircuit) {
+    return calleeInfo.shortCircuit;
+  }
+
+  let callable = calleeInfo.value;
+  if (typeof callable !== "function") {
+    throw new Error("Attempted to call a non-function value");
+  }
+
+  let infected = Boolean(calleeInfo.infected);
+  let infectiousTypeName = calleeInfo.typeName ?? null;
+  const handledParams = callable?.[HANDLED_RESULT_PARAMS];
+
+  const processedArgs = new Array(args.length);
+  for (let i = 0; i < args.length; i += 1) {
+    if (handledParams instanceof Set && handledParams.has(i)) {
+      const handledArg = await args[i];
+      if (
+        handledArg && typeof handledArg === "object" &&
+        typeof handledArg.type === "string" &&
+        INFECTIOUS_TYPE_REGISTRY.has(handledArg.type)
+      ) {
+        infected = true;
+        if (!infectiousTypeName) {
+          infectiousTypeName = handledArg.type;
+        }
+      }
+      processedArgs[i] = handledArg;
+      continue;
+    }
+
+    const argInfo = await unwrapAsyncForCall(args[i]);
+    if (argInfo.shortCircuit) {
+      return argInfo.shortCircuit;
+    }
+    if (argInfo.infected) {
+      infected = true;
+      if (!infectiousTypeName) {
+        infectiousTypeName = argInfo.typeName ?? null;
+      }
+    }
+    processedArgs[i] = argInfo.value;
+  }
+
+  const result = await callable(...processedArgs);
+  const settledResult = await result;
+
+  if (
+    settledResult && typeof settledResult === "object" &&
+    typeof settledResult.type === "string" &&
+    typeof settledResult.tag === "string" &&
+    INFECTIOUS_TYPE_REGISTRY.has(settledResult.type)
+  ) {
+    return settledResult;
+  }
+
+  if (infected) {
+    const typeToWrap = shouldWrapAsyncWithType(
+      infectiousTypeName ?? (INFECTIOUS_TYPE_REGISTRY.has(DEFAULT_ASYNC_TYPE)
+        ? DEFAULT_ASYNC_TYPE
+        : null),
+    );
+    return wrapResultValue(settledResult, typeToWrap ?? undefined);
+  }
+
+  return settledResult;
+}
+
+export async function matchPromise(scrutinee, matcher) {
+  const resolvedScrutinee = await scrutinee;
+  const scrutineeType = resolvedScrutinee?.type;
+  const hasInfectious =
+    typeof scrutineeType === "string" &&
+    INFECTIOUS_TYPE_REGISTRY.has(scrutineeType);
+
+  const result = await matcher(resolvedScrutinee);
+
+  if (
+    result && typeof result === "object" &&
+    typeof result.type === "string" &&
+    typeof result.tag === "string" &&
+    INFECTIOUS_TYPE_REGISTRY.has(result.type)
+  ) {
+    return result;
+  }
+
+  if (hasInfectious) {
+    const typeToWrap = shouldWrapAsyncWithType(scrutineeType);
+    return wrapResultValue(result, typeToWrap ?? undefined);
+  }
+
   return result;
 }
 
@@ -283,21 +405,26 @@ export function registerInfectiousType(
 
 export function unwrapResultForCall(value) {
   if (!value || typeof value !== "object") {
-    return { value, infected: false };
+    return { value, infected: false, typeName: null };
   }
   if (typeof value.type !== "string" || typeof value.tag !== "string") {
-    return { value, infected: false };
+    return { value, infected: false, typeName: null };
   }
 
   const metadata = INFECTIOUS_TYPE_REGISTRY.get(value.type);
   if (!metadata) {
     // Not a registered infectious type
-    return { value, infected: false };
+    return { value, infected: false, typeName: null };
   }
 
   // Check if this is an effect constructor (short-circuit)
   if (metadata.effectConstructors.has(value.tag)) {
-    return { value, infected: true, shortCircuit: value };
+    return {
+      value,
+      infected: true,
+      shortCircuit: value,
+      typeName: value.type,
+    };
   }
 
   // Check if this is the value constructor (extract payload)
@@ -305,11 +432,11 @@ export function unwrapResultForCall(value) {
     const payload = Object.prototype.hasOwnProperty.call(value, "_0")
       ? value._0
       : undefined;
-    return { value: payload, infected: true };
+    return { value: payload, infected: true, typeName: value.type };
   }
 
   // Unknown constructor for this infectious type - treat as non-infectious
-  return { value, infected: false };
+  return { value, infected: false, typeName: null };
 }
 
 export function wrapResultValue(value, infectiousTypeName) {
