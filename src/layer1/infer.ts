@@ -30,6 +30,7 @@ import {
   type EffectRowType,
   effectRowUnion,
   ensureRow,
+  flattenHoleType,
   flattenResultType,
   freeTypeVars,
   freshTypeVar,
@@ -157,6 +158,20 @@ function expectParameterName(param: Parameter): string {
     );
   }
   return param.name;
+}
+
+function normalizeMatchScrutineeType(ctx: Context, type: Type): Type {
+  const resolved = applyCurrentSubst(ctx, type);
+  const holeInfo = flattenHoleType(resolved);
+  if (!holeInfo) {
+    return resolved;
+  }
+  const inner = applyCurrentSubst(ctx, holeInfo.value);
+  const carrierInfo = splitCarrier(inner);
+  if (!carrierInfo) {
+    return resolved;
+  }
+  return inner;
 }
 
 function recordExprType(ctx: Context, expr: Expr, type: Type): Type {
@@ -2948,7 +2963,7 @@ export function inferMatchBranches(
       continue;
     }
 
-    const expected = applyCurrentSubst(ctx, scrutineeType);
+    const expected = normalizeMatchScrutineeType(ctx, scrutineeType);
     const patternInfo = inferPattern(ctx, arm.pattern, expected, {
       allowPinning: true,
       requireExplicitBinding: true,
@@ -3055,7 +3070,7 @@ export function inferMatchBranches(
     }
   }
 
-  const resolvedScrutinee = applyCurrentSubst(ctx, scrutineeType);
+  const resolvedScrutinee = normalizeMatchScrutineeType(ctx, scrutineeType);
   const okBranchesReturnResult = branchMetadata.some((branch) =>
     branch.kind === "ok" && flattenResultType(branch.type) !== null
   );
