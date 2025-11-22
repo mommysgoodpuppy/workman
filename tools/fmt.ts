@@ -4,7 +4,7 @@ import { lex } from "../src/lexer.ts";
 import { type OperatorInfo, parseSurfaceProgram } from "../src/parser.ts";
 import { WorkmanError } from "../src/error.ts";
 import { FormatContext } from "../tests/fixtures/format/format_context.ts";
-import { loadModuleGraph } from "../src/module_loader.ts";
+import { isStdCoreModule, loadModuleGraph } from "../src/module_loader.ts";
 import { isAbsolute, resolve } from "../src/io.ts";
 import type {
   BlockExpr,
@@ -37,20 +37,6 @@ interface FormatOptions {
   doubleCheck?: boolean;
   sourceOverrides?: Map<string, string>;
   outputPath?: string;
-}
-
-function isStdCoreModule(path: string): boolean {
-  const normalized = path.replaceAll("\\", "/");
-  return normalized.includes("/std/core/") ||
-    normalized.includes("std/core/") ||
-    normalized.endsWith("/std/list/core.wm") ||
-    normalized.endsWith("std/list/core.wm") ||
-    normalized.endsWith("/std/option/core.wm") ||
-    normalized.endsWith("std/option/core.wm") ||
-    normalized.endsWith("/std/result/core.wm") ||
-    normalized.endsWith("std/result/core.wm") ||
-    normalized.endsWith("/std/hole/core.wm") ||
-    normalized.endsWith("std/hole/core.wm");
 }
 
 async function computeOperatorEnvironment(

@@ -1,4 +1,5 @@
 import {
+isStdCoreModule,
   loadModuleSummaries,
   type ModuleGraph,
   type ModuleLoaderOptions,
@@ -258,13 +259,3 @@ function cloneAdtMap(
   return cloned;
 }
 
-function isStdCoreModule(path: string): boolean {
-  const normalized = path.replaceAll("\\", "/");
-  if (normalized.includes("/std/core/")) {
-    return true;
-  }
-  return normalized.endsWith("/std/list/core.wm") ||
-    normalized.endsWith("/std/option/core.wm") ||
-    normalized.endsWith("/std/result/core.wm") ||
-    normalized.endsWith("/std/hole/core.wm");
-}

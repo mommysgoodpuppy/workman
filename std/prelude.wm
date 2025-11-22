@@ -5,6 +5,7 @@ export from "std/option/core" type Option(..);
 export from "std/result/core" type IResult(..);
 export from "std/list/core" type List(..);
 export from "std/hole/core" type Hole(..);
+export from "std/async/core" type Promise(..);
 
 -- Char comparison (native)
 export let charEq = (left, right) => {

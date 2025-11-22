@@ -7,6 +7,7 @@ import {
   relative,
   resolve,
 } from "../../../src/io.ts";
+import { isStdCoreModule } from "../../../src/module_loader.ts";
 
 import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
 import { emitModule } from "./emitter.ts";
@@ -157,17 +158,6 @@ function shouldModuleImportPrelude(
     return false;
   }
   return !isStdCoreModule(modulePath);
-}
-
-function isStdCoreModule(path: string): boolean {
-  const normalized = normalizeSlashes(path);
-  if (normalized.includes("/std/core/")) {
-    return true;
-  }
-  return normalized.endsWith("/std/list/core.wm") ||
-    normalized.endsWith("/std/option/core.wm") ||
-    normalized.endsWith("/std/result/core.wm") ||
-    normalized.endsWith("/std/hole/core.wm");
 }
 
 function filePathFromModule(meta: ImportMeta, specifier: string): string {

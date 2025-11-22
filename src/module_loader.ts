@@ -123,18 +123,11 @@ function sameModulePath(a?: string, b?: string): boolean {
   return normalizeModulePath(a) === normalizeModulePath(b);
 }
 
-function isStdCoreModule(path: string): boolean {
+export function isStdCoreModule(path: string): boolean {
   const normalized = path.replaceAll("\\", "/");
   return normalized.includes("/std/core/") ||
     normalized.includes("std/core/") || // For relative paths
-    normalized.endsWith("/std/list/core.wm") ||
-    normalized.endsWith("std/list/core.wm") ||
-    normalized.endsWith("/std/option/core.wm") ||
-    normalized.endsWith("std/option/core.wm") ||
-    normalized.endsWith("/std/result/core.wm") ||
-    normalized.endsWith("std/result/core.wm") ||
-    normalized.endsWith("/std/hole/core.wm") ||
-    normalized.endsWith("std/hole/core.wm");
+    normalized.endsWith("/core.wm");
 }
 
 export async function loadModuleGraph(
