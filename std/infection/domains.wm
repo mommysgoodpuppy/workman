@@ -57,7 +57,31 @@ op mem.close {
   adds [Closed];
 };
 
+op mem.free {
+  domain mem;
+  target arg0;
+  adds [Closed];
+};
+
 op mem.fill {
+  domain mem;
+  target arg0;
+  requiresExact [Opened];
+};
+
+op mem.len {
+  domain mem;
+  target arg0;
+  requiresExact [Opened];
+};
+
+op mem.get {
+  domain mem;
+  target arg0;
+  requiresExact [Opened];
+};
+
+op mem.set {
   domain mem;
   target arg0;
   requiresExact [Opened];

@@ -14,4 +14,3 @@
 -- NOTE: Today, carrier state union is implemented via `effectRowUnion` for *all* domains, so
 -- bag semantics will likely be encoded by unique tag keys (similar to the hole tag approach).
 export infectious mem type Mem<T, S> = @value MemVal<T>;
-

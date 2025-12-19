@@ -1,12 +1,13 @@
 --const std = @import("std");
+from "std/mem" import {alloc, free};
 
 let main = () => {
 
-  let buffer = alloc(u8, 100);
+  let buffer = alloc(100);
 
-  buffer[0] = 'H';
-  buffer[1] = 'i';
+  --buffer[0] = 'H';
+  --buffer[1] = 'i';
 
-  std.debug.print("Buffer says: {s}\n", .{buffer[0..2]});
+  --std.debug.print("Buffer says: {s}\n", .{buffer[0..2]});
   free(buffer);
 }
