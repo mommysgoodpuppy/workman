@@ -1,25 +1,18 @@
 from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
 from "std/nativeString" import { stringToList, stringConcat, intToString };
 from "std/result" import { stripErr };
+from "std/async/core" import { resolve, reject, Resolved, Rejected };
 
-type Direction = L | R;
-
-let testfn = (in) => { stripErr(in) +1 };
-
-let printer = (in:String) => { print(in); in };
-
-let plus = (in) => {in +1}; 
-
-let intL = stripErr(char("L")); 
-let intR = "R" >> char >> stripErr;
-
-
-let fn = (in) => { 
-  match(in) {
-    Var(b) => { print(b); L },
-    intL => { L },
-    intR => { R },
+let asyncfn = () => {
+  match (true) {
+    true => {resolve(1)}
+    false => {reject("error")}
   }
 };
 
-let main = print(fn(82));
+let main = () => {
+  match (asyncfn()) {
+    Resolved(val) => { print(val) },
+    Rejected(err) => { print(err) }
+  }
+};

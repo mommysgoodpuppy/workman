@@ -1,13 +1,17 @@
 import type {
   CommentBlock,
+  DomainDeclaration,
   ExportModifier,
   InfixDeclaration,
   Literal,
   ModuleImport,
   ModuleReexport,
   NodeId,
+  OpRuleDeclaration,
+  PolicyDeclaration,
   PrefixDeclaration,
   SourceSpan,
+  AnnotateDeclaration,
   TypeDeclaration,
   TypeExpr,
 } from "./ast.ts";
@@ -447,6 +451,10 @@ export type MTopLevel =
   | { kind: "prefix"; node: PrefixDeclaration }
   | { kind: "infix"; node: InfixDeclaration }
   | { kind: "infectious"; node: import("./ast.ts").InfectiousDeclaration }
+  | { kind: "domain"; node: DomainDeclaration }
+  | { kind: "op"; node: OpRuleDeclaration }
+  | { kind: "policy"; node: PolicyDeclaration }
+  | { kind: "annotate"; node: AnnotateDeclaration }
   | MTopLevelMark;
 
 export interface MProgram {

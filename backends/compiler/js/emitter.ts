@@ -387,7 +387,7 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
       if (isCarrierType(expr.scrutinee.type)) {
         const scrutineeDomain = findCarrierDomain(expr.scrutinee.type);
         if (scrutineeDomain === "async") {
-          // Async matches are handled entirely inside matchPromise
+          // Async matches are fully handled inside matchPromise
           return matchCode;
         }
         const scrutineeCode = emitExpr(expr.scrutinee, ctx);

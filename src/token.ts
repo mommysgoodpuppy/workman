@@ -35,6 +35,10 @@ export const keywords = new Set([
   "infixr",
   "prefix",
   "infectious",
+  "domain",
+  "op",
+  "policy",
+  "annotate",
 ]);
 
 // Symbols sorted by length (longest first) to ensure correct matching

@@ -27,7 +27,13 @@ export type ConstraintDiagnosticReason =
   | "type_decl_duplicate"
   | "type_decl_invalid_member"
   | "unfillable_hole"
-  | "internal_error";
+  | "internal_error"
+  | "boundary_violation"
+  | "incompatible_constraints"
+  | "require_exact_state"
+  | "require_any_state"
+  | "require_at_return"
+  | "call_rejects_infection";
 
 export interface ConstraintDiagnostic {
   origin: NodeId;

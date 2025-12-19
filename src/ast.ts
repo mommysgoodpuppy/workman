@@ -414,12 +414,88 @@ export interface InfectiousDeclaration extends NodeBase {
   hasTerminatingSemicolon?: boolean;
 }
 
+export interface RuleNamePart {
+  kind: "name";
+  name: string;
+}
+
+export interface RuleListPart {
+  kind: "list";
+  items: string[];
+}
+
+export interface RulePairListPart {
+  kind: "pair_list";
+  pairs: [string, string][];
+}
+
+export type RuleValuePart = RuleNamePart | RuleListPart | RulePairListPart;
+
+export interface RuleValue {
+  kind: "sequence";
+  parts: RuleValuePart[];
+}
+
+export interface RuleEntry extends NodeBase {
+  kind: "rule_entry";
+  key: string;
+  value?: RuleValue;
+}
+
+export interface DomainDeclaration extends NodeBase {
+  kind: "domain";
+  name: string;
+  entries: RuleEntry[];
+  export?: ExportModifier;
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
+  hasTerminatingSemicolon?: boolean;
+}
+
+export interface OpRuleDeclaration extends NodeBase {
+  kind: "op";
+  name: string;
+  entries: RuleEntry[];
+  export?: ExportModifier;
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
+  hasTerminatingSemicolon?: boolean;
+}
+
+export interface PolicyDeclaration extends NodeBase {
+  kind: "policy";
+  name: string;
+  entries: RuleEntry[];
+  export?: ExportModifier;
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
+  hasTerminatingSemicolon?: boolean;
+}
+
+export interface AnnotateDeclaration extends NodeBase {
+  kind: "annotate";
+  target: string;
+  policies: string[];
+  export?: ExportModifier;
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
+  hasTerminatingSemicolon?: boolean;
+}
+
 export type TopLevel =
   | LetDeclaration
   | TypeDeclaration
   | InfixDeclaration
   | PrefixDeclaration
-  | InfectiousDeclaration;
+  | InfectiousDeclaration
+  | DomainDeclaration
+  | OpRuleDeclaration
+  | PolicyDeclaration
+  | AnnotateDeclaration;
 
 export interface Program {
   imports: ModuleImport[];

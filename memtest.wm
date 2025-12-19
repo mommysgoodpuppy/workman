@@ -1,0 +1,36 @@
+from "std/mem/core" import { MemVal };
+
+op addData {
+  domain mem;
+  requiresExact [Opened];
+};
+
+let alloc = (size: Int) => {
+  MemVal(size)
+};
+
+let fill = (buf, value: Int) => {
+  buf
+};
+
+let addData = (buf) => {
+  fill(buf, 42)
+};
+
+let close = (buf) => {
+  buf
+};
+
+let clear = (buf) => {
+  close(buf);
+};
+
+let main = () => {
+  let buf = {
+    let buf = alloc(8);
+    addData(buf);
+    buf
+  };
+  close(buf);
+};
+

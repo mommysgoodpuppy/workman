@@ -1,5 +1,6 @@
 import {
-isStdCoreModule,
+  isStdCoreModule,
+  buildInfectionRegistryForModule,
   loadModuleSummaries,
   type ModuleGraph,
   type ModuleLoaderOptions,
@@ -68,15 +69,24 @@ export async function compileWorkmanGraph(
     if (!node) {
       continue;
     }
+    const infectionRegistry = await buildInfectionRegistryForModule(
+      moduleGraph,
+      summaries,
+      path,
+      loaderOptions,
+    );
     const analysis = analyzeAndPresent(
       node.program,
-      buildAnalysisOptions(
-        node,
-        moduleGraph,
-        summaries,
-        analysisOptions,
-        preludePath,
-      ),
+      {
+        ...buildAnalysisOptions(
+          node,
+          moduleGraph,
+          summaries,
+          analysisOptions,
+          preludePath,
+        ),
+        infectionRegistry,
+      },
     );
     const summary = summaries.get(path);
     const core = lowerAnalyzedModule(

@@ -30,9 +30,11 @@ import {
   type EffectRowType,
   effectRowUnion,
   ensureRow,
+  createEffectRow,
   flattenHoleType,
   flattenResultType,
   freeTypeVars,
+  freshResource,
   freshTypeVar,
   getCarrier,
   instantiate,
@@ -40,6 +42,7 @@ import {
   joinCarrier,
   type Provenance,
   registerCarrier,
+  rowLabel,
   splitCarrier,
   type Type,
   type TypeEnv,
@@ -65,6 +68,11 @@ import {
   emitConstraintFlow,
   emitConstraintRewrite,
   emitConstraintSource,
+  emitRequireAnyState,
+  emitRequireAtReturn,
+  emitRequireExactState,
+  emitAddStateTags,
+  emitCallRejectsInfection,
   expectFunctionType,
   generalizeInContext,
   holeOriginFromExpr,
@@ -108,6 +116,11 @@ import type {
   PatternInfo,
 } from "./infer_types.ts";
 import type { HoleOrigin } from "./context_types.ts";
+import {
+  collectInfectionDeclarations,
+  type OpRuleDefinition,
+  type PolicyDefinition,
+} from "../infection_registry.ts";
 
 export type { Context, InferOptions, InferResult } from "./context.ts";
 export { InferError } from "../error.ts";
@@ -150,6 +163,260 @@ const NUMERIC_UNARY_OPERATORS = new Set([
 const BOOLEAN_UNARY_OPERATORS = new Set([
   "!",
 ]);
+
+type IdentitySetByDomain = Map<string, Set<number>>;
+
+function normalizeStateKind(stateKind?: string): string {
+  return stateKind?.replaceAll("_", "").toLowerCase() ?? "";
+}
+
+function isRowBagDomain(registry: Context["infectionRegistry"], domain: string) {
+  const rule = registry.domains.get(domain);
+  return normalizeStateKind(rule?.stateKind) === "rowbag";
+}
+
+function cloneIdentitySetByDomain(
+  source: IdentitySetByDomain,
+): IdentitySetByDomain {
+  const cloned = new Map<string, Set<number>>();
+  for (const [domain, ids] of source.entries()) {
+    cloned.set(domain, new Set(ids));
+  }
+  return cloned;
+}
+
+function tagWithIdentity(tag: string, identityId: number): string {
+  return `${tag}#r${identityId}`;
+}
+
+function getIdentityTags(
+  ctx: Context,
+  domain: string,
+  identityId: number,
+): string[] {
+  const domainTags = ctx.identityStates.get(identityId)?.get(domain);
+  if (!domainTags || domainTags.size === 0) return [];
+  const tags: string[] = [];
+  for (const [tag, count] of domainTags.entries()) {
+    for (let index = 1; index <= count; index += 1) {
+      tags.push(`${tagWithIdentity(tag, identityId)}@${index}`);
+    }
+  }
+  return tags;
+}
+
+function addIdentityTags(
+  ctx: Context,
+  domain: string,
+  identityId: number,
+  tags: string[],
+): string[] {
+  let domainTags = ctx.identityStates.get(identityId);
+  if (!domainTags) {
+    domainTags = new Map<string, Map<string, number>>();
+    ctx.identityStates.set(identityId, domainTags);
+  }
+  let tagCounts = domainTags.get(domain);
+  if (!tagCounts) {
+    tagCounts = new Map<string, number>();
+    domainTags.set(domain, tagCounts);
+  }
+  const tagged: string[] = [];
+  for (const tag of tags) {
+    const nextCount = (tagCounts.get(tag) ?? 0) + 1;
+    tagCounts.set(tag, nextCount);
+    tagged.push(`${tagWithIdentity(tag, identityId)}@${nextCount}`);
+  }
+  return tagged;
+}
+
+function recordIdentityUsage(
+  ctx: Context,
+  domain: string,
+  identityId: number,
+  nodeId: NodeId,
+): void {
+  let domainUsage = ctx.identityUsage.get(identityId);
+  if (!domainUsage) {
+    domainUsage = new Map<string, Map<NodeId, number>>();
+    ctx.identityUsage.set(identityId, domainUsage);
+  }
+  const nodes = domainUsage.get(domain) ?? new Map<NodeId, number>();
+  nodes.set(nodeId, getCurrentScopeId(ctx));
+  domainUsage.set(domain, nodes);
+}
+
+function emitIdentityTagsToUsage(
+  ctx: Context,
+  domain: string,
+  identityId: number,
+  tagged: string[],
+): void {
+  const domainUsage = ctx.identityUsage.get(identityId);
+  const nodes = domainUsage?.get(domain);
+  if (!nodes) return;
+  const scopeId = getCurrentScopeId(ctx);
+  for (const [nodeId, nodeScopeId] of nodes.entries()) {
+    if (nodeScopeId !== scopeId) continue;
+    emitAddStateTags(ctx, nodeId, domain, tagged);
+  }
+}
+
+function getExprIdentities(
+  ctx: Context,
+  expr: Expr,
+): IdentitySetByDomain | undefined {
+  return ctx.exprIdentities.get(expr.id);
+}
+
+function splitIdentityTag(tag: string): number | null {
+  const match = /#r(\d+)(?:@(\d+))?$/.exec(tag);
+  if (!match) return null;
+  const id = Number.parseInt(match[1], 10);
+  return Number.isNaN(id) ? null : id;
+}
+
+function collectIdentitiesFromType(
+  type: Type | undefined,
+): IdentitySetByDomain | undefined {
+  if (!type) return undefined;
+  const carrier = splitCarrier(type);
+  if (!carrier || carrier.state.kind !== "effect_row") {
+    return undefined;
+  }
+  const identities: IdentitySetByDomain = new Map();
+  for (const tag of carrier.state.cases.keys()) {
+    const identityId = splitIdentityTag(tag);
+    if (identityId === null) continue;
+    let domainIds = identities.get(carrier.domain);
+    if (!domainIds) {
+      domainIds = new Set<number>();
+      identities.set(carrier.domain, domainIds);
+    }
+    domainIds.add(identityId);
+  }
+  return identities.size > 0 ? identities : undefined;
+}
+
+function getIdentitiesForExpr(
+  ctx: Context,
+  expr: Expr,
+): IdentitySetByDomain | undefined {
+  return getExprIdentities(ctx, expr) ??
+    collectIdentitiesFromType(ctx.nodeTypes.get(expr.id));
+}
+
+function setExprIdentities(
+  ctx: Context,
+  expr: Expr,
+  identities: IdentitySetByDomain,
+): void {
+  ctx.exprIdentities.set(expr.id, cloneIdentitySetByDomain(identities));
+}
+
+function parseTargetIndex(target: string): number | null {
+  const match = /^arg(\d+)$/i.exec(target);
+  if (!match) return null;
+  const index = Number.parseInt(match[1], 10);
+  return Number.isNaN(index) ? null : index;
+}
+
+function getCurrentFunctionScope(ctx: Context) {
+  if (ctx.functionParamStack.length === 0) return null;
+  return ctx.functionParamStack[ctx.functionParamStack.length - 1];
+}
+
+function getCurrentScopeId(ctx: Context): number {
+  return getCurrentFunctionScope(ctx)?.scopeId ?? 0;
+}
+
+function recordParamEffect(
+  ctx: Context,
+  paramIndex: number,
+  domain: string,
+  kind: "requiresExact" | "requiresAny" | "adds",
+  tags: string[],
+): void {
+  const scope = getCurrentFunctionScope(ctx);
+  if (!scope) return;
+  let functionEffects = ctx.functionParamEffects.get(scope.name);
+  if (!functionEffects) {
+    functionEffects = new Map();
+    ctx.functionParamEffects.set(scope.name, functionEffects);
+  }
+  let paramEffects = functionEffects.get(paramIndex);
+  if (!paramEffects) {
+    paramEffects = new Map();
+    functionEffects.set(paramIndex, paramEffects);
+  }
+  let rule = paramEffects.get(domain);
+  if (!rule) {
+    rule = {
+      requiresExact: new Set(),
+      requiresAny: new Set(),
+      adds: new Set(),
+    };
+    paramEffects.set(domain, rule);
+  }
+  const target = rule[kind];
+  for (const tag of tags) {
+    target.add(tag);
+  }
+}
+
+function applyParamEffectsToCall(
+  ctx: Context,
+  calleeName: string,
+  args: Expr[],
+): void {
+  const functionEffects = ctx.functionParamEffects.get(calleeName);
+  if (!functionEffects) return;
+  for (const [paramIndex, domainEffects] of functionEffects.entries()) {
+    const argExpr = args[paramIndex];
+    if (!argExpr) continue;
+    for (const [domain, effects] of domainEffects.entries()) {
+      if (effects.requiresExact.size > 0) {
+        emitRequireExactState(
+          ctx,
+          argExpr.id,
+          domain,
+          Array.from(effects.requiresExact),
+        );
+      }
+      if (effects.requiresAny.size > 0) {
+        emitRequireAnyState(
+          ctx,
+          argExpr.id,
+          domain,
+          Array.from(effects.requiresAny),
+        );
+      }
+      if (effects.adds.size > 0) {
+        const addTags = Array.from(effects.adds);
+        if (isRowBagDomain(ctx.infectionRegistry, domain)) {
+          const identities = getIdentitiesForExpr(ctx, argExpr);
+          const domainIds = identities?.get(domain);
+          if (domainIds && domainIds.size > 0) {
+            const tagged: string[] = [];
+            for (const identityId of domainIds) {
+              const identityTags = addIdentityTags(
+                ctx,
+                domain,
+                identityId,
+                addTags,
+              );
+              tagged.push(...identityTags);
+              emitIdentityTagsToUsage(ctx, domain, identityId, identityTags);
+            }
+            emitAddStateTags(ctx, argExpr.id, domain, tagged);
+            continue;
+          }
+        }
+        emitAddStateTags(ctx, argExpr.id, domain, addTags);
+      }
+    }
+  }
+}
 
 function expectParameterName(param: Parameter): string {
   if (!param.name) {
@@ -270,6 +537,44 @@ function resolveTypeForName(ctx: Context, name: string): Type | undefined {
   }
   const applied = applySubstitutionScheme(scheme, ctx.subst);
   return applied.type;
+}
+
+function getCalleeName(expr: Expr): string | undefined {
+  if (expr.kind === "identifier") {
+    return expr.name;
+  }
+  return undefined;
+}
+
+function resolveOpRule(
+  registry: Context["infectionRegistry"],
+  name: string,
+): OpRuleDefinition | undefined {
+  const direct = registry.opRules.get(name);
+  if (direct) return direct;
+  const suffixMatches = Array.from(registry.opRules.values()).filter((rule) =>
+    rule.name.endsWith(`.${name}`)
+  );
+  if (suffixMatches.length === 1) {
+    return suffixMatches[0];
+  }
+  return undefined;
+}
+
+function getPoliciesForTarget(
+  registry: Context["infectionRegistry"],
+  target: string,
+): PolicyDefinition[] {
+  const annotation = registry.annotations.get(target);
+  if (!annotation) return [];
+  const policies: PolicyDefinition[] = [];
+  for (const policyName of annotation.policies) {
+    const policy = registry.policies.get(policyName);
+    if (policy) {
+      policies.push(policy);
+    }
+  }
+  return policies;
 }
 
 function registerInfixDeclaration(ctx: Context, decl: InfixDeclaration) {
@@ -566,6 +871,7 @@ function inferLetDeclaration(
       decl.body,
       decl.annotation,
       decl.returnAnnotation,
+      decl.name,
     );
 
     // Zero-parameter arrow functions () => { ... } should have type Unit -> T
@@ -591,6 +897,10 @@ function inferLetDeclaration(
         decl.body.result ?? decl.body,
       );
     }
+    if (decl.parameters.length === 0 && !decl.isArrowSyntax) {
+      bindIdentitiesFromExpr(ctx, decl.name, decl.body.result ?? decl.body);
+    }
+    applyReturnPolicies(ctx, decl);
     return [{ name: decl.name, scheme }];
   }
 
@@ -615,6 +925,7 @@ function inferLetDeclaration(
       binding.body,
       binding.annotation,
       binding.returnAnnotation,
+      binding.name,
     );
     inferredTypes.set(binding.name, inferredType);
   }
@@ -678,8 +989,47 @@ function inferLetDeclaration(
       );
     }
   }
+  for (const binding of allBindings) {
+    applyReturnPolicies(ctx, binding);
+  }
 
   return results;
+}
+
+function applyReturnPolicies(ctx: Context, decl: LetDeclaration): void {
+  const policies = getPoliciesForTarget(ctx.infectionRegistry, decl.name);
+  if (policies.length === 0) return;
+  const returnNodeId = decl.body.result?.id ?? decl.body.id;
+  for (const policy of policies) {
+    if (policy.domain && policy.requireAtReturn?.length) {
+      emitRequireAtReturn(
+        ctx,
+        returnNodeId,
+        policy.domain,
+        policy.requireAtReturn,
+        policy.name,
+      );
+    }
+  }
+}
+
+function bindIdentitiesFromExpr(
+  ctx: Context,
+  name: string,
+  expr: Expr | undefined,
+): void {
+  if (!expr) return;
+  const identities = getIdentitiesForExpr(ctx, expr);
+  if (identities) {
+    ctx.identityBindings.set(name, cloneIdentitySetByDomain(identities));
+    return;
+  }
+  if (expr.kind === "identifier") {
+    const bound = ctx.identityBindings.get(expr.name);
+    if (bound) {
+      ctx.identityBindings.set(name, cloneIdentitySetByDomain(bound));
+    }
+  }
 }
 
 function inferLetBinding(
@@ -688,6 +1038,7 @@ function inferLetBinding(
   body: BlockExpr,
   annotation: TypeExpr | undefined,
   returnAnnotation?: TypeExpr,
+  functionName?: string,
 ): Type {
   const annotationScope = new Map<string, Type>();
   const paramTypes = parameters.map((param) => (
@@ -696,14 +1047,29 @@ function inferLetBinding(
       : freshTypeVar()
   ));
 
-  return withScopedEnv(ctx, () => {
-    parameters.forEach((param, index) => {
-      const paramName = expectParameterName(param);
-      ctx.env.set(paramName, {
-        quantifiers: [],
-        type: paramTypes[index],
-      });
+  const paramNameToIndex = new Map<string, number>();
+  for (let index = 0; index < parameters.length; index += 1) {
+    const paramName = expectParameterName(parameters[index]);
+    paramNameToIndex.set(paramName, index);
+  }
+  if (functionName) {
+    ctx.functionParamStack.push({
+      name: functionName,
+      params: paramNameToIndex,
+      scopeId: ctx.functionScopeCounter++,
     });
+  }
+
+  let result: Type;
+  try {
+    result = withScopedEnv(ctx, () => {
+      parameters.forEach((param, index) => {
+        const paramName = expectParameterName(param);
+        ctx.env.set(paramName, {
+          quantifiers: [],
+          type: paramTypes[index],
+        });
+      });
 
     let bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
 
@@ -780,8 +1146,15 @@ function inferLetBinding(
       }
     }
 
-    return fnType;
-  });
+      return fnType;
+    });
+  } finally {
+    if (functionName) {
+      ctx.functionParamStack.pop();
+    }
+  }
+
+  return result;
 }
 
 function inferBlockExpr(ctx: Context, block: BlockExpr): Type {
@@ -824,6 +1197,13 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
         const scheme = generalizeInContext(ctx, type);
         ctx.env.set(name, scheme);
         ctx.allBindings.set(name, scheme);
+      }
+      if (statement.pattern.kind === "variable") {
+        bindIdentitiesFromExpr(
+          ctx,
+          statement.pattern.name,
+          statement.initializer,
+        );
       }
       break;
     }
@@ -1022,6 +1402,30 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const instantiated = instantiateAndApply(ctx, scheme);
       if (isHoleType(instantiated)) {
         registerHoleForType(ctx, holeOriginFromExpr(expr), instantiated);
+      }
+      const carrierInfo = splitCarrier(instantiated);
+      if (
+        carrierInfo && carrierInfo.domain === "mem" &&
+        carrierInfo.state.kind === "effect_row"
+      ) {
+        emitConstraintSource(
+          ctx,
+          expr.id,
+          rowLabel(carrierInfo.domain, carrierInfo.state),
+        );
+      }
+      const boundIdentities = ctx.identityBindings.get(expr.name);
+      if (boundIdentities) {
+        setExprIdentities(ctx, expr, boundIdentities);
+        for (const [domain, identities] of boundIdentities.entries()) {
+          for (const identityId of identities) {
+            recordIdentityUsage(ctx, domain, identityId, expr.id);
+            const tagged = getIdentityTags(ctx, domain, identityId);
+            if (tagged.length > 0) {
+              emitAddStateTags(ctx, expr.id, domain, tagged);
+            }
+          }
+        }
       }
       return recordExprType(ctx, expr, instantiated);
     }
@@ -1734,17 +2138,126 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       }
 
       // PHASE 2: Emit constraint stubs (generic for any carrier domain)
+      const calleeName = getCalleeName(expr.callee);
+      const opRule = calleeName
+        ? resolveOpRule(ctx.infectionRegistry, calleeName)
+        : undefined;
+      const targetIndex = opRule?.target
+        ? parseTargetIndex(opRule.target)
+        : null;
+      const targetExpr = targetIndex !== null
+        ? expr.arguments[targetIndex]
+        : undefined;
+      const requireTargetIndex = targetIndex === null &&
+          ((opRule?.requiresExact?.length ?? 0) > 0 ||
+            (opRule?.requiresAny?.length ?? 0) > 0)
+        ? 0
+        : targetIndex;
+      const requireTargetExpr = requireTargetIndex !== null
+        ? expr.arguments[requireTargetIndex]
+        : undefined;
+      const isRowBag = opRule?.domain
+        ? isRowBagDomain(ctx.infectionRegistry, opRule.domain)
+        : false;
+      let callIdentityTags: string[] | null = null;
+
+      const currentScope = getCurrentFunctionScope(ctx);
+      if (currentScope && opRule?.domain) {
+        if (
+          requireTargetExpr?.kind === "identifier" &&
+          (opRule.requiresExact?.length || opRule.requiresAny?.length)
+        ) {
+          const paramIndex = currentScope.params.get(requireTargetExpr.name);
+          if (paramIndex !== undefined) {
+            if (opRule.requiresExact?.length) {
+              recordParamEffect(
+                ctx,
+                paramIndex,
+                opRule.domain,
+                "requiresExact",
+                opRule.requiresExact,
+              );
+            }
+            if (opRule.requiresAny?.length) {
+              recordParamEffect(
+                ctx,
+                paramIndex,
+                opRule.domain,
+                "requiresAny",
+                opRule.requiresAny,
+              );
+            }
+          }
+        }
+        if (targetExpr?.kind === "identifier" && opRule.adds?.length) {
+          const paramIndex = currentScope.params.get(targetExpr.name);
+          if (paramIndex !== undefined) {
+            recordParamEffect(
+              ctx,
+              paramIndex,
+              opRule.domain,
+              "adds",
+              opRule.adds,
+            );
+          }
+        }
+      }
+
+      if (opRule?.domain && opRule.adds?.length && !targetExpr) {
+        const carrierInfo = splitCarrier(callType);
+        if (carrierInfo && carrierInfo.domain === opRule.domain) {
+          let addedTags = opRule.adds;
+          if (isRowBag) {
+            const identity = freshResource();
+            addedTags = addIdentityTags(
+              ctx,
+              opRule.domain,
+              identity.id,
+              opRule.adds,
+            );
+            callIdentityTags = addedTags;
+            setExprIdentities(
+              ctx,
+              expr,
+              new Map([[opRule.domain, new Set([identity.id])]]),
+            );
+            recordIdentityUsage(ctx, opRule.domain, identity.id, expr.id);
+          }
+          const addedRow = createEffectRow(addedTags.map((tag) => [tag, null]));
+          let baseState = carrierInfo.state;
+          if (carrierInfo.domain === "mem") {
+            const row = ensureRow(carrierInfo.state);
+            if (row.cases.size === 0 && row.tail?.kind === "var") {
+              baseState = createEffectRow();
+            }
+          }
+          const mergedState = unionCarrierStates(
+            carrierInfo.domain,
+            baseState,
+            addedRow,
+          ) ??
+            effectRowUnion(baseState, addedRow);
+          const rejoined = joinCarrier(
+            carrierInfo.domain,
+            carrierInfo.value,
+            mergedState,
+          );
+          if (rejoined) {
+            callType = rejoined;
+          }
+        }
+      }
+
       const finalCarrierInfo = splitCarrier(callType);
       if (finalCarrierInfo) {
         // Emit constraint source with the carrier's state
         if (
-          finalCarrierInfo.domain === "effect" &&
           finalCarrierInfo.state.kind === "effect_row"
         ) {
           emitConstraintSource(
             ctx,
             expr.id,
-            effectLabel(finalCarrierInfo.state),
+            rowLabel(finalCarrierInfo.domain, finalCarrierInfo.state),
           );
         }
         // TODO: Add taintLabel when taint domaineffectLabelimplemented
@@ -1758,6 +2271,87 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         emitConstraintFlow(ctx, expr.callee.id, expr.id);
         for (const arg of expr.arguments) {
           emitConstraintFlow(ctx, arg.id, expr.id);
+        }
+      }
+
+      if (calleeName) {
+        if (opRule?.domain) {
+          const targetNode = requireTargetExpr?.id ?? expr.id;
+          if (opRule.requiresExact?.length) {
+            emitRequireExactState(
+              ctx,
+              targetNode,
+              opRule.domain,
+              opRule.requiresExact,
+            );
+          }
+          if (opRule.requiresAny?.length) {
+            emitRequireAnyState(
+              ctx,
+              targetNode,
+              opRule.domain,
+              opRule.requiresAny,
+            );
+          }
+          if (opRule.adds?.length) {
+            let addTags = opRule.adds;
+            if (targetExpr && isRowBag) {
+              const identities = getIdentitiesForExpr(ctx, targetExpr);
+              const domainIds = identities?.get(opRule.domain);
+              if (domainIds && domainIds.size > 0) {
+                const tagged: string[] = [];
+                for (const identityId of domainIds) {
+                  const identityTags = addIdentityTags(
+                    ctx,
+                    opRule.domain,
+                    identityId,
+                    opRule.adds,
+                  );
+                  tagged.push(...identityTags);
+                  emitIdentityTagsToUsage(
+                    ctx,
+                    opRule.domain,
+                    identityId,
+                    identityTags,
+                  );
+                }
+                addTags = tagged;
+              }
+            } else if (!targetExpr && isRowBag && callIdentityTags) {
+              addTags = callIdentityTags;
+            }
+            emitAddStateTags(ctx, targetNode, opRule.domain, addTags);
+          }
+        }
+        if (opRule?.callPolicy === "pure") {
+          emitCallRejectsInfection(ctx, expr.id, opRule.callPolicy);
+        }
+
+        const policies = getPoliciesForTarget(
+          ctx.infectionRegistry,
+          calleeName,
+        );
+        for (const policy of policies) {
+          if (policy.rejectsAllDomains) {
+            emitCallRejectsInfection(ctx, expr.id, policy.name);
+          }
+        }
+
+        applyParamEffectsToCall(ctx, calleeName, expr.arguments);
+      }
+
+      if (
+        opRule?.target && opRule.domain && targetExpr && isRowBag &&
+        !ctx.exprIdentities.has(expr.id)
+      ) {
+        const targetIdentities = getExprIdentities(ctx, targetExpr);
+        const domainIds = targetIdentities?.get(opRule.domain);
+        if (domainIds && domainIds.size > 0) {
+          setExprIdentities(
+            ctx,
+            expr,
+            new Map([[opRule.domain, new Set(domainIds)]]),
+          );
         }
       }
 
@@ -2093,6 +2687,7 @@ export function inferProgram(
     registerPrelude: options.registerPrelude,
     resetCounter: options.resetCounter,
     source: options.source ?? undefined,
+    infectionRegistry: options.infectionRegistry,
   });
   const summaries: { name: string; scheme: TypeScheme }[] = [];
   const markedDeclarations: MTopLevel[] = [];
@@ -2105,6 +2700,9 @@ export function inferProgram(
 
   // Clear the type params cache for this program
   resetTypeParamsCache();
+
+  const infectionSummary = collectInfectionDeclarations(canonicalProgram);
+  ctx.infectionRegistry.mergeSummary(infectionSummary);
 
   if (options.registerPrelude !== false) {
     registerPrelude(ctx);
@@ -2188,6 +2786,14 @@ export function inferProgram(
     } else if (decl.kind === "infectious") {
       // Already registered in Pass 0
       markedDeclarations.push({ kind: "infectious", node: decl });
+    } else if (decl.kind === "domain") {
+      markedDeclarations.push({ kind: "domain", node: decl });
+    } else if (decl.kind === "op") {
+      markedDeclarations.push({ kind: "op", node: decl });
+    } else if (decl.kind === "policy") {
+      markedDeclarations.push({ kind: "policy", node: decl });
+    } else if (decl.kind === "annotate") {
+      markedDeclarations.push({ kind: "annotate", node: decl });
     } else if (decl.kind === "type" && successfulTypeDecls.has(decl)) {
       markedDeclarations.push({ kind: "type", node: decl });
     }
@@ -2241,6 +2847,7 @@ export function inferProgram(
     nodeTypeById,
     marksVersion: 1,
     layer1Diagnostics: ctx.layer1Diagnostics,
+    infectionRegistry: ctx.infectionRegistry,
   };
 }
 

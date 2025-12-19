@@ -287,10 +287,10 @@ Deno.test("return annotation keeps infectious carrier when errors ignored", () =
     };
 
     let produce = (flag: Bool): Operation => {
-      let op = match(parseDirection(flag)) {
+      let operation = match(parseDirection(flag)) {
         Var(direction) => { { direction: direction, distance: 0 } }
       };
-      op
+      operation
     };
   `;
   const result = inferTypes(source);

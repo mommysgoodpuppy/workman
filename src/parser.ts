@@ -9,6 +9,7 @@ import type {
   Associativity,
   BlockExpr,
   BlockStatement,
+  DomainDeclaration,
   ExportModifier,
   Expr,
   ImportSpecifier,
@@ -21,9 +22,15 @@ import type {
   ModuleReexport,
   NamedImport,
   NamespaceImport,
+  OpRuleDeclaration,
+  PolicyDeclaration,
+  AnnotateDeclaration,
   Parameter,
   Program,
   RecordField,
+  RuleEntry,
+  RuleValue,
+  RuleValuePart,
   TopLevel,
   TypeAliasMember,
   TypeDeclaration,
@@ -405,6 +412,14 @@ class SurfaceParser {
           // Check if this is "infectious <domain> type" (combined syntax)
           // or standalone "infectious <domain> <TypeName>" (old syntax)
           return this.parseInfectiousOrTypeDeclaration(exportToken);
+        case "domain":
+          return this.parseDomainDeclaration(exportToken);
+        case "op":
+          return this.parseOpRuleDeclaration(exportToken);
+        case "policy":
+          return this.parsePolicyDeclaration(exportToken);
+        case "annotate":
+          return this.parseAnnotateDeclaration(exportToken);
         default:
           throw this.error(
             `Unexpected keyword '${token.value}' at top-level`,
@@ -414,7 +429,7 @@ class SurfaceParser {
     }
     if (exportToken) {
       throw this.error(
-        "Expected 'let', 'type', 'infix', 'prefix', or 'infectious' after 'export'",
+        "Expected 'let', 'type', 'infix', 'prefix', 'infectious', 'domain', 'op', 'policy', or 'annotate' after 'export'",
         token,
       );
     }
@@ -1075,6 +1090,202 @@ class SurfaceParser {
     }
 
     return declaration;
+  }
+
+  private parseDomainDeclaration(exportToken?: Token): DomainDeclaration {
+    const domainToken = this.expectKeyword("domain");
+    const nameToken = this.expectIdentifier();
+    const { entries, closeToken } = this.parseRuleBlock();
+    const declaration: DomainDeclaration = {
+      kind: "domain",
+      name: nameToken.value,
+      entries,
+      span: this.spanFrom(domainToken.start, closeToken.end),
+      id: nextNodeId(),
+    };
+    if (exportToken) {
+      declaration.export = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+    }
+    return declaration;
+  }
+
+  private parseOpRuleDeclaration(exportToken?: Token): OpRuleDeclaration {
+    const opToken = this.expectKeyword("op");
+    const { name } = this.parseQualifiedName();
+    const { entries, closeToken } = this.parseRuleBlock();
+    const declaration: OpRuleDeclaration = {
+      kind: "op",
+      name,
+      entries,
+      span: this.spanFrom(opToken.start, closeToken.end),
+      id: nextNodeId(),
+    };
+    if (exportToken) {
+      declaration.export = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+    }
+    return declaration;
+  }
+
+  private parsePolicyDeclaration(exportToken?: Token): PolicyDeclaration {
+    const policyToken = this.expectKeyword("policy");
+    const nameToken = this.expectIdentifier();
+    const { entries, closeToken } = this.parseRuleBlock();
+    const declaration: PolicyDeclaration = {
+      kind: "policy",
+      name: nameToken.value,
+      entries,
+      span: this.spanFrom(policyToken.start, closeToken.end),
+      id: nextNodeId(),
+    };
+    if (exportToken) {
+      declaration.export = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+    }
+    return declaration;
+  }
+
+  private parseAnnotateDeclaration(exportToken?: Token): AnnotateDeclaration {
+    const annotateToken = this.expectKeyword("annotate");
+    const { name } = this.parseQualifiedName();
+    const open = this.expectSymbol("{");
+    const policies: string[] = [];
+    if (!this.checkSymbol("}")) {
+      do {
+        const policyToken = this.expectRuleNameToken();
+        policies.push(policyToken.value);
+      } while (this.matchSymbol(","));
+    }
+    const close = this.expectSymbol("}");
+    const declaration: AnnotateDeclaration = {
+      kind: "annotate",
+      target: name,
+      policies,
+      span: this.spanFrom(annotateToken.start, close.end),
+      id: nextNodeId(),
+    };
+    if (exportToken) {
+      declaration.export = {
+        kind: "export",
+        span: this.createSpan(exportToken, exportToken),
+      };
+    }
+    return declaration;
+  }
+
+  private parseRuleBlock(): { entries: RuleEntry[]; closeToken: Token } {
+    this.expectSymbol("{");
+    const entries: RuleEntry[] = [];
+    while (!this.checkSymbol("}")) {
+      entries.push(this.parseRuleEntry());
+      this.matchSymbol(";") || this.matchSymbol(",");
+    }
+    const closeToken = this.expectSymbol("}");
+    return { entries, closeToken };
+  }
+
+  private parseRuleEntry(): RuleEntry {
+    const keyToken = this.expectRuleNameToken();
+    let value: RuleValue | undefined;
+    let endToken: Token = keyToken;
+
+    if (!this.checkSymbol("}") && !this.checkSymbol(";") && !this.checkSymbol(",")) {
+      const parts: RuleValuePart[] = [];
+      if (this.checkSymbol("[")) {
+        const listPart = this.parseListPart();
+        parts.push(listPart.part);
+        endToken = listPart.endToken;
+      } else {
+        const nameToken = this.expectRuleNameToken();
+        parts.push({ kind: "name", name: nameToken.value });
+        endToken = nameToken;
+        if (this.checkSymbol("[")) {
+          const listPart = this.parseListPart();
+          parts.push(listPart.part);
+          endToken = listPart.endToken;
+        }
+      }
+      value = { kind: "sequence", parts };
+    }
+
+    return {
+      kind: "rule_entry",
+      key: keyToken.value,
+      value,
+      span: this.spanFrom(keyToken.start, endToken.end),
+      id: nextNodeId(),
+    };
+  }
+
+  private parseListPart(): { part: RuleValuePart; endToken: Token } {
+    const open = this.expectSymbol("[");
+    if (this.checkSymbol("]")) {
+      const close = this.expectSymbol("]");
+      return { part: { kind: "list", items: [] }, endToken: close };
+    }
+    if (this.checkSymbol("(")) {
+      return this.parsePairListAfterOpen(open);
+    }
+    return this.parseNameListAfterOpen(open);
+  }
+
+  private parseNameListAfterOpen(
+    _open: Token,
+  ): { part: RuleValuePart; endToken: Token } {
+    const items: string[] = [];
+    do {
+      const nameToken = this.expectRuleNameToken();
+      items.push(nameToken.value);
+    } while (this.matchSymbol(","));
+    const close = this.expectSymbol("]");
+    return { part: { kind: "list", items }, endToken: close };
+  }
+
+  private parsePairListAfterOpen(
+    _open: Token,
+  ): { part: RuleValuePart; endToken: Token } {
+    const pairs: [string, string][] = [];
+    do {
+      this.expectSymbol("(");
+      const left = this.expectRuleNameToken();
+      this.expectSymbol(",");
+      const right = this.expectRuleNameToken();
+      this.expectSymbol(")");
+      pairs.push([left.value, right.value]);
+    } while (this.matchSymbol(","));
+    const close = this.expectSymbol("]");
+    return { part: { kind: "pair_list", pairs }, endToken: close };
+  }
+
+  private parseQualifiedName(): { name: string; end: Token } {
+    const first = this.expectRuleNameToken();
+    const parts = [first.value];
+    let endToken = first;
+    while (this.matchSymbol(".")) {
+      const next = this.expectRuleNameToken();
+      parts.push(next.value);
+      endToken = next;
+    }
+    return { name: parts.join("."), end: endToken };
+  }
+
+  private expectRuleNameToken(): Token {
+    const token = this.consume();
+    if (
+      token.kind === "identifier" ||
+      token.kind === "constructor" ||
+      token.kind === "keyword"
+    ) {
+      return token;
+    }
+    throw this.error("Expected name", token);
   }
 
   private parseTypeParameters(): TypeParameter[] {
@@ -2193,6 +2404,10 @@ class SurfaceParser {
         token.value === "infixr" ||
         token.value === "prefix" ||
         token.value === "infectious" ||
+        token.value === "domain" ||
+        token.value === "op" ||
+        token.value === "policy" ||
+        token.value === "annotate" ||
         token.value === "export"
       );
     }

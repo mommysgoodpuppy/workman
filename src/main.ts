@@ -1,6 +1,6 @@
 import { toFileUrl } from "./io.ts";
-import { compileWorkmanGraph } from "./backends/compiler/frontends/workman.ts";
-import { emitModuleGraph } from "./backends/compiler/js/graph_emitter.ts";
+import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
+import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import { formatScheme } from "./type_printer.ts";
 import {
   collectCompiledValues,

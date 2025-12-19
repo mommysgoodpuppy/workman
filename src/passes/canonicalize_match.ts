@@ -40,6 +40,10 @@ function canonicalizeTopLevel(node: TopLevel): void {
     case "infix":
     case "prefix":
     case "infectious":
+    case "domain":
+    case "op":
+    case "policy":
+    case "annotate":
       // No expression children to canonicalise.
       break;
     default:

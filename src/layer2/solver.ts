@@ -25,9 +25,10 @@ import {
   applySubstitution,
   cloneType,
   type ConstraintLabel,
-  effectLabel,
+  createEffectRow,
   type EffectRowType,
   effectRowUnion,
+  ensureRow,
   findCarrierDomain,
   flattenResultType,
   formatLabel,
@@ -44,6 +45,7 @@ import {
   type Substitution,
   type Type,
   unknownType,
+  rowLabel,
 } from "../types.ts";
 import type {
   ConstraintDiagnostic,
@@ -52,6 +54,7 @@ import type {
 import type { NodeId } from "../ast.ts";
 import { areIncompatible, conflictMessage } from "./conflict_rules.ts";
 import { BOUNDARY_RULES } from "./boundary_rules.ts";
+import { InfectionRegistry } from "../infection_registry.ts";
 
 export interface ConstraintConflict {
   holeId: HoleId;
@@ -84,6 +87,7 @@ export interface SolveInput {
   layer1Diagnostics: ConstraintDiagnostic[];
   summaries: { name: string; scheme: import("../types.ts").TypeScheme }[];
   adtEnv: Map<string, import("../types.ts").ADTInfo>;
+  infectionRegistry?: InfectionRegistry;
 }
 
 export interface SolverResult {
@@ -122,6 +126,7 @@ export function solveConstraints(input: SolveInput): SolverResult {
     nodeTypeById: input.nodeTypeById,
     adtEnv: input.adtEnv,
   };
+  const infectionRegistry = input.infectionRegistry ?? new InfectionRegistry();
 
   // Solve constraints in phases to establish type information before
   // checking numeric/boolean constraints that depend on it:
@@ -188,13 +193,35 @@ export function solveConstraints(input: SolveInput): SolverResult {
 
   // PHASE 5: NEW Constraint Propagation System (parallel to existing)
   // Build constraint flow graph
-  const constraintFlow = buildConstraintFlow(input.constraintStubs);
+  const constraintFlow = buildConstraintFlow(
+    input.constraintStubs,
+    infectionRegistry,
+  );
 
   // Propagate constraints using single-pass algorithm
-  propagateConstraints(constraintFlow, input.constraintStubs);
+  propagateConstraints(
+    constraintFlow,
+    input.constraintStubs,
+    infectionRegistry,
+  );
+
+  // Reify constraint labels into carrier types for better type surfaces (LSP/hover).
+  reifyConstraintLabelsIntoTypes(
+    constraintFlow,
+    resolvedNodeTypes,
+  );
 
   // Detect conflicts (multi-domain)
-  detectConstraintConflicts(constraintFlow, state.diagnostics);
+  detectConstraintConflicts(
+    constraintFlow,
+    state.diagnostics,
+    infectionRegistry,
+  );
+  detectRowBagDuplicateTags(
+    constraintFlow,
+    state.diagnostics,
+    infectionRegistry,
+  );
 
   // Check return boundaries
   checkReturnBoundaries(
@@ -202,6 +229,14 @@ export function solveConstraints(input: SolveInput): SolverResult {
     resolvedNodeTypes,
     input.markedProgram,
     state.diagnostics,
+    infectionRegistry,
+  );
+
+  checkDomainStubs(
+    input.constraintStubs,
+    constraintFlow,
+    state.diagnostics,
+    infectionRegistry,
   );
 
   // Additional checking for annotations and matches (backward compatibility with test expectations)
@@ -1496,7 +1531,72 @@ interface ConstraintFlow {
   aliases: Map<number, number>; // Simple parent-pointer structure
 }
 
-function buildConstraintFlow(stubs: ConstraintStub[]): ConstraintFlow {
+function isRowLabel(label: ConstraintLabel): label is {
+  domain: string;
+  row: EffectRowType;
+} {
+  return "row" in label;
+}
+
+function normalizeMergeRow(policy?: string): string {
+  return policy?.replaceAll("_", "").toLowerCase() ?? "";
+}
+
+function normalizeBoundaryPolicy(policy?: string): string {
+  return policy?.replaceAll("_", "").toLowerCase() ?? "";
+}
+
+function normalizeStateKind(stateKind?: string): string {
+  return stateKind?.replaceAll("_", "").toLowerCase() ?? "";
+}
+
+function mergeRowsForDomain(
+  registry: InfectionRegistry,
+  domain: string,
+  left: EffectRowType,
+  right: EffectRowType,
+): EffectRowType {
+  const rule = registry.domains.get(domain);
+  const policy = normalizeMergeRow(rule?.mergeRow);
+  switch (policy) {
+    case "union":
+    case "unionrow":
+    case "bagunion":
+    case "bagrowunion":
+      return effectRowUnion(left, right);
+    case "keepleft":
+      return left;
+    case "keepright":
+      return right;
+    default:
+      if (domain === "effect") {
+        return effectRowUnion(left, right);
+      }
+      return left;
+  }
+}
+
+function mergeDomainLabels(
+  registry: InfectionRegistry,
+  existing: ConstraintLabel,
+  incoming: ConstraintLabel,
+): ConstraintLabel {
+  if (isRowLabel(existing) && isRowLabel(incoming)) {
+    const mergedRow = mergeRowsForDomain(
+      registry,
+      existing.domain,
+      existing.row,
+      incoming.row,
+    );
+    return rowLabel(existing.domain, mergedRow);
+  }
+  return existing;
+}
+
+function buildConstraintFlow(
+  stubs: ConstraintStub[],
+  registry: InfectionRegistry,
+): ConstraintFlow {
   const flow: ConstraintFlow = {
     labels: new Map(),
     edges: new Map(),
@@ -1511,10 +1611,11 @@ function buildConstraintFlow(stubs: ConstraintStub[]): ConstraintFlow {
 
       // Per-domain singleton: merge if already exists
       const existing = domainMap.get(stub.label.domain);
-      if (existing && stub.label.domain === "effect") {
-        // Error domain: union rows
-        const merged = effectRowUnion(existing.row, stub.label.row);
-        domainMap.set("effect", effectLabel(merged));
+      if (existing) {
+        domainMap.set(
+          stub.label.domain,
+          mergeDomainLabels(registry, existing, stub.label),
+        );
       } else {
         domainMap.set(stub.label.domain, stub.label);
       }
@@ -1571,6 +1672,7 @@ function identityToNumber(id: Identity): number {
 function propagateConstraints(
   flow: ConstraintFlow,
   stubs: ConstraintStub[],
+  registry: InfectionRegistry,
 ): void {
   // CRITICAL: Process stubs in creation order (follows inference traversal)
   // This gives parent-before-child ordering for nested matches
@@ -1588,13 +1690,9 @@ function propagateConstraints(
 
       for (const [domain, label] of fromLabels.entries()) {
         const existing = toLabels.get(domain);
-        if (existing && domain === "effect") {
-          // Error domain: union rows
-          if (existing.domain === "effect" && label.domain === "effect") {
-            const merged = effectRowUnion(existing.row, label.row);
-            toLabels.set("effect", effectLabel(merged));
-          }
-        } else if (!existing) {
+        if (existing) {
+          toLabels.set(domain, mergeDomainLabels(registry, existing, label));
+        } else {
           toLabels.set(domain, label);
         }
         // Other domains: handle in their conflict rules
@@ -1611,6 +1709,22 @@ function propagateConstraints(
       for (const addLabel of stub.add) {
         labels.set(addLabel.domain, addLabel);
       }
+    } else if (stub.kind === "add_state_tags") {
+      const labels = flow.labels.get(stub.node) ?? new Map();
+      const existing = labels.get(stub.domain);
+      const tagRow = createEffectRow(stub.tags.map((tag) => [tag, null]));
+      if (existing && isRowLabel(existing)) {
+        const merged = mergeRowsForDomain(
+          registry,
+          stub.domain,
+          existing.row,
+          tagRow,
+        );
+        labels.set(stub.domain, rowLabel(stub.domain, merged));
+      } else if (!existing) {
+        labels.set(stub.domain, rowLabel(stub.domain, tagRow));
+      }
+      flow.labels.set(stub.node, labels);
     } else if (stub.kind === "branch_join") {
       // Union labels from all branches
       const merged = new Map<string, ConstraintLabel>();
@@ -1621,13 +1735,9 @@ function propagateConstraints(
 
         for (const [domain, label] of branchLabels.entries()) {
           const existing = merged.get(domain);
-          if (existing && domain === "effect") {
-            // Error domain: union rows
-            if (existing.domain === "effect" && label.domain === "effect") {
-              const unionRow = effectRowUnion(existing.row, label.row);
-              merged.set("effect", effectLabel(unionRow));
-            }
-          } else if (!existing) {
+          if (existing) {
+            merged.set(domain, mergeDomainLabels(registry, existing, label));
+          } else {
             merged.set(domain, label);
           }
           // Other domains: conflict checking happens later
@@ -1641,17 +1751,41 @@ function propagateConstraints(
 function detectConstraintConflicts(
   flow: ConstraintFlow,
   diagnostics: ConstraintDiagnostic[],
+  registry: InfectionRegistry,
 ): void {
   // Check conflicts at every node
   for (const [node, domainLabels] of flow.labels.entries()) {
     // Convert Map<string, ConstraintLabel> to array for pairwise checking
     const labelArray = Array.from(domainLabels.values());
 
+    for (const label of labelArray) {
+      if (!isRowLabel(label)) continue;
+      const rule = registry.domains.get(label.domain);
+      if (!rule?.conflictPairs?.length) continue;
+      for (const [left, right] of rule.conflictPairs) {
+        if (label.row.cases.has(left) && label.row.cases.has(right)) {
+          diagnostics.push({
+            origin: node,
+            reason: "incompatible_constraints" as ConstraintDiagnosticReason,
+            details: {
+              label1: `${label.domain}:${left}`,
+              label2: `${label.domain}:${right}`,
+              message: `Cannot combine ${left} and ${right} in ${label.domain}`,
+            },
+          });
+        }
+      }
+    }
+
     // Check pairs within each node
     for (let i = 0; i < labelArray.length; i++) {
       for (let j = i + 1; j < labelArray.length; j++) {
         const label1 = labelArray[i];
         const label2 = labelArray[j];
+
+        if (isRowLabel(label1) || isRowLabel(label2)) {
+          continue;
+        }
 
         if (areIncompatible(label1, label2)) {
           diagnostics.push({
@@ -1674,6 +1808,7 @@ function checkReturnBoundaries(
   resolved: Map<NodeId, Type>,
   program: MProgram,
   diagnostics: ConstraintDiagnostic[],
+  registry: InfectionRegistry,
 ): void {
   // Walk all function declarations (top-level and nested)
   function checkFunction(decl: MLetDeclaration) {
@@ -1684,9 +1819,48 @@ function checkReturnBoundaries(
 
     if (!labels || !returnType) return;
 
-    // Check each domain's boundary rules
+    const handledDomains = new Set<string>();
+
+    for (const [domain, label] of labels.entries()) {
+      const rule = registry.domains.get(domain);
+      if (!rule?.boundary) continue;
+      if (!isRowLabel(label)) continue;
+
+      const boundary = normalizeBoundaryPolicy(rule.boundary);
+      const hasState = label.row.cases.size > 0 || Boolean(label.row.tail);
+      let error: string | null = null;
+
+      if (boundary === "mustbecarrier") {
+        if (hasState) {
+          const carrier = splitCarrier(returnType);
+          if (!carrier || carrier.domain !== domain) {
+            error =
+              `Undischarged ${domain} state. Return type must reify ${domain} in a carrier.`;
+          }
+        }
+      } else if (boundary === "mustbeempty") {
+        if (hasState) {
+          error = `Undischarged ${domain} state at return.`;
+        }
+      }
+
+      if (error) {
+        diagnostics.push({
+          origin: returnNodeId,
+          reason: "boundary_violation" as ConstraintDiagnosticReason,
+          details: {
+            domain,
+            message: error,
+            functionName: decl.name,
+          },
+        });
+      }
+      handledDomains.add(domain);
+    }
+
+    // Fallback to hardcoded rules when no stdlib rule is registered.
     for (const [_domain, rule] of BOUNDARY_RULES.entries()) {
-      // Convert Map<string, ConstraintLabel> to Set<ConstraintLabel> for rules
+      if (handledDomains.has(_domain)) continue;
       const labelSet = new Set(labels.values());
       const error = rule.check(labelSet, returnType);
       if (error) {
@@ -1696,7 +1870,7 @@ function checkReturnBoundaries(
           details: {
             domain: _domain,
             message: error,
-            functionName: decl.name, // Include function name in error
+            functionName: decl.name,
           },
         });
       }
@@ -1718,6 +1892,211 @@ function checkReturnBoundaries(
       checkFunction(topLevel);
     }
   }
+}
+
+function detectRowBagDuplicateTags(
+  flow: ConstraintFlow,
+  diagnostics: ConstraintDiagnostic[],
+  registry: InfectionRegistry,
+): void {
+  for (const [node, domainLabels] of flow.labels.entries()) {
+    for (const label of domainLabels.values()) {
+      if (!isRowLabel(label)) continue;
+      const rule = registry.domains.get(label.domain);
+      if (normalizeStateKind(rule?.stateKind) !== "rowbag") continue;
+      const { identities } = collectIdentityTags(label.row);
+      for (const [identityId, tags] of identities.entries()) {
+        for (const [tag, count] of tags.entries()) {
+          if (count <= 1) continue;
+          diagnostics.push({
+            origin: node,
+            reason: "incompatible_constraints" as ConstraintDiagnosticReason,
+            details: {
+              label1: `${label.domain}:${tag}`,
+              label2: `duplicate#r${identityId}`,
+              message:
+                `Duplicate ${tag} for identity #r${identityId} in ${label.domain}`,
+            },
+          });
+        }
+      }
+    }
+  }
+}
+
+function reifyConstraintLabelsIntoTypes(
+  flow: ConstraintFlow,
+  resolved: Map<NodeId, Type>,
+): void {
+  for (const [nodeId, domainLabels] of flow.labels.entries()) {
+    let current = resolved.get(nodeId);
+    if (!current) continue;
+    for (const label of domainLabels.values()) {
+      if (!isRowLabel(label)) continue;
+      const carrierInfo = splitCarrier(current);
+      if (!carrierInfo || carrierInfo.domain !== label.domain) {
+        continue;
+      }
+      const baseState = ensureRow(carrierInfo.state);
+      const mergedState = effectRowUnion(baseState, label.row);
+      const rejoined = joinCarrier(
+        carrierInfo.domain,
+        carrierInfo.value,
+        mergedState,
+      );
+      if (rejoined) {
+        current = rejoined;
+      }
+    }
+    resolved.set(nodeId, current);
+  }
+}
+
+function splitIdentityTag(
+  tag: string,
+): { base: string; identity: number } | null {
+  const match = /^(.*)#r(\d+)(?:@(\d+))?$/.exec(tag);
+  if (!match) return null;
+  return { base: match[1], identity: Number.parseInt(match[2], 10) };
+}
+
+function collectIdentityTags(
+  row: EffectRowType,
+): { identities: Map<number, Map<string, number>>; nonIdentity: Set<string> } {
+  const identities = new Map<number, Map<string, number>>();
+  const nonIdentity = new Set<string>();
+  for (const tag of row.cases.keys()) {
+    const parsed = splitIdentityTag(tag);
+    if (!parsed) {
+      nonIdentity.add(tag);
+      continue;
+    }
+    const counts = identities.get(parsed.identity) ?? new Map<string, number>();
+    counts.set(parsed.base, (counts.get(parsed.base) ?? 0) + 1);
+    identities.set(parsed.identity, counts);
+  }
+  return { identities, nonIdentity };
+}
+
+function rowHasAllTags(row: EffectRowType, tags: string[]): boolean {
+  const { identities } = collectIdentityTags(row);
+  if (identities.size > 0) {
+    for (const baseTags of identities.values()) {
+      if (!tags.every((tag) => baseTags.has(tag))) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return tags.every((tag) => row.cases.has(tag));
+}
+
+function rowHasAnyTag(row: EffectRowType, tags: string[]): boolean {
+  const { identities } = collectIdentityTags(row);
+  if (identities.size > 0) {
+    for (const baseTags of identities.values()) {
+      if (tags.some((tag) => baseTags.has(tag))) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return tags.some((tag) => row.cases.has(tag));
+}
+
+function rowMatchesExactTags(row: EffectRowType, tags: string[]): boolean {
+  if (row.tail) return false;
+  const { identities, nonIdentity } = collectIdentityTags(row);
+  if (identities.size > 0) {
+    if (nonIdentity.size > 0 || identities.size !== 1) return false;
+    const baseTags = identities.values().next().value as Map<string, number>;
+    if (baseTags.size !== tags.length) return false;
+    for (const tag of tags) {
+      if ((baseTags.get(tag) ?? 0) !== 1) return false;
+    }
+    return true;
+  }
+  if (row.cases.size !== tags.length) return false;
+  return rowHasAllTags(row, tags);
+}
+
+function labelHasInfection(label: ConstraintLabel): boolean {
+  if (isRowLabel(label)) {
+    return label.row.cases.size > 0 || Boolean(label.row.tail);
+  }
+  return true;
+}
+
+function checkDomainStubs(
+  stubs: ConstraintStub[],
+  flow: ConstraintFlow,
+  diagnostics: ConstraintDiagnostic[],
+  registry: InfectionRegistry,
+): void {
+  for (const stub of stubs) {
+    if (stub.kind === "require_exact_state") {
+      const labels = flow.labels.get(stub.node);
+      const label = labels?.get(stub.domain);
+      if (!label) {
+        continue;
+      }
+      if (!isRowLabel(label) || !rowMatchesExactTags(label.row, stub.tags)) {
+        diagnostics.push({
+          origin: stub.node,
+          reason: "require_exact_state" as ConstraintDiagnosticReason,
+          details: {
+            domain: stub.domain,
+            expected: stub.tags,
+            actual: formatLabel(label),
+          },
+        });
+      }
+    } else if (stub.kind === "require_any_state") {
+      const labels = flow.labels.get(stub.node);
+      const label = labels?.get(stub.domain);
+      if (!label || !isRowLabel(label) || !rowHasAnyTag(label.row, stub.tags)) {
+        diagnostics.push({
+          origin: stub.node,
+          reason: "require_any_state" as ConstraintDiagnosticReason,
+          details: {
+            domain: stub.domain,
+            expected: stub.tags,
+            actual: label ? formatLabel(label) : null,
+          },
+        });
+      }
+    } else if (stub.kind === "require_at_return") {
+      const labels = flow.labels.get(stub.node);
+      const label = labels?.get(stub.domain);
+      if (!label || !isRowLabel(label) || !rowHasAllTags(label.row, stub.tags)) {
+        diagnostics.push({
+          origin: stub.node,
+          reason: "require_at_return" as ConstraintDiagnosticReason,
+          details: {
+            domain: stub.domain,
+            expected: stub.tags,
+            actual: label ? formatLabel(label) : null,
+            policy: stub.policy,
+          },
+        });
+      }
+    } else if (stub.kind === "call_rejects_infection") {
+      const labels = flow.labels.get(stub.node);
+      if (!labels) continue;
+      const infected = Array.from(labels.values()).some(labelHasInfection);
+      if (infected) {
+        diagnostics.push({
+          origin: stub.node,
+          reason: "call_rejects_infection" as ConstraintDiagnosticReason,
+          details: {
+            policy: stub.policy,
+          },
+        });
+      }
+    }
+  }
+
+  void registry;
 }
 
 // ============================================================================

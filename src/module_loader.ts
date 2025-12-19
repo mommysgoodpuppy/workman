@@ -18,6 +18,11 @@ import { lookupValue } from "./value.ts";
 import { formatScheme } from "./type_printer.ts";
 import { IO, isNotFoundError, toFileUrl } from "./io.ts";
 import {
+  collectInfectionDeclarations,
+  InfectionRegistry,
+  type InfectionSummary,
+} from "./infection_registry.ts";
+import {
   compileWorkmanGraph,
   type WorkmanCompilerOptions,
 } from "../backends/compiler/frontends/workman.ts";
@@ -26,6 +31,7 @@ import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 export interface ModuleLoaderOptions {
   stdRoots?: string[];
   preludeModule?: string;
+  infectionModule?: string;
   skipEvaluation?: boolean;
   /** Map of absolute file paths to their in-memory content (for LSP) */
   sourceOverrides?: Map<string, string>;
@@ -99,6 +105,7 @@ export interface ModuleSummary {
     types: Map<string, TypeInfo>;
     operators: Map<string, OperatorInfo>;
   };
+  infection: InfectionSummary;
   runtime: Map<string, RuntimeValue>;
   letSchemes: Map<string, TypeScheme>;
   letSchemeOrder: string[];
@@ -329,6 +336,44 @@ export async function loadModuleSummaries(
   }
 }
 
+export async function buildInfectionRegistryForModule(
+  graph: ModuleGraph,
+  summaries: Map<string, ModuleSummary>,
+  modulePath: string,
+  options: ModuleLoaderOptions = {},
+): Promise<InfectionRegistry> {
+  const normalizedOptions = normalizeOptions(options);
+  const infectionPreludeRegistry = await loadInfectionPreludeRegistry(
+    graph,
+    normalizedOptions,
+  );
+  const registry = infectionPreludeRegistry.clone();
+  const node = graph.nodes.get(modulePath);
+  if (!node) {
+    return registry;
+  }
+
+  for (const record of node.imports) {
+    if (record.kind !== "workman") {
+      continue;
+    }
+    const provider = summaries.get(record.sourcePath);
+    if (provider) {
+      registry.mergeSummary(provider.infection);
+    }
+  }
+
+  const preludePath = graph.prelude;
+  if (preludePath && modulePath !== preludePath && !isStdCoreModule(modulePath)) {
+    const preludeSummary = summaries.get(preludePath);
+    if (preludeSummary) {
+      registry.mergeSummary(preludeSummary.infection);
+    }
+  }
+
+  return registry;
+}
+
 export async function loadPreludeEnvironment(
   options: ModuleLoaderOptions = {},
 ): Promise<{
@@ -379,6 +424,48 @@ export async function loadPreludeEnvironment(
   return { env, adtEnv, operators, prefixOperators };
 }
 
+async function readSourceWithOverrides(
+  path: string,
+  options: ModuleLoaderOptions,
+): Promise<string> {
+  const override = options.sourceOverrides?.get(path);
+  if (override !== undefined) {
+    return override;
+  }
+  return await IO.readTextFile(path);
+}
+
+async function loadInfectionPreludeRegistry(
+  graph: ModuleGraph,
+  options: ModuleLoaderOptions,
+): Promise<InfectionRegistry> {
+  const registry = new InfectionRegistry();
+  const infectionModule = options.infectionModule ?? "std/infection/domains";
+  if (!infectionModule) {
+    return registry;
+  }
+
+  const basePath = graph.prelude ?? graph.entry;
+  const infectionPath = resolveModuleSpecifier(
+    basePath,
+    infectionModule,
+    options,
+  );
+  const source = await readSourceWithOverrides(infectionPath, options);
+  const tokens = lex(source, infectionPath);
+  const program = parseSurfaceProgram(
+    tokens,
+    source,
+    false,
+    undefined,
+    undefined,
+    { tolerant: options.tolerantParsing ?? false },
+  );
+  const summary = collectInfectionDeclarations(program);
+  registry.mergeSummary(summary);
+  return registry;
+}
+
 async function summarizeGraph(
   graph: ModuleGraph,
   options: ModuleLoaderOptions = {},
@@ -392,6 +479,10 @@ async function summarizeGraph(
   const runtimeLogs: string[] = [];
   const preludePath = graph.prelude;
   let preludeSummary: ModuleSummary | undefined = undefined;
+  const infectionPreludeRegistry = await loadInfectionPreludeRegistry(
+    graph,
+    normalizedOptions,
+  );
 
   let counterInitialized = false;
   for (const path of graph.order) {
@@ -418,6 +509,7 @@ async function summarizeGraph(
       ? undefined
       : new Map<string, RuntimeValue>();
     const skipPrelude = isStdCoreModule(path);
+    const initialRegistry = infectionPreludeRegistry.clone();
 
     for (const record of node.imports) {
       if (record.kind === "js") {
@@ -437,6 +529,7 @@ async function summarizeGraph(
         initialAdtEnv,
         initialBindings,
       );
+      initialRegistry.mergeSummary(provider.infection);
     }
 
     if (preludeSummary && path !== preludePath && !skipPrelude) {
@@ -450,6 +543,7 @@ async function summarizeGraph(
           initialAdtEnv.set(name, cloneTypeInfo(info));
         }
       }
+      initialRegistry.mergeSummary(preludeSummary.infection);
       if (!skipEvaluation && initialBindings) {
         for (const [name, value] of preludeSummary.runtime.entries()) {
           if (!initialBindings.has(name)) {
@@ -504,6 +598,7 @@ async function summarizeGraph(
         initialAdtEnv,
         resetCounter: shouldResetCounter,
         source: node.source,
+        infectionRegistry: initialRegistry,
       });
     } catch (error) {
       if (error instanceof InferError) {
@@ -622,12 +717,17 @@ async function summarizeGraph(
       letValueOrder = [];
     }
 
+    const infectionSummary = collectInfectionDeclarations(node.program, {
+      onlyExported: true,
+    });
+
     moduleSummaries.set(path, {
       exports: {
         values: exportedValues,
         types: exportedTypes,
         operators: node.exportedOperators,
       },
+      infection: infectionSummary,
       runtime: runtimeExports,
       letSchemes,
       letSchemeOrder,
@@ -648,12 +748,14 @@ function normalizeOptions(options: ModuleLoaderOptions): ModuleLoaderOptions {
     ? options.stdRoots.map((root) => resolve(root))
     : [resolve("std")];
   const preludeModule = options.preludeModule ?? "std/prelude";
+  const infectionModule = options.infectionModule ?? "std/infection/domains";
   const skipEvaluation = options.skipEvaluation ?? true;
   const sourceOverrides = options.sourceOverrides;
   const tolerantParsing = options.tolerantParsing ?? false;
   return {
     stdRoots,
     preludeModule,
+    infectionModule,
     skipEvaluation,
     sourceOverrides,
     tolerantParsing,

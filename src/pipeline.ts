@@ -29,6 +29,7 @@ export function analyzeProgram(
     layer1Diagnostics: layer1.layer1Diagnostics,
     summaries: layer1.summaries,
     adtEnv: layer1.adtEnv,
+    infectionRegistry: layer1.infectionRegistry,
   };
 
   const layer2 = solveConstraints(solveInput);

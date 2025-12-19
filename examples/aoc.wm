@@ -2,7 +2,6 @@ from "std/nativeString" import { stringToList, stringConcat, intToString };
 from "std/string" import { strEq };
 from "std/list" import { listSlice, listAt, listLength };
 from "std/string" import { charToDigit, char };
-from "std/result" import { stripErr };
 
 type ParseResult =
   | NotMul

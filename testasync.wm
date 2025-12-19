@@ -1,0 +1,24 @@
+from "std/async/core" import { Resolved, Rejected };
+from "std/nativeString" import { stringConcat };
+from "./async.js" import { fetchText, delayResolve, delayReject };
+
+-- A helper to report the result of a Promise<String>
+let logResult = (label, promise) => {
+  match(promise) {
+    Resolved(value) => {
+      print(stringConcat(label, stringConcat(": ", value)))
+    }
+    Rejected(err) => {
+      print(stringConcat(label, stringConcat(" (error): ", err)))
+    }
+  }
+};
+
+let run = () => {
+  print("Starting async demo");
+  logResult("delayResolve", delayResolve("done", 10));
+  logResult("delayReject", delayReject("boom", 10));
+  logResult("fetchText", fetchText("https://example.com"));
+};
+
+export let main = run;

@@ -159,16 +159,20 @@ export function freshBorrow(): Identity {
 // NOTE: Each node has AT MOST ONE constraint label per domain (per-domain singleton invariant)
 // Multiple sources for the same domain are merged using domain-specific rules
 export type ConstraintLabel =
-  // Effect domain - reuses existing EffectRowType structure
-  | { domain: "effect"; row: EffectRowType }
-  // Memory domain - capability tracking (future: Phase 5)
+  // Row-based domains (effect, mem, taint, etc.)
+  | { domain: string; row: EffectRowType }
+  // Memory domain - capability tracking (legacy shape; kept for back-compat)
   | { domain: "mem"; label: string; identity: Identity }
   // Hole domain - type hole tracking (integration with existing hole system)
   | { domain: "hole"; identity: Identity; provenance: Provenance };
 
 // Helper constructors for constraint labels
+export function rowLabel(domain: string, row: EffectRowType): ConstraintLabel {
+  return { domain, row };
+}
+
 export function effectLabel(row: EffectRowType): ConstraintLabel {
-  return { domain: "effect", row };
+  return rowLabel("effect", row);
 }
 
 export function memLabel(label: string, identity: Identity): ConstraintLabel {
@@ -201,15 +205,13 @@ export function formatIdentity(id: Identity): string {
 
 // Helper: format label for display
 export function formatLabel(label: ConstraintLabel): string {
-  switch (label.domain) {
-    case "effect":
-      // For error domain, we could format the row constructors
-      return `error:<${Array.from(label.row.cases.keys()).join("|")}>`;
-    case "mem":
-      return `${label.label}[${formatIdentity(label.identity)}]`;
-    case "hole":
-      return `Unknown[${formatIdentity(label.identity)}]`;
+  if ("row" in label) {
+    return `${label.domain}:<${Array.from(label.row.cases.keys()).join("|")}>`;
   }
+  if (label.domain === "mem") {
+    return `${label.label}[${formatIdentity(label.identity)}]`;
+  }
+  return `Unknown[${formatIdentity(label.identity)}]`;
 }
 
 // ============================================================================

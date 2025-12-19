@@ -1,10 +1,13 @@
 from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
 from "std/nativeString" import { stringToList, stringConcat, intToString };
 from "std/result" import { stripErr };
+from "std/list" import { listFoldl };
 from "std/async/core" import { resolve, reject, Resolved, Rejected };
+
 from "./async.js" import {
   fetch as fetchNative,
-  json as jsonNative
+  json as jsonNative,
+  listFromArray
 };
 
 -- 1. Structural Types (What TS devs love)
@@ -19,6 +22,26 @@ let json = (resp: Response): Promise<JsonValue, UnknownError>  => {jsonNative(re
 
 let identity = (in) => {in};
 
+let pickMostPopularRepo = (repos) => {
+  let fallback = ({
+    name: "No repos",
+    stargazerscount: 0
+  });
+
+  --print(repos);
+
+  listFoldl(
+    (currentBest, repo) => {
+      match(repo.stargazerscount > currentBest.stargazerscount) {
+        true => { repo },
+        false => { currentBest }
+      }
+    },
+    fallback,
+    repos
+  )
+};
+
 -- 2. The Logic
 let getUserSummary = (username) => {
   let baseUrl = stringConcat("https://api.github.com/users/", username);
@@ -27,20 +50,27 @@ let getUserSummary = (username) => {
 
 
   let userx = profileRequest >> json;
-  let repos = reposRequest >> json;
-
+  let reposx = reposRequest >> json;
+  
   let user = match (userx) {
-    Resolved(body) => { body},
-    Rejected(err) => { ?}
+    Resolved(body) => { body },
+    Rejected(err) => { ? }
+  };
+  let reposList = match (reposx) {
+    Resolved(body) => { body },
+    Rejected(err) => {  }
   };
 
-  let mostPopularRepo = repos >> ;
+  print(reposList);
+
+  let mostPopularRepo = pickMostPopularRepo(reposList);
+
 
   ({
     status:"success",
     handle: user.login, 
     totalRepos: user.publicrepos, 
-    topRepo:mostPopularRepo.name, 
+    topRepo: mostPopularRepo.name, 
     starsOnTop: mostPopularRepo.stargazerscount
   })
 

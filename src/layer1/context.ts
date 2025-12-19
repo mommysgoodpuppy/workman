@@ -8,6 +8,7 @@ import type {
   TypeDeclaration,
   TypeExpr,
 } from "../ast.ts";
+import { InfectionRegistry } from "../infection_registry.ts";
 import type {
   MExpr,
   MMarkFreeVar,
@@ -88,6 +89,25 @@ export interface Context {
   holes: Map<HoleId, UnknownInfo>;
   constraintStubs: ConstraintStub[];
   layer1Diagnostics: ConstraintDiagnostic[];
+  infectionRegistry: InfectionRegistry;
+  identityBindings: Map<string, Map<string, Set<number>>>;
+  identityStates: Map<number, Map<string, Map<string, number>>>;
+  exprIdentities: Map<NodeId, Map<string, Set<number>>>;
+  identityUsage: Map<number, Map<string, Map<NodeId, number>>>;
+  functionParamEffects: Map<
+    string,
+    Map<number, Map<string, {
+      requiresExact: Set<string>;
+      requiresAny: Set<string>;
+      adds: Set<string>;
+    }>>
+  >;
+  functionParamStack: {
+    name: string;
+    params: Map<string, number>;
+    scopeId: number;
+  }[];
+  functionScopeCounter: number;
 }
 
 export interface InferOptions {
@@ -96,6 +116,7 @@ export interface InferOptions {
   registerPrelude?: boolean;
   resetCounter?: boolean;
   source?: string;
+  infectionRegistry?: InfectionRegistry;
 }
 
 export interface InferResult {
@@ -111,6 +132,7 @@ export interface InferResult {
   nodeTypeById: Map<NodeId, Type>;
   marksVersion: number;
   layer1Diagnostics: ConstraintDiagnostic[];
+  infectionRegistry: InfectionRegistry;
 }
 
 export function createContext(options: InferOptions = {}): Context {
@@ -136,6 +158,14 @@ export function createContext(options: InferOptions = {}): Context {
     holes: new Map(),
     constraintStubs: [],
     layer1Diagnostics: [],
+    infectionRegistry: options.infectionRegistry ?? new InfectionRegistry(),
+    identityBindings: new Map(),
+    identityStates: new Map(),
+    exprIdentities: new Map(),
+    identityUsage: new Map(),
+    functionParamEffects: new Map(),
+    functionParamStack: [],
+    functionScopeCounter: 1,
   };
 }
 
@@ -224,6 +254,36 @@ export type ConstraintStub =
     kind: "constraint_alias";
     id1: Identity;
     id2: Identity;
+  }
+  | {
+    kind: "require_exact_state";
+    node: NodeId;
+    domain: string;
+    tags: string[];
+  }
+  | {
+    kind: "require_any_state";
+    node: NodeId;
+    domain: string;
+    tags: string[];
+  }
+  | {
+    kind: "add_state_tags";
+    node: NodeId;
+    domain: string;
+    tags: string[];
+  }
+  | {
+    kind: "require_at_return";
+    node: NodeId;
+    domain: string;
+    tags: string[];
+    policy?: string;
+  }
+  | {
+    kind: "call_rejects_infection";
+    node: NodeId;
+    policy?: string;
   };
 // NOTE: constraint_merge is NOT needed - branch_join already handles merge semantics
 
@@ -406,6 +466,76 @@ export function emitConstraintAlias(
   });
 }
 
+export function emitRequireExactState(
+  ctx: Context,
+  node: NodeId,
+  domain: string,
+  tags: string[],
+): void {
+  ctx.constraintStubs.push({
+    kind: "require_exact_state",
+    node,
+    domain,
+    tags: [...tags],
+  });
+}
+
+export function emitRequireAnyState(
+  ctx: Context,
+  node: NodeId,
+  domain: string,
+  tags: string[],
+): void {
+  ctx.constraintStubs.push({
+    kind: "require_any_state",
+    node,
+    domain,
+    tags: [...tags],
+  });
+}
+
+export function emitAddStateTags(
+  ctx: Context,
+  node: NodeId,
+  domain: string,
+  tags: string[],
+): void {
+  ctx.constraintStubs.push({
+    kind: "add_state_tags",
+    node,
+    domain,
+    tags: [...tags],
+  });
+}
+
+export function emitRequireAtReturn(
+  ctx: Context,
+  node: NodeId,
+  domain: string,
+  tags: string[],
+  policy?: string,
+): void {
+  ctx.constraintStubs.push({
+    kind: "require_at_return",
+    node,
+    domain,
+    tags: [...tags],
+    policy,
+  });
+}
+
+export function emitCallRejectsInfection(
+  ctx: Context,
+  node: NodeId,
+  policy?: string,
+): void {
+  ctx.constraintStubs.push({
+    kind: "call_rejects_infection",
+    node,
+    policy,
+  });
+}
+
 // ============================================================================
 // End of Constraint Flow Emit Functions
 // ============================================================================
@@ -512,13 +642,30 @@ export function cloneAdtEnv(source: TypeEnvADT): TypeEnvADT {
   return clone;
 }
 
+function cloneIdentityBindings(
+  source: Map<string, Map<string, Set<number>>>,
+): Map<string, Map<string, Set<number>>> {
+  const clone = new Map<string, Map<string, Set<number>>>();
+  for (const [name, byDomain] of source.entries()) {
+    const domainClone = new Map<string, Set<number>>();
+    for (const [domain, ids] of byDomain.entries()) {
+      domainClone.set(domain, new Set(ids));
+    }
+    clone.set(name, domainClone);
+  }
+  return clone;
+}
+
 export function withScopedEnv<T>(ctx: Context, fn: () => T): T {
   const previous = ctx.env;
+  const previousIdentities = ctx.identityBindings;
   ctx.env = new Map(ctx.env);
+  ctx.identityBindings = cloneIdentityBindings(ctx.identityBindings);
   try {
     return fn();
   } finally {
     ctx.env = previous;
+    ctx.identityBindings = previousIdentities;
   }
 }
 
