@@ -1130,6 +1130,10 @@ function unifyTypes(
   const left = applySubstitution(a, subst);
   const right = applySubstitution(b, subst);
 
+  if (isHoleType(left) || isHoleType(right)) {
+    return { success: true, subst };
+  }
+
   if (left.kind === "var") {
     return bindVar(left.id, right, subst);
   }

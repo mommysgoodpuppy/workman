@@ -209,6 +209,7 @@ export function solveConstraints(input: SolveInput): SolverResult {
   reifyConstraintLabelsIntoTypes(
     constraintFlow,
     resolvedNodeTypes,
+    infectionRegistry,
   );
 
   // Detect conflicts (multi-domain)
@@ -1550,6 +1551,38 @@ function normalizeStateKind(stateKind?: string): string {
   return stateKind?.replaceAll("_", "").toLowerCase() ?? "";
 }
 
+function normalizeRowBagRow(row: EffectRowType): EffectRowType {
+  const { identities, nonIdentity } = collectIdentityTags(row);
+  if (identities.size === 0 || nonIdentity.size === 0) {
+    return row;
+  }
+  const baseNames = new Set<string>();
+  for (const tags of identities.values()) {
+    for (const base of tags.keys()) {
+      baseNames.add(base);
+    }
+  }
+  const filteredCases = new Map<string, Type | null>();
+  for (const [tag, payload] of row.cases.entries()) {
+    const parsed = splitIdentityTag(tag);
+    if (parsed) {
+      filteredCases.set(tag, payload);
+      continue;
+    }
+    if (!baseNames.has(tag)) {
+      filteredCases.set(tag, payload);
+    }
+  }
+  if (filteredCases.size === row.cases.size) {
+    return row;
+  }
+  return {
+    kind: "effect_row",
+    cases: filteredCases,
+    tail: row.tail,
+  };
+}
+
 function mergeRowsForDomain(
   registry: InfectionRegistry,
   domain: string,
@@ -1927,6 +1960,7 @@ function detectRowBagDuplicateTags(
 function reifyConstraintLabelsIntoTypes(
   flow: ConstraintFlow,
   resolved: Map<NodeId, Type>,
+  registry: InfectionRegistry,
 ): void {
   for (const [nodeId, domainLabels] of flow.labels.entries()) {
     let current = resolved.get(nodeId);
@@ -1937,8 +1971,19 @@ function reifyConstraintLabelsIntoTypes(
       if (!carrierInfo || carrierInfo.domain !== label.domain) {
         continue;
       }
-      const baseState = ensureRow(carrierInfo.state);
-      const mergedState = effectRowUnion(baseState, label.row);
+      const stateKind = normalizeStateKind(
+        registry.domains.get(label.domain)?.stateKind,
+      );
+      let baseState = ensureRow(carrierInfo.state);
+      let labelRow = label.row;
+      if (stateKind === "rowbag") {
+        baseState = normalizeRowBagRow(baseState);
+        labelRow = normalizeRowBagRow(labelRow);
+      }
+      let mergedState = effectRowUnion(baseState, labelRow);
+      if (stateKind === "rowbag") {
+        mergedState = normalizeRowBagRow(mergedState);
+      }
       const rejoined = joinCarrier(
         carrierInfo.domain,
         carrierInfo.value,
