@@ -22,6 +22,9 @@
 		},
 		{
 			"include": "#strings"
+		},
+		{
+			"include": "#chars"
 		}
 	],
 	"repository": {
@@ -37,7 +40,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.wm",
-					"match": "\\b(let|rec|and|type|record|match|from|import|export|as)\\b"
+					"match": "\\b(let|rec|and|type|record|match|from|import|export|as|domain|op|policy|infectious)\\b"
 				}
 			]
 		},
@@ -93,6 +96,17 @@
 			"name": "string.quoted.double.wm",
 			"begin": "\"",
 			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.wm",
+					"match": "\\\\."
+				}
+			]
+		},
+		"chars": {
+			"name": "string.quoted.single.wm",
+			"begin": "'",
+			"end": "'",
 			"patterns": [
 				{
 					"name": "constant.character.escape.wm",
