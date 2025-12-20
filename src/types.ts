@@ -935,10 +935,17 @@ export function cloneConstructorInfo(info: ConstructorInfo): ConstructorInfo {
   };
 }
 
+const GENERIC_NAMES_TYPETOSTRING = ["T", "U", "V", "W", "X", "Y", "Z"];
+
+function getGenericName(id: number): string {
+  // Just cycle through T, U, V, etc. without showing the raw ID
+  return GENERIC_NAMES_TYPETOSTRING[id % GENERIC_NAMES_TYPETOSTRING.length];
+}
+
 export function typeToString(type: Type): string {
   switch (type.kind) {
     case "var":
-      return `'t${type.id}`;
+      return getGenericName(type.id);
     case "int":
       return "Int";
     case "bool":
@@ -955,6 +962,17 @@ export function typeToString(type: Type): string {
       if (type.args.length === 0) {
         return type.name;
       }
+
+      // Special handling for carrier types with domain state
+      // If the second parameter is just a bare type variable, show it as <_>
+      if (
+        isCarrierType(type) && type.args.length === 2 &&
+        type.args[1].kind === "var"
+      ) {
+        const firstArg = typeToString(type.args[0]);
+        return `${type.name}<${firstArg}, <_>>`;
+      }
+
       const args = type.args.map(typeToString).join(", ");
       return `${type.name}<${args}>`;
     }

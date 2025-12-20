@@ -1,5 +1,6 @@
 import {
   ensureRow,
+  isCarrierType,
   provenanceToString,
   type Type,
   type TypeScheme,
@@ -35,6 +36,17 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       if (type.args.length === 0) {
         return type.name;
       }
+
+      // Special handling for carrier types with domain state
+      // If the second parameter is just a bare type variable, show it as <_>
+      if (
+        isCarrierType(type) && type.args.length === 2 &&
+        type.args[1].kind === "var"
+      ) {
+        const firstArg = formatType(type.args[0], context, 2);
+        return `${type.name}<${firstArg}, <_>>`;
+      }
+
       const args = type.args.map((arg) => formatType(arg, context, 2)).join(
         ", ",
       );
@@ -61,7 +73,7 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       if (type.tail?.kind === "effect_row") {
         flattenedType = ensureRow(type);
       }
-      
+
       // Show error_row structure to make infectious types visible
       // If this row has no explicit cases and only a tail, wrap it in angle brackets
       // to show it's an error row (e.g., <ParseError> instead of ParseError)
@@ -70,7 +82,7 @@ function formatType(type: Type, context: PrintContext, prec: number): string {
       const parts = entries.map(([label, payload]) =>
         payload ? `${label}(${formatType(payload, context, 0)})` : label
       );
-      
+
       if (flattenedType.tail) {
         const tailStr = formatType(flattenedType.tail, context, 0);
         if (parts.length === 0) {

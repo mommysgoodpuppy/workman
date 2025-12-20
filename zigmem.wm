@@ -1,23 +1,14 @@
 from "std/zig/mem" import { alloc, free, write, slice };
-from "std/zig/bytes" import { toList };
-from "std/core/string" import { stringToList, listToString };
-from "std/list" import { listAppend };
+from "std/zig/debug" import { print };
 
 let main = () => {
-  
-  -- in workman free + use cant be done in the same scope
-  -- so this is the default convention
   let buf = {
     let buffer = alloc(100);
 
     'H' >> buffer[0];
     'i' >> buffer[1];
     
-
-    let view = slice(buffer, 0, 2);
-    let pref = "Buffer says: " >> stringToList;
-    let data = view >> toList;
-    nativePrint(listToString(listAppend(pref, data)));
+    print("Buffer says: {s}\n", slice(buffer, 0, 2));
     buffer
   };
 
