@@ -1570,11 +1570,29 @@ class SurfaceParser {
   }
 
   private createPipeCall(left: Expr, right: Expr): Expr {
+    if (right.kind === "index") {
+      const callee: Expr = {
+        kind: "identifier",
+        name: "write",
+        span: this.spanFrom(right.span.start, right.span.start),
+        id: nextNodeId(),
+      };
+      return {
+        kind: "call",
+        callee,
+        arguments: [right.target, right.index, left],
+        span: this.spanFrom(left.span.start, right.span.end),
+        id: nextNodeId(),
+      };
+    }
+
+    const leftArgs = left.kind === "tuple" ? left.elements : [left];
+
     if (right.kind === "call") {
       return {
         kind: "call",
         callee: right.callee,
-        arguments: [left, ...right.arguments],
+        arguments: [...leftArgs, ...right.arguments],
         span: this.spanFrom(left.span.start, right.span.end),
         id: nextNodeId(),
       };
@@ -1583,7 +1601,7 @@ class SurfaceParser {
     return {
       kind: "call",
       callee: right,
-      arguments: [left],
+      arguments: leftArgs,
       span: this.spanFrom(left.span.start, right.span.end),
       id: nextNodeId(),
     };
@@ -1617,6 +1635,19 @@ class SurfaceParser {
             id: nextNodeId(),
           };
         }
+        continue;
+      }
+
+      if (this.matchSymbol("[")) {
+        const indexExpr = this.parseExpression();
+        const close = this.expectSymbol("]");
+        expr = {
+          kind: "index",
+          target: expr,
+          index: indexExpr,
+          span: this.spanFrom(expr.span.start, close.end),
+          id: nextNodeId(),
+        };
         continue;
       }
 

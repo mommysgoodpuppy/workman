@@ -85,6 +85,7 @@ op mem.write {
   domain mem;
   target arg0;
   requiresExact [Opened];
+  rejectDomains [effect];
 };
 
 policy pure {

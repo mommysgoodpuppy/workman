@@ -2,7 +2,8 @@ import {
   compileWorkmanGraph,
   type WorkmanModuleArtifacts,
 } from "../backends/compiler/frontends/workman.ts";
-import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
+import { emitModuleGraph as emitJsModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
+import { emitModuleGraph as emitZigModuleGraph } from "../backends/compiler/zig/graph_emitter.ts";
 import {
   collectCompiledValues,
   invokeMainIfPresent,
@@ -19,7 +20,9 @@ import { substituteHoleSolutionsInType } from "./type_utils.ts";
 import type { SourceSpan } from "../src/ast.ts";
 
 const RUN_USAGE =
-  "Usage: wm [fmt|type [--line <line>] |err|compile] <file.wm> | wm <file.wm> | wm (REPL mode)";
+  "Usage: wm [fmt|type [--line <line>] |err|compile] <file.wm> | wm <file.wm> [--backend <js|zig>] | wm (REPL mode)";
+
+type RunBackend = "js" | "zig";
 
 interface NodeLocationEntry {
   path: string;
@@ -44,6 +47,7 @@ export async function runProgramCommand(
   let lineNumber: number | undefined = undefined;
   let skipEvaluation = false;
   let showErrorsOnly = false;
+  let backend: RunBackend = "zig";
 
   if (args[0] === "type") {
     let index = 1;
@@ -76,11 +80,36 @@ export async function runProgramCommand(
     showErrorsOnly = true;
     skipEvaluation = true;
   } else {
-    if (args.length !== 1) {
+    for (let index = 0; index < args.length; index += 1) {
+      const arg = args[index];
+      if (arg === "--backend" || arg === "-b") {
+        const value = args[index + 1];
+        if (!value) {
+          console.error("Missing value for --backend");
+          IO.exit(1);
+        }
+        if (value !== "js" && value !== "zig") {
+          console.error("Unknown backend (expected 'js' or 'zig')");
+          IO.exit(1);
+        }
+        backend = value;
+        index += 1;
+        continue;
+      }
+      if (arg.startsWith("-")) {
+        console.error(RUN_USAGE);
+        IO.exit(1);
+      }
+      if (filePath) {
+        console.error("Multiple entry paths provided");
+        IO.exit(1);
+      }
+      filePath = arg;
+    }
+    if (!filePath) {
       console.error(RUN_USAGE);
       IO.exit(1);
     }
-    filePath = args[0];
   }
 
   if (!filePath.endsWith(".wm")) {
@@ -123,12 +152,16 @@ export async function runProgramCommand(
 
     if (!skipEvaluation) {
       const nodeLocations = buildNodeLocationIndex(compileResult.modules);
-      await executeModule(
-        coreModule,
-        compileResult.coreGraph,
-        debugMode,
-        nodeLocations,
-      );
+      if (backend === "js") {
+        await executeJsModule(
+          coreModule,
+          compileResult.coreGraph,
+          debugMode,
+          nodeLocations,
+        );
+      } else {
+        await executeZigModule(compileResult.coreGraph);
+      }
     }
   } catch (error) {
     if (error instanceof WorkmanError) {
@@ -445,6 +478,15 @@ async function reportErrorsOnly(
             : "value";
           message +=
             `Pattern '${name}' would bind a new name. Use Var(${name}) to bind or ^${name} to pin an existing value.`;
+        } else if (diag.reason === "call_rejects_domains" && diag.details) {
+          const details = diag.details as Record<string, unknown>;
+          const domains = Array.isArray(details.domains)
+            ? (details.domains as string[]).join(", ")
+            : "unknown";
+          const policy = typeof details.policy === "string"
+            ? ` (${details.policy})`
+            : "";
+          message += `Call rejects domains${policy}: ${domains}`;
         } else if (diag.reason === "non_exhaustive_match" && diag.details) {
           const details = diag.details as Record<string, unknown>;
           message += "Match expression is not exhaustive";
@@ -530,7 +572,7 @@ function buildNodeLocationIndex(
   return index;
 }
 
-async function executeModule(
+async function executeJsModule(
   coreModule: any,
   coreGraph: any,
   debugMode: boolean,
@@ -538,7 +580,7 @@ async function executeModule(
 ): Promise<void> {
   const tempDir = await IO.makeTempDir({ prefix: "workman-cli-" });
   try {
-    const emitResult = await emitModuleGraph(coreGraph, {
+    const emitResult = await emitJsModuleGraph(coreGraph, {
       outDir: tempDir,
     });
     const moduleUrl = toFileUrl(emitResult.entryPath).href;
@@ -559,6 +601,36 @@ async function executeModule(
       }
     } catch (runtimeError) {
       throw enhanceRuntimeError(runtimeError, nodeLocations);
+    }
+  } finally {
+    try {
+      await IO.remove(tempDir, { recursive: true });
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
+async function executeZigModule(
+  coreGraph: any,
+): Promise<void> {
+  if (typeof Deno === "undefined") {
+    throw new Error("Zig backend execution requires the Deno runtime");
+  }
+  const tempDir = await IO.makeTempDir({ prefix: "workman-zig-" });
+  try {
+    const emitResult = await emitZigModuleGraph(coreGraph, {
+      outDir: tempDir,
+    });
+    const command = new Deno.Command("zig", {
+      args: ["run", emitResult.rootPath],
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const result = await command.output();
+    if (result.code !== 0) {
+      throw new Error(`zig run failed with exit code ${result.code}`);
     }
   } finally {
     try {

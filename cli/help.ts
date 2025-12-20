@@ -3,7 +3,9 @@ export const HELP_TEXT = `
 
 Usage:
   wm                    Start interactive REPL
-  wm <file.wm>          Run a Workman file
+  wm <file.wm>          Run a Workman file (default backend: zig)
+  wm <file.wm> --backend js
+                        Run a Workman file with the JS backend
   wm --debug <file.wm>  Run a file and print types/values
   wm type <file.wm>     Type-check a file (skip evaluation)
   wm err <file.wm>      Check for type errors only
@@ -22,6 +24,8 @@ Examples:
   wm compile main.wm    # Emit Zig modules into ./dist
   wm compile main.wm --backend js
                         # Emit JS modules into ./dist
+  wm main.wm --backend js
+                        # Build + run using the JS backend
 
 REPL Commands:
   :help                 Show REPL-specific commands

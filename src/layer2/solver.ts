@@ -2138,6 +2138,23 @@ function checkDomainStubs(
           },
         });
       }
+    } else if (stub.kind === "call_rejects_domains") {
+      const labels = flow.labels.get(stub.node);
+      if (!labels) continue;
+      const rejected = stub.domains.some((domain) => {
+        const label = labels.get(domain);
+        return label ? labelHasInfection(label) : false;
+      });
+      if (rejected) {
+        diagnostics.push({
+          origin: stub.node,
+          reason: "call_rejects_domains" as ConstraintDiagnosticReason,
+          details: {
+            policy: stub.policy,
+            domains: stub.domains,
+          },
+        });
+      }
     }
   }
 

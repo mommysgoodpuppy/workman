@@ -122,6 +122,10 @@ function canonicalizeExpr(expr: Expr): Expr {
     case "record_projection":
       expr.target = canonicalizeExpr(expr.target);
       return expr;
+    case "index":
+      expr.target = canonicalizeExpr(expr.target);
+      expr.index = canonicalizeExpr(expr.index);
+      return expr;
     case "binary":
       expr.left = canonicalizeExpr(expr.left);
       expr.right = canonicalizeExpr(expr.right);

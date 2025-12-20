@@ -181,3 +181,68 @@ Deno.test("parser assigns unique and deterministic node IDs", () => {
   // First ID should be 0
   assertEquals(ids1[0], 0);
 });
+
+Deno.test("parses index expression", () => {
+  const source = `let x = buffer[0];`;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+
+  assertEquals(program.declarations.length, 1);
+  const decl = program.declarations[0];
+  if (decl.kind !== "let") {
+    throw new Error("expected let declaration");
+  }
+
+  const body = decl.body;
+  if (body.result?.kind !== "index") {
+    throw new Error("expected index expression");
+  }
+  const indexExpr = body.result;
+  assertEquals(indexExpr.target.kind, "identifier");
+  if (indexExpr.target.kind === "identifier") {
+    assertEquals(indexExpr.target.name, "buffer");
+  }
+  assertEquals(indexExpr.index.kind, "literal");
+  if (indexExpr.index.kind === "literal") {
+    assertEquals(indexExpr.index.literal.kind, "int");
+    if (indexExpr.index.literal.kind === "int") {
+      assertEquals(indexExpr.index.literal.value, 0);
+    }
+  }
+});
+
+Deno.test("parses pipe into index as write call", () => {
+  const source = `let x = 'H' >> buffer[0];`;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+
+  assertEquals(program.declarations.length, 1);
+  const decl = program.declarations[0];
+  if (decl.kind !== "let") {
+    throw new Error("expected let declaration");
+  }
+
+  const body = decl.body;
+  if (body.result?.kind !== "call") {
+    throw new Error("expected call expression");
+  }
+
+  const call = body.result;
+  assertEquals(call.callee.kind, "identifier");
+  if (call.callee.kind === "identifier") {
+    assertEquals(call.callee.name, "write");
+  }
+  assertEquals(call.arguments.length, 3);
+  assertEquals(call.arguments[0].kind, "identifier");
+  if (call.arguments[0].kind === "identifier") {
+    assertEquals(call.arguments[0].name, "buffer");
+  }
+  assertEquals(call.arguments[1].kind, "literal");
+  if (call.arguments[1].kind === "literal") {
+    assertEquals(call.arguments[1].literal.kind, "int");
+  }
+  assertEquals(call.arguments[2].kind, "literal");
+  if (call.arguments[2].kind === "literal") {
+    assertEquals(call.arguments[2].literal.kind, "char");
+  }
+});

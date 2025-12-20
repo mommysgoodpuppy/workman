@@ -284,6 +284,12 @@ export type ConstraintStub =
     kind: "call_rejects_infection";
     node: NodeId;
     policy?: string;
+  }
+  | {
+    kind: "call_rejects_domains";
+    node: NodeId;
+    domains: string[];
+    policy?: string;
   };
 // NOTE: constraint_merge is NOT needed - branch_join already handles merge semantics
 
@@ -532,6 +538,21 @@ export function emitCallRejectsInfection(
   ctx.constraintStubs.push({
     kind: "call_rejects_infection",
     node,
+    policy,
+  });
+}
+
+export function emitCallRejectsDomains(
+  ctx: Context,
+  node: NodeId,
+  domains: string[],
+  policy?: string,
+): void {
+  if (domains.length === 0) return;
+  ctx.constraintStubs.push({
+    kind: "call_rejects_domains",
+    node,
+    domains: [...domains],
     policy,
   });
 }

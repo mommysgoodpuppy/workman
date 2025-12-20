@@ -28,6 +28,7 @@ export interface OpRuleDefinition {
   adds?: string[];
   removes?: string[];
   callPolicy?: string;
+  rejectDomains?: string[];
   entries: RuleEntry[];
 }
 
@@ -36,6 +37,7 @@ export interface PolicyDefinition {
   domain?: string;
   requireAtReturn?: string[];
   rejectsAllDomains?: boolean;
+  rejectDomains?: string[];
   entries: RuleEntry[];
 }
 
@@ -143,6 +145,8 @@ function parseOpRule(decl: OpRuleDeclaration): OpRuleDefinition {
     removes: getListByKey(decl.entries, "removes"),
     callPolicy: getNameByKey(decl.entries, "callPolicy") ??
       getNameByKey(decl.entries, "call_policy"),
+    rejectDomains: getListByKey(decl.entries, "rejectDomains") ??
+      getListByKey(decl.entries, "reject_domains"),
     entries: decl.entries,
   };
 }
@@ -153,6 +157,8 @@ function parsePolicyRule(decl: PolicyDeclaration): PolicyDefinition {
     domain: getNameByKey(decl.entries, "domain"),
     requireAtReturn: getListByKey(decl.entries, "requireAtReturn"),
     rejectsAllDomains: hasFlag(decl.entries, "rejectsAllDomains"),
+    rejectDomains: getListByKey(decl.entries, "rejectDomains") ??
+      getListByKey(decl.entries, "reject_domains"),
     entries: decl.entries,
   };
 }

@@ -148,6 +148,10 @@ class Formatter {
       "record_projection",
       (expr) => `${this.formatExpr(expr.target)}.${expr.field}`,
     );
+    this.exprFormatters.set(
+      "index",
+      (expr) => `${this.formatExpr(expr.target)}[${this.formatExpr(expr.index)}]`,
+    );
     this.exprFormatters.set("binary", (expr) => this.formatBinary(expr));
     this.exprFormatters.set(
       "unary",
@@ -933,6 +937,8 @@ class Formatter {
         return true;
       case "call":
       case "constructor":
+      case "record_projection":
+      case "index":
         return true;
       case "tuple":
         return expr.elements.length <= 2;

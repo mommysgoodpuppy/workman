@@ -33,7 +33,8 @@ export type ConstraintDiagnosticReason =
   | "require_exact_state"
   | "require_any_state"
   | "require_at_return"
-  | "call_rejects_infection";
+  | "call_rejects_infection"
+  | "call_rejects_domains";
 
 export interface ConstraintDiagnostic {
   origin: NodeId;

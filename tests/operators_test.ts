@@ -217,6 +217,29 @@ Deno.test("parser: parses complex expression with multiple operators", () => {
   }
 });
 
+Deno.test("parser: spreads tuple arguments into pipeline calls", () => {
+  const source = `
+    let add = (a, b) => { a };
+    let result = (1, 2) >> add;
+  `;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+
+  const resultDecl = program.declarations[1];
+  if (resultDecl.kind !== "let") {
+    throw new Error("expected let declaration");
+  }
+
+  const body = resultDecl.body;
+  if (body.result?.kind !== "call") {
+    throw new Error("expected call expression");
+  }
+
+  assertEquals(body.result.arguments.length, 2);
+  assertEquals(body.result.arguments[0].kind, "literal");
+  assertEquals(body.result.arguments[1].kind, "literal");
+});
+
 // ============================================================================
 // TYPE INFERENCE TESTS
 // ============================================================================

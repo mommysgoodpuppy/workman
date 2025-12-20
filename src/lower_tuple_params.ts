@@ -87,6 +87,10 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
     case "record_projection":
       lowerExpr(expr.target, ctx);
       return;
+    case "index":
+      lowerExpr(expr.target, ctx);
+      lowerExpr(expr.index, ctx);
+      return;
     case "call":
       lowerExpr(expr.callee, ctx);
       for (const argument of expr.arguments) {

@@ -617,7 +617,7 @@ export function registerPrelude(ctx: Context): void {
   registerMemPrimitive(ctx, "nativeAlloc", ["int"], "int");
   registerMemPrimitive(ctx, "nativeFree", ["int", "int"], "unit");
   registerMemPrimitive(ctx, "nativeRead", ["int", "int"], "int");
-  registerMemPrimitive(ctx, "nativeWrite", ["int", "int", "int"], "unit");
+  registerMemPrimitive(ctx, "nativeWrite", ["int", "int", "char"], "unit");
   registerMemPrimitive(ctx, "nativeMemcpy", ["int", "int", "int"], "unit");
 }
 
@@ -830,12 +830,16 @@ function registerListToStringPrimitive(ctx: Context, name: string): void {
 function registerMemPrimitive(
   ctx: Context,
   name: string,
-  args: ("int" | "unit")[],
+  args: ("int" | "unit" | "char")[],
   result: "int" | "unit",
 ): void {
   const resultType: Type = result === "int" ? { kind: "int" } : { kind: "unit" };
   const type = args.reduceRight<Type>((acc, arg) => {
-    const argType: Type = arg === "int" ? { kind: "int" } : { kind: "unit" };
+    const argType: Type = arg === "int"
+      ? { kind: "int" }
+      : arg === "char"
+      ? { kind: "char" }
+      : { kind: "unit" };
     return { kind: "func", from: argType, to: acc };
   }, resultType);
   const scheme: TypeScheme = {

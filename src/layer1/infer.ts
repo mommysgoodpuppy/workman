@@ -17,6 +17,7 @@ import type {
 } from "../ast.ts";
 import { lowerTupleParameters } from "../lower_tuple_params.ts";
 import { canonicalizeMatch } from "../passes/canonicalize_match.ts";
+import { lowerIndexAccess } from "../passes/lower_index_access.ts";
 import {
   applySubstitution,
   applySubstitutionScheme,
@@ -73,6 +74,7 @@ import {
   emitRequireExactState,
   emitAddStateTags,
   emitCallRejectsInfection,
+  emitCallRejectsDomains,
   expectFunctionType,
   generalizeInContext,
   holeOriginFromExpr,
@@ -2326,6 +2328,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         if (opRule?.callPolicy === "pure") {
           emitCallRejectsInfection(ctx, expr.id, opRule.callPolicy);
         }
+        if (opRule?.rejectDomains?.length) {
+          emitCallRejectsDomains(ctx, expr.id, opRule.rejectDomains, opRule.name);
+        }
 
         const policies = getPoliciesForTarget(
           ctx.infectionRegistry,
@@ -2334,6 +2339,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         for (const policy of policies) {
           if (policy.rejectsAllDomains) {
             emitCallRejectsInfection(ctx, expr.id, policy.name);
+          }
+          if (policy.rejectDomains?.length) {
+            emitCallRejectsDomains(ctx, expr.id, policy.rejectDomains, policy.name);
           }
         }
 
@@ -2679,6 +2687,7 @@ export function inferProgram(
   program: Program,
   options: InferOptions = {},
 ): InferResult {
+  lowerIndexAccess(program);
   const canonicalProgram = canonicalizeMatch(program);
   lowerTupleParameters(canonicalProgram);
   const ctx = createContext({
