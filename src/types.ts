@@ -364,7 +364,35 @@ export function collapseCarrier(type: Type): Type {
 
 // Check if a type is ANY carrier type
 export function isCarrierType(type: Type): boolean {
+  if (type.kind !== "constructor") return false;
   return findCarrierDomain(type) !== null;
+}
+
+// Debug: get registry size
+export function getCarrierRegistrySize(): number {
+  return CARRIER_REGISTRY.size;
+}
+
+// Debug: get all registered carrier type names
+export function getRegisteredCarrierInfo(): { domain: string; sampleTypeName: string }[] {
+  const result: { domain: string; sampleTypeName: string }[] = [];
+  for (const [domain, carriers] of CARRIER_REGISTRY.entries()) {
+    for (const ops of carriers) {
+      // Try to guess the type name by testing common names
+      for (const testName of ["Mem", "Result", "Hole", "Async", "IResult"]) {
+        const testType: Type = {
+          kind: "constructor",
+          name: testName,
+          args: [{ kind: "int" }, { kind: "int" }],
+        };
+        if (ops.is(testType)) {
+          result.push({ domain, sampleTypeName: testName });
+          break;
+        }
+      }
+    }
+  }
+  return result;
 }
 
 // Check if a type has a specific carrier domain
@@ -966,8 +994,8 @@ export function typeToString(type: Type): string {
       // Special handling for carrier types with domain state
       // If the second parameter is just a bare type variable, show it as <_>
       if (
-        isCarrierType(type) && type.args.length === 2 &&
-        type.args[1].kind === "var"
+        isCarrierType(type) &&
+        type.args.length === 2 && type.args[1].kind === "var"
       ) {
         const firstArg = typeToString(type.args[0]);
         return `${type.name}<${firstArg}, <_>>`;

@@ -6,7 +6,12 @@ import {
   PartialType,
 } from "../../../src/layer3/mod.ts";
 import { formatScheme } from "../../../src/type_printer.ts";
-import { Type, typeToString } from "../../../src//types.ts";
+import {
+  getCarrierRegistrySize,
+  getRegisteredCarrierInfo,
+  Type,
+  typeToString,
+} from "../../../src/types.ts";
 
 type LspServerContext = WorkmanLanguageServer;
 
@@ -15,7 +20,7 @@ export function renderNodeView(
   view: NodeView,
   layer3: Layer3Result,
   coverage?: MatchCoverageView,
-  adtEnv?: Map<string, import("../../../src//types.ts").TypeInfo>,
+  adtEnv?: Map<string, import("../../../src/types.ts").TypeInfo>,
 ): string | null {
   let typeStr = partialTypeToString(ctx, view.finalType, layer3);
   if (!typeStr) {

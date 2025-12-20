@@ -96,11 +96,14 @@ export interface Context {
   identityUsage: Map<number, Map<string, Map<NodeId, number>>>;
   functionParamEffects: Map<
     string,
-    Map<number, Map<string, {
-      requiresExact: Set<string>;
-      requiresAny: Set<string>;
-      adds: Set<string>;
-    }>>
+    Map<
+      number,
+      Map<string, {
+        requiresExact: Set<string>;
+        requiresAny: Set<string>;
+        adds: Set<string>;
+      }>
+    >
   >;
   functionParamStack: {
     name: string;

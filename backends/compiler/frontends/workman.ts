@@ -1,6 +1,6 @@
 import {
-  isStdCoreModule,
   buildInfectionRegistryForModule,
+  isStdCoreModule,
   loadModuleSummaries,
   type ModuleGraph,
   type ModuleLoaderOptions,
@@ -47,7 +47,6 @@ export async function compileWorkmanGraph(
   entryPath: string,
   options: WorkmanCompilerOptions = {},
 ): Promise<WorkmanCompileResult> {
-
   const loaderOptions: ModuleLoaderOptions = {
     ...options.loader,
     skipEvaluation: options.loader?.skipEvaluation ?? true,
@@ -55,7 +54,6 @@ export async function compileWorkmanGraph(
 
   const analysisOptions = options.analysis ?? {};
   const loweringOptions = options.lowering ?? {};
-
 
   const { graph: moduleGraph, summaries } = await loadModuleSummaries(
     entryPath,
@@ -277,4 +275,3 @@ function cloneAdtMap(
   }
   return cloned;
 }
-

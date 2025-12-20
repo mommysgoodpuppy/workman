@@ -10,12 +10,13 @@ console.log = console.error;
 
 import { formatScheme } from "../../../src//type_printer.ts";
 import {
+  getCarrierRegistrySize,
   getProvenance,
   isHoleType,
   type Type,
   type TypeScheme,
   typeToString,
-} from "../../../src//types.ts";
+} from "../../../src/types.ts";
 import { type Layer3Result } from "../../../src//layer3/mod.ts";
 import type {
   WorkmanModuleArtifacts,
@@ -65,7 +66,7 @@ export class WorkmanLanguageServer {
       env: Map<string, TypeScheme>;
       layer3: Layer3Result;
       program: MProgram;
-      adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>;
+      adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>;
       entryPath: string;
       graph: ModuleGraph;
       modules: ReadonlyMap<string, WorkmanModuleArtifacts>;
@@ -309,7 +310,7 @@ export class WorkmanLanguageServer {
   formatSchemeWithPartials(
     scheme: TypeScheme,
     layer3: Layer3Result,
-    adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>,
+    adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
   ): string {
     const substitutedScheme = this.applyHoleSolutionsToScheme(
       scheme,
@@ -466,7 +467,7 @@ export class WorkmanLanguageServer {
 
   summarizeEffectRowFromType(
     type: Type | undefined,
-    adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>,
+    adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
   ): string | null {
     if (!type) return null;
     if (
@@ -476,7 +477,7 @@ export class WorkmanLanguageServer {
     const errArg = type.args[1];
     const ensureRow = (
       t: Type,
-    ): import("../../../src//types.ts").EffectRowType => (
+    ): import("../../../src/types.ts").EffectRowType => (
       t.kind === "effect_row"
         ? t
         : { kind: "effect_row", cases: new Map(), tail: t }

@@ -27,11 +27,11 @@ import {
   cloneTypeScheme,
   collapseCarrier,
   collapseResultType,
+  createEffectRow,
   effectLabel,
   type EffectRowType,
   effectRowUnion,
   ensureRow,
-  createEffectRow,
   flattenHoleType,
   flattenResultType,
   freeTypeVars,
@@ -66,15 +66,15 @@ import {
   type Context,
   createContext,
   createUnknownAndRegister,
+  emitAddStateTags,
+  emitCallRejectsDomains,
+  emitCallRejectsInfection,
   emitConstraintFlow,
   emitConstraintRewrite,
   emitConstraintSource,
   emitRequireAnyState,
   emitRequireAtReturn,
   emitRequireExactState,
-  emitAddStateTags,
-  emitCallRejectsInfection,
-  emitCallRejectsDomains,
   expectFunctionType,
   generalizeInContext,
   holeOriginFromExpr,
@@ -172,7 +172,10 @@ function normalizeStateKind(stateKind?: string): string {
   return stateKind?.replaceAll("_", "").toLowerCase() ?? "";
 }
 
-function isRowBagDomain(registry: Context["infectionRegistry"], domain: string) {
+function isRowBagDomain(
+  registry: Context["infectionRegistry"],
+  domain: string,
+) {
   const rule = registry.domains.get(domain);
   return normalizeStateKind(rule?.stateKind) === "rowbag";
 }
@@ -1073,80 +1076,80 @@ function inferLetBinding(
         });
       });
 
-    let bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
+      let bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
 
-    if (returnAnnotation) {
-      const returnType = convertTypeExpr(
-        ctx,
-        returnAnnotation,
-        annotationScope,
-      );
-      storeAnnotationType(ctx, returnAnnotation, returnType);
-      const alignedReturn = alignAnnotationWithCarrier(bodyType, returnType);
-      if (isHoleType(bodyType) && !isHoleType(alignedReturn)) {
-        bodyType = applyCurrentSubst(ctx, alignedReturn);
-      } else if (unify(ctx, bodyType, alignedReturn)) {
-        bodyType = applyCurrentSubst(ctx, alignedReturn);
-      } else {
-        const failure = ctx.lastUnifyFailure;
-        const subject = materializeExpr(ctx, body.result ?? body);
-        if (failure?.kind === "occurs_check") {
-          const mark = markOccursCheck(
-            ctx,
-            body,
-            subject,
-            failure.left,
-            failure.right,
-          );
-          bodyType = mark.type;
+      if (returnAnnotation) {
+        const returnType = convertTypeExpr(
+          ctx,
+          returnAnnotation,
+          annotationScope,
+        );
+        storeAnnotationType(ctx, returnAnnotation, returnType);
+        const alignedReturn = alignAnnotationWithCarrier(bodyType, returnType);
+        if (isHoleType(bodyType) && !isHoleType(alignedReturn)) {
+          bodyType = applyCurrentSubst(ctx, alignedReturn);
+        } else if (unify(ctx, bodyType, alignedReturn)) {
+          bodyType = applyCurrentSubst(ctx, alignedReturn);
         } else {
-          const expected = applyCurrentSubst(ctx, alignedReturn);
-          const actual = applyCurrentSubst(ctx, bodyType);
-          const mark = markInconsistent(ctx, body, subject, expected, actual);
-          bodyType = mark.type;
+          const failure = ctx.lastUnifyFailure;
+          const subject = materializeExpr(ctx, body.result ?? body);
+          if (failure?.kind === "occurs_check") {
+            const mark = markOccursCheck(
+              ctx,
+              body,
+              subject,
+              failure.left,
+              failure.right,
+            );
+            bodyType = mark.type;
+          } else {
+            const expected = applyCurrentSubst(ctx, alignedReturn);
+            const actual = applyCurrentSubst(ctx, bodyType);
+            const mark = markInconsistent(ctx, body, subject, expected, actual);
+            bodyType = mark.type;
+          }
         }
       }
-    }
 
-    let fnType: Type;
-    // Note: Zero-parameter bindings are NOT treated as functions here
-    // They are just value bindings. Top-level zero-parameter functions
-    // are handled separately in inferLetDeclaration.
-    if (parameters.length === 0) {
-      fnType = bodyType;
-    } else {
-      fnType = paramTypes.reduceRight<Type>((acc, paramType) => ({
-        kind: "func",
-        from: applyCurrentSubst(ctx, paramType),
-        to: acc,
-      }), bodyType);
-    }
-
-    if (annotation) {
-      const annotated = convertTypeExpr(ctx, annotation, annotationScope);
-      storeAnnotationType(ctx, annotation, annotated);
-      if (unify(ctx, fnType, annotated)) {
-        fnType = applyCurrentSubst(ctx, annotated);
+      let fnType: Type;
+      // Note: Zero-parameter bindings are NOT treated as functions here
+      // They are just value bindings. Top-level zero-parameter functions
+      // are handled separately in inferLetDeclaration.
+      if (parameters.length === 0) {
+        fnType = bodyType;
       } else {
-        const failure = ctx.lastUnifyFailure;
-        const subject = materializeExpr(ctx, body.result ?? body);
-        if (failure?.kind === "occurs_check") {
-          const mark = markOccursCheck(
-            ctx,
-            body,
-            subject,
-            failure.left,
-            failure.right,
-          );
-          fnType = mark.type;
+        fnType = paramTypes.reduceRight<Type>((acc, paramType) => ({
+          kind: "func",
+          from: applyCurrentSubst(ctx, paramType),
+          to: acc,
+        }), bodyType);
+      }
+
+      if (annotation) {
+        const annotated = convertTypeExpr(ctx, annotation, annotationScope);
+        storeAnnotationType(ctx, annotation, annotated);
+        if (unify(ctx, fnType, annotated)) {
+          fnType = applyCurrentSubst(ctx, annotated);
         } else {
-          const expected = applyCurrentSubst(ctx, annotated);
-          const actual = applyCurrentSubst(ctx, fnType);
-          const mark = markInconsistent(ctx, body, subject, expected, actual);
-          fnType = mark.type;
+          const failure = ctx.lastUnifyFailure;
+          const subject = materializeExpr(ctx, body.result ?? body);
+          if (failure?.kind === "occurs_check") {
+            const mark = markOccursCheck(
+              ctx,
+              body,
+              subject,
+              failure.left,
+              failure.right,
+            );
+            fnType = mark.type;
+          } else {
+            const expected = applyCurrentSubst(ctx, annotated);
+            const actual = applyCurrentSubst(ctx, fnType);
+            const mark = markInconsistent(ctx, body, subject, expected, actual);
+            fnType = mark.type;
+          }
         }
       }
-    }
 
       return fnType;
     });
@@ -2329,7 +2332,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           emitCallRejectsInfection(ctx, expr.id, opRule.callPolicy);
         }
         if (opRule?.rejectDomains?.length) {
-          emitCallRejectsDomains(ctx, expr.id, opRule.rejectDomains, opRule.name);
+          emitCallRejectsDomains(
+            ctx,
+            expr.id,
+            opRule.rejectDomains,
+            opRule.name,
+          );
         }
 
         const policies = getPoliciesForTarget(
@@ -2341,7 +2349,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             emitCallRejectsInfection(ctx, expr.id, policy.name);
           }
           if (policy.rejectDomains?.length) {
-            emitCallRejectsDomains(ctx, expr.id, policy.rejectDomains, policy.name);
+            emitCallRejectsDomains(
+              ctx,
+              expr.id,
+              policy.rejectDomains,
+              policy.name,
+            );
           }
         }
 
@@ -3880,7 +3893,8 @@ export function inferMatchBranches(
   }
 
   const shouldRewrapCarrier = scrutineeCarrier && (
-    (scrutineeCarrier.domain === "effect" && handledErrorConstructors.size === 0) ||
+    (scrutineeCarrier.domain === "effect" &&
+      handledErrorConstructors.size === 0) ||
     (scrutineeCarrier.domain !== "effect" && !scrutineeFullyCovered)
   );
 

@@ -2,7 +2,7 @@ import {
   compileWorkmanGraph,
   WorkmanModuleArtifacts,
 } from "../../../backends/compiler/frontends/workman.ts";
-import { TypeScheme, cloneTypeScheme } from "../../../src//types.ts";
+import { cloneTypeScheme, TypeScheme } from "../../../src//types.ts";
 import { MProgram } from "../../../src/ast_marked.ts";
 import { Layer3Result } from "../../../src/layer3/mod.ts";
 import { ModuleGraph, ModuleLoaderError } from "../../../src/module_loader.ts";
@@ -20,7 +20,7 @@ export async function buildModuleContext(
   env: Map<string, TypeScheme>;
   layer3: Layer3Result;
   program: MProgram;
-  adtEnv: Map<string, import("../../../src//types.ts").TypeInfo>;
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>;
   entryPath: string;
   graph: ModuleGraph;
   modules: ReadonlyMap<string, WorkmanModuleArtifacts>;

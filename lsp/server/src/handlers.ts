@@ -2,15 +2,30 @@
 
 import { fromFileUrl } from "std/path/from_file_url.ts";
 import { LSPMessage } from "./server.ts";
-import { splitCarrier, typeToString, Type } from "../../../src/types.ts";
+import { splitCarrier, Type, typeToString } from "../../../src/types.ts";
 
-import { findNodeAtOffset, } from "../../../src/layer3/mod.ts";
+import { findNodeAtOffset } from "../../../src/layer3/mod.ts";
 
 import { renderNodeView } from "./render.ts";
-import { getWordAtOffset, offsetToPosition, positionToOffset, spanToRange } from "./util.ts";
+import {
+  getWordAtOffset,
+  offsetToPosition,
+  positionToOffset,
+  spanToRange,
+} from "./util.ts";
 import { computeStdRoots, uriToFsPath } from "./fsio.ts";
 import type { WorkmanLanguageServer } from "./server.ts";
-import { collectIdentifierReferences, computeTopLevelVisibility, findConstructorDeclaration, findGlobalDefinitionLocations, findLetDeclaration, findModuleDefinitionLocations, findNearestLetBeforeOffset, findTopLevelLet, findTypeDeclaration } from "./findcollect.ts";
+import {
+  collectIdentifierReferences,
+  computeTopLevelVisibility,
+  findConstructorDeclaration,
+  findGlobalDefinitionLocations,
+  findLetDeclaration,
+  findModuleDefinitionLocations,
+  findNearestLetBeforeOffset,
+  findTopLevelLet,
+  findTypeDeclaration,
+} from "./findcollect.ts";
 type LspServerContext = WorkmanLanguageServer;
 
 export async function handleMessage(
@@ -92,7 +107,8 @@ function deriveExpectedTypeFromPreviousValue(
     const currentNode = nodeIndex.get(currentId);
     debugCtx?.log(`[LSP] kind ${currentNode?.kind}`);
     if (currentNode?.kind === "block") {
-      const blockNode = currentNode as import("../../../src/ast_marked.ts").MBlockExpr;
+      const blockNode =
+        currentNode as import("../../../src/ast_marked.ts").MBlockExpr;
       const candidateId = findPreviousValueInBlock(
         blockNode,
         incomingChildId,
@@ -106,8 +122,11 @@ function deriveExpectedTypeFromPreviousValue(
     }
 
     if (currentNode?.kind === "let") {
-      const letNode = currentNode as import("../../../src/ast_marked.ts").MLetDeclaration;
-      if (typeof letNode.body?.id === "number" && !visited.has(letNode.body.id)) {
+      const letNode =
+        currentNode as import("../../../src/ast_marked.ts").MLetDeclaration;
+      if (
+        typeof letNode.body?.id === "number" && !visited.has(letNode.body.id)
+      ) {
         currentId = letNode.body.id;
         incomingChildId = undefined;
         continue;
@@ -115,7 +134,8 @@ function deriveExpectedTypeFromPreviousValue(
     }
 
     if (currentNode?.kind === "call") {
-      const callNode = currentNode as import("../../../src/ast_marked.ts").MCallExpr;
+      const callNode =
+        currentNode as import("../../../src/ast_marked.ts").MCallExpr;
       if (callNode.arguments.length > 0) {
         const firstArg = callNode.arguments[0];
         if (typeof firstArg?.id === "number") {
@@ -124,7 +144,9 @@ function deriveExpectedTypeFromPreviousValue(
             firstArg.id,
           );
           if (argType) {
-            debugCtx?.log(`[LSP] Previous value type from call arg ${firstArg.id}`);
+            debugCtx?.log(
+              `[LSP] Previous value type from call arg ${firstArg.id}`,
+            );
             return argType;
           }
           if (!visited.has(firstArg.id)) {
@@ -137,12 +159,15 @@ function deriveExpectedTypeFromPreviousValue(
 
     const parent = parentIndex.get(currentId);
     if (!parent) {
-      debugCtx?.log(`[LSP] Previous value type reached root at node ${currentId}`);
+      debugCtx?.log(
+        `[LSP] Previous value type reached root at node ${currentId}`,
+      );
       return null;
     }
 
     if (parent.kind === "call") {
-      const callNode = parent.node as import("../../../src/ast_marked.ts").MCallExpr;
+      const callNode = parent
+        .node as import("../../../src/ast_marked.ts").MCallExpr;
       if (callNode.callee?.id === currentId && callNode.arguments.length > 0) {
         const firstArg = callNode.arguments[0];
         if (typeof firstArg?.id === "number") {
@@ -151,7 +176,9 @@ function deriveExpectedTypeFromPreviousValue(
             firstArg.id,
           );
           if (argType) {
-            debugCtx?.log(`[LSP] Previous value type from first arg ${firstArg.id}`);
+            debugCtx?.log(
+              `[LSP] Previous value type from first arg ${firstArg.id}`,
+            );
             return argType;
           }
           if (!visited.has(firstArg.id)) {
@@ -160,7 +187,9 @@ function deriveExpectedTypeFromPreviousValue(
           }
         }
       }
-      const argIndex = callNode.arguments.findIndex((arg) => arg?.id === currentId);
+      const argIndex = callNode.arguments.findIndex((arg) =>
+        arg?.id === currentId
+      );
       if (argIndex > 0) {
         const predecessor = callNode.arguments[argIndex - 1];
         if (typeof predecessor?.id === "number") {
@@ -169,7 +198,9 @@ function deriveExpectedTypeFromPreviousValue(
             predecessor.id,
           );
           if (prevType) {
-            debugCtx?.log(`[LSP] Previous value type from sibling arg ${predecessor.id}`);
+            debugCtx?.log(
+              `[LSP] Previous value type from sibling arg ${predecessor.id}`,
+            );
             return prevType;
           }
           if (!visited.has(predecessor.id)) {
@@ -181,7 +212,8 @@ function deriveExpectedTypeFromPreviousValue(
     }
 
     if (parent.kind === "binary") {
-      const binaryNode = parent.node as import("../../../src/ast_marked.ts").MBinaryExpr;
+      const binaryNode = parent
+        .node as import("../../../src/ast_marked.ts").MBinaryExpr;
       if (binaryNode.right?.id === currentId) {
         const candidate = findRightmostValueNode(binaryNode.left);
         if (candidate?.id !== undefined) {
@@ -190,7 +222,9 @@ function deriveExpectedTypeFromPreviousValue(
             candidate.id,
           );
           if (candidateType) {
-            debugCtx?.log(`[LSP] Previous value type from binary left ${candidate.id}`);
+            debugCtx?.log(
+              `[LSP] Previous value type from binary left ${candidate.id}`,
+            );
             return candidateType;
           }
           if (!visited.has(candidate.id)) {
@@ -202,12 +236,12 @@ function deriveExpectedTypeFromPreviousValue(
     }
 
     incomingChildId = currentId;
-    currentId = typeof parent.node.id === "number"
-      ? parent.node.id
-      : undefined;
+    currentId = typeof parent.node.id === "number" ? parent.node.id : undefined;
   }
 
-  debugCtx?.log(`[LSP] Unable to derive previous value type for node ${startNodeId}`);
+  debugCtx?.log(
+    `[LSP] Unable to derive previous value type for node ${startNodeId}`,
+  );
   return null;
 }
 
@@ -345,7 +379,7 @@ function handleInitialize(
         referencesProvider: true,
         inlayHintProvider: true,
         completionProvider: {
-          triggerCharacters: [" ", ".", "(", ",", "+", "-", "*"]
+          triggerCharacters: [" ", ".", "(", ",", "+", "-", "*"],
         },
         workspace: {
           fileOperations: {
@@ -972,7 +1006,9 @@ async function handleCompletion(
         );
         ctx.moduleContexts.set(uri, context);
       } catch (error) {
-        ctx.log(`[LSP] Failed to build module context for completion: ${error}`);
+        ctx.log(
+          `[LSP] Failed to build module context for completion: ${error}`,
+        );
         return emptyCompletionResult(message.id);
       }
     }
@@ -1026,7 +1062,9 @@ async function handleCompletion(
       );
       ctx.log(`[LSP] ${name} compatibility: ${compatibility}`);
       ctx.log(`[LSP] ${name} expected type: ${expectedInfo}`);
-      ctx.log(`[LSP] ${name} substituted type: ${JSON.stringify(substitutedType)}`);
+      ctx.log(
+        `[LSP] ${name} substituted type: ${JSON.stringify(substitutedType)}`,
+      );
       if (expectedInfo && compatibility >= 4) {
         ctx.log(`[LSP] Skipping ${name} due to compatibility ${compatibility}`);
         // Skip clearly incompatible functions when we know the expected type.
@@ -1115,7 +1153,11 @@ function extractExpectedFunctionInfo(
     return buildExpectedInfo(ctx, layer3, derived);
   }
 
-  const previousValueType = deriveExpectedTypeFromPreviousValue(context, nodeId, ctx);
+  const previousValueType = deriveExpectedTypeFromPreviousValue(
+    context,
+    nodeId,
+    ctx,
+  );
   if (!previousValueType) {
     ctx.log(`[LSP] Unable to derive expected type for node ID ${nodeId}`);
     return null;
@@ -1137,11 +1179,16 @@ function deriveExpectedTypeFromParentCall(
     return null;
   }
   if (parent.kind === "call" && parent.node.arguments) {
-    const argumentIndex = parent.node.arguments.findIndex((arg) => arg.id === nodeId);
+    const argumentIndex = parent.node.arguments.findIndex((arg) =>
+      arg.id === nodeId
+    );
     if (argumentIndex === -1) {
       return null;
     }
-    const calleeType = getNodeType(context.layer3.nodeViews, parent.node.callee.id);
+    const calleeType = getNodeType(
+      context.layer3.nodeViews,
+      parent.node.callee.id,
+    );
     if (!calleeType) {
       return null;
     }
@@ -1319,7 +1366,10 @@ function getBestAvailableType(
   return null;
 }
 
-function peelFuncType(type: Type, argIndex: number): { from: Type; to: Type } | null {
+function peelFuncType(
+  type: Type,
+  argIndex: number,
+): { from: Type; to: Type } | null {
   let current: Type | null = type;
   for (let i = 0; i <= argIndex; i++) {
     if (!current || current.kind !== "func") {
@@ -1338,7 +1388,8 @@ function buildExpectedInfo(
   layer3: import("../../../src/layer3/mod.ts").Layer3Result,
   paramType: Type,
 ) {
-  const substituted = ctx.substituteTypeWithLayer3(paramType, layer3) ?? paramType;
+  const substituted = ctx.substituteTypeWithLayer3(paramType, layer3) ??
+    paramType;
   const display = ctx.replaceIResultFormats(
     typeToString(normalizeCarrierType(substituted)),
   );
@@ -1430,7 +1481,6 @@ function canSpecializeType(candidate: Type, expected: Type): boolean {
       return false;
   }
 }
-
 
 function scoreFunctionCompatibility(
   ctx: LspServerContext,
