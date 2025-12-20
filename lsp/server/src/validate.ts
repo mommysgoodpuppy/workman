@@ -485,6 +485,20 @@ function formatSolverDiagnostic(
       }
       break;
     }
+    case "require_exact_state":
+    case "require_any_state": {
+      const domain = diag.details?.domain ?? "unknown";
+      const expected = Array.isArray(diag.details?.expected)
+        ? diag.details.expected.join(", ")
+        : String(diag.details?.expected ?? "?");
+      const actual = String(diag.details?.actual ?? "?");
+      const verb = diag.reason === "require_exact_state"
+        ? "exactly"
+        : "at least one of";
+      base =
+        `Memory state error: operation requires ${verb} [${expected}] but value has state ${actual}`;
+      break;
+    }
     default:
       base = `Solver diagnostic: ${diag.reason}`;
       break;

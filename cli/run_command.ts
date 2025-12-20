@@ -500,6 +500,26 @@ async function reportErrorsOnly(
           if (hint) {
             message += `\n    Hint: ${hint}`;
           }
+        } else if (
+          (diag.reason === "require_exact_state" ||
+            diag.reason === "require_any_state") &&
+          diag.details
+        ) {
+          const details = diag.details as Record<string, unknown>;
+          const domain = typeof details.domain === "string"
+            ? details.domain
+            : "unknown";
+          const expected = Array.isArray(details.expected)
+            ? details.expected.join(", ")
+            : String(details.expected ?? "?");
+          const actual = typeof details.actual === "string"
+            ? details.actual
+            : "?";
+          const verb = diag.reason === "require_exact_state"
+            ? "exactly"
+            : "at least one of";
+          message +=
+            `Memory state error in domain '${domain}': operation requires ${verb} [${expected}] but value has state ${actual}`;
         } else if (diag.details && typeof diag.details === "object") {
           const details = diag.details as Record<string, unknown>;
           if (details.expected && details.actual) {
@@ -658,17 +678,20 @@ function enhanceRuntimeError(
     : "unknown patterns";
   const valueDesc = metadata.valueDescription ?? "value";
 
-  const locationCandidates = [metadata.callSite, metadata].filter(Boolean) as
-    Array<{
-      nodeId: number | null | undefined;
-      modulePath?: string | null;
-      span?: SourceSpan | null;
-    }>;
+  const locationCandidates = [metadata.callSite, metadata].filter(
+    Boolean,
+  ) as Array<{
+    nodeId: number | null | undefined;
+    modulePath?: string | null;
+    span?: SourceSpan | null;
+  }>;
 
   let location: NodeLocationEntry | undefined;
   let resolvedNodeId: number | null = null;
   for (const candidate of locationCandidates) {
-    const nodeId = typeof candidate.nodeId === "number" ? candidate.nodeId : null;
+    const nodeId = typeof candidate.nodeId === "number"
+      ? candidate.nodeId
+      : null;
     if (nodeId !== null) {
       location = findNodeLocation(nodeId, candidate.modulePath, nodeLocations);
       if (location) {
