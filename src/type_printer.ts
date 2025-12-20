@@ -22,7 +22,8 @@ export function formatScheme(scheme: TypeScheme): string {
   return formatType(scheme.type, context, 0);
 }
 
-function formatType(type: Type, context: PrintContext, prec: number): string {
+export function formatType(type: Type, context: PrintContext, prec: number): string {
+  //console.log(`[DEBUG] Formatting type: ${JSON.stringify(type)}`);
   switch (type.kind) {
     case "var":
       return ensureName(context, type.id);

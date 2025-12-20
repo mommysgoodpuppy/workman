@@ -5,12 +5,11 @@ import {
   NodeView,
   PartialType,
 } from "../../../src/layer3/mod.ts";
-import { formatScheme } from "../../../src/type_printer.ts";
+import { formatScheme, formatType } from "../../../src/type_printer.ts";
 import {
   getCarrierRegistrySize,
   getRegisteredCarrierInfo,
   Type,
-  typeToString,
 } from "../../../src/types.ts";
 
 type LspServerContext = WorkmanLanguageServer;
@@ -22,7 +21,10 @@ export function renderNodeView(
   coverage?: MatchCoverageView,
   adtEnv?: Map<string, import("../../../src/types.ts").TypeInfo>,
 ): string | null {
-  let typeStr = partialTypeToString(ctx, view.finalType, layer3);
+  // Create printing context once and reuse it throughout
+  const printCtx = { names: new Map(), next: 0 };
+
+  let typeStr = partialTypeToString(ctx, view.finalType, layer3, printCtx);
   if (!typeStr) {
     return null;
   }
@@ -41,7 +43,7 @@ export function renderNodeView(
     summary = ctx.summarizeEffectRowFromType(t, adtEnv ?? new Map());
     if (summary && t && t.kind === "constructor" && t.args.length > 0) {
       // Format infected Result types specially
-      typeStr = `⚡${typeToString(t.args[0])} <${summary}>`;
+      typeStr = `⚡${formatType(t.args[0], printCtx, 0)} <${summary}>`;
     }
   } catch {
     // ignore
@@ -99,7 +101,9 @@ export function renderNodeView(
         if (solution.state === "partial" && solution.partial) {
           result += "\n\n**Partial Type Information:**\n";
           if (solution.partial.known) {
-            result += `- Known: \`${typeToString(solution.partial.known)}\`\n`;
+            result += `- Known: \`${
+              formatType(solution.partial.known, printCtx, 0)
+            }\`\n`;
           }
           if (
             solution.partial.possibilities &&
@@ -115,7 +119,7 @@ export function renderNodeView(
               i++
             ) {
               result += `  - \`${
-                typeToString(solution.partial.possibilities[i])
+                formatType(solution.partial.possibilities[i], printCtx, 0)
               }\`\n`;
             }
             if (solution.partial.possibilities.length > maxShow) {
@@ -129,7 +133,9 @@ export function renderNodeView(
         } else if (solution.state === "conflicted" && solution.conflicts) {
           result += "\n\n**⚠️ Type Conflict Detected:**\n";
           for (const conflict of solution.conflicts) {
-            const types = conflict.types.map((t: any) => typeToString(t))
+            const types = conflict.types.map((t: any) =>
+              formatType(t, printCtx, 0)
+            )
               .join(" vs ");
             result += `- Conflicting types: \`${types}\`\n`;
             result += `- Reason: ${conflict.reason}\n`;
@@ -149,6 +155,7 @@ function partialTypeToString(
   ctx: LspServerContext,
   partial: PartialType,
   layer3: Layer3Result,
+  printCtx: { names: Map<number, string>; next: number },
 ): string | null {
   switch (partial.kind) {
     case "unknown": {
@@ -157,14 +164,18 @@ function partialTypeToString(
         partial.type,
         layer3,
       );
-      let str = substituted ? typeToString(substituted) : "?";
+      let str = substituted ? formatType(substituted, printCtx, 0) : "?";
       // Post-process to format Result types using a robust replacer
       str = ctx.replaceIResultFormats(str);
       return str;
     }
     case "concrete": {
       let str = partial.type
-        ? typeToString(ctx.substituteTypeWithLayer3(partial.type, layer3))
+        ? formatType(
+          ctx.substituteTypeWithLayer3(partial.type, layer3),
+          printCtx,
+          0,
+        )
         : null;
       if (str) {
         // Post-process to format Result types using a robust replacer

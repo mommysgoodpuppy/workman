@@ -8,14 +8,13 @@
 // Redirect console.log to stderr to prevent polluting LSP stdout with debug messages
 console.log = console.error;
 
-import { formatScheme } from "../../../src//type_printer.ts";
+import { formatScheme, formatType } from "../../../src//type_printer.ts";
 import {
   getCarrierRegistrySize,
   getProvenance,
   isHoleType,
   type Type,
   type TypeScheme,
-  typeToString,
 } from "../../../src/types.ts";
 import { type Layer3Result } from "../../../src//layer3/mod.ts";
 import type {
@@ -354,8 +353,11 @@ export class WorkmanLanguageServer {
       returnType.args.length > 0
     ) {
       // Replace the IResult<...> in typeStr with the formatted version
-      const fullResultStr = typeToString(returnType);
-      const formatted = `⚡${typeToString(returnType.args[0])} <${summary}>`;
+      const ctx = { names: new Map(), next: 0 };
+      const fullResultStr = formatType(returnType, ctx, 0);
+      const formatted = `⚡${
+        formatType(returnType.args[0], ctx, 0)
+      } <${summary}>`;
       typeStr = typeStr.replace(fullResultStr, formatted);
     }
 

@@ -1,5 +1,5 @@
-
-import { Type, typeToString } from "../../../src/types.ts";
+import { Type } from "../../../src/types.ts";
+import { formatType } from "../../../src/type_printer.ts";
 
 import {
   ConstraintDiagnosticWithSpan,
@@ -8,39 +8,48 @@ import {
 } from "../../../src/layer3/mod.ts";
 import { InferError, LexError, ParseError } from "../../../src/error.ts";
 import { ModuleLoaderError } from "../../../src/module_loader.ts";
-import { estimateRangeFromMessage, getWordAtOffset, offsetToPosition, positionToOffset } from "./util.ts";
+import {
+  estimateRangeFromMessage,
+  getWordAtOffset,
+  offsetToPosition,
+  positionToOffset,
+} from "./util.ts";
 import type { WorkmanLanguageServer } from "./server.ts";
 import { computeStdRoots, uriToFsPath } from "./fsio.ts";
 type LspServerContext = WorkmanLanguageServer;
 
-  export function ensureValidation(ctx: LspServerContext, uri: string, text: string) {
-    // Clear any pending validation timer for this document
-    const existingTimer = ctx.validationTimers.get(uri);
-    if (existingTimer !== undefined) {
-      clearTimeout(existingTimer);
-    }
-
-    // Debounce validation by 50ms to avoid excessive work during rapid typing
-    const timer = setTimeout(() => {
-      ctx.validationTimers.delete(uri);
-      runValidation(ctx, uri, text);
-    }, 50);
-    ctx.validationTimers.set(uri, timer);
+export function ensureValidation(
+  ctx: LspServerContext,
+  uri: string,
+  text: string,
+) {
+  // Clear any pending validation timer for this document
+  const existingTimer = ctx.validationTimers.get(uri);
+  if (existingTimer !== undefined) {
+    clearTimeout(existingTimer);
   }
 
-  async function runValidation(ctx: LspServerContext, uri: string, text: string) {
-    const existing = ctx.validationInProgress.get(uri);
-    if (existing) {
-      await existing;
-    }
-    const promise = validateDocument(ctx, uri, text);
-    ctx.validationInProgress.set(uri, promise);
-    try {
-      await promise;
-    } finally {
-      ctx.validationInProgress.delete(uri);
-    }
+  // Debounce validation by 50ms to avoid excessive work during rapid typing
+  const timer = setTimeout(() => {
+    ctx.validationTimers.delete(uri);
+    runValidation(ctx, uri, text);
+  }, 50);
+  ctx.validationTimers.set(uri, timer);
+}
+
+async function runValidation(ctx: LspServerContext, uri: string, text: string) {
+  const existing = ctx.validationInProgress.get(uri);
+  if (existing) {
+    await existing;
   }
+  const promise = validateDocument(ctx, uri, text);
+  ctx.validationInProgress.set(uri, promise);
+  try {
+    await promise;
+  } finally {
+    ctx.validationInProgress.delete(uri);
+  }
+}
 
 export async function validateDocument(
   ctx: LspServerContext,
@@ -251,7 +260,7 @@ function appendSolverDiagnostics(
     target.push({
       range,
       severity: 1,
-      message: formatSolverDiagnostic( diag),
+      message: formatSolverDiagnostic(diag),
       source: "workman-layer2",
       code: diag.reason,
     });
@@ -290,8 +299,12 @@ function appendConflictDiagnostics(
         conflict.details.actual,
         layer3,
       );
-      const expectedStr = typeToString(expected);
-      const actualStr = typeToString(actual);
+      const expectedStr = formatType(
+        expected,
+        { names: new Map(), next: 0 },
+        0,
+      );
+      const actualStr = formatType(actual, { names: new Map(), next: 0 }, 0);
       message = `Type mismatch: expected ${expectedStr}, got ${actualStr}`;
     } else if (conflict.message) {
       message = conflict.message;
@@ -309,7 +322,6 @@ function appendConflictDiagnostics(
 }
 
 function appendFlowDiagnostics(
-
   target: any[],
   flowDiagnostics: FlowDiagnostic[],
   text: string,
@@ -336,7 +348,6 @@ function appendFlowDiagnostics(
 }
 
 function formatSolverDiagnostic(
-
   diag: ConstraintDiagnosticWithSpan,
 ): string {
   let base: string;
@@ -359,7 +370,7 @@ function formatSolverDiagnostic(
     case "type_mismatch":
       base = "Conflicting type requirements";
       {
-        const comparison = formatTypeComparisonDetails( diag);
+        const comparison = formatTypeComparisonDetails(diag);
         if (comparison) {
           base += `\n${comparison}`;
         }
@@ -419,7 +430,9 @@ function formatSolverDiagnostic(
         scrutineeType.name === "Result"
       ) {
         const errorType = scrutineeType.args[1];
-        const errorTypeStr = errorType ? typeToString(errorType) : "?";
+        const errorTypeStr = errorType
+          ? formatType(errorType, { names: new Map(), next: 0 }, 0)
+          : "?";
         base +=
           `\n\nThe scrutinee has type Result<?, ${errorTypeStr}> (infectious Result from an operation that can fail).`;
         base += `\nHandle both Ok and Err cases, or use a wildcard pattern.`;
@@ -450,7 +463,9 @@ function formatSolverDiagnostic(
       break;
     case "infectious_call_result_mismatch": {
       const row = diag.details?.effectRow as Type | undefined;
-      const rowLabel = row ? typeToString(row) : "an unresolved error row";
+      const rowLabel = row
+        ? formatType(row, { names: new Map(), next: 0 }, 0)
+        : "an unresolved error row";
       base =
         `This call must remain infectious because an argument carries ${rowLabel}`;
       break;
@@ -460,7 +475,9 @@ function formatSolverDiagnostic(
       const missing = Array.isArray(diag.details?.missingConstructors)
         ? (diag.details?.missingConstructors as string[]).join(", ")
         : null;
-      const rowLabel = row ? ` for row ${typeToString(row)}` : "";
+      const rowLabel = row
+        ? ` for row ${formatType(row, { names: new Map(), next: 0 }, 0)}`
+        : "";
       base =
         `Match claimed to discharge Result errors${rowLabel} but remained infectious`;
       if (missing && missing.length > 0) {
@@ -500,8 +517,8 @@ function formatTypeComparisonDetails(
   if (!details) {
     return null;
   }
-  const expected = tryFormatDiagnosticValue( details.expected);
-  const actual = tryFormatDiagnosticValue( details.actual);
+  const expected = tryFormatDiagnosticValue(details.expected);
+  const actual = tryFormatDiagnosticValue(details.actual);
   if (!expected && !actual) {
     return null;
   }
@@ -536,32 +553,32 @@ function tryFormatDiagnosticValue(
   return String(value);
 }
 
-  function tryFormatType( value: unknown): string | null {
-    if (!value || typeof value !== "object") {
-      return null;
-    }
-    const kind = (value as { kind?: string }).kind;
-    if (typeof kind !== "string") {
-      return null;
-    }
-    switch (kind) {
-      case "var":
-      case "func":
-      case "constructor":
-      case "tuple":
-      case "record":
-      case "effect_row":
-      case "unit":
-      case "int":
-      case "bool":
-      case "char":
-      case "string":
-        try {
-          return typeToString(value as Type);
-        } catch {
-          return null;
-        }
-      default:
-        return null;
-    }
+function tryFormatType(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
   }
+  const kind = (value as { kind?: string }).kind;
+  if (typeof kind !== "string") {
+    return null;
+  }
+  switch (kind) {
+    case "var":
+    case "func":
+    case "constructor":
+    case "tuple":
+    case "record":
+    case "effect_row":
+    case "unit":
+    case "int":
+    case "bool":
+    case "char":
+    case "string":
+      try {
+        return formatType(value as Type, { names: new Map(), next: 0 }, 0);
+      } catch {
+        return null;
+      }
+    default:
+      return null;
+  }
+}

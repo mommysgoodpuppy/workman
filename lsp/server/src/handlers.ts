@@ -2,7 +2,8 @@
 
 import { fromFileUrl } from "std/path/from_file_url.ts";
 import { LSPMessage } from "./server.ts";
-import { splitCarrier, Type, typeToString } from "../../../src/types.ts";
+import { splitCarrier, Type } from "../../../src/types.ts";
+import { formatType } from "../../../src/type_printer.ts";
 
 import { findNodeAtOffset } from "../../../src/layer3/mod.ts";
 
@@ -879,7 +880,9 @@ async function handleInlayHint(
               name === "Result" || name === "IResult" ||
               typeStr.includes("IResult<") || typeStr.startsWith("⚡")
             ) {
-              typeStr = `⚡${typeToString(returnType.args[0])}`;
+              typeStr = `⚡${
+                formatType(returnType.args[0], { names: new Map(), next: 0 }, 0)
+              }`;
             }
           }
         } catch {
@@ -931,6 +934,8 @@ async function handleInlayHint(
       }
       const position = offsetToPosition(text, anchorOffset);
 
+      // Create printing context once for this hint
+      const printCtx = { names: new Map(), next: 0 };
       let typeStr = "?";
       let summary: string | null = null;
       try {
@@ -939,13 +944,17 @@ async function handleInlayHint(
           layer3,
         );
         if (substituted) {
-          typeStr = ctx.replaceIResultFormats(typeToString(substituted));
+          typeStr = ctx.replaceIResultFormats(
+            formatType(substituted, printCtx, 0),
+          );
           summary = ctx.summarizeEffectRowFromType(substituted, context.adtEnv);
           if (
             summary && substituted.kind === "constructor" &&
             substituted.args.length > 0
           ) {
-            typeStr = `⚡${typeToString(substituted.args[0])} <${summary}>`;
+            typeStr = `⚡${
+              formatType(substituted.args[0], printCtx, 0)
+            } <${summary}>`;
           }
         }
       } catch {
@@ -1391,7 +1400,11 @@ function buildExpectedInfo(
   const substituted = ctx.substituteTypeWithLayer3(paramType, layer3) ??
     paramType;
   const display = ctx.replaceIResultFormats(
-    typeToString(normalizeCarrierType(substituted)),
+    formatType(
+      normalizeCarrierType(substituted),
+      { names: new Map(), next: 0 },
+      0,
+    ),
   );
   return {
     paramType: substituted,
@@ -1569,7 +1582,8 @@ function normalizeCarrierType(type: Type): Type {
 
 function typesEqual(a: Type, b: Type): boolean {
   try {
-    return typeToString(a) === typeToString(b);
+    const printCtx = { names: new Map(), next: 0 };
+    return formatType(a, printCtx, 0) === formatType(b, printCtx, 0);
   } catch {
     return false;
   }
