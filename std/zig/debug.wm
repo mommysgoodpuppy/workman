@@ -1,0 +1,19 @@
+from "std/zig/bytes" import { toList };
+from "std/nativeString" import { stringToList, listToString };
+from "std/list/core" import { Empty, Link };
+from "std/list" import { listAppend };
+
+let rec replaceFirst = (pattern, replacement) => {
+  match(pattern) {
+    Link(123, Link(115, Link(125, rest))) => { listAppend(replacement, rest) },
+    Link(head, tail) => { Link(head, replaceFirst(tail, replacement)) },
+    Empty => { Empty }
+  }
+};
+
+export let print = (format, buf) => {
+  let fmtList = stringToList(format);
+  let dataList = toList(buf);
+  let rendered = replaceFirst(fmtList, dataList);
+  nativePrint(listToString(rendered))
+};

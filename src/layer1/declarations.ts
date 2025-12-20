@@ -612,6 +612,13 @@ export function registerPrelude(ctx: Context): void {
   registerStringFromLiteralPrimitive(ctx, "nativeStringFromLiteral");
   registerStringToListPrimitive(ctx, "nativeStringToList");
   registerListToStringPrimitive(ctx, "nativeListToString");
+
+  // Memory primitives (zig-focused)
+  registerMemPrimitive(ctx, "nativeAlloc", ["int"], "int");
+  registerMemPrimitive(ctx, "nativeFree", ["int", "int"], "unit");
+  registerMemPrimitive(ctx, "nativeRead", ["int", "int"], "int");
+  registerMemPrimitive(ctx, "nativeWrite", ["int", "int", "int"], "unit");
+  registerMemPrimitive(ctx, "nativeMemcpy", ["int", "int", "int"], "unit");
 }
 
 function buildConstructorInfo(
@@ -816,6 +823,24 @@ function registerListToStringPrimitive(ctx: Context, name: string): void {
       from: listType,
       to: { kind: "string" },
     },
+  };
+  ctx.env.set(name, scheme);
+}
+
+function registerMemPrimitive(
+  ctx: Context,
+  name: string,
+  args: ("int" | "unit")[],
+  result: "int" | "unit",
+): void {
+  const resultType: Type = result === "int" ? { kind: "int" } : { kind: "unit" };
+  const type = args.reduceRight<Type>((acc, arg) => {
+    const argType: Type = arg === "int" ? { kind: "int" } : { kind: "unit" };
+    return { kind: "func", from: argType, to: acc };
+  }, resultType);
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type,
   };
   ctx.env.set(name, scheme);
 }

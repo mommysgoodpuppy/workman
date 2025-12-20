@@ -1,0 +1,34 @@
+from "std/zig/mem" import { read, len, slice };
+from "std/list/core" import { Empty, Link };
+from "std/list" import { listReverse };
+from "std/core/int" import { intAdd, intEq };
+from "std/core/string" import { listToString };
+
+export let toListRange = (buf, start, finish) => {
+  let rec helper = (index, acc) => {
+    match(intEq(index, finish)) {
+      true => { listReverse(acc) },
+      false => {
+        let value = read(buf, index);
+        helper(intAdd(index, 1), Link(value, acc))
+      }
+    }
+  };
+  helper(start, Empty)
+};
+
+export let toList = (buf) => {
+  toListRange(buf, 0, len(buf))
+};
+
+export let toStringRange = (buf, start, finish) => {
+  listToString(toListRange(buf, start, finish))
+};
+
+export let toString = (buf) => {
+  listToString(toList(buf))
+};
+
+export let sliceToString = (buf, start, finish) => {
+  toString(slice(buf, start, finish))
+};

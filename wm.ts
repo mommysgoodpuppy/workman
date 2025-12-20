@@ -48,10 +48,10 @@ async function runCli(): Promise<void> {
     IO.exit(0);
   }
 
-  if (command === "compile") {
+  if (command === "compile" || command === "build") {
     try {
-      const { entryPath, outDir } = parseCompileArgs(args.slice(1));
-      await compileToDirectory(entryPath, outDir);
+      const { entryPath, outDir, backend } = parseCompileArgs(args.slice(1));
+      await compileToDirectory(entryPath, outDir, backend);
     } catch (error) {
       handleCliError(error);
       IO.exit(1);

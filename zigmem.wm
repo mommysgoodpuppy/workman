@@ -1,13 +1,26 @@
---const std = @import("std");
-from "std/mem" import {alloc, free};
+from "std/zig/mem" import { alloc, free, write, slice };
+from "std/zig/bytes" import { toList };
+from "std/core/string" import { stringToList, listToString };
+from "std/list" import { listAppend };
+from "std/string" import {char};
+from "std/result" import { withDefault };
 
 let main = () => {
+  
+  -- in workman free + use cant be done in the same scope
+  -- so this is the default convention
+  let buf = {
+    let buffer = alloc(100);
 
-  let buffer = alloc(100);
+    write(buffer, 0, withDefault(0, char("H")));
+    write(buffer, 1, withDefault(0, char("i")));
 
-  --buffer[0] = 'H';
-  --buffer[1] = 'i';
+    let view = slice(buffer, 0, 2);
+    let pref = stringToList("Buffer says: ");
+    let data = toList(view);
+    nativePrint(listToString(listAppend(pref, data)));
+    buffer
+  };
 
-  --std.debug.print("Buffer says: {s}\n", .{buffer[0..2]});
-  free(buffer);
+  free(buf);
 }

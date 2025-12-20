@@ -1,0 +1,58 @@
+from "std/mem/core" import { MemVal };
+from "std/core/int" import { intAdd, intSub };
+
+-- Low-level pointer + slice types (Zig-like surface).
+export type Ptr<T> = { addr: Int };
+export type Slice<T> = { ptr: Ptr<T>, len: Int };
+
+-- Minimal mem API (backed by runtime primitives).
+export let alloc = (len) => {
+  let ptr = { addr: nativeAlloc(len) };
+  let slice = { ptr: ptr, len: len };
+  MemVal(slice)
+};
+
+export let free = (buf) => {
+  match(buf) {
+    MemVal(slice) => { nativeFree(slice.ptr.addr, slice.len) }
+  }
+};
+
+export let len = (buf) => {
+  match(buf) {
+    MemVal(slice) => { slice.len }
+  }
+};
+
+export let read = (buf, index) => {
+  match(buf) {
+    MemVal(slice) => { nativeRead(slice.ptr.addr, index) }
+  }
+};
+
+export let write = (buf, index, value) => {
+  match(buf) {
+    MemVal(slice) => { nativeWrite(slice.ptr.addr, index, value) }
+  }
+};
+
+export let copy = (dst, src, count) => {
+  match(dst, src) {
+    (MemVal(dstSlice), MemVal(srcSlice)) => {
+      nativeMemcpy(dstSlice.ptr.addr, srcSlice.ptr.addr, count)
+    }
+  }
+};
+
+export let slice = (buf, start, finish) => {
+  match(buf) {
+    MemVal(slice) => {
+      let addr = intAdd(slice.ptr.addr, start);
+      let len = intSub(finish, start);
+      MemVal({ ptr: { addr: addr }, len: len })
+    }
+  }
+};
+
+-- Back-compat alias (non-Zig name).
+export let close = (buf) => { free(buf) };

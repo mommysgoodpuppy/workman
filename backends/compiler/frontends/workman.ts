@@ -161,6 +161,15 @@ function seedImports(
       const valueExport = provider.exports.values.get(spec.imported);
       if (valueExport) {
         env.set(spec.local, cloneTypeScheme(valueExport));
+        for (const [typeName, info] of provider.exports.types.entries()) {
+          if (!info.constructors.some((ctor) => ctor.name === spec.imported)) {
+            continue;
+          }
+          if (!adtEnv.has(typeName)) {
+            adtEnv.set(typeName, cloneTypeInfo(info));
+          }
+          break;
+        }
         continue;
       }
       const typeExport = provider.exports.types.get(spec.imported);

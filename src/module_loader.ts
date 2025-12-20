@@ -1345,6 +1345,7 @@ function applyImports(
   targetAdtEnv: Map<string, TypeInfo>,
   targetRuntime?: Map<string, RuntimeValue>,
 ): void {
+  const autoImportedTypes = new Set<string>();
   for (const spec of record.specifiers) {
     const valueExport = provider.exports.values.get(spec.imported);
     const typeExport = provider.exports.types.get(spec.imported);
@@ -1370,6 +1371,17 @@ function applyImports(
         }
         targetRuntime.set(spec.local, runtimeValue);
       }
+
+      for (const [typeName, info] of provider.exports.types.entries()) {
+        if (!info.constructors.some((ctor) => ctor.name === spec.imported)) {
+          continue;
+        }
+        if (!targetAdtEnv.has(typeName)) {
+          targetAdtEnv.set(typeName, cloneTypeInfo(info));
+          autoImportedTypes.add(typeName);
+        }
+        break;
+      }
     }
 
     if (typeExport) {
@@ -1379,6 +1391,9 @@ function applyImports(
         );
       }
       if (targetAdtEnv.has(spec.imported)) {
+        if (autoImportedTypes.has(spec.imported)) {
+          continue;
+        }
         throw moduleError(
           `Duplicate imported type '${spec.imported}' in module '${record.importerPath}'`,
         );

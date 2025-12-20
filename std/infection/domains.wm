@@ -75,13 +75,13 @@ op mem.len {
   requiresExact [Opened];
 };
 
-op mem.get {
+op mem.read {
   domain mem;
   target arg0;
   requiresExact [Opened];
 };
 
-op mem.set {
+op mem.write {
   domain mem;
   target arg0;
   requiresExact [Opened];
