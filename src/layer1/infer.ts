@@ -128,43 +128,17 @@ export type { Context, InferOptions, InferResult } from "./context.ts";
 export { InferError } from "../error.ts";
 export { inferError } from "./context.ts";
 
-const NUMERIC_BINARY_OPERATORS = new Set([
-  "+",
-  "-",
-  "*",
-  "/",
-  "%",
-]);
+const NUMERIC_BINARY_OPERATORS = new Set(["+", "-", "*", "/", "%"]);
 
-const COMPARISON_OPERATORS = new Set([
-  "<",
-  "<=",
-  ">",
-  ">=",
-  "==",
-  "!=",
-]);
+const COMPARISON_OPERATORS = new Set(["<", "<=", ">", ">=", "==", "!="]);
 
-const ORDERING_COMPARISON_OPERATORS = new Set([
-  "<",
-  "<=",
-  ">",
-  ">=",
-]);
+const ORDERING_COMPARISON_OPERATORS = new Set(["<", "<=", ">", ">="]);
 
-const BOOLEAN_BINARY_OPERATORS = new Set([
-  "&&",
-  "||",
-]);
+const BOOLEAN_BINARY_OPERATORS = new Set(["&&", "||"]);
 
-const NUMERIC_UNARY_OPERATORS = new Set([
-  "+",
-  "-",
-]);
+const NUMERIC_UNARY_OPERATORS = new Set(["+", "-"]);
 
-const BOOLEAN_UNARY_OPERATORS = new Set([
-  "!",
-]);
+const BOOLEAN_UNARY_OPERATORS = new Set(["!"]);
 
 type IdentitySetByDomain = Map<string, Set<number>>;
 
@@ -251,6 +225,18 @@ function recordIdentityUsage(
   domainUsage.set(domain, nodes);
 }
 
+function getPreviousIdentityUses(
+  ctx: Context,
+  domain: string,
+  identityId: number,
+): NodeId[] {
+  const domainUsage = ctx.identityUsage.get(identityId);
+  if (!domainUsage) return [];
+  const nodes = domainUsage.get(domain);
+  if (!nodes) return [];
+  return Array.from(nodes.keys());
+}
+
 function emitIdentityTagsToUsage(
   ctx: Context,
   domain: string,
@@ -260,10 +246,20 @@ function emitIdentityTagsToUsage(
   const domainUsage = ctx.identityUsage.get(identityId);
   const nodes = domainUsage?.get(domain);
   if (!nodes) return;
-  const scopeId = getCurrentScopeId(ctx);
+  const currentScopeId = getCurrentScopeId(ctx);
+  const identityCreationScope = ctx.identityCreationScope.get(identityId) ?? 0;
   for (const [nodeId, nodeScopeId] of nodes.entries()) {
-    if (nodeScopeId !== scopeId) continue;
-    emitAddStateTags(ctx, nodeId, domain, tagged);
+    // Only propagate to nested scopes for CAPTURED variables.
+    // A variable is captured if:
+    // 1. The usage is in a nested scope (nodeScopeId > currentScopeId), AND
+    // 2. The identity was created in the current or outer scope (identityCreationScope <= currentScopeId)
+    // If the identity was created inside the nested scope, it's a local variable, not a capture.
+    if (
+      nodeScopeId > currentScopeId &&
+      identityCreationScope <= currentScopeId
+    ) {
+      emitAddStateTags(ctx, nodeId, domain, tagged);
+    }
   }
 }
 
@@ -307,8 +303,10 @@ function getIdentitiesForExpr(
   ctx: Context,
   expr: Expr,
 ): IdentitySetByDomain | undefined {
-  return getExprIdentities(ctx, expr) ??
-    collectIdentitiesFromType(ctx.nodeTypes.get(expr.id));
+  return (
+    getExprIdentities(ctx, expr) ??
+    collectIdentitiesFromType(ctx.nodeTypes.get(expr.id))
+  );
 }
 
 function setExprIdentities(
@@ -487,11 +485,14 @@ function typesEqual(a: Type, b: Type): boolean {
     case "var":
       return b.kind === "var" && a.id === b.id;
     case "func":
-      return typesEqual(a.from, (b as Type & { kind: "func" }).from) &&
-        typesEqual(a.to, (b as Type & { kind: "func" }).to);
+      return (
+        typesEqual(a.from, (b as Type & { kind: "func" }).from) &&
+        typesEqual(a.to, (b as Type & { kind: "func" }).to)
+      );
     case "constructor": {
       if (
-        b.kind !== "constructor" || a.name !== b.name ||
+        b.kind !== "constructor" ||
+        a.name !== b.name ||
         a.args.length !== b.args.length
       ) {
         return false;
@@ -558,7 +559,7 @@ function resolveOpRule(
   const direct = registry.opRules.get(name);
   if (direct) return direct;
   const suffixMatches = Array.from(registry.opRules.values()).filter((rule) =>
-    rule.name.endsWith(`.${name}`)
+    rule.name.endsWith(`.${name}`),
   );
   if (suffixMatches.length === 1) {
     return suffixMatches[0];
@@ -731,12 +732,10 @@ function registerInfectiousTypeDeclaration(
       m.kind === "constructor" && m.annotation === "effect",
   );
 
-  const valueConstructor = valueCtors.length > 0
-    ? valueCtors[0].name
-    : undefined;
-  const effectConstructors = effectCtors.length > 0
-    ? effectCtors.map((c) => c.name)
-    : undefined;
+  const valueConstructor =
+    valueCtors.length > 0 ? valueCtors[0].name : undefined;
+  const effectConstructors =
+    effectCtors.length > 0 ? effectCtors.map((c) => c.name) : undefined;
 
   // Create and register the carrier
   createAndRegisterCarrier(
@@ -806,8 +805,11 @@ function createAndRegisterCarrier(
   // Create carrier operations for this infectious type
   const carrier: CarrierOperations = {
     is: (type: Type): boolean => {
-      return type.kind === "constructor" && type.name === typeName &&
-        type.args.length === 2;
+      return (
+        type.kind === "constructor" &&
+        type.name === typeName &&
+        type.args.length === 2
+      );
     },
 
     split: (type: Type): CarrierInfo | null => {
@@ -824,9 +826,10 @@ function createAndRegisterCarrier(
         return { value, state };
       }
       // If we have nested carriers, union the states
-      const unionedState = state.kind === "effect_row"
-        ? effectRowUnion(inner.state, state)
-        : ensureRow(state); // Only wrap if needed for union
+      const unionedState =
+        state.kind === "effect_row"
+          ? effectRowUnion(inner.state, state)
+          : ensureRow(state); // Only wrap if needed for union
       return {
         value: inner.value,
         state: unionedState,
@@ -877,6 +880,7 @@ function inferLetDeclaration(
       decl.annotation,
       decl.returnAnnotation,
       decl.name,
+      decl.isArrowSyntax,
     );
 
     // Zero-parameter arrow functions () => { ... } should have type Unit -> T
@@ -903,6 +907,9 @@ function inferLetDeclaration(
       );
     }
     if (decl.parameters.length === 0 && !decl.isArrowSyntax) {
+      // Clear any existing identity bindings for this name before binding new ones
+      // This prevents shadowed variables from sharing identities with their shadows
+      ctx.identityBindings.delete(decl.name);
       bindIdentitiesFromExpr(ctx, decl.name, decl.body.result ?? decl.body);
     }
     applyReturnPolicies(ctx, decl);
@@ -931,6 +938,7 @@ function inferLetDeclaration(
       binding.annotation,
       binding.returnAnnotation,
       binding.name,
+      binding.isArrowSyntax,
     );
     inferredTypes.set(binding.name, inferredType);
   }
@@ -1024,15 +1032,35 @@ function bindIdentitiesFromExpr(
   expr: Expr | undefined,
 ): void {
   if (!expr) return;
+
   const identities = getIdentitiesForExpr(ctx, expr);
   if (identities) {
+    // For call expressions: only bind if it's a FRESH allocation (like alloc)
+    // Check if this is a call that returns an existing value (like a pass-through function)
+    if (expr.kind === "call") {
+      // Heuristic: if it's calling alloc, MemVal, or other constructors, bind the identity
+      // Otherwise, skip binding to avoid aliasing issues
+      const calleeName =
+        expr.callee.kind === "identifier" ? expr.callee.name : null;
+      if (
+        calleeName &&
+        (calleeName === "alloc" || calleeName.match(/^[A-Z]/))
+      ) {
+        // Constructor or alloc - bind the fresh identity
+        ctx.identityBindings.set(name, cloneIdentitySetByDomain(identities));
+      }
+      // For other calls, don't bind - they might return aliases
+      return;
+    }
     ctx.identityBindings.set(name, cloneIdentitySetByDomain(identities));
     return;
   }
   if (expr.kind === "identifier") {
     const bound = ctx.identityBindings.get(expr.name);
     if (bound) {
-      ctx.identityBindings.set(name, cloneIdentitySetByDomain(bound));
+      // Don't copy identities from another variable - creates cross-shadow issues
+      // Only fresh allocations should propagate identities
+      return;
     }
   }
 }
@@ -1044,20 +1072,24 @@ function inferLetBinding(
   annotation: TypeExpr | undefined,
   returnAnnotation?: TypeExpr,
   functionName?: string,
+  isArrowSyntax?: boolean,
 ): Type {
   const annotationScope = new Map<string, Type>();
-  const paramTypes = parameters.map((param) => (
+  const paramTypes = parameters.map((param) =>
     param.annotation
       ? convertTypeExpr(ctx, param.annotation, annotationScope)
-      : freshTypeVar()
-  ));
+      : freshTypeVar(),
+  );
 
   const paramNameToIndex = new Map<string, number>();
   for (let index = 0; index < parameters.length; index += 1) {
     const paramName = expectParameterName(parameters[index]);
     paramNameToIndex.set(paramName, index);
   }
-  if (functionName) {
+  // Push a function scope for actual functions (with parameters) or arrow functions.
+  // Simple value bindings like `let x = expr` should not create a new scope.
+  const isActualFunction = parameters.length > 0 || isArrowSyntax === true;
+  if (functionName && isActualFunction) {
     ctx.functionParamStack.push({
       name: functionName,
       params: paramNameToIndex,
@@ -1074,6 +1106,8 @@ function inferLetBinding(
           quantifiers: [],
           type: paramTypes[index],
         });
+        // Parameters shadow outer variables, so clear any identity bindings
+        ctx.identityBindings.delete(paramName);
       });
 
       let bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
@@ -1118,11 +1152,14 @@ function inferLetBinding(
       if (parameters.length === 0) {
         fnType = bodyType;
       } else {
-        fnType = paramTypes.reduceRight<Type>((acc, paramType) => ({
-          kind: "func",
-          from: applyCurrentSubst(ctx, paramType),
-          to: acc,
-        }), bodyType);
+        fnType = paramTypes.reduceRight<Type>(
+          (acc, paramType) => ({
+            kind: "func",
+            from: applyCurrentSubst(ctx, paramType),
+            to: acc,
+          }),
+          bodyType,
+        );
       }
 
       if (annotation) {
@@ -1154,7 +1191,7 @@ function inferLetBinding(
       return fnType;
     });
   } finally {
-    if (functionName) {
+    if (functionName && isActualFunction) {
       ctx.functionParamStack.pop();
     }
   }
@@ -1228,68 +1265,89 @@ function inferArrowFunction(
   body: BlockExpr,
   returnAnnotation?: TypeExpr,
 ): Type {
-  return withScopedEnv(ctx, () => {
-    const annotationScope = new Map<string, Type>();
-    const paramTypes = parameters.map((param) => (
-      param.annotation
-        ? convertTypeExpr(ctx, param.annotation, annotationScope)
-        : freshTypeVar()
-    ));
+  // Push an anonymous function scope to track nested scope for identity propagation
+  const anonymousScopeId = ctx.functionScopeCounter++;
+  ctx.functionParamStack.push({
+    name: `__anonymous_${anonymousScopeId}`,
+    params: new Map(),
+    scopeId: anonymousScopeId,
+  });
 
-    parameters.forEach((param, index) => {
-      const paramName = expectParameterName(param);
-      ctx.env.set(paramName, {
-        quantifiers: [],
-        type: paramTypes[index],
+  try {
+    return withScopedEnv(ctx, () => {
+      const annotationScope = new Map<string, Type>();
+      const paramTypes = parameters.map((param) =>
+        param.annotation
+          ? convertTypeExpr(ctx, param.annotation, annotationScope)
+          : freshTypeVar(),
+      );
+
+      parameters.forEach((param, index) => {
+        const paramName = expectParameterName(param);
+        ctx.env.set(paramName, {
+          quantifiers: [],
+          type: paramTypes[index],
+        });
+        // Parameters shadow outer variables, so clear any identity bindings
+        ctx.identityBindings.delete(paramName);
       });
-    });
 
-    let bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
+      let bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
 
-    if (returnAnnotation) {
-      const annotated = convertTypeExpr(ctx, returnAnnotation, annotationScope);
-      storeAnnotationType(ctx, returnAnnotation, annotated);
-      const aligned = alignAnnotationWithCarrier(bodyType, annotated);
-      if (isHoleType(bodyType) && !isHoleType(aligned)) {
-        bodyType = applyCurrentSubst(ctx, aligned);
-      } else if (unify(ctx, bodyType, aligned)) {
-        bodyType = applyCurrentSubst(ctx, aligned);
-      } else {
-        const failure = ctx.lastUnifyFailure;
-        const subject = materializeExpr(ctx, body.result ?? body);
-        if (failure?.kind === "occurs_check") {
-          const mark = markOccursCheck(
-            ctx,
-            body,
-            subject,
-            failure.left,
-            failure.right,
-          );
-          bodyType = mark.type;
+      if (returnAnnotation) {
+        const annotated = convertTypeExpr(
+          ctx,
+          returnAnnotation,
+          annotationScope,
+        );
+        storeAnnotationType(ctx, returnAnnotation, annotated);
+        const aligned = alignAnnotationWithCarrier(bodyType, annotated);
+        if (isHoleType(bodyType) && !isHoleType(aligned)) {
+          bodyType = applyCurrentSubst(ctx, aligned);
+        } else if (unify(ctx, bodyType, aligned)) {
+          bodyType = applyCurrentSubst(ctx, aligned);
         } else {
-          const expected = applyCurrentSubst(ctx, aligned);
-          const actual = applyCurrentSubst(ctx, bodyType);
-          const mark = markInconsistent(ctx, body, subject, expected, actual);
-          bodyType = mark.type;
+          const failure = ctx.lastUnifyFailure;
+          const subject = materializeExpr(ctx, body.result ?? body);
+          if (failure?.kind === "occurs_check") {
+            const mark = markOccursCheck(
+              ctx,
+              body,
+              subject,
+              failure.left,
+              failure.right,
+            );
+            bodyType = mark.type;
+          } else {
+            const expected = applyCurrentSubst(ctx, aligned);
+            const actual = applyCurrentSubst(ctx, bodyType);
+            const mark = markInconsistent(ctx, body, subject, expected, actual);
+            bodyType = mark.type;
+          }
         }
       }
-    }
 
-    if (parameters.length === 0) {
-      // Zero-parameter function: () => body has type Unit -> bodyType
-      return {
-        kind: "func",
-        from: { kind: "unit" },
-        to: bodyType,
-      };
-    }
+      if (parameters.length === 0) {
+        // Zero-parameter function: () => body has type Unit -> bodyType
+        return {
+          kind: "func",
+          from: { kind: "unit" },
+          to: bodyType,
+        };
+      }
 
-    return paramTypes.reduceRight<Type>((acc, paramType) => ({
-      kind: "func",
-      from: applyCurrentSubst(ctx, paramType),
-      to: acc,
-    }), bodyType);
-  });
+      return paramTypes.reduceRight<Type>(
+        (acc, paramType) => ({
+          kind: "func",
+          from: applyCurrentSubst(ctx, paramType),
+          to: acc,
+        }),
+        bodyType,
+      );
+    });
+  } finally {
+    ctx.functionParamStack.pop();
+  }
 }
 
 function alignAnnotationWithCarrier(actual: Type, annotation: Type): Type {
@@ -1410,7 +1468,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       }
       const carrierInfo = splitCarrier(instantiated);
       if (
-        carrierInfo && carrierInfo.domain === "mem" &&
+        carrierInfo &&
+        carrierInfo.domain === "mem" &&
         carrierInfo.state.kind === "effect_row"
       ) {
         emitConstraintSource(
@@ -1424,6 +1483,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         setExprIdentities(ctx, expr, boundIdentities);
         for (const [domain, identities] of boundIdentities.entries()) {
           for (const identityId of identities) {
+            // Don't add flow edges here - emitIdentityTagsToUsage handles
+            // propagation to nested scopes when tags are added
             recordIdentityUsage(ctx, domain, identityId, expr.id);
             const tagged = getIdentityTags(ctx, domain, identityId);
             if (tagged.length > 0) {
@@ -1548,12 +1609,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const fieldNames = new Set<string>();
       for (const field of expr.fields) {
         if (fieldNames.has(field.name)) {
-          recordLayer1Diagnostic(
-            ctx,
-            expr.id,
-            "duplicate_record_field",
-            { field: field.name },
-          );
+          recordLayer1Diagnostic(ctx, expr.id, "duplicate_record_field", {
+            field: field.name,
+          });
           const unknown = unknownType({
             kind: "incomplete",
             reason: "duplicate_record_field",
@@ -1580,10 +1638,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       if (candidateRecords.length === 1) {
         const [recordName, recordInfo] = candidateRecords[0];
-        const missingFields = Array.from(recordInfo.recordFields!.keys())
-          .filter(
-            (fieldName) => !fields.has(fieldName),
-          );
+        const missingFields = Array.from(
+          recordInfo.recordFields!.keys(),
+        ).filter((fieldName) => !fields.has(fieldName));
         for (const missingField of missingFields) {
           recordLayer1Diagnostic(ctx, expr.id, "missing_field", {
             field: missingField,
@@ -1638,9 +1695,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       const matches = candidateRecords.length;
       const candidateNames = candidateRecords.map(([name]) => name);
-      const descriptor = matches === 0
-        ? "no nominal record matches these fields"
-        : `ambiguous among: ${candidateNames.join(", ")}`;
+      const descriptor =
+        matches === 0
+          ? "no nominal record matches these fields"
+          : `ambiguous among: ${candidateNames.join(", ")}`;
       recordLayer1Diagnostic(ctx, expr.id, "ambiguous_record", {
         matches,
         candidates: candidateNames,
@@ -1681,11 +1739,13 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         if (!targetCarrierInfo) {
           return value;
         }
-        return joinCarrier(
-          targetCarrierInfo.domain,
-          value,
-          targetCarrierInfo.state,
-        ) ?? value;
+        return (
+          joinCarrier(
+            targetCarrierInfo.domain,
+            value,
+            targetCarrierInfo.state,
+          ) ?? value
+        );
       };
 
       // First check if the subject type (either direct or carrier payload) is a nominal record
@@ -1761,12 +1821,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // If targetType or carrier subject is a type variable (so unresolved), unify to exactly one nominal record
       if (targetType.kind === "var" || recordSubject.kind === "var") {
-        const subjectVar = recordSubject.kind === "var"
-          ? recordSubject
-          : targetType;
-        const possibleRecords = Array.from(ctx.adtEnv.entries()).filter((
-          [name, info],
-        ) => info.recordFields?.has(expr.field));
+        const subjectVar =
+          recordSubject.kind === "var" ? recordSubject : targetType;
+        const possibleRecords = Array.from(ctx.adtEnv.entries()).filter(
+          ([name, info]) => info.recordFields?.has(expr.field),
+        );
         if (possibleRecords.length === 1) {
           // HM nominal record unification: exactly one record type has this field
           const [, info] = possibleRecords[0];
@@ -1776,10 +1835,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             const projectedValueType = aliasInstance.fields.get(expr.field)!;
             const projectionType = targetCarrierInfo
               ? (joinCarrier(
-                targetCarrierInfo.domain,
-                projectedValueType,
-                targetCarrierInfo.state,
-              ) ?? projectedValueType)
+                  targetCarrierInfo.domain,
+                  projectedValueType,
+                  targetCarrierInfo.state,
+                ) ?? projectedValueType)
               : projectedValueType;
             recordHasFieldConstraint(
               ctx,
@@ -1812,10 +1871,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           const projectedValueType = constructorType.args[index];
           const projectionType = targetCarrierInfo
             ? (joinCarrier(
-              targetCarrierInfo.domain,
-              projectedValueType,
-              targetCarrierInfo.state,
-            ) ?? projectedValueType)
+                targetCarrierInfo.domain,
+                projectedValueType,
+                targetCarrierInfo.state,
+              ) ?? projectedValueType)
             : projectedValueType;
           recordHasFieldConstraint(
             ctx,
@@ -1926,8 +1985,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               state,
             );
             if (mergedState) {
-              finalType = joinCarrier(domain, flattened.value, mergedState) ??
-                finalType;
+              finalType =
+                joinCarrier(domain, flattened.value, mergedState) ?? finalType;
             }
           } else {
             // Wrap with carrier if finalType doesn't have this domain
@@ -1954,9 +2013,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           collapseCarrier(applyCurrentSubst(ctx, argType)),
         );
         registerHoleForType(ctx, holeOriginFromExpr(expr), resultType);
-        const calleeIdentifierName = expr.callee.kind === "identifier"
-          ? expr.callee.name
-          : null;
+        const calleeIdentifierName =
+          expr.callee.kind === "identifier" ? expr.callee.name : null;
         const calleeName = calleeIdentifierName ?? "<expression>";
         const shouldLogFormatter = calleeIdentifierName === "formatter";
         if (
@@ -1991,9 +2049,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           ? argCarrierInfo.value
           : resolvedArg;
 
-        const expectedParamType = fnType.kind === "func"
-          ? applyCurrentSubst(ctx, fnType.from)
-          : undefined;
+        const expectedParamType =
+          fnType.kind === "func"
+            ? applyCurrentSubst(ctx, fnType.from)
+            : undefined;
         const expectsCarrier = expectedParamType
           ? splitCarrier(expectedParamType) !== null
           : false;
@@ -2073,7 +2132,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           const failure = ctx.lastUnifyFailure;
           const calleeMarked = materializeExpr(ctx, expr.callee);
           const argsMarked = expr.arguments.map((argument) =>
-            materializeExpr(ctx, argument)
+            materializeExpr(ctx, argument),
           );
           const subject = argsMarked[index];
 
@@ -2132,8 +2191,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             state,
           );
           if (mergedState) {
-            callType = joinCarrier(domain, flattened.value, mergedState) ??
-              callType;
+            callType =
+              joinCarrier(domain, flattened.value, mergedState) ?? callType;
           }
         } else {
           // Wrap with carrier if callType doesn't have this domain
@@ -2150,17 +2209,18 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const targetIndex = opRule?.target
         ? parseTargetIndex(opRule.target)
         : null;
-      const targetExpr = targetIndex !== null
-        ? expr.arguments[targetIndex]
-        : undefined;
-      const requireTargetIndex = targetIndex === null &&
-          ((opRule?.requiresExact?.length ?? 0) > 0 ||
-            (opRule?.requiresAny?.length ?? 0) > 0)
-        ? 0
-        : targetIndex;
-      const requireTargetExpr = requireTargetIndex !== null
-        ? expr.arguments[requireTargetIndex]
-        : undefined;
+      const targetExpr =
+        targetIndex !== null ? expr.arguments[targetIndex] : undefined;
+      const requireTargetIndex =
+        targetIndex === null &&
+        ((opRule?.requiresExact?.length ?? 0) > 0 ||
+          (opRule?.requiresAny?.length ?? 0) > 0)
+          ? 0
+          : targetIndex;
+      const requireTargetExpr =
+        requireTargetIndex !== null
+          ? expr.arguments[requireTargetIndex]
+          : undefined;
       const isRowBag = opRule?.domain
         ? isRowBagDomain(ctx.infectionRegistry, opRule.domain)
         : false;
@@ -2214,6 +2274,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           let addedTags = opRule.adds;
           if (isRowBag) {
             const identity = freshResource();
+            // Record the scope where this identity was created
+            ctx.identityCreationScope.set(identity.id, getCurrentScopeId(ctx));
             addedTags = addIdentityTags(
               ctx,
               opRule.domain,
@@ -2236,11 +2298,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               baseState = createEffectRow();
             }
           }
-          const mergedState = unionCarrierStates(
-            carrierInfo.domain,
-            baseState,
-            addedRow,
-          ) ??
+          const mergedState =
+            unionCarrierStates(carrierInfo.domain, baseState, addedRow) ??
             effectRowUnion(baseState, addedRow);
           const rejoined = joinCarrier(
             carrierInfo.domain,
@@ -2256,9 +2315,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const finalCarrierInfo = splitCarrier(callType);
       if (finalCarrierInfo) {
         // Emit constraint source with the carrier's state
-        if (
-          finalCarrierInfo.state.kind === "effect_row"
-        ) {
+        if (finalCarrierInfo.state.kind === "effect_row") {
           emitConstraintSource(
             ctx,
             expr.id,
@@ -2362,7 +2419,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       }
 
       if (
-        opRule?.target && opRule.domain && targetExpr && isRowBag &&
+        opRule?.target &&
+        opRule.domain &&
+        targetExpr &&
+        isRowBag &&
         !ctx.exprIdentities.has(expr.id)
       ) {
         const targetIdentities = getExprIdentities(ctx, targetExpr);
@@ -2476,9 +2536,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           accumulatedStates.set(domain, leftCarrierInfo.state);
         }
       }
-      const resolvedRight = collapseCarrier(
-        applyCurrentSubst(ctx, rightType),
-      );
+      const resolvedRight = collapseCarrier(applyCurrentSubst(ctx, rightType));
       const rightCarrierInfo = splitCarrier(resolvedRight);
       const rightArgType = rightCarrierInfo
         ? rightCarrierInfo.value
@@ -2568,8 +2626,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             state,
           );
           if (mergedState) {
-            callType = joinCarrier(domain, flattened.value, mergedState) ??
-              callType;
+            callType =
+              joinCarrier(domain, flattened.value, mergedState) ?? callType;
           }
         } else {
           // Wrap with carrier if callType doesn't have this domain
@@ -2679,8 +2737,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             state,
           );
           if (mergedState) {
-            callType = joinCarrier(domain, flattened.value, mergedState) ??
-              callType;
+            callType =
+              joinCarrier(domain, flattened.value, mergedState) ?? callType;
           }
         } else {
           // Wrap with carrier if callType doesn't have this domain
@@ -2772,7 +2830,8 @@ export function inferProgram(
   const seenTypeDeclsPass2 = new Set<number>();
   for (const decl of canonicalProgram.declarations) {
     if (
-      decl.kind === "type" && successfulTypeDecls.has(decl) &&
+      decl.kind === "type" &&
+      successfulTypeDecls.has(decl) &&
       !skippedTypeDecls.has(decl)
     ) {
       if (seenTypeDeclsPass2.has(decl.id)) continue;
@@ -2944,8 +3003,8 @@ export function inferPattern(
         };
       }
 
-      const shouldAutoPin = allowAutoPin && !!existingScheme &&
-        !autoPinBlacklist.has(pattern.name);
+      const shouldAutoPin =
+        allowAutoPin && !!existingScheme && !autoPinBlacklist.has(pattern.name);
       const shouldPin = pattern.isExplicitPin || shouldAutoPin;
       if (shouldPin && existingScheme) {
         const existingType = instantiateAndApply(ctx, existingScheme);
@@ -3056,9 +3115,10 @@ export function inferPattern(
       return {
         type: resolved,
         bindings: new Map(),
-        coverage: pattern.literal.kind === "bool"
-          ? { kind: "bool", value: pattern.literal.value }
-          : { kind: "none" },
+        coverage:
+          pattern.literal.kind === "bool"
+            ? { kind: "bool", value: pattern.literal.value }
+            : { kind: "none" },
         marked: {
           kind: "literal",
           span: pattern.span,
@@ -3265,15 +3325,10 @@ export function inferPattern(
         current = fnType.to;
       }
       if (!unify(ctx, expected, current)) {
-        recordLayer1Diagnostic(
-          ctx,
-          pattern.id,
-          "type_mismatch",
-          {
-            expected: applyCurrentSubst(ctx, expected),
-            actual: applyCurrentSubst(ctx, current),
-          },
-        );
+        recordLayer1Diagnostic(ctx, pattern.id, "type_mismatch", {
+          expected: applyCurrentSubst(ctx, expected),
+          actual: applyCurrentSubst(ctx, current),
+        });
         const markType = createUnknownAndRegister(
           ctx,
           holeOriginFromPattern(pattern),
@@ -3442,11 +3497,9 @@ export function ensureExhaustive(
   }
   if (resolved.kind !== "constructor") {
     if (hasEqualityPattern) {
-      const typeLabel = resolved.kind === "var"
-        ? "this type"
-        : typeToString(resolved);
-      const hint =
-        `Literal or pinned patterns only cover specific values of ${typeLabel}. Add a '_' arm (or equivalent catch-all) to handle the rest.`;
+      const typeLabel =
+        resolved.kind === "var" ? "this type" : typeToString(resolved);
+      const hint = `Literal or pinned patterns only cover specific values of ${typeLabel}. Add a '_' arm (or equivalent catch-all) to handle the rest.`;
       markNonExhaustive(
         ctx,
         expr,
@@ -3703,8 +3756,10 @@ export function inferMatchBranches(
       return inferExpr(ctx, arm.body);
     });
     const resolvedBodyType = applyCurrentSubst(ctx, bodyType);
-    const skipJoin = (branchKind === "err" || branchKind === "all_errors") &&
-      arm.body.kind === "block" && !arm.body.result;
+    const skipJoin =
+      (branchKind === "err" || branchKind === "all_errors") &&
+      arm.body.kind === "block" &&
+      !arm.body.result;
     bodyTypes.push(resolvedBodyType);
     branchMetadata.push({ kind: branchKind, type: resolvedBodyType, skipJoin });
 
@@ -3720,12 +3775,13 @@ export function inferMatchBranches(
   }
 
   const resolvedScrutinee = normalizeMatchScrutineeType(ctx, scrutineeType);
-  const okBranchesReturnResult = branchMetadata.some((branch) =>
-    branch.kind === "ok" && flattenResultType(branch.type) !== null
+  const okBranchesReturnResult = branchMetadata.some(
+    (branch) => branch.kind === "ok" && flattenResultType(branch.type) !== null,
   );
-  const errBranchesReturnResult = branchMetadata.some((branch) =>
-    (branch.kind === "err" || branch.kind === "all_errors") &&
-    flattenResultType(branch.type) !== null
+  const errBranchesReturnResult = branchMetadata.some(
+    (branch) =>
+      (branch.kind === "err" || branch.kind === "all_errors") &&
+      flattenResultType(branch.type) !== null,
   );
   const preventsDischarge = okBranchesReturnResult || errBranchesReturnResult;
 
@@ -3740,8 +3796,8 @@ export function inferMatchBranches(
           // Find the error constructor (heuristic: has arity 1)
           for (const ctor of typeInfo.constructors) {
             if (ctor.arity === 1) {
-              const set = coverageMap.get(resolvedScrutinee.name) ??
-                new Set<string>();
+              const set =
+                coverageMap.get(resolvedScrutinee.name) ?? new Set<string>();
               set.add(ctor.name);
               coverageMap.set(resolvedScrutinee.name, set);
               break;
@@ -3787,10 +3843,7 @@ export function inferMatchBranches(
     }
   };
 
-  const snapshotErrorCoverage = (
-    row: Type,
-    missing: string[],
-  ) => {
+  const snapshotErrorCoverage = (row: Type, missing: string[]) => {
     effectRowCoverage = {
       effectRow: row,
       coveredConstructors: new Set(handledErrorConstructors),
@@ -3880,31 +3933,23 @@ export function inferMatchBranches(
     }
   }
   if (branchBodies.length > 0 && scrutineeExpr) {
-    recordBranchJoinConstraint(
-      ctx,
-      expr,
-      branchBodies,
-      scrutineeExpr,
-      {
-        dischargesResult: dischargedResult,
-        effectRowCoverage,
-      },
-    );
+    recordBranchJoinConstraint(ctx, expr, branchBodies, scrutineeExpr, {
+      dischargesResult: dischargedResult,
+      effectRowCoverage,
+    });
   }
 
-  const shouldRewrapCarrier = scrutineeCarrier && (
-    (scrutineeCarrier.domain === "effect" &&
+  const shouldRewrapCarrier =
+    scrutineeCarrier &&
+    ((scrutineeCarrier.domain === "effect" &&
       handledErrorConstructors.size === 0) ||
-    (scrutineeCarrier.domain !== "effect" && !scrutineeFullyCovered)
-  );
+      (scrutineeCarrier.domain !== "effect" && !scrutineeFullyCovered));
 
   if (shouldRewrapCarrier && scrutineeCarrier) {
     const resultCarrier = splitCarrier(resolvedResult);
     const baseValue = resultCarrier ? resultCarrier.value : resolvedResult;
     let combinedState = scrutineeCarrier.state;
-    if (
-      resultCarrier && resultCarrier.domain === scrutineeCarrier.domain
-    ) {
+    if (resultCarrier && resultCarrier.domain === scrutineeCarrier.domain) {
       const unioned = unionCarrierStates(
         scrutineeCarrier.domain,
         resultCarrier.state,

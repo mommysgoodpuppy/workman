@@ -94,15 +94,19 @@ export interface Context {
   identityStates: Map<number, Map<string, Map<string, number>>>;
   exprIdentities: Map<NodeId, Map<string, Set<number>>>;
   identityUsage: Map<number, Map<string, Map<NodeId, number>>>;
+  identityCreationScope: Map<number, number>; // identityId -> scopeId where it was created
   functionParamEffects: Map<
     string,
     Map<
       number,
-      Map<string, {
-        requiresExact: Set<string>;
-        requiresAny: Set<string>;
-        adds: Set<string>;
-      }>
+      Map<
+        string,
+        {
+          requiresExact: Set<string>;
+          requiresAny: Set<string>;
+          adds: Set<string>;
+        }
+      >
     >
   >;
   functionParamStack: {
@@ -166,6 +170,7 @@ export function createContext(options: InferOptions = {}): Context {
     identityStates: new Map(),
     exprIdentities: new Map(),
     identityUsage: new Map(),
+    identityCreationScope: new Map(),
     functionParamEffects: new Map(),
     functionParamStack: [],
     functionScopeCounter: 1,
@@ -189,111 +194,111 @@ export interface EffectRowCoverageStub {
 
 export type ConstraintStub =
   | {
-    kind: "call";
-    origin: NodeId;
-    callee: NodeId;
-    argument: NodeId;
-    result: NodeId;
-    resultType: Type;
-    index: number;
-    argumentValueType?: Type;
-  }
+      kind: "call";
+      origin: NodeId;
+      callee: NodeId;
+      argument: NodeId;
+      result: NodeId;
+      resultType: Type;
+      index: number;
+      argumentValueType?: Type;
+    }
   | {
-    kind: "branch_join";
-    origin: NodeId;
-    scrutinee: NodeId | null;
-    branches: NodeId[];
-    dischargesResult?: boolean;
-    effectRowCoverage?: EffectRowCoverageStub;
-  }
+      kind: "branch_join";
+      origin: NodeId;
+      scrutinee: NodeId | null;
+      branches: NodeId[];
+      dischargesResult?: boolean;
+      effectRowCoverage?: EffectRowCoverageStub;
+    }
   | {
-    kind: "annotation";
-    origin: NodeId;
-    annotation: NodeId;
-    annotationType?: Type;
-    value: NodeId;
-    subject: NodeId | null;
-  }
+      kind: "annotation";
+      origin: NodeId;
+      annotation: NodeId;
+      annotationType?: Type;
+      value: NodeId;
+      subject: NodeId | null;
+    }
   | {
-    kind: "has_field";
-    origin: NodeId;
-    target: NodeId;
-    field: string;
-    result: NodeId;
-    projectedValueType?: Type;
-  }
+      kind: "has_field";
+      origin: NodeId;
+      target: NodeId;
+      field: string;
+      result: NodeId;
+      projectedValueType?: Type;
+    }
   | {
-    kind: "numeric";
-    origin: NodeId;
-    operator: string;
-    operands: NodeId[];
-    result: NodeId;
-  }
+      kind: "numeric";
+      origin: NodeId;
+      operator: string;
+      operands: NodeId[];
+      result: NodeId;
+    }
   | {
-    kind: "boolean";
-    origin: NodeId;
-    operator: string;
-    operands: NodeId[];
-    result: NodeId;
-  }
+      kind: "boolean";
+      origin: NodeId;
+      operator: string;
+      operands: NodeId[];
+      result: NodeId;
+    }
   // NEW: Constraint flow primitives (Phase 1: Unified Constraint Model)
   | {
-    kind: "constraint_source";
-    node: NodeId;
-    label: ConstraintLabel;
-  }
+      kind: "constraint_source";
+      node: NodeId;
+      label: ConstraintLabel;
+    }
   | {
-    kind: "constraint_flow";
-    from: NodeId;
-    to: NodeId;
-  }
+      kind: "constraint_flow";
+      from: NodeId;
+      to: NodeId;
+    }
   | {
-    kind: "constraint_rewrite";
-    node: NodeId;
-    remove: ConstraintLabel[];
-    add: ConstraintLabel[];
-  }
+      kind: "constraint_rewrite";
+      node: NodeId;
+      remove: ConstraintLabel[];
+      add: ConstraintLabel[];
+    }
   | {
-    kind: "constraint_alias";
-    id1: Identity;
-    id2: Identity;
-  }
+      kind: "constraint_alias";
+      id1: Identity;
+      id2: Identity;
+    }
   | {
-    kind: "require_exact_state";
-    node: NodeId;
-    domain: string;
-    tags: string[];
-  }
+      kind: "require_exact_state";
+      node: NodeId;
+      domain: string;
+      tags: string[];
+    }
   | {
-    kind: "require_any_state";
-    node: NodeId;
-    domain: string;
-    tags: string[];
-  }
+      kind: "require_any_state";
+      node: NodeId;
+      domain: string;
+      tags: string[];
+    }
   | {
-    kind: "add_state_tags";
-    node: NodeId;
-    domain: string;
-    tags: string[];
-  }
+      kind: "add_state_tags";
+      node: NodeId;
+      domain: string;
+      tags: string[];
+    }
   | {
-    kind: "require_at_return";
-    node: NodeId;
-    domain: string;
-    tags: string[];
-    policy?: string;
-  }
+      kind: "require_at_return";
+      node: NodeId;
+      domain: string;
+      tags: string[];
+      policy?: string;
+    }
   | {
-    kind: "call_rejects_infection";
-    node: NodeId;
-    policy?: string;
-  }
+      kind: "call_rejects_infection";
+      node: NodeId;
+      policy?: string;
+    }
   | {
-    kind: "call_rejects_domains";
-    node: NodeId;
-    domains: string[];
-    policy?: string;
-  };
+      kind: "call_rejects_domains";
+      node: NodeId;
+      domains: string[];
+      policy?: string;
+    };
 // NOTE: constraint_merge is NOT needed - branch_join already handles merge semantics
 
 export function recordCallConstraint(
@@ -330,13 +335,13 @@ export function recordBranchJoinConstraint(
 ): void {
   const coverage = metadata?.effectRowCoverage!
     ? {
-      row: metadata.effectRowCoverage.effectRow,
-      coveredConstructors: Array.from(
-        metadata.effectRowCoverage.coveredConstructors,
-      ),
-      coversTail: metadata.effectRowCoverage.coversTail,
-      missingConstructors: metadata.effectRowCoverage.missingConstructors,
-    }
+        row: metadata.effectRowCoverage.effectRow,
+        coveredConstructors: Array.from(
+          metadata.effectRowCoverage.coveredConstructors,
+        ),
+        coversTail: metadata.effectRowCoverage.coversTail,
+        missingConstructors: metadata.effectRowCoverage.missingConstructors,
+      }
     : undefined;
   ctx.constraintStubs.push({
     kind: "branch_join",
@@ -708,10 +713,12 @@ export interface UnifyFailure {
   right: Type;
 }
 
-export type UnifyResult = { success: true; subst: Substitution } | {
-  success: false;
-  reason: UnifyFailure;
-};
+export type UnifyResult =
+  | { success: true; subst: Substitution }
+  | {
+      success: false;
+      reason: UnifyFailure;
+    };
 
 export function lookupEnv(ctx: Context, name: string): TypeScheme | null {
   const scheme = ctx.env.get(name);
@@ -731,8 +738,8 @@ export function generalizeInContext(ctx: Context, type: Type): TypeScheme {
   if (ctx.nonGeneralizable.size === 0) {
     return scheme;
   }
-  const filtered = scheme.quantifiers.filter((id) =>
-    !ctx.nonGeneralizable.has(id)
+  const filtered = scheme.quantifiers.filter(
+    (id) => !ctx.nonGeneralizable.has(id),
   );
   ctx.nonGeneralizable.clear();
   if (filtered.length === scheme.quantifiers.length) {
@@ -744,10 +751,12 @@ export function generalizeInContext(ctx: Context, type: Type): TypeScheme {
   };
 }
 
-export type ExpectFunctionResult = { success: true; from: Type; to: Type } | {
-  success: false;
-  type: Type;
-};
+export type ExpectFunctionResult =
+  | { success: true; from: Type; to: Type }
+  | {
+      success: false;
+      type: Type;
+    };
 
 export function expectFunctionType(
   ctx: Context,
@@ -820,10 +829,15 @@ export function markFreeVariable(
     kind: "mark_free_var",
     span: expr.span,
     id: expr.id,
-    type: createUnknownAndRegister(ctx, origin, {
-      kind: "error_free_var",
-      name,
-    }, "free"),
+    type: createUnknownAndRegister(
+      ctx,
+      origin,
+      {
+        kind: "error_free_var",
+        name,
+      },
+      "free",
+    ),
     name,
   };
   ctx.marks.set(expr, mark);
@@ -844,9 +858,7 @@ export function markNotFunction(
   // preserve that provenance instead of wrapping it in error_not_function
   let resultType: Type;
   const calleeProvenance = getProvenance(calleeType);
-  if (
-    isHoleType(calleeType) && calleeProvenance?.kind === "incomplete"
-  ) {
+  if (isHoleType(calleeType) && calleeProvenance?.kind === "incomplete") {
     const provenance = { ...calleeProvenance } as Record<string, unknown>;
     delete provenance.nodeId;
     resultType = createUnknownAndRegister(
@@ -878,10 +890,12 @@ export function markNotFunction(
   // For holes (JS imports, explicit holes), this is expected gradual typing behavior
   const calleeProvenance2 = getProvenance(calleeType);
   if (
-    !(isHoleType(calleeType) &&
+    !(
+      isHoleType(calleeType) &&
       (calleeProvenance2?.kind === "incomplete" ||
         calleeProvenance2?.kind === "expr_hole" ||
-        calleeProvenance2?.kind === "user_hole"))
+        calleeProvenance2?.kind === "user_hole")
+    )
   ) {
     recordLayer1Diagnostic(ctx, expr.id, "not_function", { calleeType });
   }
@@ -947,10 +961,11 @@ export function markInconsistent(
   // Holes (holes, JS imports) are allowed to mismatch - Layer 2 will handle conflicts
   const expectedProvenance = getProvenance(expected);
   const actualProvenance = getProvenance(actual);
-  const isGradualTyping = (isHoleType(expected) &&
-    (expectedProvenance?.kind === "incomplete" ||
-      expectedProvenance?.kind === "expr_hole" ||
-      expectedProvenance?.kind === "user_hole")) ||
+  const isGradualTyping =
+    (isHoleType(expected) &&
+      (expectedProvenance?.kind === "incomplete" ||
+        expectedProvenance?.kind === "expr_hole" ||
+        expectedProvenance?.kind === "user_hole")) ||
     (isHoleType(actual) &&
       (actualProvenance?.kind === "incomplete" ||
         actualProvenance?.kind === "expr_hole" ||
@@ -974,10 +989,15 @@ export function markUnsupportedExpr(
     kind: "mark_unsupported_expr",
     span: expr.span,
     id: expr.id,
-    type: createUnknownAndRegister(ctx, origin, {
-      kind: "incomplete",
-      reason: "expr.unsupported",
-    }, "incomplete"),
+    type: createUnknownAndRegister(
+      ctx,
+      origin,
+      {
+        kind: "incomplete",
+        reason: "expr.unsupported",
+      },
+      "incomplete",
+    ),
     exprKind,
   };
   ctx.marks.set(expr, mark);
@@ -1107,10 +1127,15 @@ export function markNonExhaustive(
     kind: "mark_unsupported_expr",
     span: expr.span,
     id: expr.id,
-    type: createUnknownAndRegister(ctx, origin, {
-      kind: "incomplete",
-      reason: "match.non_exhaustive",
-    }, "incomplete"),
+    type: createUnknownAndRegister(
+      ctx,
+      origin,
+      {
+        kind: "incomplete",
+        reason: "match.non_exhaustive",
+      },
+      "incomplete",
+    ),
     exprKind: "match_non_exhaustive",
   };
   // Don't replace the match expression with a mark - just record the diagnostic
@@ -1178,7 +1203,9 @@ function unifyTypes(
     const rightCarrier = splitCarrier(right);
 
     if (
-      leftCarrier && rightCarrier && leftCarrier.domain === rightCarrier.domain
+      leftCarrier &&
+      rightCarrier &&
+      leftCarrier.domain === rightCarrier.domain
     ) {
       // Both are carriers in the same domain - unify value and state
       const valueUnify = unifyTypes(
@@ -1366,7 +1393,8 @@ function unifyEffectRowTypes(
 
   // If both tails are the same type variable, bind it to the union
   if (
-    resolvedLeft.tail?.kind === "var" && resolvedRight.tail?.kind === "var" &&
+    resolvedLeft.tail?.kind === "var" &&
+    resolvedRight.tail?.kind === "var" &&
     resolvedLeft.tail.id === resolvedRight.tail.id
   ) {
     // Same tail variable - the union will have the same tail
