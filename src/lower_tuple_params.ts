@@ -103,6 +103,11 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
     case "arrow":
       lowerArrowFunction(expr, ctx);
       return;
+    case "if":
+      lowerExpr(expr.condition, ctx);
+      lowerIfBranch(expr.thenBranch, ctx);
+      lowerIfBranch(expr.elseBranch, ctx);
+      return;
     case "match":
       lowerExpr(expr.scrutinee, ctx);
       for (const arm of expr.bundle.arms) {
@@ -146,6 +151,14 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
     default:
       return;
   }
+}
+
+function lowerIfBranch(expr: Expr, ctx: LoweringContext): void {
+  if (expr.kind === "block") {
+    lowerBlockExpr(expr, ctx);
+    return;
+  }
+  lowerExpr(expr, ctx);
 }
 
 function lowerArrowFunction(

@@ -40,21 +40,20 @@ let readRequiredDigit = (chars, i) => {
 
 -- Extend up to three total digits, stopping cleanly if parsing fails.
 let rec extendDigits = (chars, step, count) => {
-  match(count == 3) {
-    true => { step },
-    false => {
-      match(listAt(chars, step.next)) {
-        IErr(_) => { step },
-        IOk(code) => {
-          match(infectOption(charToDigit(code))) {
-            IErr(_) => { step },
-            IOk(digit) => {
-              let combined = makeStep(
-                step.value * 10 + digit,
-                step.next + 1
-              );
-              extendDigits(chars, combined, count + 1)
-            }
+  if (count == 3) {
+    step
+  } else {
+    match(listAt(chars, step.next)) {
+      IErr(_) => { step },
+      IOk(code) => {
+        match(infectOption(charToDigit(code))) {
+          IErr(_) => { step },
+          IOk(digit) => {
+            let combined = makeStep(
+              step.value * 10 + digit,
+              step.next + 1
+            );
+            extendDigits(chars, combined, count + 1)
           }
         }
       }
@@ -66,9 +65,10 @@ let rec extendDigits = (chars, step, count) => {
 let expectCharAt = (chars, i, expected, error) => {
   match(listAt(chars, i)) {
     IOk(code) => {
-      match(code == expected) {
-        true => { IOk(i + 1) },
-        false => { IErr(error) }
+      if (code == expected) {
+        IOk(i + 1)
+      } else {
+        IErr(error) 
       }
     },
     _ => { IErr(error) }
@@ -77,9 +77,10 @@ let expectCharAt = (chars, i, expected, error) => {
 
 -- Check for the mul( literal at a position, otherwise resume scanning.
 let expectMulLiteral = (chars, i) => {
-  match(strEq(listSlice(chars, i, i + mulLiteralLength), mulLiteral)) {
-    true => { IOk(i + mulLiteralLength) },
-    false => { IErr(NotMul) }
+  if (strEq(listSlice(chars, i, i + mulLiteralLength), mulLiteral)) {
+    IOk(i + mulLiteralLength) 
+  } else {
+    IErr(NotMul) 
   }
 };
 

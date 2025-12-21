@@ -159,6 +159,7 @@ export type Expr =
   | UnaryExpr
   | ArrowFunctionExpr
   | BlockExpr
+  | IfExpr
   | MatchExpr
   | MatchFunctionExpr
   | MatchBundleLiteralExpr
@@ -239,6 +240,13 @@ export interface ArrowFunctionExpr extends NodeBase {
   parameters: Parameter[];
   body: BlockExpr;
   returnAnnotation?: TypeExpr;
+}
+
+export interface IfExpr extends NodeBase {
+  kind: "if";
+  condition: Expr;
+  thenBranch: Expr;
+  elseBranch: Expr;
 }
 
 export interface MatchExpr extends NodeBase {

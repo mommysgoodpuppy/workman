@@ -1381,7 +1381,7 @@ class SurfaceParser {
   }
 
   private parseExpression(): Expr {
-    return this.parseMatchExpression();
+    return this.parseIfExpression();
   }
 
   private buildMatchScrutinee(args: Expr[]): Expr {
@@ -1398,6 +1398,39 @@ class SurfaceParser {
       span,
       id: nextNodeId(),
     };
+  }
+
+  private parseIfExpression(): Expr {
+    const token = this.peek();
+    if (token.kind === "keyword" && token.value === "if") {
+      const ifToken = this.expectKeyword("if");
+      this.expectSymbol("(");
+      const condition = this.parseExpression();
+      this.expectSymbol(")");
+      const thenBranch = this.parseBlockExpr();
+      if (!this.matchKeyword("else")) {
+        throw this.error(
+          "'if' expression is missing 'else' block.",
+          this.peek(),
+        );
+      }
+      if (this.checkKeyword("if")) {
+        throw this.error(
+          "Workman does not support 'else if'. Use 'match' for multiple conditions.",
+          this.peek(),
+        );
+      }
+      const elseBranch = this.parseBlockExpr();
+      return {
+        kind: "if",
+        condition,
+        thenBranch,
+        elseBranch,
+        span: this.spanFrom(ifToken.start, elseBranch.span.end),
+        id: nextNodeId(),
+      };
+    }
+    return this.parseMatchExpression();
   }
 
   private parseMatchExpression(): Expr {

@@ -25,6 +25,8 @@ export const keywords = new Set([
   "type",
   "record",
   "carrier",
+  "if",
+  "else",
   "match",
   "import",
   "export",

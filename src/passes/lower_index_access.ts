@@ -103,6 +103,11 @@ function lowerExpr(expr: Expr): Expr {
     case "block":
       lowerBlockExpr(expr);
       return expr;
+    case "if":
+      expr.condition = lowerExpr(expr.condition);
+      expr.thenBranch = lowerIfBranch(expr.thenBranch);
+      expr.elseBranch = lowerIfBranch(expr.elseBranch);
+      return expr;
     case "match":
       expr.scrutinee = lowerExpr(expr.scrutinee);
       lowerMatchBundle(expr.bundle);
@@ -117,6 +122,14 @@ function lowerExpr(expr: Expr): Expr {
     default:
       return expr;
   }
+}
+
+function lowerIfBranch(expr: Expr): Expr {
+  if (expr.kind === "block") {
+    lowerBlockExpr(expr);
+    return expr;
+  }
+  return lowerExpr(expr);
 }
 
 function lowerMatchBundle(bundle: MatchBundle): void {

@@ -1,7 +1,8 @@
 import { lex } from "../src/lexer.ts";
 import type { NodeId, Program } from "../src/ast.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
-import { assertEquals } from "https://deno.land/std/assert/mod.ts";
+import { ParseError } from "../src/error.ts";
+import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
 
 function collectNodeIds(program: Program): NodeId[] {
   const ids: NodeId[] = [];
@@ -245,4 +246,58 @@ Deno.test("parses pipe into index as write call", () => {
   if (call.arguments[2].kind === "literal") {
     assertEquals(call.arguments[2].literal.kind, "char");
   }
+});
+
+Deno.test("parses if expression", () => {
+  const source = `
+let result = if (debug) {
+  1
+} else {
+  2
+};
+`;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+
+  const decl = program.declarations[0];
+  if (decl.kind !== "let") {
+    throw new Error("expected let declaration");
+  }
+
+  const body = decl.body;
+  if (body.result?.kind !== "if") {
+    throw new Error("expected if expression");
+  }
+  const ifExpr = body.result;
+  assertEquals(ifExpr.condition.kind, "identifier");
+  assertEquals(ifExpr.thenBranch.kind, "block");
+  assertEquals(ifExpr.elseBranch.kind, "block");
+});
+
+Deno.test("requires else for if expression", () => {
+  const source = `let result = if (debug) { 1 };`;
+  const tokens = lex(source);
+  assertThrows(
+    () => parseSurfaceProgram(tokens),
+    ParseError,
+    "'if' expression is missing 'else' block.",
+  );
+});
+
+Deno.test("rejects else if syntax", () => {
+  const source = `
+let result = if (x > 0) {
+  1
+} else if (x < 0) {
+  -1
+} else {
+  0
+};
+`;
+  const tokens = lex(source);
+  assertThrows(
+    () => parseSurfaceProgram(tokens),
+    ParseError,
+    "Workman does not support 'else if'. Use 'match' for multiple conditions.",
+  );
 });

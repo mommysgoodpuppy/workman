@@ -166,6 +166,7 @@ class Formatter {
       return `${paramsStr}${returnAnn} => ${body}`;
     });
     this.exprFormatters.set("block", (expr) => this.formatBlock(expr));
+    this.exprFormatters.set("if", (expr) => this.formatIfExpr(expr));
     this.exprFormatters.set(
       "match",
       (expr) => this.formatMatch(expr.scrutinee, expr.bundle),
@@ -790,6 +791,20 @@ class Formatter {
     });
     ctx.write("}");
     return ctx.toString();
+  }
+
+  private formatIfExpr(expr: Extract<Expr, { kind: "if" }>): string {
+    const condition = this.formatExpr(expr.condition);
+    const thenBranch = this.formatIfBranch(expr.thenBranch);
+    const elseBranch = this.formatIfBranch(expr.elseBranch);
+    return `if (${condition}) ${thenBranch} else ${elseBranch}`;
+  }
+
+  private formatIfBranch(expr: Expr): string {
+    if (expr.kind === "block") {
+      return this.formatBlock(expr, true);
+    }
+    return `{ ${this.formatExpr(expr)} }`;
   }
 
   private formatStructuredBlock(block: BlockExpr): string {

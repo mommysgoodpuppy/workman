@@ -3,13 +3,16 @@ import type {
   BlockStatement,
   Expr,
   IdentifierExpr,
+  IfExpr,
   LetDeclaration,
+  Literal,
   MatchArm,
   MatchBundle,
   MatchFunctionExpr,
   Parameter,
   Pattern,
   Program,
+  SourceSpan,
   TopLevel,
 } from "../ast.ts";
 import { nextNodeId } from "../node_ids.ts";
@@ -142,6 +145,8 @@ function canonicalizeExpr(expr: Expr): Expr {
     case "block":
       canonicalizeBlock(expr);
       return expr;
+    case "if":
+      return rewriteIfExpression(expr);
     case "match":
       expr.scrutinee = canonicalizeExpr(expr.scrutinee);
       canonicalizeMatchBundle(expr.bundle);
@@ -261,6 +266,63 @@ function rewriteMatchFunction(expr: MatchFunctionExpr): Expr {
     body,
     span: expr.span,
     id: expr.id,
+  };
+}
+
+function rewriteIfExpression(expr: IfExpr): Expr {
+  const condition = canonicalizeExpr(expr.condition);
+  const thenBranch = canonicalizeExpr(expr.thenBranch);
+  const elseBranch = canonicalizeExpr(expr.elseBranch);
+
+  const truePattern = createBoolPattern(true, condition.span);
+  const falsePattern = createBoolPattern(false, condition.span);
+
+  const thenArm: MatchArm = {
+    kind: "match_pattern",
+    pattern: truePattern,
+    body: thenBranch,
+    hasTrailingComma: false,
+    span: { start: truePattern.span.start, end: thenBranch.span.end },
+    id: nextNodeId(),
+  };
+
+  const elseArm: MatchArm = {
+    kind: "match_pattern",
+    pattern: falsePattern,
+    body: elseBranch,
+    hasTrailingComma: false,
+    span: { start: falsePattern.span.start, end: elseBranch.span.end },
+    id: nextNodeId(),
+  };
+
+  const bundle: MatchBundle = {
+    kind: "match_bundle",
+    arms: [thenArm, elseArm],
+    span: expr.span,
+    id: nextNodeId(),
+  };
+
+  return {
+    kind: "match",
+    scrutinee: condition,
+    bundle,
+    span: expr.span,
+    id: nextNodeId(),
+  };
+}
+
+function createBoolPattern(value: boolean, span: SourceSpan): Pattern {
+  const literal: Literal = {
+    kind: "bool",
+    value,
+    span,
+    id: nextNodeId(),
+  };
+  return {
+    kind: "literal",
+    literal,
+    span,
+    id: nextNodeId(),
   };
 }
 
