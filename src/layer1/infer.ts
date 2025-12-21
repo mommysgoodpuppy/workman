@@ -209,19 +209,37 @@ function addIdentityTags(
   return tagged;
 }
 
+function getBindingIdForVar(ctx: Context, varName: string): number {
+  return ctx.variableBindingIds.get(varName) ?? 0;
+}
+
+function createNewBindingForVar(ctx: Context, varName: string): number {
+  const newId = ctx.nextBindingId++;
+  ctx.variableBindingIds.set(varName, newId);
+  return newId;
+}
+
 function recordIdentityUsage(
   ctx: Context,
   domain: string,
   identityId: number,
   nodeId: NodeId,
+  varName: string | null = null,
 ): void {
   let domainUsage = ctx.identityUsage.get(identityId);
   if (!domainUsage) {
-    domainUsage = new Map<string, Map<NodeId, number>>();
+    domainUsage = new Map<
+      string,
+      Map<NodeId, { scopeId: number; bindingId: number | null }>
+    >();
     ctx.identityUsage.set(identityId, domainUsage);
   }
-  const nodes = domainUsage.get(domain) ?? new Map<NodeId, number>();
-  nodes.set(nodeId, getCurrentScopeId(ctx));
+  const nodes =
+    domainUsage.get(domain) ??
+    new Map<NodeId, { scopeId: number; bindingId: number | null }>();
+  // Record the binding ID for this variable at the time of usage
+  const bindingId = varName ? getBindingIdForVar(ctx, varName) : null;
+  nodes.set(nodeId, { scopeId: getCurrentScopeId(ctx), bindingId });
   domainUsage.set(domain, nodes);
 }
 
@@ -242,22 +260,41 @@ function emitIdentityTagsToUsage(
   domain: string,
   identityId: number,
   tagged: string[],
+  sourceVarName: string | null = null,
 ): void {
   const domainUsage = ctx.identityUsage.get(identityId);
   const nodes = domainUsage?.get(domain);
   if (!nodes) return;
   const currentScopeId = getCurrentScopeId(ctx);
   const identityCreationScope = ctx.identityCreationScope.get(identityId) ?? 0;
-  for (const [nodeId, nodeScopeId] of nodes.entries()) {
-    // Only propagate to nested scopes for CAPTURED variables.
-    // A variable is captured if:
-    // 1. The usage is in a nested scope (nodeScopeId > currentScopeId), AND
-    // 2. The identity was created in the current or outer scope (identityCreationScope <= currentScopeId)
-    // If the identity was created inside the nested scope, it's a local variable, not a capture.
-    if (
-      nodeScopeId > currentScopeId &&
-      identityCreationScope <= currentScopeId
-    ) {
+  // Get the current binding ID for the source variable
+  const sourceBindingId = sourceVarName
+    ? getBindingIdForVar(ctx, sourceVarName)
+    : null;
+  for (const [nodeId, usageInfo] of nodes.entries()) {
+    const { scopeId: nodeScopeId, bindingId: nodeBindingId } = usageInfo;
+    // Non-linear semantics: propagate to usages based on scope and variable binding.
+    //
+    // For SAME SCOPE propagation (non-linear within a binding context):
+    // Only propagate if the usage is from the SAME variable binding (same bindingId).
+    // This ensures that shadowed variables don't see state changes from each other.
+    // Example: let buffer = alloc(); let buffer = f(buffer); free(buffer);
+    // The free on the shadowed buffer shouldn't affect the original buffer's usages.
+    //
+    // For NESTED SCOPE propagation (closure capture):
+    // Propagate to all nested scopes that capture the identity, regardless of binding.
+    // This handles the case where a closure captures a variable before it's freed.
+    //
+    // Propagate if:
+    // 1. Usage is in the same scope AND from the same binding (same bindingId), OR
+    // 2. Usage is in a nested scope AND the identity was created in current or outer scope
+    const isSameScopeAndBinding =
+      nodeScopeId === currentScopeId &&
+      sourceBindingId !== null &&
+      nodeBindingId === sourceBindingId;
+    const isNestedCapture =
+      nodeScopeId > currentScopeId && identityCreationScope <= currentScopeId;
+    if (isSameScopeAndBinding || isNestedCapture) {
       emitAddStateTags(ctx, nodeId, domain, tagged);
     }
   }
@@ -401,6 +438,8 @@ function applyParamEffectsToCall(
           const domainIds = identities?.get(domain);
           if (domainIds && domainIds.size > 0) {
             const tagged: string[] = [];
+            const argVarName =
+              argExpr.kind === "identifier" ? argExpr.name : null;
             for (const identityId of domainIds) {
               const identityTags = addIdentityTags(
                 ctx,
@@ -409,7 +448,13 @@ function applyParamEffectsToCall(
                 addTags,
               );
               tagged.push(...identityTags);
-              emitIdentityTagsToUsage(ctx, domain, identityId, identityTags);
+              emitIdentityTagsToUsage(
+                ctx,
+                domain,
+                identityId,
+                identityTags,
+                argVarName,
+              );
             }
             emitAddStateTags(ctx, argExpr.id, domain, tagged);
             continue;
@@ -907,6 +952,8 @@ function inferLetDeclaration(
       );
     }
     if (decl.parameters.length === 0 && !decl.isArrowSyntax) {
+      // Create a new binding ID for this variable (handles shadowing)
+      createNewBindingForVar(ctx, decl.name);
       // Clear any existing identity bindings for this name before binding new ones
       // This prevents shadowed variables from sharing identities with their shadows
       ctx.identityBindings.delete(decl.name);
@@ -1035,23 +1082,14 @@ function bindIdentitiesFromExpr(
 
   const identities = getIdentitiesForExpr(ctx, expr);
   if (identities) {
-    // For call expressions: only bind if it's a FRESH allocation (like alloc)
-    // Check if this is a call that returns an existing value (like a pass-through function)
-    if (expr.kind === "call") {
-      // Heuristic: if it's calling alloc, MemVal, or other constructors, bind the identity
-      // Otherwise, skip binding to avoid aliasing issues
-      const calleeName =
-        expr.callee.kind === "identifier" ? expr.callee.name : null;
-      if (
-        calleeName &&
-        (calleeName === "alloc" || calleeName.match(/^[A-Z]/))
-      ) {
-        // Constructor or alloc - bind the fresh identity
-        ctx.identityBindings.set(name, cloneIdentitySetByDomain(identities));
-      }
-      // For other calls, don't bind - they might return aliases
-      return;
-    }
+    // Bind identities from the expression to this variable name.
+    // This enables same-scope non-linear propagation for operations on this variable.
+    //
+    // Note: We bind even for non-alloc calls because:
+    // 1. The identity already exists in the type system
+    // 2. We need to track which variable name is associated with which identity
+    //    for same-scope propagation to work correctly
+    // 3. The binding ID system (createNewBindingForVar) handles shadowing
     ctx.identityBindings.set(name, cloneIdentitySetByDomain(identities));
     return;
   }
@@ -1236,6 +1274,8 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
       const valueType = inferExpr(ctx, statement.initializer);
       const patternInfo = inferPattern(ctx, statement.pattern, valueType);
       for (const [name, type] of patternInfo.bindings.entries()) {
+        // Create a new binding ID for this variable (handles shadowing)
+        createNewBindingForVar(ctx, name);
         const scheme = generalizeInContext(ctx, type);
         ctx.env.set(name, scheme);
         ctx.allBindings.set(name, scheme);
@@ -1485,7 +1525,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           for (const identityId of identities) {
             // Don't add flow edges here - emitIdentityTagsToUsage handles
             // propagation to nested scopes when tags are added
-            recordIdentityUsage(ctx, domain, identityId, expr.id);
+            recordIdentityUsage(ctx, domain, identityId, expr.id, expr.name);
             const tagged = getIdentityTags(ctx, domain, identityId);
             if (tagged.length > 0) {
               emitAddStateTags(ctx, expr.id, domain, tagged);
@@ -2362,6 +2402,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               const domainIds = identities?.get(opRule.domain);
               if (domainIds && domainIds.size > 0) {
                 const tagged: string[] = [];
+                const targetVarName =
+                  targetExpr.kind === "identifier" ? targetExpr.name : null;
                 for (const identityId of domainIds) {
                   const identityTags = addIdentityTags(
                     ctx,
@@ -2375,6 +2417,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
                     opRule.domain,
                     identityId,
                     identityTags,
+                    targetVarName,
                   );
                 }
                 addTags = tagged;

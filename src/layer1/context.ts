@@ -93,8 +93,13 @@ export interface Context {
   identityBindings: Map<string, Map<string, Set<number>>>;
   identityStates: Map<number, Map<string, Map<string, number>>>;
   exprIdentities: Map<NodeId, Map<string, Set<number>>>;
-  identityUsage: Map<number, Map<string, Map<NodeId, number>>>;
+  identityUsage: Map<
+    number,
+    Map<string, Map<NodeId, { scopeId: number; bindingId: number | null }>>
+  >;
   identityCreationScope: Map<number, number>; // identityId -> scopeId where it was created
+  variableBindingIds: Map<string, number>; // varName -> current binding ID (increments on shadow)
+  nextBindingId: number;
   functionParamEffects: Map<
     string,
     Map<
@@ -171,6 +176,8 @@ export function createContext(options: InferOptions = {}): Context {
     exprIdentities: new Map(),
     identityUsage: new Map(),
     identityCreationScope: new Map(),
+    variableBindingIds: new Map(),
+    nextBindingId: 1,
     functionParamEffects: new Map(),
     functionParamStack: [],
     functionScopeCounter: 1,
