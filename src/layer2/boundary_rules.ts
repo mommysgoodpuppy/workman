@@ -7,7 +7,6 @@
 
 import type { ConstraintLabel, Type } from "../types.ts";
 import {
-  flattenResultType,
   flattenTaintedType,
   formatIdentity,
   isMemLabel,
@@ -33,19 +32,12 @@ function errorBoundary(
     return null;
   }
 
-  // Fallback: check hardcoded Result type for backward compatibility
-  const resultInfo = flattenResultType(returnType);
-  if (resultInfo) {
-    // Error is reified in Result type - OK
-    return null;
-  }
-
   // Errors not captured!
   const errorConstructors = errorLabels.flatMap((l) =>
     l.domain === "effect" ? Array.from(l.row.cases.keys()) : []
   );
   const errorNames = errorConstructors.join(", ");
-  return `Undischarged errors: <${errorNames}>. Return type must be Result<T, E> or errors must be handled with pattern matching.`;
+  return `Undischarged errors: <${errorNames}>. Return type must be an effect-domain carrier or errors must be handled with pattern matching.`;
 }
 
 // Taint domain: must be reified in Tainted or empty (parallel to error domain)

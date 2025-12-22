@@ -34,7 +34,7 @@ export let charSemicolon = () => { ';' };
 export let charColon = () => { ':' };
 
 -- Character classification using pattern matching
-export let isDigit = match(c) {
+export let isDigit = match(c) => {
   '0' => { true },
   '1' => { true },
   '2' => { true },
@@ -48,7 +48,7 @@ export let isDigit = match(c) {
   _ => { false }
 };
 
-export let isWhitespace = match(c) {
+export let isWhitespace = match(c) => {
   ' ' => { true },
   '\t' => { true },
   '\n' => { true },
@@ -56,32 +56,32 @@ export let isWhitespace = match(c) {
   _ => { false }
 };
 
-export let isPlus = match(c) {
+export let isPlus = match(c) => {
   '+' => { true },
   _ => { false }
 };
 
-export let isMinus = match(c) {
+export let isMinus = match(c) => {
   '-' => { true },
   _ => { false }
 };
 
-export let isStar = match(c) {
+export let isStar = match(c) => {
   '*' => { true },
   _ => { false }
 };
 
-export let isSlash = match(c) {
+export let isSlash = match(c) => {
   '/' => { true },
   _ => { false }
 };
 
-export let isLParen = match(c) {
+export let isLParen = match(c) => {
   '(' => { true },
   _ => { false }
 };
 
-export let isRParen = match(c) {
+export let isRParen = match(c) => {
   ')' => { true },
   _ => { false }
 };
@@ -169,60 +169,58 @@ export let isAlphaNum = (c) => {
 };
 
 -- i wrote this by hand
-export let charToInt = (c) => {
-  match(c) {
-    'A' => { 65 },
-    'B' => { 66 },
-    'C' => { 67 },
-    'D' => { 68 },
-    'E' => { 69 },
-    'F' => { 70 },
-    'G' => { 71 },
-    'H' => { 72 },
-    'I' => { 73 },
-    'J' => { 74 },
-    'K' => { 75 },
-    'L' => { 76 },
-    'M' => { 77 },
-    'N' => { 78 },
-    'O' => { 79 },
-    'P' => { 80 },
-    'Q' => { 81 },
-    'R' => { 82 },
-    'S' => { 83 },
-    'T' => { 84 },
-    'U' => { 85 },
-    'V' => { 86 },
-    'W' => { 87 },
-    'X' => { 88 },
-    'Y' => { 89 },
-    'Z' => { 90 },
-    'a' => { 97 },
-    'b' => { 98 },
-    'c' => { 99 },
-    'd' => { 100 },
-    'e' => { 101 },
-    'f' => { 102 },
-    'g' => { 103 },
-    'h' => { 104 },
-    'i' => { 105 },
-    'j' => { 106 },
-    'k' => { 107 },
-    'l' => { 108 },
-    'm' => { 109 },
-    'n' => { 110 },
-    'o' => { 111 },
-    'p' => { 112 },
-    'q' => { 113 },
-    'r' => { 114 },
-    's' => { 115 },
-    't' => { 116 },
-    'u' => { 117 },
-    'v' => { 118 },
-    'w' => { 119 },
-    'x' => { 120 },
-    'y' => { 121 },
-    'z' => { 122 },
-    _ => { 0 }
-  }
+export let charToInt = match(c) => {
+  'A' => { 65 },
+  'B' => { 66 },
+  'C' => { 67 },
+  'D' => { 68 },
+  'E' => { 69 },
+  'F' => { 70 },
+  'G' => { 71 },
+  'H' => { 72 },
+  'I' => { 73 },
+  'J' => { 74 },
+  'K' => { 75 },
+  'L' => { 76 },
+  'M' => { 77 },
+  'N' => { 78 },
+  'O' => { 79 },
+  'P' => { 80 },
+  'Q' => { 81 },
+  'R' => { 82 },
+  'S' => { 83 },
+  'T' => { 84 },
+  'U' => { 85 },
+  'V' => { 86 },
+  'W' => { 87 },
+  'X' => { 88 },
+  'Y' => { 89 },
+  'Z' => { 90 },
+  'a' => { 97 },
+  'b' => { 98 },
+  'c' => { 99 },
+  'd' => { 100 },
+  'e' => { 101 },
+  'f' => { 102 },
+  'g' => { 103 },
+  'h' => { 104 },
+  'i' => { 105 },
+  'j' => { 106 },
+  'k' => { 107 },
+  'l' => { 108 },
+  'm' => { 109 },
+  'n' => { 110 },
+  'o' => { 111 },
+  'p' => { 112 },
+  'q' => { 113 },
+  'r' => { 114 },
+  's' => { 115 },
+  't' => { 116 },
+  'u' => { 117 },
+  'v' => { 118 },
+  'w' => { 119 },
+  'x' => { 120 },
+  'y' => { 121 },
+  'z' => { 122 },
+  _ => { 0 }
 };

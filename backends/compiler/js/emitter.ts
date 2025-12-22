@@ -18,7 +18,6 @@ import type {
 } from "../ir/core.ts";
 import {
   findCarrierDomain,
-  flattenResultType,
   isCarrierType,
 } from "../../../src/types.ts";
 

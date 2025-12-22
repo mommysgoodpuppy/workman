@@ -1258,7 +1258,9 @@ function inferBlockExpr(ctx: Context, block: BlockExpr): Type {
       return resolved;
     }
 
-    return { kind: "unit" };
+    const unitType: Type = { kind: "unit" };
+    ctx.nodeTypes.set(block.id, unitType);
+    return unitType;
   });
 }
 

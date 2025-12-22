@@ -663,21 +663,21 @@ pub const nativeRead = makeFunc(nativeReadImpl, null);
 pub const nativeWrite = makeFunc(nativeWriteImpl, null);
 pub const nativeMemcpy = makeFunc(nativeMemcpyImpl, null);
 
-fn expectInt(value: Value) i64 {
+pub fn expectInt(value: Value) i64 {
     return switch (value) {
         .Int => |v| v,
         else => @panic("expected int"),
     };
 }
 
-fn expectString(value: Value) []const u8 {
+pub fn expectString(value: Value) []const u8 {
     return switch (value) {
         .String => |v| v,
         else => @panic("expected string"),
     };
 }
 
-fn expectTuple(value: Value) []Value {
+pub fn expectTuple(value: Value) []Value {
     return switch (value) {
         .Tuple => |v| v,
         else => @panic("expected tuple"),

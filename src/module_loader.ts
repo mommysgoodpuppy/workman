@@ -58,7 +58,7 @@ export interface ModuleNode {
   exportedPrefixOperators: Set<string>;
 }
 
-type ModuleSourceKind = "workman" | "js";
+type ModuleSourceKind = "workman" | "js" | "zig";
 
 export interface ModuleImportRecord {
   sourcePath: string;
@@ -262,8 +262,7 @@ export async function runEntryPath(
     );
   }
 
-  const hasTypeErrors =
-    artifact.analysis.layer2.diagnostics.length > 0 ||
+  const hasTypeErrors = artifact.analysis.layer2.diagnostics.length > 0 ||
     artifact.analysis.layer3.diagnostics.solver.length > 0 ||
     artifact.analysis.layer3.diagnostics.conflicts.length > 0 ||
     artifact.analysis.layer3.diagnostics.flow.length > 0;
@@ -323,7 +322,6 @@ export async function loadModuleSummaries(
   summaries: Map<string, ModuleSummary>;
 }> {
   try {
-
     //console.log("  [DEBUG] loadModuleSummaries: about to call loadModuleGraph");
     const graph = await loadModuleGraph(entryPath, options);
     //console.log("  [DEBUG] loadModuleSummaries: graph loaded");
@@ -364,7 +362,9 @@ export async function buildInfectionRegistryForModule(
   }
 
   const preludePath = graph.prelude;
-  if (preludePath && modulePath !== preludePath && !isStdCoreModule(modulePath)) {
+  if (
+    preludePath && modulePath !== preludePath && !isStdCoreModule(modulePath)
+  ) {
     const preludeSummary = summaries.get(preludePath);
     if (preludeSummary) {
       registry.mergeSummary(preludeSummary.infection);
@@ -512,8 +512,8 @@ async function summarizeGraph(
     const initialRegistry = infectionPreludeRegistry.clone();
 
     for (const record of node.imports) {
-      if (record.kind === "js") {
-        seedJsImports(record, initialEnv);
+      if (record.kind === "js" || record.kind === "zig") {
+        seedForeignImports(record, initialEnv);
         continue;
       }
       const provider = moduleSummaries.get(record.sourcePath);
@@ -778,7 +778,9 @@ function formatCompiledValueLegacy(
       return "<cyclic>";
     }
     seen.add(value);
-    return `[${value.map((item) => formatCompiledValueLegacy(item, seen)).join(", ")}]`;
+    return `[${
+      value.map((item) => formatCompiledValueLegacy(item, seen)).join(", ")
+    }]`;
   }
   if (valueType === "object") {
     if (seen.has(value)) {
@@ -1116,9 +1118,9 @@ function resolveImports(
         path,
       );
     }
-    if (kind === "js" && !existsSync(resolvedPath)) {
+    if ((kind === "js" || kind === "zig") && !existsSync(resolvedPath)) {
       throw moduleError(
-        `JavaScript module '${entry.source}' imported by '${path}' was not found at '${resolvedPath}'`,
+        `Foreign module '${entry.source}' imported by '${path}' was not found at '${resolvedPath}'`,
         path,
       );
     }
@@ -1258,6 +1260,19 @@ function resolveModuleSpecifier(
   specifier: string,
   options: ModuleLoaderOptions,
 ): string {
+  if (specifier.startsWith("zig:")) {
+    const rawPath = specifier.slice(4);
+    if (rawPath.startsWith("./") || rawPath.startsWith("../")) {
+      return resolve(dirname(importerPath), rawPath);
+    }
+    if (isAbsolute(rawPath)) {
+      return rawPath;
+    }
+    throw moduleError(
+      `Zig imports must be relative or absolute: '${specifier}' in '${importerPath}'`,
+    );
+  }
+
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     const target = resolve(dirname(importerPath), specifier);
     return ensureWmExtension(target);
@@ -1295,6 +1310,9 @@ function detectModuleKind(path: string): ModuleSourceKind {
   const extension = extname(path).toLowerCase();
   if (extension === ".js" || extension === ".mjs") {
     return "js";
+  }
+  if (extension === ".zig") {
+    return "zig";
   }
   return "workman";
 }
@@ -1376,7 +1394,7 @@ function applyImports(
   }
 }
 
-function seedJsImports(
+function seedForeignImports(
   record: ModuleImportRecord,
   targetEnv: Map<string, TypeScheme>,
 ): void {
@@ -1386,11 +1404,11 @@ function seedJsImports(
         `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
       );
     }
-    targetEnv.set(spec.local, createJsImportScheme(spec, record));
+    targetEnv.set(spec.local, createForeignImportScheme(spec, record));
   }
 }
 
-function createJsImportScheme(
+function createForeignImportScheme(
   spec: NamedImportRecord,
   record: ModuleImportRecord,
 ): TypeScheme {

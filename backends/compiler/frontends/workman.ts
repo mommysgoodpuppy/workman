@@ -143,9 +143,9 @@ function seedImports(
   adtEnv: Map<string, TypeInfo>,
 ): void {
   for (const record of node.imports) {
-    if (record.kind === "js") {
+    if (record.kind === "js" || record.kind === "zig") {
       for (const spec of record.specifiers) {
-        env.set(spec.local, createJsImportScheme(spec, record));
+        env.set(spec.local, createForeignImportScheme(spec, record));
       }
       continue;
     }
@@ -189,16 +189,16 @@ function seedImports(
   }
 }
 
-function createJsImportScheme(
+function createForeignImportScheme(
   spec: { imported: string; local: string },
-  record: { rawSource: string; importerPath: string },
+  record: { rawSource: string; importerPath: string; kind: string },
 ): TypeScheme {
   return {
     quantifiers: [],
     type: unknownType({
       kind: "incomplete",
       reason:
-        `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
+        `${record.kind} import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
     }),
   };
 }
