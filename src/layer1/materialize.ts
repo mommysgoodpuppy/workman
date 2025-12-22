@@ -2,7 +2,6 @@ import type {
   BlockExpr,
   BlockStatement,
   Expr,
-  ExprStatement,
   LetDeclaration,
   MatchBundle,
   Parameter,
@@ -70,6 +69,9 @@ export function materializeMatchBundle(
       arms.push(marked);
       continue;
     }
+    if (arm.kind === "comment_statement") {
+      continue;
+    }
 
     const info = patternInfos[patternIndex++];
     const pattern = info?.marked ?? materializePattern(ctx, arm.pattern);
@@ -107,9 +109,13 @@ export function materializeBlockExpr(
   ctx: Context,
   block: BlockExpr,
 ): MBlockExpr {
-  const statements = block.statements.map((statement) =>
-    materializeBlockStatement(ctx, statement)
-  );
+  const statements: MBlockStatement[] = [];
+  for (const statement of block.statements) {
+    const materialized = materializeBlockStatement(ctx, statement);
+    if (materialized) {
+      statements.push(materialized);
+    }
+  }
   const result = block.result ? materializeExpr(ctx, block.result) : undefined;
   const type = ctx.nodeTypes.get(block.id) ??
     (result ? result.type : { kind: "unit" as const });
@@ -127,7 +133,7 @@ export function materializeBlockExpr(
 export function materializeBlockStatement(
   ctx: Context,
   statement: BlockStatement,
-): MBlockStatement {
+): MBlockStatement | null {
   switch (statement.kind) {
     case "let_statement":
       return {
@@ -155,14 +161,10 @@ export function materializeBlockStatement(
         id: statement.id,
         expression: materializeExpr(ctx, statement.expression),
       } satisfies MExprStatement;
+    case "comment_statement":
+      return null;
     default:
-      const exprStmt = statement as ExprStatement;
-      return {
-        kind: "expr_statement",
-        span: exprStmt.span,
-        id: exprStmt.id,
-        expression: materializeExpr(ctx, exprStmt.expression),
-      } satisfies MExprStatement;
+      return null;
   }
 }
 

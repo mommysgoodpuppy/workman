@@ -505,7 +505,7 @@ function instantiateRecordAlias(
   if (!info.alias || info.alias.kind !== "record") {
     return null;
   }
-  const aliasClone = cloneType(info.alias);
+  const aliasClone = cloneType(info.alias) as Extract<Type, { kind: "record" }>;
   if (info.parameters.length === 0) {
     return aliasClone;
   }
@@ -513,7 +513,8 @@ function instantiateRecordAlias(
   for (const paramId of info.parameters) {
     substitution.set(paramId, freshTypeVar());
   }
-  return applySubstitution(aliasClone, substitution);
+  const applied = applySubstitution(aliasClone, substitution);
+  return applied.kind === "record" ? applied : null;
 }
 
 function storeAnnotationType(
@@ -573,7 +574,12 @@ function typesEqual(a: Type, b: Type): boolean {
       }
       for (const [label, payloadA] of a.cases.entries()) {
         const payloadB = b.cases.get(label);
-        if (!payloadB || !typesEqual(payloadA, payloadB)) return false;
+        if (payloadB === undefined) return false;
+        if (payloadA === null || payloadB === null) {
+          if (payloadA !== payloadB) return false;
+          continue;
+        }
+        if (!typesEqual(payloadA, payloadB)) return false;
       }
       return a.tail === b.tail;
     }

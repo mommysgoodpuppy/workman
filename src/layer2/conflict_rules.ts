@@ -6,7 +6,7 @@
 // incompatible with each other.
 
 import type { ConstraintLabel, Identity } from "../types.ts";
-import { sameIdentity } from "../types.ts";
+import { isMemLabel, sameIdentity } from "../types.ts";
 
 // Per-domain conflict rule
 export interface ConflictRule {
@@ -49,7 +49,7 @@ function memConflict(
   label1: ConstraintLabel,
   label2: ConstraintLabel,
 ): boolean {
-  if (label1.domain !== "mem" || label2.domain !== "mem") return false;
+  if (!isMemLabel(label1) || !isMemLabel(label2)) return false;
 
   // Must be same identity to conflict
   if (!sameIdentity(label1.identity, label2.identity)) return false;
@@ -79,7 +79,7 @@ function memConflictMessage(
   label1: ConstraintLabel,
   label2: ConstraintLabel,
 ): string {
-  if (label1.domain !== "mem" || label2.domain !== "mem") {
+  if (!isMemLabel(label1) || !isMemLabel(label2)) {
     return "Incompatible constraints";
   }
   return `Cannot combine ${label1.label} and ${label2.label} on same resource`;

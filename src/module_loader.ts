@@ -686,36 +686,9 @@ async function summarizeGraph(
     let letValueOrder: string[] = [];
     let runtimeExports: Map<string, RuntimeValue>;
 
-    if (false) {
-      const evaluation = evaluateProgram(node.program, {
-        sourceName: path,
-        source: node.source,
-        initialBindings: initialBindings ?? new Map<string, RuntimeValue>(),
-        onPrint: (text) => {
-          runtimeLogs.push(text);
-        },
-      });
-
-      letRuntime = new Map<string, RuntimeValue>();
-      letValueOrder = [];
-      for (const summary of evaluation.summaries) {
-        letRuntime.set(summary.name, summary.value);
-        letValueOrder.push(summary.name);
-      }
-
-      runtimeExports = new Map<string, RuntimeValue>(reexportedRuntime);
-      for (const name of exportedValues.keys()) {
-        if (runtimeExports.has(name)) {
-          continue;
-        }
-        const value = letRuntime.get(name) ?? lookupValue(evaluation.env, name);
-        runtimeExports.set(name, value);
-      }
-    } else {
-      runtimeExports = new Map<string, RuntimeValue>();
-      letRuntime = new Map<string, RuntimeValue>();
-      letValueOrder = [];
-    }
+    runtimeExports = new Map<string, RuntimeValue>();
+    letRuntime = new Map<string, RuntimeValue>();
+    letValueOrder = [];
 
     const infectionSummary = collectInfectionDeclarations(node.program, {
       onlyExported: true,
@@ -794,7 +767,7 @@ function formatCompiledValueLegacy(
   if (valueType === "boolean") {
     return value ? "true" : "false";
   }
-  if (valueType === "string") {
+  if (typeof value === "string") {
     return value;
   }
   if (valueType === "function") {

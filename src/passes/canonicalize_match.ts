@@ -89,6 +89,8 @@ function canonicalizeStatement(statement: BlockStatement): void {
     case "expr_statement":
       statement.expression = canonicalizeExpr(statement.expression);
       break;
+    case "comment_statement":
+      break;
     default:
       // Exhaustiveness guard.
       const _exhaustive: never = statement;
@@ -100,6 +102,7 @@ function canonicalizeExpr(expr: Expr): Expr {
   switch (expr.kind) {
     case "identifier":
     case "literal":
+    case "hole":
       return expr;
     case "constructor":
       for (let index = 0; index < expr.args.length; index += 1) {
@@ -192,6 +195,7 @@ function canonicalizePattern(pattern: Pattern): void {
     case "variable":
     case "wildcard":
     case "literal":
+    case "all_errors":
       break;
     default:
       const _exhaustive: never = pattern;

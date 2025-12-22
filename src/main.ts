@@ -8,7 +8,7 @@ import {
 } from "./runtime_display.ts";
 
 import { IO } from "./io.ts";
-import { ParseError } from "./error.ts";
+import { InferError, ParseError } from "./error.ts";
 
 if (import.meta.main) {
   if (IO.args.length === 0) {

@@ -6,7 +6,13 @@
 // at function return positions.
 
 import type { ConstraintLabel, Type } from "../types.ts";
-import { flattenResultType, formatIdentity, splitCarrier } from "../types.ts";
+import {
+  flattenResultType,
+  flattenTaintedType,
+  formatIdentity,
+  isMemLabel,
+  splitCarrier,
+} from "../types.ts";
 
 export interface BoundaryRule {
   check: (labels: Set<ConstraintLabel>, returnType: Type) => string | null;
@@ -70,17 +76,15 @@ function memBoundary(
   labels: Set<ConstraintLabel>,
   _returnType: Type,
 ): string | null {
-  const obligations = Array.from(labels).filter((l) =>
-    l.domain === "mem" && (l.label === "MustClose" || l.label === "MustEnd")
+  const memLabels = Array.from(labels).filter(isMemLabel);
+  const obligations = memLabels.filter((l) =>
+    l.label === "MustClose" || l.label === "MustEnd"
   );
 
   if (obligations.length === 0) return null; // OK
 
   const obligationNames = obligations.map((l) => {
-    if (l.domain === "mem") {
-      return `${l.label}[${formatIdentity(l.identity)}]`;
-    }
-    return "";
+    return `${l.label}[${formatIdentity(l.identity)}]`;
   }).join(", ");
   return `Unfulfilled obligations: ${obligationNames}. Resources must be properly closed/ended before return.`;
 }

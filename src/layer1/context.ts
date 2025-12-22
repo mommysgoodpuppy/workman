@@ -193,7 +193,7 @@ export interface UnknownInfo {
 }
 
 export interface EffectRowCoverageStub {
-  row: EffectRowType;
+  row: Type;
   coveredConstructors: string[];
   coversTail: boolean;
   missingConstructors: string[];
@@ -356,7 +356,7 @@ export function recordBranchJoinConstraint(
     scrutinee: scrutinee?.id ?? null,
     branches: branchBodies.map((body) => body.id),
     dischargesResult: metadata?.dischargesResult ?? false,
-    effectRowCoverage: coverage!,
+    effectRowCoverage: coverage,
   });
 }
 

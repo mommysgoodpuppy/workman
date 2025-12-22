@@ -86,7 +86,7 @@ export interface SolveInput {
   nodeTypeById: Map<NodeId, Type>;
   layer1Diagnostics: ConstraintDiagnostic[];
   summaries: { name: string; scheme: import("../types.ts").TypeScheme }[];
-  adtEnv: Map<string, import("../types.ts").ADTInfo>;
+  adtEnv: Map<string, import("../types.ts").TypeInfo>;
   infectionRegistry?: InfectionRegistry;
 }
 
@@ -408,7 +408,7 @@ interface SolverState {
   substitution: Substitution;
   diagnostics: ConstraintDiagnostic[];
   nodeTypeById: Map<NodeId, Type>;
-  adtEnv: Map<string, import("../types.ts").ADTInfo>;
+  adtEnv: Map<string, import("../types.ts").TypeInfo>;
 }
 
 function solveCallConstraint(
@@ -2631,8 +2631,12 @@ function buildPartialSolution(
         fields.set(c.field, resultType);
       }
     }
-    // Return the record type directly
-    return { kind: "concrete", type: { kind: "record", fields } };
+    return {
+      kind: "partial",
+      known: { kind: "record", fields },
+      constraints: relevantConstraints,
+      possibilities: [],
+    };
   }
 
   // Try to extract what we know about this hole

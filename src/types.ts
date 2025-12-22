@@ -186,6 +186,12 @@ export function holeLabel(
   return { domain: "hole", identity, provenance };
 }
 
+export function isMemLabel(
+  label: ConstraintLabel,
+): label is { domain: "mem"; label: string; identity: Identity } {
+  return label.domain === "mem" && "label" in label;
+}
+
 // Helper: check if two identities are the same
 export function sameIdentity(id1: Identity, id2: Identity): boolean {
   return id1.kind === id2.kind && id1.id === id2.id;
@@ -589,6 +595,17 @@ export function flattenResultType(type: Type): ResultTypeInfo | null {
   // During inference, the state might be a type variable that will become an effect_row
   // So we don't require state.kind === "effect_row" here
   return { value: info.value, effect: info.state };
+}
+
+export interface TaintedTypeInfo {
+  value: Type;
+  taint: Type; // Can be effect_row or type variable during inference
+}
+
+export function flattenTaintedType(type: Type): TaintedTypeInfo | null {
+  const info = splitCarrier(type);
+  if (!info || info.domain !== "taint") return null;
+  return { value: info.value, taint: info.state };
 }
 
 export function makeResultType(value: Type, error?: Type): Type {

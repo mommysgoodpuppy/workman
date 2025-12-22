@@ -588,6 +588,8 @@ function hasResultConstructorPattern(pattern: CorePattern): boolean {
     case "literal":
     case "all_errors":
       return false;
+    default:
+      return false;
   }
 }
 
@@ -859,8 +861,6 @@ function describeLiteral(literal: CoreLiteral): string {
     }
     case "string":
       return JSON.stringify(literal.value);
-    default:
-      return literal.kind;
   }
 }
 
@@ -1010,7 +1010,11 @@ function emitExprWithScope(
   }
 }
 
-function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
+function emitPrim(
+  op: CorePrimOp,
+  args: readonly CoreExpr[],
+  ctx: EmitContext,
+): string {
   const emitArg = (index: number) => emitExpr(args[index], ctx);
 
   // Check if any argument has an infectious type

@@ -570,7 +570,10 @@ function traverse(
   const maybeSpan = (node as { span?: SourceSpan }).span;
   const maybeNameSpan = (node as { nameSpan?: SourceSpan }).nameSpan;
   if (maybeId !== undefined && (maybeSpan !== undefined || maybeNameSpan !== undefined)) {
-    spans.set(maybeId, maybeNameSpan ?? maybeSpan);
+    const span = maybeNameSpan ?? maybeSpan;
+    if (span) {
+      spans.set(maybeId, span);
+    }
   }
 
   if (Array.isArray(node)) {
