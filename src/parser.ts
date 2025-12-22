@@ -49,6 +49,7 @@ export type OperatorInfo = { precedence: number; associativity: Associativity };
 
 export interface ParseSurfaceProgramOptions {
   tolerant?: boolean;
+  preservePipeOperator?: boolean;
 }
 
 export function parseSurfaceProgram(
@@ -67,6 +68,7 @@ export function parseSurfaceProgram(
     initialOperators,
     initialPrefixOperators,
     options?.tolerant ?? false,
+    options?.preservePipeOperator ?? false,
   );
   return parser.parseProgram();
 }
@@ -88,6 +90,7 @@ class SurfaceParser {
     initialOperators?: Map<string, OperatorInfo>,
     initialPrefixOperators?: Set<string>,
     private readonly tolerant: boolean = false,
+    private readonly preservePipeOperator: boolean = false,
   ) {
     // Start with default comparison operators (these are defined in std/core/int but need to be known at parse time)
     const defaultOperators = new Map<string, OperatorInfo>([
@@ -1588,10 +1591,10 @@ class SurfaceParser {
         }
       }
 
-      if (operator === ">>") {
-        left = this.createPipeCall(left, right);
-        continue;
-      }
+        if (operator === ">>" && !this.preservePipeOperator) {
+          left = this.createPipeCall(left, right);
+          continue;
+        }
 
       left = {
         kind: "binary",

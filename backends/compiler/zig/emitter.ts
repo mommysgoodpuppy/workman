@@ -881,7 +881,7 @@ function emitMatchLambda(
   expr: CoreExpr & { kind: "match" },
   ctx: EmitContext,
 ): string {
-  const { freeVars } = collectFreeVars(expr, new Set());
+  const { freeVars } = collectFreeVarsInMatchBody(expr, new Set());
   const captures = Array.from(freeVars).filter((name) => ctx.scope.has(name));
   const lambdaName = allocateTempName(ctx.state, "__match_lambda");
 
@@ -928,6 +928,29 @@ function emitMatchLambda(
   ctx.hoisted.push("}");
 
   return `runtime.makeFunc(${lambdaName}, ${envInit})`;
+}
+
+function collectFreeVarsInMatchBody(
+  expr: CoreExpr & { kind: "match" },
+  bound: Set<string>,
+): { freeVars: Set<string> } {
+  const freeVars = new Set<string>();
+  const addFreeVars = (node: CoreExpr, localBound: Set<string>) => {
+    const collected = collectFreeVars(node, localBound).freeVars;
+    for (const name of collected) {
+      freeVars.add(name);
+    }
+  };
+  for (const kase of expr.cases) {
+    const caseBound = new Set(bound);
+    for (const name of boundNamesInPattern(kase.pattern)) {
+      caseBound.add(name);
+    }
+    if (kase.guard) addFreeVars(kase.guard, caseBound);
+    addFreeVars(kase.body, caseBound);
+  }
+  if (expr.fallback) addFreeVars(expr.fallback, bound);
+  return { freeVars };
 }
 
 function emitMatchCase(

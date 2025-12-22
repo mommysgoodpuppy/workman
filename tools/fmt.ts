@@ -795,8 +795,13 @@ class Formatter {
 
   private formatIfExpr(expr: Extract<Expr, { kind: "if" }>): string {
     const condition = this.formatExpr(expr.condition);
-    const thenBranch = this.formatIfBranch(expr.thenBranch);
-    const elseBranch = this.formatIfBranch(expr.elseBranch);
+    const multiline = this.shouldFormatIfMultiline(expr);
+    const thenBranch = multiline
+      ? this.formatIfBranchMultiline(expr.thenBranch)
+      : this.formatIfBranch(expr.thenBranch);
+    const elseBranch = multiline
+      ? this.formatIfBranchMultiline(expr.elseBranch)
+      : this.formatIfBranch(expr.elseBranch);
     return `if (${condition}) ${thenBranch} else ${elseBranch}`;
   }
 
@@ -805,6 +810,19 @@ class Formatter {
       return this.formatBlock(expr, true);
     }
     return `{ ${this.formatExpr(expr)} }`;
+  }
+
+  private formatIfBranchMultiline(expr: Expr): string {
+    if (expr.kind === "block") {
+      return this.formatStructuredBlock(expr);
+    }
+    return `{ ${this.formatExpr(expr)} }`;
+  }
+
+  private shouldFormatIfMultiline(
+    expr: Extract<Expr, { kind: "if" }>,
+  ): boolean {
+    return expr.thenBranch.kind === "block" && expr.elseBranch.kind === "block";
   }
 
   private formatStructuredBlock(block: BlockExpr): string {
@@ -1825,6 +1843,7 @@ async function formatFile(
       true,
       operators,
       prefixOperators,
+      { preservePipeOperator: true },
     ); // preserveComments = true for formatter
 
     const formatter = new Formatter(options, source);
@@ -1842,6 +1861,7 @@ async function formatFile(
         true,
         operators,
         prefixOperators,
+        { preservePipeOperator: true },
       );
       const formatterSecond = new Formatter(options, formatted);
       const formattedTwice = formatterSecond.format(programSecond);
