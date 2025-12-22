@@ -29,7 +29,21 @@ pub const RecordField = struct {
     value: Value,
 };
 
+const InfectiousTypeMeta = struct {
+    value_constructor: []const u8,
+    effect_constructors: []const []const u8,
+};
+
+const FuncKey = struct {
+    func: *const anyopaque,
+    env: ?*anyopaque,
+};
+
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+var infectious_registry: std.StringHashMap(InfectiousTypeMeta) = undefined;
+var infectious_registry_init = false;
+var handled_param_registry: std.AutoHashMap(FuncKey, []const usize) = undefined;
+var handled_param_registry_init = false;
 
 pub fn allocator() std.mem.Allocator {
     return arena.allocator();
@@ -37,6 +51,22 @@ pub fn allocator() std.mem.Allocator {
 
 fn rawAllocator() std.mem.Allocator {
     return std.heap.page_allocator;
+}
+
+fn getInfectiousRegistry() *std.StringHashMap(InfectiousTypeMeta) {
+    if (!infectious_registry_init) {
+        infectious_registry = std.StringHashMap(InfectiousTypeMeta).init(allocator());
+        infectious_registry_init = true;
+    }
+    return &infectious_registry;
+}
+
+fn getHandledParamRegistry() *std.AutoHashMap(FuncKey, []const usize) {
+    if (!handled_param_registry_init) {
+        handled_param_registry = std.AutoHashMap(FuncKey, []const usize).init(allocator());
+        handled_param_registry_init = true;
+    }
+    return &handled_param_registry;
 }
 
 pub fn allocEnv(comptime T: type, value: T) *anyopaque {
@@ -104,6 +134,21 @@ pub fn recordGet(value: Value, field: []const u8) Value {
     @panic("missing record field");
 }
 
+pub fn recordGetInfectious(value: Value, field: []const u8) Value {
+    const info = unwrapResultForCall(value);
+    if (info.short_circuit) |shorted| {
+        return shorted;
+    }
+    const map = expectRecord(info.value);
+    if (map.get(field)) |stored| {
+        if (!info.infected) {
+            return stored;
+        }
+        return wrapResultValue(stored, info.type_name);
+    }
+    @panic("missing record field");
+}
+
 pub fn makeData(
     type_name: []const u8,
     tag: []const u8,
@@ -134,6 +179,168 @@ pub fn call(func_value: Value, args: []const Value) Value {
     const func = expectFunc(func_value);
     const fn_ptr: FnPtr = @ptrCast(func.func);
     return fn_ptr(func.env, args);
+}
+
+pub fn registerInfectiousType(
+    type_name: []const u8,
+    value_constructor: []const u8,
+    effect_constructors: []const []const u8,
+) void {
+    const registry = getInfectiousRegistry();
+    registry.put(type_name, .{
+        .value_constructor = value_constructor,
+        .effect_constructors = effect_constructors,
+    }) catch @panic("oom");
+}
+
+pub fn markResultHandler(func_value: Value, handled_params: []const usize) Value {
+    const func = expectFunc(func_value);
+    const registry = getHandledParamRegistry();
+    registry.put(.{ .func = func.func, .env = func.env }, handled_params) catch @panic("oom");
+    return func_value;
+}
+
+const UnwrapInfo = struct {
+    value: Value,
+    infected: bool,
+    short_circuit: ?Value,
+    type_name: ?[]const u8,
+};
+
+fn findInfectiousMeta(type_name: []const u8) ?InfectiousTypeMeta {
+    if (!infectious_registry_init) {
+        return null;
+    }
+    return infectious_registry.get(type_name);
+}
+
+fn isEffectConstructor(meta: InfectiousTypeMeta, tag: []const u8) bool {
+    for (meta.effect_constructors) |ctor| {
+        if (std.mem.eql(u8, ctor, tag)) return true;
+    }
+    return false;
+}
+
+fn unwrapResultForCall(value: Value) UnwrapInfo {
+    switch (value) {
+        .Data => |data| {
+            if (findInfectiousMeta(data.type_name)) |meta| {
+                if (isEffectConstructor(meta, data.tag)) {
+                    return .{
+                        .value = value,
+                        .infected = true,
+                        .short_circuit = value,
+                        .type_name = data.type_name,
+                    };
+                }
+                if (std.mem.eql(u8, data.tag, meta.value_constructor)) {
+                    const payload = if (data.fields.len > 0) data.fields[0] else makeUnit();
+                    return .{
+                        .value = payload,
+                        .infected = true,
+                        .short_circuit = null,
+                        .type_name = data.type_name,
+                    };
+                }
+            } else if (std.mem.eql(u8, data.tag, "IErr")) {
+                return .{
+                    .value = value,
+                    .infected = true,
+                    .short_circuit = value,
+                    .type_name = data.type_name,
+                };
+            } else if (std.mem.eql(u8, data.tag, "IOk")) {
+                const payload = if (data.fields.len > 0) data.fields[0] else makeUnit();
+                return .{
+                    .value = payload,
+                    .infected = true,
+                    .short_circuit = null,
+                    .type_name = data.type_name,
+                };
+            }
+        },
+        else => {},
+    }
+    return .{
+        .value = value,
+        .infected = false,
+        .short_circuit = null,
+        .type_name = null,
+    };
+}
+
+fn isInfectiousValue(value: Value) bool {
+    return switch (value) {
+        .Data => |data| findInfectiousMeta(data.type_name) != null,
+        else => false,
+    };
+}
+
+fn wrapResultValue(value: Value, type_name: ?[]const u8) Value {
+    if (isInfectiousValue(value)) {
+        return value;
+    }
+    if (type_name) |name| {
+        if (findInfectiousMeta(name)) |meta| {
+            return makeData(name, meta.value_constructor, &[_]Value{value});
+        }
+    }
+    return value;
+}
+
+fn getHandledParams(func: FuncValue) ?[]const usize {
+    if (!handled_param_registry_init) return null;
+    const registry = getHandledParamRegistry();
+    return registry.get(.{ .func = func.func, .env = func.env });
+}
+
+fn isParamHandled(handled: []const usize, index: usize) bool {
+    for (handled) |param| {
+        if (param == index) return true;
+    }
+    return false;
+}
+
+pub fn callInfectious(func_value: Value, args: []const Value) Value {
+    const callee_info = unwrapResultForCall(func_value);
+    if (callee_info.short_circuit) |shorted| {
+        return shorted;
+    }
+
+    const callable = callee_info.value;
+    var infected = callee_info.infected;
+    var infectious_type_name = callee_info.type_name;
+
+    const func = expectFunc(callable);
+    const handled = getHandledParams(func);
+
+    const processed = allocator().alloc(Value, args.len) catch @panic("oom");
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        if (handled != null and isParamHandled(handled.?, index)) {
+            processed[index] = args[index];
+            continue;
+        }
+
+        const arg_info = unwrapResultForCall(args[index]);
+        if (arg_info.short_circuit) |shorted| {
+            return shorted;
+        }
+        if (arg_info.infected and infectious_type_name == null) {
+            infectious_type_name = arg_info.type_name;
+        }
+        infected = infected or arg_info.infected;
+        processed[index] = arg_info.value;
+    }
+
+    const result = call(callable, processed);
+    if (isInfectiousValue(result)) {
+        return result;
+    }
+    if (infected) {
+        return wrapResultValue(result, infectious_type_name);
+    }
+    return result;
 }
 
 pub fn expectBool(value: Value) bool {

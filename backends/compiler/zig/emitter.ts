@@ -3,6 +3,7 @@ import {
   extname,
   relative,
 } from "../../../src/io.ts";
+import { isCarrierType } from "../../../src/types.ts";
 import type {
   CoreExpr,
   CoreLiteral,
@@ -101,6 +102,25 @@ const RESERVED = new Set<string>([
 
 const INIT_FN = "__wm_init";
 const INIT_STATE = "__wm_init_state";
+
+const PRELUDE_OPERATOR_ALIASES = new Map<string, string>([
+  ["__op_+", "add"],
+  ["__op_-", "sub"],
+  ["__op_*", "mul"],
+  ["__op_/", "div"],
+  ["__op_==", "eq"],
+  ["__op_!=", "neq"],
+  ["__op_<", "lt"],
+  ["__op_>", "gt"],
+  ["__op_<=", "lte"],
+  ["__op_>=", "gte"],
+  ["__op_&&", "boolAnd"],
+  ["__op_||", "boolOr"],
+]);
+
+const PRELUDE_PREFIX_ALIASES = new Map<string, string>([
+  ["__prefix_!", "not"],
+]);
 
 export function emitModule(
   module: CoreModule,
@@ -330,6 +350,17 @@ function emitTypeDeclarations(
     for (const ctor of decl.constructors) {
       lines.push(...emitConstructor(decl, ctor, ctx, initLines));
     }
+    if (
+      decl.infectious && decl.infectious.valueConstructor &&
+      decl.infectious.effectConstructors
+    ) {
+      const effectCtors = decl.infectious.effectConstructors
+        .map((ctor) => `"${ctor}"`)
+        .join(", ");
+      initLines.push(
+        `runtime.registerInfectiousType("${decl.name}", "${decl.infectious.valueConstructor}", &[_][]const u8{ ${effectCtors} });`,
+      );
+    }
   }
   return lines;
 }
@@ -425,6 +456,22 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
         emitExpr(expr.thenBranch, ctx)
       } else ${emitExpr(expr.elseBranch, ctx)}`;
     case "match":
+      if (isCarrierType(expr.scrutinee.type)) {
+        const scrutineeCode = emitExpr(expr.scrutinee, ctx);
+        const dischargesCarrier = Boolean(expr.effectRowCoverage?.dischargesResult);
+        const patternsHandleCarrier = expr.cases.some((kase) =>
+          hasResultConstructorPattern(kase.pattern) ||
+          kase.pattern.kind === "all_errors"
+        );
+        let matchLambda = emitMatchLambda(expr, ctx);
+        if (patternsHandleCarrier) {
+          matchLambda = `runtime.markResultHandler(${matchLambda}, &[_]usize{ 0 })`;
+        }
+        if (dischargesCarrier && patternsHandleCarrier) {
+          return `runtime.call(${matchLambda}, &[_]Value{ ${scrutineeCode} })`;
+        }
+        return `runtime.callInfectious(${matchLambda}, &[_]Value{ ${scrutineeCode} })`;
+      }
       return emitMatch(expr, ctx);
     default:
       throw new Error(
@@ -475,6 +522,7 @@ function emitLambda(
   expr: CoreExpr & { kind: "lambda" },
   ctx: EmitContext,
 ): string {
+  const handledParams = detectHandledResultParams(expr, expr.params);
   const usedVars = collectUsedVars(expr.body);
   const { freeVars } = collectFreeVars(expr.body, new Set(expr.params));
   const captures = Array.from(freeVars).filter((name) =>
@@ -535,7 +583,13 @@ function emitLambda(
   ctx.hoisted.push(indent(`return ${body};`));
   ctx.hoisted.push("}");
 
-  return `runtime.makeFunc(${lambdaName}, ${envInit})`;
+  const funcValue = `runtime.makeFunc(${lambdaName}, ${envInit})`;
+  if (handledParams.length > 0) {
+    return `runtime.markResultHandler(${funcValue}, &[_]usize{ ${
+      handledParams.join(", ")
+    } })`;
+  }
+  return funcValue;
 }
 
 function collectFreeVars(
@@ -702,7 +756,13 @@ function boundNamesInPattern(pattern: CorePattern): string[] {
 function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
   const callee = emitExpr(expr.callee, ctx);
   const args = expr.args.map((arg) => emitExpr(arg, ctx)).join(", ");
-  return `runtime.call(${callee}, &[_]Value{ ${args} })`;
+  const resultIsInfectious = isCarrierType(expr.type);
+  const calleeIsInfectious = isCarrierType(expr.callee.type);
+  const anyArgIsInfectious = expr.args.some((arg) => isCarrierType(arg.type));
+  if (!resultIsInfectious && !calleeIsInfectious && !anyArgIsInfectious) {
+    return `runtime.call(${callee}, &[_]Value{ ${args} })`;
+  }
+  return `runtime.callInfectious(${callee}, &[_]Value{ ${args} })`;
 }
 
 function emitLet(expr: CoreExpr & { kind: "let" }, ctx: EmitContext): string {
@@ -778,13 +838,34 @@ function emitMatch(
   expr: CoreExpr & { kind: "match" },
   ctx: EmitContext,
 ): string {
+  const scrutineeCode = emitExpr(expr.scrutinee, ctx);
+  return emitMatchWithScrutinee(expr, ctx, scrutineeCode);
+}
+
+function emitMatchWithScrutinee(
+  expr: CoreExpr & { kind: "match" },
+  ctx: EmitContext,
+  scrutineeCode: string,
+  baseScope: Map<string, VarRef> = new Map(ctx.scope),
+): string {
   const scrutineeTemp = allocateTempName(ctx.state, "__match_scrutinee");
-  const baseScope = new Map(ctx.scope);
+  const scrutineeTypeName = expr.scrutinee.type.kind === "constructor"
+    ? expr.scrutinee.type.name
+    : undefined;
   const label = allocateLabel(ctx.state);
   const lines: string[] = [];
-  lines.push(`const ${scrutineeTemp} = ${emitExpr(expr.scrutinee, ctx)};`);
+  lines.push(`const ${scrutineeTemp} = ${scrutineeCode};`);
   for (const kase of expr.cases) {
-    lines.push(...emitMatchCase(kase, scrutineeTemp, ctx, baseScope, label));
+    lines.push(
+      ...emitMatchCase(
+        kase,
+        scrutineeTemp,
+        ctx,
+        baseScope,
+        label,
+        scrutineeTypeName,
+      ),
+    );
   }
   if (expr.fallback) {
     const fallbackExpr = emitExprWithScope(expr.fallback, ctx, baseScope);
@@ -796,12 +877,66 @@ function emitMatch(
   return `${label}: {\n${body}\n}`;
 }
 
+function emitMatchLambda(
+  expr: CoreExpr & { kind: "match" },
+  ctx: EmitContext,
+): string {
+  const { freeVars } = collectFreeVars(expr, new Set());
+  const captures = Array.from(freeVars).filter((name) => ctx.scope.has(name));
+  const lambdaName = allocateTempName(ctx.state, "__match_lambda");
+
+  let envType: string | undefined;
+  let envInit = "null";
+  const scope = new Map(ctx.scope);
+
+  if (captures.length > 0) {
+    envType = allocateTempName(ctx.state, "__env");
+    const fieldNames = new Map<string, string>();
+    const fields = captures.map((name) => {
+      const fieldName = sanitizeIdentifier(name, ctx.state);
+      fieldNames.set(name, fieldName);
+      scope.set(name, {
+        value: `env.${fieldName}.*`,
+        address: `env.${fieldName}`,
+      });
+      return `${fieldName}: *const Value`;
+    });
+    ctx.hoisted.push(`const ${envType} = struct { ${fields.join(", ")} };`);
+    const initFields = captures.map((name) => {
+      const ref = resolveVar(name, ctx);
+      const fieldName = fieldNames.get(name)!;
+      return `.${fieldName} = ${ref.address}`;
+    }).join(", ");
+    envInit = `runtime.allocEnv(${envType}, .{ ${initFields} })`;
+  }
+
+  const paramName = bindShadowingLocal(scope, "__match_value", ctx.state);
+  const body = emitMatchWithScrutinee(expr, ctx, paramName, scope);
+
+  ctx.hoisted.push(
+    `fn ${lambdaName}(env_ptr: ?*anyopaque, args: []const Value) Value {`,
+  );
+  if (captures.length > 0) {
+    ctx.hoisted.push(
+      indent(`const env: *${envType} = @ptrCast(@alignCast(env_ptr.?));`),
+    );
+  } else {
+    ctx.hoisted.push(indent("_ = env_ptr;"));
+  }
+  ctx.hoisted.push(indent(`const ${paramName} = args[0];`));
+  ctx.hoisted.push(indent(`return ${body};`));
+  ctx.hoisted.push("}");
+
+  return `runtime.makeFunc(${lambdaName}, ${envInit})`;
+}
+
 function emitMatchCase(
   kase: CoreMatchCase,
   scrutineeRef: string,
   ctx: EmitContext,
   baseScope: Map<string, VarRef>,
   label: string,
+  scrutineeTypeName?: string,
 ): string[] {
   const caseScope = new Map(baseScope);
   const usedVars = collectUsedVars(kase.body);
@@ -817,6 +952,7 @@ function emitMatchCase(
     ctx,
     caseScope,
     usedVars,
+    scrutineeTypeName,
   );
   const conditionExpr = conditions.length > 0
     ? conditions.map((cond) => `(${cond})`).join(" and ")
@@ -853,6 +989,7 @@ function emitPattern(
   ctx: EmitContext,
   scope: Map<string, VarRef>,
   usedVars: Set<string>,
+  overrideConstructorTypeName?: string,
 ): PatternEmission {
   const ref = `(${valueRef})`;
   switch (pattern.kind) {
@@ -898,6 +1035,7 @@ function emitPattern(
           ctx,
           scope,
           usedVars,
+          undefined,
         );
         conditions.push(...nested.conditions);
         bindings.push(...nested.bindings);
@@ -905,8 +1043,9 @@ function emitPattern(
       return { conditions, bindings };
     }
     case "constructor": {
+      const typeName = overrideConstructorTypeName ?? pattern.typeName;
       const conditions = [
-        `runtime.isData(${ref}, "${pattern.typeName}", "${pattern.constructor}")`,
+        `runtime.isData(${ref}, "${typeName}", "${pattern.constructor}")`,
       ];
       const bindings: string[] = [];
       for (let index = 0; index < pattern.fields.length; index += 1) {
@@ -916,6 +1055,7 @@ function emitPattern(
           ctx,
           scope,
           usedVars,
+          undefined,
         );
         conditions.push(...nested.conditions);
         bindings.push(...nested.bindings);
@@ -951,6 +1091,108 @@ function emitExprWithScope(
     return emitExpr(expr, ctx);
   } finally {
     ctx.scope = previous;
+  }
+}
+
+function detectHandledResultParams(
+  expr: CoreExpr & { kind: "lambda" },
+  originalParams: readonly string[],
+): number[] {
+  const directMatch = resolveMatchInLambda(expr.body, originalParams);
+  if (directMatch) {
+    const { matchExpr, paramIndex } = directMatch;
+    if (paramIndex !== -1) {
+      if (!isCarrierType(matchExpr.scrutinee.type)) {
+        return [];
+      }
+      const hasResultPatterns = matchExpr.cases.some((c) =>
+        hasResultConstructorPattern(c.pattern)
+      );
+      if (hasResultPatterns) {
+        return [paramIndex];
+      }
+      const coverage = matchExpr.effectRowCoverage;
+      if (coverage?.dischargesResult) {
+        return [paramIndex];
+      }
+    }
+  }
+
+  if (expr.body.kind === "match" && expr.body.scrutinee.kind === "tuple") {
+    if (!isCarrierType(expr.body.scrutinee.type)) {
+      return [];
+    }
+    const handledIndices: number[] = [];
+    for (const matchCase of expr.body.cases) {
+      if (matchCase.pattern.kind === "tuple") {
+        for (let i = 0; i < matchCase.pattern.elements.length; i += 1) {
+          const element = matchCase.pattern.elements[i];
+          if (hasResultConstructorPattern(element)) {
+            const scrutineeElement = expr.body.scrutinee.elements[i];
+            if (scrutineeElement?.kind === "var") {
+              const paramIndex = originalParams.indexOf(scrutineeElement.name);
+              if (paramIndex !== -1 && !handledIndices.includes(paramIndex)) {
+                handledIndices.push(paramIndex);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (handledIndices.length > 0) {
+      return handledIndices;
+    }
+
+    const coverage = expr.body.effectRowCoverage;
+    if (coverage?.dischargesResult) {
+      for (const element of expr.body.scrutinee.elements) {
+        if (element.kind === "var") {
+          const paramIndex = originalParams.indexOf(element.name);
+          if (paramIndex !== -1) {
+            handledIndices.push(paramIndex);
+          }
+        }
+      }
+      return handledIndices;
+    }
+  }
+
+  return [];
+}
+
+function resolveMatchInLambda(
+  body: CoreExpr,
+  params: readonly string[],
+): { matchExpr: CoreExpr & { kind: "match" }; paramIndex: number } | null {
+  if (body.kind === "match" && body.scrutinee.kind === "var") {
+    const paramIndex = params.indexOf(body.scrutinee.name);
+    if (paramIndex === -1) return null;
+    return { matchExpr: body, paramIndex };
+  }
+  if (
+    body.kind === "call" && body.args.length === 1 &&
+    body.args[0].kind === "var" && body.callee.kind === "match"
+  ) {
+    const paramIndex = params.indexOf(body.args[0].name);
+    if (paramIndex === -1) return null;
+    return { matchExpr: body.callee, paramIndex };
+  }
+  return null;
+}
+
+function hasResultConstructorPattern(pattern: CorePattern): boolean {
+  switch (pattern.kind) {
+    case "constructor":
+      return isCarrierType(pattern.type);
+    case "tuple":
+      return pattern.elements.some(hasResultConstructorPattern);
+    case "wildcard":
+    case "binding":
+    case "literal":
+    case "all_errors":
+    case "pinned":
+      return false;
   }
 }
 
@@ -1001,6 +1243,9 @@ function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
         throw new Error("record_get expects string literal field");
       }
       const fieldName = JSON.stringify(field.literal.value);
+      if (isCarrierType(args[0].type)) {
+        return `runtime.recordGetInfectious(${target}, ${fieldName})`;
+      }
       return `runtime.recordGet(${target}, ${fieldName})`;
     }
     default:
@@ -1009,13 +1254,22 @@ function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
 }
 
 function resolveVar(name: string, ctx: EmitContext): VarRef {
-  const ref = ctx.scope.get(name);
-  if (!ref) {
-    const runtimeName = makeIdentifierBase(name);
-    return { value: `runtime.${runtimeName}`, address: `&runtime.${runtimeName}` };
+  const direct = ctx.scope.get(name);
+  if (direct) {
+    return direct;
   }
-  return ref;
+  const alias = PRELUDE_OPERATOR_ALIASES.get(name) ??
+    PRELUDE_PREFIX_ALIASES.get(name);
+  if (alias) {
+    const aliasRef = ctx.scope.get(alias);
+    if (aliasRef) {
+      return aliasRef;
+    }
+  }
+  const runtimeName = makeIdentifierBase(name);
+  return { value: `runtime.${runtimeName}`, address: `&runtime.${runtimeName}` };
 }
+
 
 function resolveName(
   scope: Map<string, VarRef>,
