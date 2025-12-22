@@ -440,8 +440,8 @@ class Formatter {
       const matchExpr = decl.body.result;
       // Force multi-line if the body was originally multi-line
       const forceMultiLine = decl.body.isMultiLine === true;
-      const formattedMatch = this.formatMatch(
-        matchExpr.scrutinee,
+      const formattedMatch = this.formatMatchFn(
+        [matchExpr.scrutinee],
         matchExpr.bundle,
         forceMultiLine,
       );
@@ -482,8 +482,8 @@ class Formatter {
         ) {
           const matchExpr = mutual.body.result;
           const forceMultiLine = mutual.body.isMultiLine === true;
-          const formattedMatch = this.formatMatch(
-            matchExpr.scrutinee,
+          const formattedMatch = this.formatMatchFn(
+            [matchExpr.scrutinee],
             matchExpr.bundle,
             forceMultiLine,
           );
@@ -997,8 +997,8 @@ class Formatter {
         ) {
           const matchExpr = decl.body.result;
           const forceMultiLine = decl.body.isMultiLine === true;
-          const formattedMatch = this.formatMatch(
-            matchExpr.scrutinee,
+          const formattedMatch = this.formatMatchFn(
+            [matchExpr.scrutinee],
             matchExpr.bundle,
             forceMultiLine,
           );
@@ -1373,7 +1373,11 @@ class Formatter {
     return ctx.toString();
   }
 
-  private formatMatchFn(params: Expr[], bundle: MatchBundle): string {
+  private formatMatchFn(
+    params: Expr[],
+    bundle: MatchBundle,
+    forceMultiLine: boolean = false,
+  ): string {
     const arms = bundle.arms;
     const paramExpr = params.length === 1
       ? this.formatExpr(params[0])
@@ -1382,16 +1386,17 @@ class Formatter {
       ? this.formatMatchArmContent(arms[0])
       : null;
     const inlineFn = inlineArm !== null
-      ? `match(${paramExpr}) { ${inlineArm} }`
+      ? `match(${paramExpr}) => { ${inlineArm} }`
       : "";
     if (
-      !this.matchBundleIsMultiLine(bundle) && inlineFn.length <= 80 &&
+      !forceMultiLine && !this.matchBundleIsMultiLine(bundle) &&
+      inlineFn.length <= 80 &&
       arms.length <= 2 && inlineArm !== null
     ) {
       return inlineFn;
     }
     const ctx = this.createBlockContext();
-    ctx.write(`match(${paramExpr}) {`);
+    ctx.write(`match(${paramExpr}) => {`);
     ctx.writeLine();
     ctx.withIndent(() => {
       this.writeMatchArmsWithContext(ctx, arms);

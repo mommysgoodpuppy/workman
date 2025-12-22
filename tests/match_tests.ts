@@ -252,20 +252,20 @@ Deno.test("composes nested bundle references", async () => {
       zero,
       one
     };
-    let describeNumber = match(n) {
+    let describeNumber = match(n) => {
       grouped,
       other
     };
     let a = describeNumber(0);
     let b = describeNumber(1);
     let c = describeNumber(42);
-    let aLabel = match(a) {
+    let aLabel = match(a) => {
       (label, _, _) => { label }
     };
-    let cExtracted = match(c) {
+    let cExtracted = match(c) => {
       (_, (value, _), _) => { value }
     };
-    let bFormatted = match(b) {
+    let bFormatted = match(b) => {
       (_, _, formatter) => { formatter(999) }
     };
   `;
@@ -405,7 +405,7 @@ Deno.test("composes nested bundle references", async () => {
 Deno.test("supports recursive match bundles", { ignore: false }, async () => {
   const source = `
     type List<T> = Empty | Link<T, List<T>>;
-    let rec describeList = match(list) {
+    let rec describeList = match(list) => {
       Empty => { "empty" },
       Link(_, Empty) => { "singleton" },
       Link(_, rest) => { describeList(rest) }
@@ -470,3 +470,4 @@ Deno.test("rejects non-exhaustive match expression", { ignore: false }, () => {
   );
   assert(diagnostic, "expected non-exhaustive match diagnostic");
 });
+

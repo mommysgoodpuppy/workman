@@ -281,7 +281,7 @@ Deno.test("return annotation keeps infectious carrier when errors ignored", () =
     record Operation { direction: Direction, distance: Int };
     type ParseError = Missing;
 
-    let parseDirection = match(flag) {
+    let parseDirection = match(flag) => {
       true => { IOk(L) },
       false => { IErr(Missing) }
     };
@@ -519,7 +519,7 @@ Deno.test("type annotation reuses named variables", () => {
 
 Deno.test("occurs check triggers on ill-typed recursion", () => {
   const source = `
-    let rec loop = match(x) {
+    let rec loop = match(x) => {
       _ => { loop(loop) }
     };
   `;
@@ -804,3 +804,4 @@ Deno.test("inference completes successfully with ID-annotated AST", () => {
   // Verify that the marked program was created
   assertEquals(result.markedProgram.declarations.length, 1);
 });
+

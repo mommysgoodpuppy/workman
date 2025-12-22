@@ -37,12 +37,12 @@ Deno.test("first-class match bundle discharges infection with IErr(_)", () => {
   const source = `
     type ParseError = Missing | Other;
 
-    let parseMaybe = match(flag) {
+    let parseMaybe = match(flag) => {
       true => { IOk(1) },
       false => { IErr(Missing) }
     };
 
-    let handler = match(result) {
+    let handler = match(result) => {
       IOk(value) => { value },
       IErr(_) => { 0 }
     };
@@ -56,7 +56,7 @@ Deno.test("helper function using IErr(_) stops infection", () => {
   const source = `
     type ParseError = Missing | Other;
 
-    let parseMaybe = match(flag) {
+    let parseMaybe = match(flag) => {
       true => { IOk(1) },
       false => { IErr(Missing) }
     };
@@ -81,7 +81,7 @@ Deno.test("factory returning IErr(_) handler stays infectious-free", () => {
   const source = `
     type ParseError = Missing | Other;
 
-    let parseMaybe = match(flag) {
+    let parseMaybe = match(flag) => {
       true => { IOk(1) },
       false => { IErr(Missing) }
     };
@@ -97,3 +97,4 @@ Deno.test("factory returning IErr(_) handler stays infectious-free", () => {
   `;
   expectNoDiagnostics(source);
 });
+

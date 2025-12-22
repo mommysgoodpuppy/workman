@@ -52,7 +52,7 @@ Deno.test("shadowing in match arms", () => {
   const source = `
     type Option<T> = None | Some<T>;
     let x = () => { 5 };
-    let test = match(opt) {
+    let test = match(opt) => {
       Some(x) => { x },
       None => { 0 }
     };
@@ -81,7 +81,7 @@ Deno.test("shadowing parameters", () => {
 Deno.test("simple recursive function", () => {
   const source = `
     type Option<T> = None | Some<T>;
-    let rec unwrap = match(opt) {
+    let rec unwrap = match(opt) => {
       Some(x) => { x },
       None => { unwrap(None) }
     };
@@ -127,11 +127,11 @@ Deno.test("recursive map over list", () => {
 
 Deno.test("mutually recursive even/odd", () => {
   const source = `
-    let rec isEven = match(n) {
+    let rec isEven = match(n) => {
       0 => { true },
       _ => { isOdd(0) }
     }
-    and isOdd = match(n) {
+    and isOdd = match(n) => {
       0 => { false },
       _ => { isEven(0) }
     };
@@ -146,7 +146,7 @@ Deno.test("mutually recursive tree traversal", () => {
     type Tree<T> = Leaf<T> | Node<Tree<T>, Tree<T>>;
     type Option<T> = None | Some<T>;
     
-    let rec findLeaf = match(tree) {
+    let rec findLeaf = match(tree) => {
       Leaf(x) => { Some(x) },
       Node(left, right) => { searchBranches(left, right) }
     }
@@ -168,7 +168,7 @@ Deno.test("mutually recursive tree traversal", () => {
 
 Deno.test("rejects self-reference without rec keyword", () => {
   const source = `
-    let bad = match(n) {
+    let bad = match(n) => {
       0 => { 1 },
       _ => { bad(0) }
     };
@@ -236,7 +236,7 @@ Deno.test("rejects calling a non-function value", () => {
 
 Deno.test("rejects type mismatch in recursive call", () => {
   const source = `
-    let rec bad = match(n) {
+    let rec bad = match(n) => {
       0 => { true },
       _ => { bad(n) }
     };
@@ -272,11 +272,11 @@ Deno.test("rejects type mismatch in recursive call", () => {
 
 Deno.test("rejects mutual recursion without 'and'", () => {
   const source = `
-    let rec isEven = match(n) {
+    let rec isEven = match(n) => {
       0 => { true },
       _ => { isOdd(0) }
     };
-    let rec isOdd = match(n) {
+    let rec isOdd = match(n) => {
       0 => { false },
       _ => { isEven(0) }
     };
@@ -312,3 +312,5 @@ Deno.test("rejects mutual recursion without 'and'", () => {
   );
   assertExists(freeVarDiag, "expected free_variable diagnostic for isOdd");
 });
+
+

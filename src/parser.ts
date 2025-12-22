@@ -482,14 +482,22 @@ class SurfaceParser {
     this.expectSymbol("=");
     const initializer = this.parseExpression();
 
-    // Handle first-class match: match(x) { ... } desugars to (x) => { match(x) { ... } }
-    // Only apply this transformation for top-level or recursive bindings when the scrutinee is a simple identifier or tuple of identifiers
-    if (
-      (isTopLevel || isRecursive) &&
-      initializer.kind === "match" &&
-      this.isValidMatchFunctionScrutinee(initializer.scrutinee)
-    ) {
-      const parameterSpecs = this.extractMatchParameters(initializer.scrutinee);
+    // Handle first-class match: match(x) => { ... } desugars to (x) => { match(x) { ... } }
+    if (initializer.kind === "match_fn") {
+      if (initializer.parameters.length !== 1) {
+        throw this.error(
+          "First-class match requires a single scrutinee expression",
+          this.previous(),
+        );
+      }
+      const scrutineeExpr = initializer.parameters[0];
+      if (!this.isValidMatchFunctionScrutinee(scrutineeExpr)) {
+        throw this.error(
+          "First-class match scrutinee must be an identifier or tuple of identifiers",
+          this.previous(),
+        );
+      }
+      const parameterSpecs = this.extractMatchParameters(scrutineeExpr);
       const parameters = parameterSpecs.map((spec) =>
         this.createMatchParameter(spec)
       );
@@ -504,11 +512,19 @@ class SurfaceParser {
         isMultiLine = matchText.includes("\n");
       }
 
+      const matchExpr: Expr = {
+        kind: "match",
+        scrutinee: scrutineeExpr,
+        bundle: initializer.bundle,
+        span: initializer.span,
+        id: nextNodeId(),
+      };
+
       const body: BlockExpr = {
         kind: "block",
         statements: [],
-        result: initializer,
-        span: initializer.span,
+        result: matchExpr,
+        span: matchExpr.span,
         isMultiLine,
         id: nextNodeId(),
       };

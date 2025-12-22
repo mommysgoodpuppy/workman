@@ -97,7 +97,7 @@ Deno.test("throws on constructor arity mismatch", () => {
 
 Deno.test("throws on non-exhaustive runtime match", () => {
   const source = `
-    let check = match(b) {
+    let check = match(b) => {
       true => { false }
     };
   `;
@@ -150,3 +150,4 @@ Deno.test("evaluates tuple parameter destructuring", async () => {
   assertEquals(value[0], 2);
   assertEquals(value[1], 1);
 });
+

@@ -85,7 +85,7 @@ Deno.test({
 }, () => {
   const source = `
     type Option<T> = None | Some<T>;
-    let bad = match(x) {
+    let bad = match(x) => {
       Maybe(v) => { v }
     };
   `;
@@ -100,3 +100,4 @@ Deno.test({
   // Expected once fixed: diagnostic should exist for Maybe constructor.
   assertExists(freeVarDiag);
 });
+

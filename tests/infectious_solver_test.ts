@@ -31,7 +31,7 @@ Deno.test("solver allows infectious calls and spreads Result types", () => {
   const analysis = analyzeSource(`
     type ParseError = Missing;
 
-    let parseMaybe = match(flag) {
+    let parseMaybe = match(flag) => {
       true => { IOk(1) },
       false => { IErr(Missing) }
     };
@@ -64,7 +64,7 @@ Deno.test("solver flags annotation mismatch when match discharges but annotation
     type ParseError = Missing;
 
     let leak = (value: IResult<Int, ParseError>) => {
-      let cleaned: IResult<Int, ParseError> = match(value) {
+      let cleaned: IResult<Int, ParseError> = match(value) => {
         IOk(v) => { v },
         IErr(Missing) => { 0 },
         IErr(_) => { 0 }
@@ -87,7 +87,7 @@ Deno.test("solver allows infectious record projections and spreads Result types"
       { value: value }
     };
 
-    let parseMaybe = match(flag) {
+    let parseMaybe = match(flag) => {
       true => { IOk(1) },
       false => { IErr(Missing) }
     };
@@ -118,7 +118,7 @@ Deno.test("solver flags infectious annotations expecting bare types", () => {
   const analysis = analyzeSource(`
     type ParseError = Missing;
 
-    let parseMaybe = match(flag) {
+    let parseMaybe = match(flag) => {
       true => { IOk(1) },
       false => { IErr(Missing) }
     };
@@ -160,3 +160,4 @@ Deno.test("match with empty error branch still discharges", () => {
     `expected stripErr to return bare Int, got ${typeStr}`,
   );
 });
+

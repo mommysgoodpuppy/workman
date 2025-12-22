@@ -78,7 +78,7 @@ Deno.test("first-class match desugars correctly", () => {
         None => { 0 }
       }
     };
-    let extractNew = match(opt) {
+    let extractNew = match(opt) => {
       Some(x) => { x },
       None => { 0 }
     };
@@ -118,7 +118,7 @@ Deno.test("nested constructor patterns", () => {
   const source = `
     type Option<T> = None | Some<T>;
     type Pair<A, B> = Pair<A, B>;
-    let extractNested = match(p) {
+    let extractNested = match(p) => {
       Pair(Some(x), _) => { x },
       Pair(None, Some(y)) => { y },
       Pair(None, None) => { 0 }
@@ -132,7 +132,7 @@ Deno.test("nested constructor patterns", () => {
 Deno.test("deeply nested patterns", () => {
   const source = `
     type Option<T> = None | Some<T>;
-    let unwrap3 = match(x) {
+    let unwrap3 = match(x) => {
       Some(Some(Some(value))) => { value },
       _ => { 0 }
     };
@@ -152,12 +152,12 @@ Deno.test("multiple ADTs in same program", () => {
     type Result<T, E> = Ok<T> | Err<E>;
     type Either<L, R> = Left<L> | Right<R>;
     
-    let optToResult = match(opt) {
+    let optToResult = match(opt) => {
       Some(x) => { Ok(x) },
       None => { Err(0) }
     };
     
-    let resultToEither = match(res) {
+    let resultToEither = match(res) => {
       Ok(x) => { Right(x) },
       Err(e) => { Left(e) }
     };
@@ -179,13 +179,13 @@ Deno.test("multiple ADTs in same program", () => {
 Deno.test("wildcard in various positions", () => {
   const source = `
     type Triple<A, B, C> = Triple<A, B, C>;
-    let first = match(t) {
+    let first = match(t) => {
       Triple(x, _, _) => { x }
     };
-    let second = match(t) {
+    let second = match(t) => {
       Triple(_, y, _) => { y }
     };
-    let third = match(t) {
+    let third = match(t) => {
       Triple(_, _, z) => { z }
     };
   `;
@@ -210,7 +210,7 @@ Deno.test("wildcard in various positions", () => {
 
 Deno.test("boolean literal patterns", () => {
   const source = `
-    let not = match(b) {
+    let not = match(b) => {
       true => { false },
       false => { true }
     };
@@ -221,7 +221,7 @@ Deno.test("boolean literal patterns", () => {
 
 Deno.test("integer literal patterns", () => {
   const source = `
-    let isZero = match(n) {
+    let isZero = match(n) => {
       0 => { true },
       _ => { false }
     };
@@ -233,7 +233,7 @@ Deno.test("integer literal patterns", () => {
 Deno.test("mixed literal and constructor patterns", () => {
   const source = `
     type Option<T> = None | Some<T>;
-    let describe = match(opt) {
+    let describe = match(opt) => {
       Some(0) => { true },
       Some(_) => { false },
       None => { false }
@@ -253,7 +253,7 @@ Deno.test("mixed literal and constructor patterns", () => {
 Deno.test("rejects undefined constructor", () => {
   const source = `
     type Option<T> = None | Some<T>;
-    let bad = match(x) {
+    let bad = match(x) => {
       Maybe(v) => { v }
     };
   `;
@@ -283,7 +283,7 @@ Deno.test("rejects undefined variable", () => {
 Deno.test("rejects constructor arity mismatch", () => {
   const source = `
     type Pair<A, B> = Pair<A, B>;
-    let bad = match(p) {
+    let bad = match(p) => {
       Pair(x) => { x }
     };
   `;
@@ -320,10 +320,10 @@ Deno.test("rejects type annotation mismatch with clear error", () => {
 
 Deno.test("tuple patterns with wildcards", () => {
   const source = `
-    let fst = match(t) {
+    let fst = match(t) => {
       (x, _) => { x }
     };
-    let snd = match(t) {
+    let snd = match(t) => {
       (_, y) => { y }
     };
   `;
@@ -334,7 +334,7 @@ Deno.test("tuple patterns with wildcards", () => {
 
 Deno.test("nested tuple patterns", () => {
   const source = `
-    let extract = match(t) {
+    let extract = match(t) => {
       ((a, b), c) => { b }
     };
   `;
@@ -377,7 +377,7 @@ Deno.test("parameter annotations share scope", () => {
 
 Deno.test("recursive annotation enforces consistency", () => {
   const source = `
-    let rec length = match(list) {
+    let rec length = match(list) => {
       Empty => { 0 },
       Link(_, rest) => { length(rest) }
     };
@@ -390,7 +390,7 @@ Deno.test("recursive annotation enforces consistency", () => {
 Deno.test("mutual recursion respects shared annotations", () => {
   const source = `
     type Tree<T> = Leaf<T> | Node<Tree<T>, Tree<T>>;
-    let rec walk = match(tree) {
+    let rec walk = match(tree) => {
       Leaf(_) => { true },
       Node(left, right) => { both(left, right) }
     }
@@ -445,7 +445,7 @@ Deno.test("constructor partially applied triggers error", () => {
 
 Deno.test("occurs check failure surfaces error", () => {
   const source = `
-    let rec self = match(x) {
+    let rec self = match(x) => {
       _ => { self(self) }
     };
   `;
@@ -469,3 +469,4 @@ Deno.test("annotation mismatch within block let is rejected", () => {
   );
   assertExists(inconsistent, "expected mark_inconsistent within block let");
 });
+
