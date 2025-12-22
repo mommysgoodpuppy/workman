@@ -10,7 +10,7 @@ import type {
 import { lowerProgramToValues } from "./marked_to_core.ts";
 import { InferError } from "../../../src/error.ts";
 import type { ConstraintDiagnostic } from "../../../src/diagnostics.ts";
-import { isHoleType, typeToString } from "../../../src/types.ts";
+import { isHoleType, splitCarrier, typeToString } from "../../../src/types.ts";
 import type { Type } from "../../../src/types.ts";
 import type { NodeId, SourceSpan } from "../../../src/ast.ts";
 import type { MProgram } from "../../../src/ast_marked.ts";
@@ -285,6 +285,12 @@ function createDiagnosticError(
 }
 
 function simpleFormatType(type: Type): string {
+  const carrierInfo = splitCarrier(type);
+  if (carrierInfo && carrierInfo.domain !== "hole") {
+    const valueStr = simpleFormatType(carrierInfo.value);
+    const stateStr = simpleFormatType(carrierInfo.state);
+    return `⚡${valueStr} [${stateStr}]`;
+  }
   switch (type.kind) {
     case "var":
       return `T${type.id}`;
@@ -319,6 +325,19 @@ function simpleFormatType(type: Type): string {
   }
 }
 
+function listRecordFields(type: Type): string[] {
+  if (type.kind !== "record") return [];
+  const fields = Array.from(type.fields.keys());
+  fields.sort((a, b) => a.localeCompare(b));
+  return fields;
+}
+
+function unwrapCarrier(type: Type): { name: string; value: Type } | null {
+  const info = splitCarrier(type);
+  if (!info || type.kind !== "constructor") return null;
+  return { name: type.name, value: info.value };
+}
+
 function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
   switch (diagnostic.reason) {
     case "not_function": {
@@ -340,9 +359,74 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
       const expected = diagnostic.details?.expected;
       const actual = diagnostic.details?.actual;
       if (expected && actual) {
-        return `Type mismatch: expected ${
-          simpleFormatType(expected as Type)
-        }, but got ${simpleFormatType(actual as Type)}`;
+        const expectedType = expected as Type;
+        const actualType = actual as Type;
+        const actualCarrier = unwrapCarrier(actualType);
+        const expectedLabel = simpleFormatType(expectedType);
+        const actualLabel = simpleFormatType(actualType);
+        const extraNotes: string[] = [];
+
+        const actualValueType = actualCarrier?.value ?? actualType;
+
+        if (
+          expectedType.kind === "record" && actualValueType.kind === "record"
+        ) {
+          const expectedFields = listRecordFields(expectedType);
+          const actualFields = listRecordFields(actualValueType);
+          const missing = expectedFields.filter((f) =>
+            !actualFields.includes(f)
+          );
+          const extra = actualFields.filter((f) =>
+            !expectedFields.includes(f)
+          );
+          if (missing.length > 0) {
+            extraNotes.push(`Missing fields: ${missing.join(", ")}`);
+          }
+          if (extra.length > 0) {
+            extraNotes.push(`Extra fields: ${extra.join(", ")}`);
+          }
+        } else if (expectedType.kind === "record") {
+          const expectedFields = listRecordFields(expectedType);
+          if (expectedFields.length > 0) {
+            extraNotes.push(
+              `Expected record fields: ${expectedFields.join(", ")}`,
+            );
+          }
+          if (actualValueType.kind === "tuple") {
+            extraNotes.push(
+              "Note: tuples are positional; records require named fields.",
+            );
+          } else if (actualCarrier) {
+            extraNotes.push(
+              `Note: '${actualCarrier.name}' is infectious; its value type is ${simpleFormatType(actualCarrier.value)}.`,
+            );
+          } else if (actualType.kind === "constructor") {
+            extraNotes.push(
+              `Note: '${actualType.name}' is a constructor, not a record.`,
+            );
+          }
+        } else if (actualValueType.kind === "record") {
+          const actualFields = listRecordFields(actualValueType);
+          if (actualFields.length > 0) {
+            extraNotes.push(
+              `Found record fields: ${actualFields.join(", ")}`,
+            );
+          }
+          if (expectedType.kind === "tuple") {
+            extraNotes.push(
+              "Note: tuples are positional; records require named fields.",
+            );
+          }
+        } else if (actualCarrier) {
+          extraNotes.push(
+            `Note: '${actualCarrier.name}' is infectious; its value type is ${simpleFormatType(actualCarrier.value)}.`,
+          );
+        }
+
+        const noteSuffix = extraNotes.length > 0
+          ? `\n  ${extraNotes.join("\n  ")}`
+          : "";
+        return `Type mismatch: expected ${expectedLabel}, but got ${actualLabel}${noteSuffix}`;
       }
       return "Type mismatch between incompatible types";
     }

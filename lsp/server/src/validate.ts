@@ -1,5 +1,5 @@
 import { Type } from "../../../src/types.ts";
-import { formatType } from "../../../src/type_printer.ts";
+import { formatTypeWithCarriers } from "../../../src/type_printer.ts";
 
 import {
   ConstraintDiagnosticWithSpan,
@@ -81,9 +81,11 @@ export async function validateDocument(
     ctx.moduleContexts.set(uri, context);
     ctx.log(`[LSP] Module analysis completed (${entryPath})`);
     appendSolverDiagnostics(
+      ctx,
       diagnostics,
       context.layer3.diagnostics.solver,
       text,
+      context.layer3,
     );
     appendConflictDiagnostics(
       ctx,
@@ -240,9 +242,11 @@ export async function validateDocument(
 }
 
 function appendSolverDiagnostics(
+  ctx: LspServerContext,
   target: any[],
   diagnostics: ConstraintDiagnosticWithSpan[],
   text: string,
+  layer3: Layer3Result,
 ): void {
   for (const diag of diagnostics) {
     const range = diag.span
@@ -257,10 +261,13 @@ function appendSolverDiagnostics(
         start: { line: 0, character: 0 },
         end: { line: 0, character: 1 },
       };
+    if (hasExistingDiagnostic(target, range, diag.reason)) {
+      continue;
+    }
     target.push({
       range,
       severity: 1,
-      message: formatSolverDiagnostic(diag),
+      message: formatSolverDiagnostic(diag, ctx, layer3),
       source: "workman-layer2",
       code: diag.reason,
     });
@@ -291,25 +298,25 @@ function appendConflictDiagnostics(
     if (
       conflict.details && conflict.details.expected && conflict.details.actual
     ) {
-      const expected = ctx.substituteTypeWithLayer3(
+      const expectedStr = formatTypeForDiagnostics(
+        ctx,
         conflict.details.expected,
         layer3,
       );
-      const actual = ctx.substituteTypeWithLayer3(
+      const actualStr = formatTypeForDiagnostics(
+        ctx,
         conflict.details.actual,
         layer3,
       );
-      const expectedStr = formatType(
-        expected,
-        { names: new Map(), next: 0 },
-        0,
-      );
-      const actualStr = formatType(actual, { names: new Map(), next: 0 }, 0);
       message = `Type mismatch: expected ${expectedStr}, got ${actualStr}`;
     } else if (conflict.message) {
       message = conflict.message;
     } else if (conflict.details) {
       message += `. Details: ${JSON.stringify(conflict.details)}`;
+    }
+
+    if (hasExistingDiagnostic(target, range, "type_mismatch")) {
+      continue;
     }
     target.push({
       range,
@@ -349,6 +356,8 @@ function appendFlowDiagnostics(
 
 function formatSolverDiagnostic(
   diag: ConstraintDiagnosticWithSpan,
+  ctx: LspServerContext,
+  layer3: Layer3Result,
 ): string {
   let base: string;
   switch (diag.reason) {
@@ -370,7 +379,7 @@ function formatSolverDiagnostic(
     case "type_mismatch":
       base = "Conflicting type requirements";
       {
-        const comparison = formatTypeComparisonDetails(diag);
+        const comparison = formatTypeComparisonDetails(diag, ctx, layer3);
         if (comparison) {
           base += `\n${comparison}`;
         }
@@ -431,7 +440,7 @@ function formatSolverDiagnostic(
       ) {
         const errorType = scrutineeType.args[1];
         const errorTypeStr = errorType
-          ? formatType(errorType, { names: new Map(), next: 0 }, 0)
+          ? formatTypeForDiagnostics(ctx, errorType, layer3)
           : "?";
         base +=
           `\n\nThe scrutinee has type Result<?, ${errorTypeStr}> (infectious Result from an operation that can fail).`;
@@ -464,7 +473,7 @@ function formatSolverDiagnostic(
     case "infectious_call_result_mismatch": {
       const row = diag.details?.effectRow as Type | undefined;
       const rowLabel = row
-        ? formatType(row, { names: new Map(), next: 0 }, 0)
+        ? formatTypeForDiagnostics(ctx, row, layer3)
         : "an unresolved error row";
       base =
         `This call must remain infectious because an argument carries ${rowLabel}`;
@@ -476,7 +485,7 @@ function formatSolverDiagnostic(
         ? (diag.details?.missingConstructors as string[]).join(", ")
         : null;
       const rowLabel = row
-        ? ` for row ${formatType(row, { names: new Map(), next: 0 }, 0)}`
+        ? ` for row ${formatTypeForDiagnostics(ctx, row, layer3)}`
         : "";
       base =
         `Match claimed to discharge Result errors${rowLabel} but remained infectious`;
@@ -508,7 +517,7 @@ function formatSolverDiagnostic(
       // Safely stringify details, avoiding circular references
       const safeDetails: Record<string, any> = {};
       for (const [key, value] of Object.entries(diag.details)) {
-        const formatted = tryFormatDiagnosticValue(value);
+        const formatted = tryFormatDiagnosticValue(value, ctx, layer3);
         safeDetails[key] = formatted ?? value;
       }
       base = `${base}
@@ -523,6 +532,8 @@ Details: ${JSON.stringify(safeDetails)}`;
 
 function formatTypeComparisonDetails(
   diag: ConstraintDiagnosticWithSpan,
+  ctx: LspServerContext,
+  layer3: Layer3Result,
 ): string | null {
   if (diag.reason !== "type_mismatch") {
     return null;
@@ -531,19 +542,21 @@ function formatTypeComparisonDetails(
   if (!details) {
     return null;
   }
-  const expected = tryFormatDiagnosticValue(details.expected);
-  const actual = tryFormatDiagnosticValue(details.actual);
+  const expected = tryFormatDiagnosticValue(details.expected, ctx, layer3);
+  const actual = tryFormatDiagnosticValue(details.actual, ctx, layer3);
   if (!expected && !actual) {
     return null;
   }
   const parts: string[] = [];
   if (expected) parts.push(`Expected: ${expected}`);
-  if (actual) parts.push(`---Actual: ${actual}`);
+  if (actual) parts.push(`--Actual: ${actual}`);
   return parts.join("\n");
 }
 
 function tryFormatDiagnosticValue(
   value: unknown,
+  ctx: LspServerContext,
+  layer3: Layer3Result,
 ): string | null {
   if (value === undefined || value === null) {
     return null;
@@ -558,7 +571,7 @@ function tryFormatDiagnosticValue(
     if (Array.isArray(value)) {
       return `[Array with ${value.length} items]`;
     }
-    const typeStr = tryFormatType(value);
+    const typeStr = tryFormatType(value, ctx, layer3);
     if (typeStr) {
       return typeStr;
     }
@@ -567,7 +580,11 @@ function tryFormatDiagnosticValue(
   return String(value);
 }
 
-function tryFormatType(value: unknown): string | null {
+function tryFormatType(
+  value: unknown,
+  ctx: LspServerContext,
+  layer3: Layer3Result,
+): string | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -588,11 +605,37 @@ function tryFormatType(value: unknown): string | null {
     case "char":
     case "string":
       try {
-        return formatType(value as Type, { names: new Map(), next: 0 }, 0);
+        return formatTypeForDiagnostics(ctx, value as Type, layer3);
       } catch {
         return null;
       }
     default:
       return null;
   }
+}
+
+function formatTypeForDiagnostics(
+  ctx: LspServerContext,
+  type: Type,
+  layer3: Layer3Result,
+): string {
+  const substituted = ctx.substituteTypeWithLayer3(type, layer3);
+  return formatTypeWithCarriers(substituted);
+}
+
+function hasExistingDiagnostic(
+  diagnostics: Array<{ range?: any; code?: string; source?: string }>,
+  range: { start: { line: number; character: number }; end: { line: number; character: number } },
+  code: string,
+): boolean {
+  return diagnostics.some((diag) => {
+    if (diag.code !== code || diag.source !== "workman-layer2") {
+      return false;
+    }
+    if (!diag.range) return false;
+    return diag.range.start.line === range.start.line &&
+      diag.range.start.character === range.start.character &&
+      diag.range.end.line === range.end.line &&
+      diag.range.end.character === range.end.character;
+  });
 }
