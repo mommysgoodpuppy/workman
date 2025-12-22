@@ -40,7 +40,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.wm",
-					"match": "\\b(let|rec|and|type|record|if|else|match|from|import|export|as|domain|op|policy|infectious)\\b"
+					"match": "\\b(let|rec|and|type|record|carrier|if|else|match|from|import|export|as|infix|infixl|infixr|prefix|infectious|domain|op|policy|annotate)\\b"
 				}
 			]
 		},
@@ -88,7 +88,7 @@
 				},
 				{
 					"name": "keyword.operator.wm",
-					"match": "\\+|-|\\*|/|==|<|>|&&|\\|\\||!|\\.\\."
+					"match": "<=|>=|==|!=|&&|\\|\\||\\+\\+|--|\\*\\*|//|>>|\\+|-|\\*|/|%|<|>|!|&|\\^|~|#|\\$|\\?|\\.\\."
 				}
 			]
 		},

@@ -102,7 +102,7 @@
   },
   "scripts": {
     "clean-server-bin": "node -e \"const fs=require('fs');const p=require('path');const base=process.cwd();const targets=[p.join(base,'server','workman-lsp.exe'),p.join(base,'server','workman-lsp')];for(const f of targets){try{fs.rmSync(f,{force:true});}catch(e){console.error('Failed to remove '+f+': '+e);process.exit(1);}}\"",
-    "build-server": "node -e \"const fs=require('fs');const path=require('path');fs.mkdirSync(path.join(process.cwd(),'server'),{recursive:true});\" && deno compile --allow-all --no-check --config=../lsp/server/deno.json --output=server/workman-lsp ../lsp/server/src/server.ts",
+    "build-server": "node -e \"const fs=require('fs');const path=require('path');fs.mkdirSync(path.join(process.cwd(),'server'),{recursive:true});\" && deno compile --allow-all --no-check --config=../../lsp/server/deno.json --output=server/workman-lsp ../../lsp/server/src/server.ts",
     "vscode:prepublish": "npm run clean-server-bin && npm run build-server && npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./"

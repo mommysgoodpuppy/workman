@@ -2,6 +2,7 @@ from "std/nativeString" import { stringToList, stringConcat, intToString };
 from "std/string" import { strEq };
 from "std/list" import { listSlice, listAt, listLength };
 from "std/string" import { charToDigit, char };
+from "std/char" import { charToInt };
 
 type ParseResult =
   | NotMul
@@ -23,8 +24,8 @@ let mulLiteralLength = listLength(mulLiteral);
 
 let infectOption = (in) => {
   match(in) {
-    Some(thing) => {IOk(thing)},
-    None => {IErr("none")}
+    Some(thing) => { IOk(thing) },
+    None => { IErr("none") }
   }
 };
 
@@ -66,7 +67,7 @@ let expectCharAt = (chars, i, expected, error) => {
       if (code == expected) {
         IOk(i + 1)
       } else {
-        IErr(error) 
+        IErr(error)
       }
     },
     _ => { IErr(error) }
@@ -75,10 +76,10 @@ let expectCharAt = (chars, i, expected, error) => {
 
 -- Check for the mul( literal at a position, otherwise resume scanning.
 let expectMulLiteral = (chars, i) => {
-  if (chars >> listSlice(i,i+mulLiteralLength) >> strEq(mulLiteral)) {
-    IOk(i + mulLiteralLength) 
+  if (chars >> listSlice(i, i + mulLiteralLength) >> strEq(mulLiteral)) {
+    IOk(i + mulLiteralLength)
   } else {
-    IErr(NotMul) 
+    IErr(NotMul)
   }
 };
 
@@ -101,17 +102,8 @@ let rec scan = (chars, i, acc) => {
     IOk(_) => {
       match(parseMulAt(chars, i)) {
         IOk(step) => { scan(chars, step.next, acc + step.value) },
-        IErr(NotMul) => {
-          print("yay");
-          print(stringConcat("skipping at ", intToString(i)));
-          scan(chars, i + 1, acc)
-        },
-        IErr(ExpectedComma) => {
-          print("ex comma");
-          print(stringConcat("skipping at ", intToString(i)));
-          scan(chars, i + 1, acc)
-        },
-        IErr(_) => {
+        IErr(err) => {
+          print(err);
           print(stringConcat("skipping at ", intToString(i)));
           scan(chars, i + 1, acc)
         }
