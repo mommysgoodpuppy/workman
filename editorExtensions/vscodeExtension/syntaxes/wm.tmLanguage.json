@@ -40,7 +40,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.wm",
-					"match": "\\b(let|rec|and|type|record|match|from|import|export|as|domain|op|policy|infectious)\\b"
+					"match": "\\b(let|rec|and|type|record|if|else|match|from|import|export|as|domain|op|policy|infectious)\\b"
 				}
 			]
 		},

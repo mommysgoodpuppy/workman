@@ -13,3 +13,4 @@ vscodeExtension/out/
 andr/
 vscodeExtension/out/
 dist_zig/
+*.pdb

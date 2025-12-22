@@ -1,11 +1,23 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@mommysgoodpuppy/logchannel@0.1": "0.1.0"
+    "jsr:@mommysgoodpuppy/logchannel@0.1": "0.1.0",
+    "npm:@types/node@*": "24.2.0"
   },
   "jsr": {
     "@mommysgoodpuppy/logchannel@0.1.0": {
       "integrity": "4001c4ece26bb332d511c6a3e3b0383d4f39d476d375b0dda32a6e42a9259c67"
+    }
+  },
+  "npm": {
+    "@types/node@24.2.0": {
+      "integrity": "sha512-3xyG3pMCq3oYCNg7/ZP+E1ooTaGB4cG8JWRsqqOYQdbWNY4zbaV0Ennrd7stjiJEFZCaybcIgpTjJWHRfBSIDw==",
+      "dependencies": [
+        "undici-types"
+      ]
+    },
+    "undici-types@7.10.0": {
+      "integrity": "sha512-t5Fy/nfn+14LuOc2KNYg75vZqClpAiqscVvMygNnlsHBFpSXdJaYtXMcdNLpl/Qvc3P2cB3s6lOV51nqsFq4ag=="
     }
   },
   "redirects": {
