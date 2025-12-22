@@ -1238,7 +1238,11 @@ function hasResultConstructorPattern(pattern: CorePattern): boolean {
   }
 }
 
-function emitPrim(op: CorePrimOp, args: CoreExpr[], ctx: EmitContext): string {
+function emitPrim(
+  op: CorePrimOp,
+  args: readonly CoreExpr[],
+  ctx: EmitContext,
+): string {
   const emitArg = (index: number) => emitExpr(args[index], ctx);
 
   switch (op) {
