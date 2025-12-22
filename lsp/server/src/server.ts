@@ -196,8 +196,8 @@ export class WorkmanLanguageServer {
       const first = input.slice(pos + needle.length, commaIndex).trim();
       const second = input.slice(commaIndex + 1, i).trim();
 
-      // Desired display: ⚡<first>, <second>
-      out += `⚡${first} (${second})`;
+      // Desired display: ⚡<first> [<second>]
+      out += `⚡${first} [${second}]`;
 
       idx = i + 1;
     }
@@ -357,7 +357,7 @@ export class WorkmanLanguageServer {
       const fullResultStr = formatType(returnType, ctx, 0);
       const formatted = `⚡${
         formatType(returnType.args[0], ctx, 0)
-      } <${summary}>`;
+      } [<${summary}>]`;
       typeStr = typeStr.replace(fullResultStr, formatted);
     }
 

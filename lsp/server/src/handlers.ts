@@ -954,7 +954,7 @@ async function handleInlayHint(
           ) {
             typeStr = `⚡${
               formatType(substituted.args[0], printCtx, 0)
-            } <${summary}>`;
+            } [<${summary}>]`;
           }
         }
       } catch {

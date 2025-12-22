@@ -166,7 +166,7 @@ function formatTypeWithCarriersInternal(
       context,
       0,
     );
-    return `⚡${valueStr} (${stateStr})`;
+    return `⚡${valueStr} [${stateStr}]`;
   }
   switch (type.kind) {
     case "var":

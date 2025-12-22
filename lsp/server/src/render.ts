@@ -43,7 +43,7 @@ export function renderNodeView(
     summary = ctx.summarizeEffectRowFromType(t, adtEnv ?? new Map());
     if (summary && t && t.kind === "constructor" && t.args.length > 0) {
       // Format infected Result types specially
-      typeStr = `⚡${formatType(t.args[0], printCtx, 0)} <${summary}>`;
+      typeStr = `⚡${formatType(t.args[0], printCtx, 0)} [<${summary}>]`;
     }
   } catch {
     // ignore
