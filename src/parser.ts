@@ -195,7 +195,9 @@ class SurfaceParser {
           lastTopLevel.hasTerminatingSemicolon = true;
         }
         if (
-          this.preserveComments && this.peek().kind === "comment" && this.source
+          this.preserveComments &&
+          this.peek().kind === "comment" &&
+          this.source
         ) {
           const commentToken = this.peek();
           const textBetween = this.source.slice(
@@ -223,7 +225,8 @@ class SurfaceParser {
       imports,
       reexports,
       declarations,
-      trailingComments: trailingComments.length > 0 ? trailingComments : undefined,
+      trailingComments:
+        trailingComments.length > 0 ? trailingComments : undefined,
     };
   }
 
@@ -443,7 +446,11 @@ class SurfaceParser {
     const letToken = this.expectKeyword("let");
     const isRecursive = this.matchKeyword("rec");
 
-    const firstBinding = this.parseLetBinding(letToken.start, isRecursive, true);
+    const firstBinding = this.parseLetBinding(
+      letToken.start,
+      isRecursive,
+      true,
+    );
 
     // Parse mutual bindings with "and"
     const mutualBindings: LetDeclaration[] = [];
@@ -499,7 +506,7 @@ class SurfaceParser {
       }
       const parameterSpecs = this.extractMatchParameters(scrutineeExpr);
       const parameters = parameterSpecs.map((spec) =>
-        this.createMatchParameter(spec)
+        this.createMatchParameter(spec),
       );
 
       // Detect if the match expression is multi-line
@@ -639,8 +646,8 @@ class SurfaceParser {
       return true;
     }
     if (scrutinee.kind === "tuple") {
-      return scrutinee.elements.every((element) =>
-        element.kind === "identifier"
+      return scrutinee.elements.every(
+        (element) => element.kind === "identifier",
       );
     }
     return false;
@@ -745,7 +752,11 @@ class SurfaceParser {
         const isRecursive = this.matchKeyword("rec");
         // For let statements inside blocks, pass isTopLevel = false
         // This limits first-class match transformation to recursive helpers
-        const declaration = this.parseLetBinding(letToken.start, isRecursive, false);
+        const declaration = this.parseLetBinding(
+          letToken.start,
+          isRecursive,
+          false,
+        );
         statements.push({
           kind: "let_statement",
           declaration,
@@ -815,9 +826,10 @@ class SurfaceParser {
       span,
       isMultiLine,
       resultTrailingComment,
-      resultCommentStatements: resultCommentStatements.length > 0
-        ? resultCommentStatements
-        : undefined,
+      resultCommentStatements:
+        resultCommentStatements.length > 0
+          ? resultCommentStatements
+          : undefined,
       id: nextNodeId(),
     };
   }
@@ -842,6 +854,38 @@ class SurfaceParser {
         return nextToken.kind === "symbol" && nextToken.value === ":";
       }
       return false;
+    }
+  }
+
+  private looksLikeTupleLiteral(): boolean {
+    // Called after consuming the opening '{' in .{
+    // Check if it's NOT a record literal (i.e., no field names with colons)
+    let offset = 0;
+    while (true) {
+      const token = this.peek(offset);
+      if (token.kind === "comment") {
+        offset += 1;
+        continue;
+      }
+      if (token.kind === "symbol" && token.value === "}") {
+        // Empty braces - treat as empty tuple
+        return true;
+      }
+      if (token.kind === "identifier") {
+        let nextOffset = offset + 1;
+        while (this.peek(nextOffset).kind === "comment") {
+          nextOffset += 1;
+        }
+        const nextToken = this.peek(nextOffset);
+        // If there's a colon, it's a record literal
+        if (nextToken.kind === "symbol" && nextToken.value === ":") {
+          return false;
+        }
+        // Otherwise it's a tuple (identifier followed by something else like comma or })
+        return true;
+      }
+      // If it starts with something other than identifier or }, assume tuple
+      return true;
     }
   }
 
@@ -940,11 +984,12 @@ class SurfaceParser {
 
   private parseInfixDeclaration(exportToken?: Token): InfixDeclaration {
     const infixToken = this.consume(); // infix, infixl, or infixr
-    const associativity: Associativity = infixToken.value === "infixl"
-      ? "left"
-      : infixToken.value === "infixr"
-      ? "right"
-      : "none";
+    const associativity: Associativity =
+      infixToken.value === "infixl"
+        ? "left"
+        : infixToken.value === "infixr"
+          ? "right"
+          : "none";
 
     // Parse precedence (number)
     const precedenceToken = this.consume();
@@ -1044,17 +1089,19 @@ class SurfaceParser {
       // Combined syntax: infectious <domain> type <Name> = ...
       const typeToken = this.previous();
       const nameToken = this.expectTypeName();
-      const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
+      const typeParams = this.matchSymbol("<")
+        ? this.parseTypeParameters()
+        : [];
       this.expectSymbol("=");
       const members = this.parseTypeAliasMembers();
       const endToken = this.previous();
-      
+
       const infectiousModifier: import("./ast.ts").InfectiousModifier = {
         kind: "infectious",
         domain,
         span: this.spanFrom(infectiousToken.start, domainToken.end),
       };
-      
+
       const declaration: import("./ast.ts").TypeDeclaration = {
         kind: "type",
         name: nameToken.value,
@@ -1064,7 +1111,7 @@ class SurfaceParser {
         span: this.spanFrom(infectiousToken.start, endToken.end),
         id: nextNodeId(),
       };
-      
+
       if (exportToken) {
         declaration.export = {
           kind: "export",
@@ -1219,7 +1266,11 @@ class SurfaceParser {
     let value: RuleValue | undefined;
     let endToken: Token = keyToken;
 
-    if (!this.checkSymbol("}") && !this.checkSymbol(";") && !this.checkSymbol(",")) {
+    if (
+      !this.checkSymbol("}") &&
+      !this.checkSymbol(";") &&
+      !this.checkSymbol(",")
+    ) {
       const parts: RuleValuePart[] = [];
       if (this.checkSymbol("[")) {
         const listPart = this.parseListPart();
@@ -1259,9 +1310,10 @@ class SurfaceParser {
     return this.parseNameListAfterOpen(open);
   }
 
-  private parseNameListAfterOpen(
-    _open: Token,
-  ): { part: RuleValuePart; endToken: Token } {
+  private parseNameListAfterOpen(_open: Token): {
+    part: RuleValuePart;
+    endToken: Token;
+  } {
     const items: string[] = [];
     do {
       const nameToken = this.expectRuleNameToken();
@@ -1271,9 +1323,10 @@ class SurfaceParser {
     return { part: { kind: "list", items }, endToken: close };
   }
 
-  private parsePairListAfterOpen(
-    _open: Token,
-  ): { part: RuleValuePart; endToken: Token } {
+  private parsePairListAfterOpen(_open: Token): {
+    part: RuleValuePart;
+    endToken: Token;
+  } {
     const pairs: [string, string][] = [];
     do {
       this.expectSymbol("(");
@@ -1342,7 +1395,7 @@ class SurfaceParser {
     // Check for @value or @effect annotation
     let annotation: import("./ast.ts").ConstructorAnnotation | undefined;
     const startToken = this.peek();
-    
+
     if (this.matchSymbol("@")) {
       const annotToken = this.peek();
       if (annotToken.kind === "identifier") {
@@ -1353,27 +1406,32 @@ class SurfaceParser {
           annotation = "effect";
           this.consume();
         } else {
-          this.error(`Expected 'value' or 'effect' after @, got '${annotToken.value}'`);
+          this.error(
+            `Expected 'value' or 'effect' after @, got '${annotToken.value}'`,
+          );
         }
       } else {
         this.error(`Expected annotation name after @`);
       }
     }
-    
+
     const token = this.peek();
-    const isQuestionConstructor = (
+    const isQuestionConstructor =
       (token.kind === "symbol" || token.kind === "operator") &&
-      token.value === "?"
-    );
+      token.value === "?";
     if (token.kind === "constructor" || isQuestionConstructor) {
       const ctor = this.consume();
       const ctorName = isQuestionConstructor ? "?" : ctor.value;
       if (isQuestionConstructor && this.checkSymbol("<")) {
-        throw this.error("Question mark constructor cannot take type arguments", this.peek());
+        throw this.error(
+          "Question mark constructor cannot take type arguments",
+          this.peek(),
+        );
       }
-      const typeArgs = (!isQuestionConstructor && this.matchSymbol("<"))
-        ? this.parseTypeArguments()
-        : [];
+      const typeArgs =
+        !isQuestionConstructor && this.matchSymbol("<")
+          ? this.parseTypeArguments()
+          : [];
       return {
         kind: "constructor",
         name: ctorName,
@@ -1515,9 +1573,11 @@ class SurfaceParser {
     const token = this.peek();
     if (token.kind === "symbol" && token.value === "(") {
       const snapshot = this.index;
-      let arrowInfo:
-        | { parameters: Parameter[]; returnAnnotation?: TypeExpr; start: number }
-        | null = null;
+      let arrowInfo: {
+        parameters: Parameter[];
+        returnAnnotation?: TypeExpr;
+        start: number;
+      } | null = null;
       try {
         arrowInfo = this.tryParseArrowParameters();
       } catch (_error) {
@@ -1588,9 +1648,10 @@ class SurfaceParser {
       }
 
       const operator = this.consume().value;
-      const nextMinPrecedence = opInfo.associativity === "left"
-        ? opInfo.precedence + 1
-        : opInfo.precedence;
+      const nextMinPrecedence =
+        opInfo.associativity === "left"
+          ? opInfo.precedence + 1
+          : opInfo.precedence;
 
       let right: Expr;
       try {
@@ -1607,10 +1668,10 @@ class SurfaceParser {
         }
       }
 
-        if (operator === ">>" && !this.preservePipeOperator) {
-          left = this.createPipeCall(left, right);
-          continue;
-        }
+      if (operator === ">>" && !this.preservePipeOperator) {
+        left = this.createPipeCall(left, right);
+        continue;
+      }
 
       left = {
         kind: "binary",
@@ -1813,12 +1874,18 @@ class SurfaceParser {
           } as Expr;
         }
         if (
-          token.value === "." && this.peek(1).kind === "symbol" &&
+          token.value === "." &&
+          this.peek(1).kind === "symbol" &&
           this.peek(1).value === "{"
         ) {
           const dotToken = this.consume();
           const open = this.expectSymbol("{");
-          return this.parseRecordLiteralExprFromOpen(open, dotToken.start);
+          // Check if this is a tuple .{a, b} or record .{x: a, y: b}
+          if (this.looksLikeTupleLiteral()) {
+            return this.parseBraceTupleExpr(open, dotToken.start);
+          } else {
+            return this.parseRecordLiteralExprFromOpen(open, dotToken.start);
+          }
         }
         if (token.value === "(") {
           return this.parseParenExpression();
@@ -1904,6 +1971,48 @@ class SurfaceParser {
     } as Expr;
   }
 
+  private parseBraceTupleExpr(open: Token, start: number): Expr {
+    // Parse .{a, b, c} as a tuple
+    const elements: Expr[] = [];
+    if (!this.checkSymbol("}")) {
+      elements.push(this.parseExpression());
+      while (this.matchSymbol(",")) {
+        if (this.checkSymbol("}")) {
+          // Trailing comma before closing brace
+          break;
+        }
+        elements.push(this.parseExpression());
+      }
+    }
+    const close = this.expectSymbol("}");
+
+    if (elements.length === 0) {
+      // Empty tuple .{}
+      const span = this.spanFrom(start, close.end);
+      return {
+        kind: "literal",
+        literal: { kind: "unit", span, id: nextNodeId() },
+        span,
+        id: nextNodeId(),
+      } as Expr;
+    }
+
+    // Detect if tuple is multi-line
+    let isMultiLine = false;
+    if (this.source) {
+      const tupleText = this.source.slice(open.start, close.end);
+      isMultiLine = tupleText.includes("\n");
+    }
+
+    return {
+      kind: "tuple",
+      elements,
+      span: this.spanFrom(start, close.end),
+      isMultiLine,
+      id: nextNodeId(),
+    } as Expr;
+  }
+
   private parseTypeExpr(): TypeExpr {
     return this.parseTypeArrow();
   }
@@ -1957,9 +2066,8 @@ class SurfaceParser {
     if (token.kind === "constructor") {
       const ctor = this.consume();
       const typeArgs = this.matchSymbol("<") ? this.parseTypeArguments() : [];
-      const end = typeArgs.length > 0
-        ? typeArgs[typeArgs.length - 1].span.end
-        : ctor.end;
+      const end =
+        typeArgs.length > 0 ? typeArgs[typeArgs.length - 1].span.end : ctor.end;
       return {
         kind: "type_ref",
         name: ctor.value,
@@ -2197,10 +2305,9 @@ class SurfaceParser {
       return { kind: "literal", literal, span: literal.span, id: nextNodeId() };
     }
 
-    const isQuestionConstructor = (
+    const isQuestionConstructor =
       (token.kind === "symbol" || token.kind === "operator") &&
-      token.value === "?"
-    );
+      token.value === "?";
     if (token.kind === "constructor" || isQuestionConstructor) {
       const ctor = this.consume();
       const ctorName = isQuestionConstructor ? "?" : ctor.value;
@@ -2253,9 +2360,10 @@ class SurfaceParser {
     return this.parseMatchBlockFromOpenBrace(open.start);
   }
 
-  private parseMatchBlockFromOpenBrace(
-    start: number,
-  ): { bundle: MatchBundle; span: SourceSpan } {
+  private parseMatchBlockFromOpenBrace(start: number): {
+    bundle: MatchBundle;
+    span: SourceSpan;
+  } {
     const openStart = start;
     const arms: MatchArm[] = [];
 
@@ -2275,7 +2383,8 @@ class SurfaceParser {
         if (entryStart.kind === "identifier") {
           const next = this.peek(1);
           if (
-            next.kind === "symbol" && (next.value === "," || next.value === "}")
+            next.kind === "symbol" &&
+            (next.value === "," || next.value === "}")
           ) {
             const identifier = this.expectIdentifier();
             const hasComma = this.matchSymbol(",");
@@ -2393,7 +2502,10 @@ class SurfaceParser {
   }
 
   private isSymbolToken(token: Token, value: string): boolean {
-    if ((token.kind === "symbol" || token.kind === "operator") && token.value === value) {
+    if (
+      (token.kind === "symbol" || token.kind === "operator") &&
+      token.value === value
+    ) {
       return true;
     }
     if (value === ">" && token.kind === "operator" && token.value === ">>") {
@@ -2562,10 +2674,7 @@ class SurfaceParser {
     let hasBlankLineAfter = false;
     if (this.source) {
       const nextToken = this.peek();
-      const textBetween = this.source.slice(
-        commentToken.end,
-        nextToken.start,
-      );
+      const textBetween = this.source.slice(commentToken.end, nextToken.start);
       const newlineCount = (textBetween.match(/\n/g) || []).length;
       hasBlankLineAfter = newlineCount >= 2;
     }
@@ -2583,7 +2692,8 @@ class SurfaceParser {
 
   private consumeInlineCommentAfter(position: number): string | undefined {
     if (
-      !this.preserveComments || this.peek().kind !== "comment" ||
+      !this.preserveComments ||
+      this.peek().kind !== "comment" ||
       !this.source
     ) {
       return undefined;

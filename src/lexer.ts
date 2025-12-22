@@ -56,14 +56,18 @@ export function lex(source: string, sourceName?: string): Token[] {
       // It's a negative number if:
       // - It's at the start, OR
       // - Previous non-whitespace token is not a number, identifier, or closing paren/bracket
-      const canBeNegative = tokens.length === 0 || (() => {
-        const lastToken = tokens[tokens.length - 1];
-        return lastToken.kind !== "number" &&
-          lastToken.kind !== "identifier" &&
-          lastToken.kind !== "constructor" &&
-          lastToken.value !== ")" &&
-          lastToken.value !== "]";
-      })();
+      const canBeNegative =
+        tokens.length === 0 ||
+        (() => {
+          const lastToken = tokens[tokens.length - 1];
+          return (
+            lastToken.kind !== "number" &&
+            lastToken.kind !== "identifier" &&
+            lastToken.kind !== "constructor" &&
+            lastToken.value !== ")" &&
+            lastToken.value !== "]"
+          );
+        })();
 
       if (canBeNegative) {
         let value = char;
@@ -121,14 +125,31 @@ export function lex(source: string, sourceName?: string): Token[] {
     }
 
     if (char === "_") {
-      tokens.push({
-        kind: "symbol",
-        value: "_",
-        start,
-        end: start + 1,
-      });
-      index++;
-      continue;
+      // Check if this is a standalone underscore (pattern matching wildcard)
+      // or the start of an identifier
+      if (
+        index + 1 < length &&
+        (isAlpha(source[index + 1]) || isDigit(source[index + 1]))
+      ) {
+        // This is an identifier starting with underscore
+        let value = char;
+        index++;
+        while (index < length && isAlphaNumeric(source[index])) {
+          value += source[index++];
+        }
+        tokens.push({ kind: "identifier", value, start, end: index });
+        continue;
+      } else {
+        // Standalone underscore symbol
+        tokens.push({
+          kind: "symbol",
+          value: "_",
+          start,
+          end: start + 1,
+        });
+        index++;
+        continue;
+      }
     }
 
     if (isAlpha(char)) {
@@ -272,8 +293,13 @@ function isAlpha(char: string): boolean {
 function isAlphaNumeric(char: string): boolean {
   /* return isAlphaNumericwm(char); */
   // Don't call isAlpha to avoid potential issues - inline the check
-  return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") ||
-    (char >= "0" && char <= "9") || char === "'";
+  return (
+    (char >= "a" && char <= "z") ||
+    (char >= "A" && char <= "Z") ||
+    (char >= "0" && char <= "9") ||
+    char === "'" ||
+    char === "_"
+  );
 }
 
 function isUppercase(char: string): boolean {
