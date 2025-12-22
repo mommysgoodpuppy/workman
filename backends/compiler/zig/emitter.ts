@@ -673,10 +673,10 @@ function collectFreeVars(
   return { freeVars };
 }
 
-function collectUsedVars(expr: CoreExpr): Set<string> {
-  const used = new Set<string>();
+  function collectUsedVars(expr: CoreExpr): Set<string> {
+    const used = new Set<string>();
 
-  function visit(node: CoreExpr): void {
+    function visit(node: CoreExpr): void {
     switch (node.kind) {
       case "literal":
         return;
@@ -718,22 +718,41 @@ function collectUsedVars(expr: CoreExpr): Set<string> {
       case "prim":
         node.args.forEach(visit);
         return;
-      case "match":
-        visit(node.scrutinee);
-        node.cases.forEach((kase) => {
-          if (kase.guard) visit(kase.guard);
-          visit(kase.body);
-        });
-        if (node.fallback) visit(node.fallback);
-        return;
+        case "match":
+          visit(node.scrutinee);
+          node.cases.forEach((kase) => {
+            collectPinnedNames(kase.pattern).forEach((name) => used.add(name));
+            if (kase.guard) visit(kase.guard);
+            visit(kase.body);
+          });
+          if (node.fallback) visit(node.fallback);
+          return;
       default:
         return;
     }
   }
 
-  visit(expr);
-  return used;
-}
+    visit(expr);
+    return used;
+  }
+
+  function collectPinnedNames(pattern: CorePattern): string[] {
+    switch (pattern.kind) {
+      case "pinned":
+        return [pattern.name];
+      case "tuple":
+        return pattern.elements.flatMap(collectPinnedNames);
+      case "constructor":
+        return pattern.fields.flatMap(collectPinnedNames);
+      case "binding":
+      case "wildcard":
+      case "literal":
+      case "all_errors":
+        return [];
+      default:
+        return [];
+    }
+  }
 
 function boundNamesInPattern(pattern: CorePattern): string[] {
   switch (pattern.kind) {

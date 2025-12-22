@@ -1,0 +1,4 @@
+[submodule "editorExtensions/zedExtension"]
+	path = editorExtensions/zedExtension
+	url = https://github.com/mommysgoodpuppy/zedExtension
+	branch = master
