@@ -1417,7 +1417,7 @@ class Formatter {
     expr: Extract<Expr, { kind: "record_literal" }>,
   ): string {
     if (expr.fields.length === 0) {
-      return "{}";
+      return ".{}";
     }
 
     const singleLine = !expr.isMultiLine;
@@ -1427,7 +1427,7 @@ class Formatter {
         const needsComma = index < expr.fields.length - 1;
         return `${field.name}: ${value}${needsComma ? ", " : ""}`;
       }).join("");
-      return `{ ${inner} }`;
+      return `.{ ${inner} }`;
     }
 
     this.indent++;
@@ -1440,7 +1440,7 @@ class Formatter {
       }`;
     });
     this.indent--;
-    return `{\n${lines.join("\n")}\n${this.indentStr()}}`;
+    return `.{\n${lines.join("\n")}\n${this.indentStr()}}`;
   }
 
   private formatCall(expr: Extract<Expr, { kind: "call" }>): string {

@@ -274,6 +274,23 @@ let result = if (debug) {
   assertEquals(ifExpr.elseBranch.kind, "block");
 });
 
+Deno.test("parses dot record literal", () => {
+  const source = `let result = .{ value: 1, next: 2 };`;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+
+  const decl = program.declarations[0];
+  if (decl.kind !== "let") {
+    throw new Error("expected let declaration");
+  }
+
+  const body = decl.body;
+  if (body.result?.kind !== "record_literal") {
+    throw new Error("expected record literal");
+  }
+  assertEquals(body.result.fields.length, 2);
+});
+
 Deno.test("requires else for if expression", () => {
   const source = `let result = if (debug) { 1 };`;
   const tokens = lex(source);

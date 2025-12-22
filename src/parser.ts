@@ -828,6 +828,10 @@ class SurfaceParser {
 
   private parseRecordLiteralExpr(): Expr {
     const open = this.expectSymbol("{");
+    return this.parseRecordLiteralExprFromOpen(open, open.start);
+  }
+
+  private parseRecordLiteralExprFromOpen(open: Token, start: number): Expr {
     const fields: RecordField[] = [];
     while (!this.checkSymbol("}")) {
       const nameToken = this.expectIdentifier();
@@ -847,7 +851,7 @@ class SurfaceParser {
       });
     }
     const close = this.expectSymbol("}");
-    const span = this.spanFrom(open.start, close.end);
+    const span = this.spanFrom(start, close.end);
     let isMultiLine = false;
     if (this.source) {
       const literalText = this.source.slice(open.start, close.end);
@@ -1788,6 +1792,14 @@ class SurfaceParser {
             span: this.createSpan(holeToken, holeToken),
             id: nextNodeId(),
           } as Expr;
+        }
+        if (
+          token.value === "." && this.peek(1).kind === "symbol" &&
+          this.peek(1).value === "{"
+        ) {
+          const dotToken = this.consume();
+          const open = this.expectSymbol("{");
+          return this.parseRecordLiteralExprFromOpen(open, dotToken.start);
         }
         if (token.value === "(") {
           return this.parseParenExpression();
