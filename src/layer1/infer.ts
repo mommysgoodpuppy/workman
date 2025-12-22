@@ -110,6 +110,7 @@ import {
   resetTypeParamsCache,
 } from "./declarations.ts";
 import { materializeExpr, materializeMarkedLet } from "./materialize.ts";
+import { resetNodeIds } from "../node_ids.ts";
 import { unknownFromReason } from "./infer_utils.ts";
 import type {
   EffectRowCoverage,
@@ -2658,25 +2659,28 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       let callType = collapseCarrier(applyCurrentSubst(ctx, resultType1));
 
-      // Reconstruct carrier types with accumulated states (generic for all domains)
-      for (const [domain, state] of accumulatedStates.entries()) {
-        const flattened = splitCarrier(callType);
-        if (flattened && flattened.domain === domain) {
-          // Merge states if callType already has this domain's state
-          const mergedState = unionCarrierStates(
-            domain,
-            flattened.state,
-            state,
-          );
-          if (mergedState) {
-            callType =
-              joinCarrier(domain, flattened.value, mergedState) ?? callType;
+      // Comparison operators always yield Bool and should not inherit carriers
+      if (!COMPARISON_OPERATORS.has(expr.operator)) {
+        // Reconstruct carrier types with accumulated states (generic for all domains)
+        for (const [domain, state] of accumulatedStates.entries()) {
+          const flattened = splitCarrier(callType);
+          if (flattened && flattened.domain === domain) {
+            // Merge states if callType already has this domain's state
+            const mergedState = unionCarrierStates(
+              domain,
+              flattened.state,
+              state,
+            );
+            if (mergedState) {
+              callType =
+                joinCarrier(domain, flattened.value, mergedState) ?? callType;
+            }
+          } else {
+            // Wrap with carrier if callType doesn't have this domain
+            callType = joinCarrier(domain, callType, state) ?? callType;
           }
-        } else {
-          // Wrap with carrier if callType doesn't have this domain
-          callType = joinCarrier(domain, callType, state) ?? callType;
+          callType = collapseCarrier(callType);
         }
-        callType = collapseCarrier(callType);
       }
       return recordExprType(ctx, expr, callType);
     }
@@ -2801,6 +2805,7 @@ export function inferProgram(
   program: Program,
   options: InferOptions = {},
 ): InferResult {
+  resetNodeIdsToProgramMax(program);
   lowerIndexAccess(program);
   const canonicalProgram = canonicalizeMatch(program);
   lowerTupleParameters(canonicalProgram);
@@ -4027,6 +4032,38 @@ export function inferMatchBranches(
   };
   ctx.matchResults.set(bundle, result);
   return result;
+}
+
+function resetNodeIdsToProgramMax(program: Program): void {
+  let maxId = -1;
+  const seen = new Set<object>();
+
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (seen.has(value)) return;
+    seen.add(value);
+
+    const maybeId = (value as { id?: unknown }).id;
+    if (typeof maybeId === "number") {
+      if (maybeId > maxId) {
+        maxId = maybeId;
+      }
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item);
+      }
+      return;
+    }
+
+    for (const entry of Object.values(value)) {
+      visit(entry);
+    }
+  };
+
+  visit(program);
+  resetNodeIds(maxId + 1);
 }
 
 function findMissingErrorConstructors(

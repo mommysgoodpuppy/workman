@@ -20,7 +20,7 @@ import { substituteHoleSolutionsInType } from "./type_utils.ts";
 import type { SourceSpan } from "../src/ast.ts";
 
 const RUN_USAGE =
-  "Usage: wm [fmt|type [--line <line>] |err|compile] <file.wm> | wm <file.wm> [--backend <js|zig>] | wm (REPL mode)";
+  "Usage: wm [fmt|type [--line <line>] [--var-ids] |err|compile] <file.wm> | wm <file.wm> [--backend <js|zig>] | wm (REPL mode)";
 
 type RunBackend = "js" | "zig";
 
@@ -45,25 +45,36 @@ export async function runProgramCommand(
 ): Promise<void> {
   let filePath: string;
   let lineNumber: number | undefined = undefined;
+  let showTypeVarIds = false;
   let skipEvaluation = false;
   let showErrorsOnly = false;
   let backend: RunBackend = "zig";
 
   if (args[0] === "type") {
     let index = 1;
-    if (args[index] === "--line") {
-      if (args.length < 4) {
-        console.error(RUN_USAGE);
-        IO.exit(1);
+    while (index < args.length - 1) {
+      const arg = args[index];
+      if (arg === "--line") {
+        if (args.length < index + 3) {
+          console.error(RUN_USAGE);
+          IO.exit(1);
+        }
+        const lineStr = args[index + 1];
+        const parsed = parseInt(lineStr, 10);
+        if (isNaN(parsed) || parsed < 1) {
+          console.error("Invalid line number, must be a positive integer");
+          IO.exit(1);
+        }
+        lineNumber = parsed;
+        index += 2;
+        continue;
       }
-      const lineStr = args[index + 1];
-      const parsed = parseInt(lineStr, 10);
-      if (isNaN(parsed) || parsed < 1) {
-        console.error("Invalid line number, must be a positive integer");
-        IO.exit(1);
+      if (arg === "--var-ids" || arg === "--show-var-ids") {
+        showTypeVarIds = true;
+        index += 1;
+        continue;
       }
-      lineNumber = parsed;
-      index += 2;
+      break;
     }
     if (args.length !== index + 1) {
       console.error(RUN_USAGE);
@@ -142,6 +153,7 @@ export async function runProgramCommand(
         filePath,
         artifact,
         lineFilter: lineNumber,
+        showTypeVarIds,
       });
     }
 
@@ -178,9 +190,10 @@ async function displayExpressionSummaries(
     filePath: string;
     artifact: any;
     lineFilter?: number;
+    showTypeVarIds?: boolean;
   },
 ): Promise<void> {
-  const { filePath, artifact, lineFilter } = options;
+  const { filePath, artifact, lineFilter, showTypeVarIds } = options;
   const layer3 = artifact.analysis.layer3;
   const source = await IO.readTextFile(filePath);
 
@@ -245,7 +258,7 @@ async function displayExpressionSummaries(
       typeStr = formatScheme({
         quantifiers: [],
         type: resolvedType,
-      });
+      }, { showVarIds: showTypeVarIds });
     }
 
     const solution = layer3.holeSolutions.get(nodeId);
@@ -256,7 +269,7 @@ async function displayExpressionSummaries(
         const partialType = formatScheme({
           quantifiers: [],
           type: solution.partial.known,
-        });
+        }, { showVarIds: showTypeVarIds });
         annotation = ` ?? partial: ${partialType}`;
       } else if (solution.state === "conflicted" && solution.conflicts) {
         annotation =
@@ -304,7 +317,10 @@ async function displayExpressionSummaries(
     let coverageInfo: string | undefined;
     const coverage = layer3.matchCoverages.get(nodeId);
     if (coverage) {
-      const rowStr = formatScheme({ quantifiers: [], type: coverage.row });
+      const rowStr = formatScheme(
+        { quantifiers: [], type: coverage.row },
+        { showVarIds: showTypeVarIds },
+      );
       const handledConstructors = [...coverage.coveredConstructors];
       if (coverage.coversTail) {
         handledConstructors.push("_");
@@ -370,11 +386,14 @@ async function displayExpressionSummaries(
   }
 
   if (lineFilter === undefined) {
-    await displayTopLevelSummaries(artifact);
+    await displayTopLevelSummaries(artifact, showTypeVarIds);
   }
 }
 
-async function displayTopLevelSummaries(artifact: any): Promise<void> {
+async function displayTopLevelSummaries(
+  artifact: any,
+  showTypeVarIds?: boolean,
+): Promise<void> {
   console.log("=== Top-Level Bindings ===\n");
   const summaries = artifact.analysis.layer1.summaries;
   const adtEnv = artifact.analysis.layer1.adtEnv;
@@ -443,7 +462,7 @@ async function displayTopLevelSummaries(artifact: any): Promise<void> {
     const typeStr = formatScheme({
       quantifiers: scheme.quantifiers,
       type: resolvedType,
-    });
+    }, { showVarIds: showTypeVarIds });
     const errorSummary = formatErrorSummary(resolvedType);
     if (errorSummary) {
       console.log(`${name} : ${typeStr}`);

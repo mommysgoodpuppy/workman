@@ -9,12 +9,20 @@ import {
 interface PrintContext {
   names: Map<number, string>;
   next: number;
+  showVarIds: boolean;
 }
 
 const GENERIC_NAMES = ["T", "U", "V", "W", "X", "Y", "Z"];
 
-export function formatScheme(scheme: TypeScheme): string {
-  const context: PrintContext = { names: new Map(), next: 0 };
+export function formatScheme(
+  scheme: TypeScheme,
+  options: { showVarIds?: boolean } = {},
+): string {
+  const context: PrintContext = {
+    names: new Map(),
+    next: 0,
+    showVarIds: options.showVarIds ?? false,
+  };
   const quantifiers = [...new Set(scheme.quantifiers)].sort((a, b) => a - b);
   for (const id of quantifiers) {
     ensureName(context, id);
@@ -22,7 +30,11 @@ export function formatScheme(scheme: TypeScheme): string {
   return formatType(scheme.type, context, 0);
 }
 
-export function formatType(type: Type, context: PrintContext, prec: number): string {
+export function formatType(
+  type: Type,
+  context: PrintContext,
+  prec: number,
+): string {
   //console.log(`[DEBUG] Formatting type: ${JSON.stringify(type)}`);
   switch (type.kind) {
     case "var":
@@ -116,12 +128,12 @@ export function formatType(type: Type, context: PrintContext, prec: number): str
 function ensureName(context: PrintContext, id: number): string {
   const existing = context.names.get(id);
   if (existing) {
-    return existing;
+    return context.showVarIds ? `${existing}#${id}` : existing;
   }
   const name = nextName(context.next);
   context.names.set(id, name);
   context.next += 1;
-  return name;
+  return context.showVarIds ? `${name}#${id}` : name;
 }
 
 function nextName(index: number): string {

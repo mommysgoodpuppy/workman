@@ -8,6 +8,8 @@ Usage:
                         Run a Workman file with the JS backend
   wm --debug <file.wm>  Run a file and print types/values
   wm type <file.wm>     Type-check a file (skip evaluation)
+  wm type --var-ids <file.wm>
+                        Type-check and show type variable IDs
   wm err <file.wm>      Check for type errors only
   wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>]
                         Emit backend modules for the given entry
@@ -19,6 +21,8 @@ Examples:
   wm main.wm            # Run main.wm without extra debug output
   wm --debug main.wm    # Run main.wm and show types + values
   wm type main.wm       # Only type-check main.wm
+  wm type --var-ids main.wm
+                        # Type-check and show type variable IDs
   wm err main.wm        # Check main.wm for type errors only
   wm fmt .              # Format all .wm files recursively
   wm compile main.wm    # Emit Zig modules into ./dist
