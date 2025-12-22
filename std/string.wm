@@ -63,7 +63,7 @@ export let charLowerZ = () => {
 };
 
 -- Get the length of a string (just list length)
-export let rec strLength = match(s) {
+export let rec strLength = match(s) => {
   Empty => { 0 },
   Link(_, rest) => { add(1, strLength(rest)) }
 };
@@ -76,21 +76,21 @@ export let strIsEmpty = (s) => {
   }
 };
 
-export let rec strCharAt = match(s, n) {
+export let rec strCharAt = match(s, n) => {
   (Empty, _) => { None },
   (Link(c, _), 0) => { Some(c) },
   (Link(_, rest), idx) => { strCharAt(rest, sub(idx, 1)) }
 };
 
 -- Take first n characters
-export let rec strTake = match(s, n) {
+export let rec strTake = match(s, n) => {
   (_, 0) => { Empty },
   (Empty, _) => { Empty },
   (Link(c, rest), count) => { Link(c, strTake(rest, sub(count, 1))) }
 };
 
 -- Drop first n characters
-export let rec strDrop = match(s, n) {
+export let rec strDrop = match(s, n) => {
   (value, 0) => { value },
   (Empty, _) => { Empty },
   (Link(_, rest), count) => { strDrop(rest, sub(count, 1)) }
@@ -108,7 +108,7 @@ export let strSlice = (s, start, end) => {
 };
 
 -- Concatenate two strings
-export let rec strConcat = match(s1, s2) {
+export let rec strConcat = match(s1, s2) => {
   (Empty, tail) => { tail },
   (Link(c, rest), tail) => { Link(c, strConcat(rest, tail)) }
 };
@@ -208,7 +208,7 @@ export let isWhitespace = (c) => {
 };
 
 -- String equality
-export let rec strEq = match(s1, s2) {
+export let rec strEq = match(s1, s2) => {
   (Empty, Empty) => { true },
   (Empty, _) => { false },
   (_, Empty) => { false },
@@ -265,7 +265,7 @@ export let intToString = (n) => {
 };
 
 -- Check if string starts with prefix
-export let rec strStartsWith = match(str, pre) {
+export let rec strStartsWith = match(str, pre) => {
   (_, Empty) => { true },
   (Empty, _) => { false },
   (Link(c1, rest1), Link(c2, rest2)) => {
@@ -290,7 +290,7 @@ export let strEndsWith = (str, suffix) => {
 };
 
 -- Check if string contains substring
-let rec strContainsAt = match(haystack, needle, pos) {
+let rec strContainsAt = match(haystack, needle, pos) => {
   (haystack, needle, pos) => {
     match(strStartsWith(strDrop(haystack, pos), needle)) {
       true => { true },
@@ -313,7 +313,7 @@ export let strContains = (haystack, needle) => {
 };
 
 -- Split string by delimiter
-let rec strSplitHelper = match(str, delim, acc, current) {
+let rec strSplitHelper = match(str, delim, acc, current) => {
   (Empty, delim, acc, current) => {
     -- End of string, add final part
     match(strIsEmpty(current)) {
@@ -338,11 +338,11 @@ let rec strSplitHelper = match(str, delim, acc, current) {
 };
 
 export let strSplit = (str, delim) => {
-  let rec reverseList = match(list, acc) {
+  let rec reverseList = match(list, acc) => {
     (Empty, acc) => { acc },
     (Link(x, rest), acc) => { reverseList(rest, Link(x, acc)) }
   };
-  let rec reverseAll = match(list) {
+  let rec reverseAll = match(list) => {
     Empty => { Empty },
     Link(x, rest) => { Link(reverseList(x, Empty), reverseAll(rest)) }
   };
@@ -356,7 +356,7 @@ export let strSplit = (str, delim) => {
 };
 
 -- Trim whitespace from start
-export let rec strTrimStart = match(s) {
+export let rec strTrimStart = match(s) => {
   Empty => { Empty },
   Link(c, rest) => {
     match(isWhitespace(c)) {
@@ -368,7 +368,7 @@ export let rec strTrimStart = match(s) {
 
 -- Trim whitespace from end
 export let strTrimEnd = (s) => {
-  let rec reverseList = match(list, acc) {
+  let rec reverseList = match(list, acc) => {
     (Empty, acc) => { acc },
     (Link(x, rest), acc) => { reverseList(rest, Link(x, acc)) }
   };
@@ -388,7 +388,7 @@ export let strLines = (s) => {
 };
 
 -- Join list of strings with separator
-export let rec strJoin = match(sep, strings) {
+export let rec strJoin = match(sep, strings) => {
   (sep, Empty) => { Empty },
   (sep, Link(s, Empty)) => { s },
   (sep, Link(s, rest)) => { strConcat(s, strConcat(sep, strJoin(sep, rest))) }
@@ -396,7 +396,7 @@ export let rec strJoin = match(sep, strings) {
 type Err = Fuck;
 -- Convert positive integer string to int
 export let posIntStringToInt = (s) => {
-  let rec helper = match(chars, acc) {
+  let rec helper = match(chars, acc) => {
     (Empty, acc) => { Some(acc) },
     (Link(c, rest), acc) => {
       match(charToDigit(c)) {
