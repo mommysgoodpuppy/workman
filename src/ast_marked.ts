@@ -401,14 +401,14 @@ export interface MLetDeclaration extends MTypedNode {
 
 export interface MMarkTypeDeclDuplicate extends MNodeBase {
   kind: "mark_type_decl_duplicate";
-  declaration: TypeDeclaration;
-  duplicate: TypeDeclaration;
+  declaration: TypeDeclaration | import("./ast.ts").RecordDeclaration;
+  duplicate: TypeDeclaration | import("./ast.ts").RecordDeclaration;
 }
 
 export interface MMarkTypeDeclInvalidMember extends MNodeBase {
   kind: "mark_type_decl_invalid_member";
-  declaration: TypeDeclaration;
-  member: TypeDeclaration["members"][0];
+  declaration: TypeDeclaration | import("./ast.ts").RecordDeclaration;
+  member: TypeDeclaration["members"][0] | import("./ast.ts").RecordMember;
 }
 
 export interface MMarkInternal extends MNodeBase {
@@ -448,6 +448,7 @@ export type MTypeExprMark =
 export type MTopLevel =
   | MLetDeclaration
   | { kind: "type"; node: TypeDeclaration }
+  | { kind: "record_decl"; node: import("./ast.ts").RecordDeclaration }
   | { kind: "prefix"; node: PrefixDeclaration }
   | { kind: "infix"; node: InfixDeclaration }
   | { kind: "infectious"; node: import("./ast.ts").InfectiousDeclaration }

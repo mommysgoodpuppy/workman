@@ -28,7 +28,7 @@ let rec mapFactorial = (list) => {
   }
 };
 
-let describeList = match(list) {
+let describeList = match(list) => {
   Empty => { StatusEmpty },
   Link(_, _) => { StatusNonEmpty }
 };
@@ -50,3 +50,4 @@ let buildDemo = (numbers) => {
 let demo = {
   print(buildDemo(countdown(5)))
 };
+

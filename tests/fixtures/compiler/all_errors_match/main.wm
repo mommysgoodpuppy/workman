@@ -1,6 +1,6 @@
 type ParseError = Missing | Other;
 
-let classify = match(result) {
+let classify = match(result) => {
   IOk(value) => { value },
   IErr(Missing) => { Missing },
   AllErrors => { Other }
@@ -17,3 +17,4 @@ export let missingCase = () => {
 export let otherCase = () => {
   classify(IErr(Other))
 };
+

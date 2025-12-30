@@ -1,5 +1,7 @@
 import type {
   ConstructorAlias,
+  RecordDeclaration,
+  RecordMember,
   TypeAliasExprMember,
   TypeDeclaration,
   TypeExpr,
@@ -59,7 +61,7 @@ export type RegisterTypeResult = { success: true } | {
 
 export function registerTypeName(
   ctx: Context,
-  decl: TypeDeclaration,
+  decl: TypeDeclaration | RecordDeclaration,
 ): RegisterTypeResult {
   if (ctx.adtEnv.has(decl.name)) {
     return { success: false, mark: markTypeDeclDuplicate(ctx, decl) };
@@ -219,6 +221,102 @@ export function registerTypeConstructors(
   adtInfo.constructors.push(...stagedConstructors);
 
   return { success: true };
+}
+
+export function registerRecordDeclaration(
+  ctx: Context,
+  decl: RecordDeclaration,
+): RegisterConstructorsResult {
+  const adtInfo = ctx.adtEnv.get(decl.name);
+  const parameterTypes = typeParamsCache.get(decl.name);
+  if (!adtInfo || !parameterTypes) {
+    return {
+      success: false,
+      mark: markTypeDeclInvalidMember(ctx, decl, decl.members[0] || decl),
+    };
+  }
+
+  const parameterIds = parameterTypes
+    .map((type) => (type.kind === "var" ? type.id : -1))
+    .filter((id) => id >= 0);
+
+  const typeScope: TypeScope = new Map();
+  decl.typeParams.forEach((param, index) => {
+    typeScope.set(param.name, parameterTypes[index]);
+  });
+
+  const fields = new Map<string, Type>();
+  const recordFields = new Map<string, number>();
+  const recordDefaults = new Set<string>();
+  let index = 0;
+
+  for (const member of decl.members) {
+    const { name, type, hasDefault } = recordMemberTypeInfo(
+      ctx,
+      member,
+      typeScope,
+    );
+    if (!type) continue;
+    if (!fields.has(name)) {
+      fields.set(name, type);
+      recordFields.set(name, index++);
+    }
+    if (hasDefault) {
+      recordDefaults.add(name);
+    }
+  }
+
+  const aliasType: Type = { kind: "record", fields };
+  adtInfo.recordFields = recordFields;
+  adtInfo.recordDefaults = recordDefaults;
+  adtInfo.alias = cloneType(aliasType);
+  ctx.recordDefaultFields.set(decl.name, new Set(recordDefaults));
+
+  const fieldTypes = Array.from(fields.values());
+  const ctorScheme: TypeScheme = {
+    quantifiers: parameterIds,
+    type: fieldTypes.reduceRight<Type>((acc, fieldType) => ({
+      kind: "func",
+      from: fieldType,
+      to: acc,
+    }), makeDataConstructor(decl.name, parameterTypes)),
+  };
+
+  const ctorInfo: ConstructorInfo = {
+    name: decl.name,
+    arity: fieldTypes.length,
+    scheme: ctorScheme,
+  };
+
+  adtInfo.constructors = [ctorInfo];
+  ctx.env.set(decl.name, ctorScheme);
+
+  return { success: true };
+}
+
+function recordMemberTypeInfo(
+  ctx: Context,
+  member: RecordMember,
+  typeScope: TypeScope,
+): { name: string; type: Type | null; hasDefault: boolean } {
+  switch (member.kind) {
+    case "record_typed_field": {
+      const fieldType = convertTypeExpr(ctx, member.annotation, typeScope, {
+        allowNewVariables: false,
+      });
+      return { name: member.name, type: fieldType, hasDefault: false };
+    }
+    case "record_value_field": {
+      const fieldType = member.annotation
+        ? convertTypeExpr(ctx, member.annotation, typeScope, {
+          allowNewVariables: false,
+        })
+        : freshTypeVar();
+      return { name: member.name, type: fieldType, hasDefault: true };
+    }
+    default:
+      return { name: "", type: null, hasDefault: false };
+  }
 }
 
 function registerTypeAlias(

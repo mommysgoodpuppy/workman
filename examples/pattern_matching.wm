@@ -2,13 +2,13 @@
 type Order = Order<Int, Int>; -- order id, quantity
 
 -- Retrieve the most recent stock quantity if we have any entries.
-let latestStockLevel = match(list) {
+let latestStockLevel = match(list) => {
   Link(stock, _) => { Some(stock) },
   Empty => { None }
 };
 
 -- Extract the quantity from an order using pattern matching.
-let orderQuantity = match(order) {
+let orderQuantity = match(order) => {
   Order(_, quantity) => { quantity }
 };
 
@@ -32,3 +32,4 @@ let evaluateInventory = (target) => {
     planNextStep(target)(status(), stockHistory)
   }
 };
+

@@ -1185,7 +1185,7 @@ function collectExports(
         }
       });
     }
-    if (decl.kind === "type" && decl.export) {
+    if ((decl.kind === "type" || decl.kind === "record_decl") && decl.export) {
       if (typeSet.has(decl.name)) {
         throw moduleError(`Duplicate export '${decl.name}' in '${path}'`);
       }

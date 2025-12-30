@@ -2,19 +2,19 @@
 type IoError = Timeout | Disconnected;
 
 -- Ensure sensor feeds always have at least one reading.
-let ensureRecent = match(readings) {
+let ensureRecent = match(readings) => {
   Link(first, rest) => { Ok(Link(first, rest)) },
   Empty => { Err(Timeout) }
 };
 
 -- Inspect connectivity and propagate detailed errors.
-let connect = match(status) {
+let connect = match(status) => {
   true => { Ok(Link(0, Empty)) },
   false => { Err(Disconnected) }
 };
 
 -- First-class binder for Result values.
-let bindResult = match(result, onOk) {
+let bindResult = match(result, onOk) => {
   (Ok(value), onOk) => { onOk(value) },
   (Err(error), _) => { Err(error) }
 };
@@ -37,7 +37,7 @@ let loadSnapshot = (status) => {
 };
 
 -- Recursive function to sum all readings in a Result.
-let rec sumReadings = match(result) {
+let rec sumReadings = match(result) => {
   Ok(Link(x, rest)) => {
     match(sumReadings(Ok(rest))) {
       Ok(sum) => { Ok(0) },
@@ -55,3 +55,4 @@ let healthyFeed = () => {
 let offlineFeed = () => {
   loadSnapshot(false)(Empty)
 };
+

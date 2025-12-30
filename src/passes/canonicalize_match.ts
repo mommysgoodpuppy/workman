@@ -40,6 +40,7 @@ function canonicalizeTopLevel(node: TopLevel): void {
       canonicalizeLetDeclaration(node);
       break;
     case "type":
+    case "record_decl":
     case "infix":
     case "prefix":
     case "infectious":

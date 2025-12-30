@@ -1,19 +1,19 @@
-let rec length = match(list) {
+let rec length = match(list) => {
   Empty => { 0 },
   Link(_, rest) => { add(1, length(rest)) }
 };
 
-let rec map = match(f, list) {
+let rec map = match(f, list) => {
   (f, Empty) => { Empty },
   (f, Link(x, rest)) => { Link(f(x), map(f, rest)) }
 };
 
-let rec fold = match(f, acc, list) {
+let rec fold = match(f, acc, list) => {
   (f, acc, Empty) => { acc },
   (f, acc, Link(x, rest)) => { fold(f, f(acc, x), rest) }
 };
 
-let rec insertBy = match(cmp, value, list) {
+let rec insertBy = match(cmp, value, list) => {
   (cmp, value, Empty) => { Link(value, Empty) },
   (cmp, value, Link(x, rest)) => {
     match(cmp(value, x)) {
@@ -23,7 +23,7 @@ let rec insertBy = match(cmp, value, list) {
   }
 };
 
-let rec insertionSortBy = match(cmp, list) {
+let rec insertionSortBy = match(cmp, list) => {
   (cmp, Empty) => { Empty },
   (cmp, Link(x, rest)) => { insertBy(cmp, x, insertionSortBy(cmp, rest)) }
 };
@@ -32,7 +32,7 @@ let sortInt = (list) => {
   insertionSortBy(cmpInt, list)
 };
 
-let rec range = match(start, finish) {
+let rec range = match(start, finish) => {
   (start, finish) => {
     match(cmpInt(start, finish)) {
       GT => { Empty },
@@ -48,3 +48,4 @@ let demo = {
   print(shuffled);
   print(sorted)
 };
+

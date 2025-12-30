@@ -4,7 +4,7 @@
 -- === Counter with Limit ===
 -- Recursively prints numbers up to a limit
 -- Note: Deep recursion will overflow the stack since JavaScript doesn't have TCO
-let rec countUpTo = match(current, max) {
+let rec countUpTo = match(current, max) => {
   (current, max) => {
     match(cmpInt(current, max)) {
       GT => { print("Done counting!") },
@@ -18,7 +18,7 @@ let rec countUpTo = match(current, max) {
 
 -- === Countdown Timer ===
 -- Counts down from a number to zero
-let rec countdown = match(n) {
+let rec countdown = match(n) => {
   0 => { print("Blast off!") },
   _ => {
     print(n);
@@ -28,7 +28,7 @@ let rec countdown = match(n) {
 
 -- === Pattern-Based Printer ===
 -- Prints different messages based on number patterns
-let rec printPattern = match(n, max) {
+let rec printPattern = match(n, max) => {
   (n, max) => {
     match(cmpInt(n, max)) {
       GT => { print("Done!") },
@@ -132,24 +132,24 @@ let grouped = match {
   zero,
   one
 };
-let describeNumber = match(n) {
+let describeNumber = match(n) => {
   grouped,
   other
 };
 
-let boolToString = match(b) {
+let boolToString = match(b) => {
   true => { "yes" },
   false => { "no" }
 };
 
 -- === Recursion ===
-let rec factorial = match(n) {
+let rec factorial = match(n) => {
   0 => { 1 },
   1 => { 1 },
   _ => { n * factorial(n - 1) }
 };
 
-let rec fibonacci = match(n) {
+let rec fibonacci = match(n) => {
   0 => { 0 },
   1 => { 1 },
   _ => { fibonacci(n - 1) + fibonacci(n - 2) }
@@ -160,12 +160,12 @@ let myList = () => {
   Link(1, Link(2, Link(3, Empty)))
 };
 
-let rec listLength = match(list) {
+let rec listLength = match(list) => {
   Empty => { 0 },
   Link(_, tail) => { 1 + listLength(tail) }
 };
 
-let rec listSum = match(list) {
+let rec listSum = match(list) => {
   Empty => { 0 },
   Link(head, tail) => { head + listSum(tail) }
 };
@@ -204,3 +204,4 @@ let main = () => {
   -- countdown(10)              -- Counts down from 10 to 0
   -- countUpTo(1, 20);           -- Counts from 1 to 500
 };
+

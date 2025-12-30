@@ -1,0 +1,56 @@
+from "std/nativeString" import { intToString, stringConcat };
+from "std/list" import { listMap };
+from "std/list/core" import { Empty, Link };
+
+-- Simple Fibonacci
+let rec fib = (n) => {
+  if (n < 2) {
+    n
+  } else {
+    fib(n - 1) + fib(n - 2)
+  }
+};
+
+let rec range = (start, end) => {
+  if (start >= end) {
+    Empty
+  } else {
+    Link(start, range(start + 1, end))
+  }
+};
+
+-- Expression Evaluator
+type Expr =
+  | Val<Int>
+  | Add<Expr, Expr>
+  | Sub<Expr, Expr>
+  | Mul<Expr, Expr>;
+
+let rec eval = match(expr) => {
+  Val(n) => { n },
+  Add(l, r) => { eval(l) + eval(r) },
+  Sub(l, r) => { eval(l) - eval(r) },
+  Mul(l, r) => { eval(l) * eval(r) }
+};
+
+let rec exprToString = match(expr) => {
+  Val(n) => { intToString(n) },
+  Add(l, r) => { stringConcat("(", stringConcat(exprToString(l), stringConcat(" + ", stringConcat(exprToString(r), ")")))) },
+  Sub(l, r) => { stringConcat("(", stringConcat(exprToString(l), stringConcat(" - ", stringConcat(exprToString(r), ")")))) },
+  Mul(l, r) => { stringConcat("(", stringConcat(exprToString(l), stringConcat(" * ", stringConcat(exprToString(r), ")")))) }
+};
+
+let main = () => {
+  print("--- Fibonacci ---");
+  let nums = range(0, 10);
+  let printFib = (n) => {
+    let res = fib(n);
+    print(stringConcat("Fib(", stringConcat(intToString(n), stringConcat(") = ", intToString(res)))))
+  };
+  listMap(printFib, nums);
+
+  print("\n--- Expression Evaluator ---");
+  let expr = Add(Val(10), Mul(Val(5), Sub(Val(4), Val(2))));
+  print(stringConcat("Expression: ", exprToString(expr)));
+  print(stringConcat("Result: ", intToString(eval(expr))));
+};

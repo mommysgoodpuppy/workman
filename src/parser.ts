@@ -16,6 +16,8 @@ import type {
   InfixDeclaration,
   LetDeclaration,
   PatternLetStatement,
+  RecordDeclaration,
+  RecordMember,
   MatchArm,
   MatchBundle,
   ModuleImport,
@@ -953,24 +955,17 @@ class SurfaceParser {
     return declaration;
   }
 
-  private parseRecordDeclaration(exportToken?: Token): TypeDeclaration {
+  private parseRecordDeclaration(exportToken?: Token): RecordDeclaration {
     const recordToken = this.expectKeyword("record");
     const nameToken = this.expectTypeName();
     const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
-    const recordType = this.parseRecordTypeExpr();
-    const aliasMember = {
-      kind: "alias" as const,
-      type: recordType,
-      span: recordType.span,
-      id: nextNodeId(),
-    };
-    const declaration: TypeDeclaration = {
-      kind: "type",
+    const { members, endToken } = this.parseRecordMembers();
+    const declaration: RecordDeclaration = {
+      kind: "record_decl",
       name: nameToken.value,
       typeParams,
-      members: [aliasMember],
-      declarationKind: "record",
-      span: this.spanFrom(recordToken.start, recordType.span.end),
+      members,
+      span: this.spanFrom(recordToken.start, endToken.end),
       id: nextNodeId(),
     };
     if (exportToken) {
@@ -980,6 +975,110 @@ class SurfaceParser {
       };
     }
     return declaration;
+  }
+
+  private parseRecordMembers(): { members: RecordMember[]; endToken: Token } {
+    const open = this.expectSymbol("{");
+    const members: RecordMember[] = [];
+    while (!this.checkSymbol("}")) {
+      const nameToken = this.expectIdentifier();
+      if (this.checkSymbol("(")) {
+        const parameters = this.parseParameterList();
+        let returnAnnotation: TypeExpr | undefined;
+        if (this.matchSymbol(":")) {
+          returnAnnotation = this.parseTypeExpr();
+        }
+        this.expectSymbol("=>");
+        const body = this.parseBlockExpr();
+        const valueExpr: Expr = {
+          kind: "arrow",
+          parameters,
+          returnAnnotation,
+          body,
+          span: this.spanFrom(
+            parameters[0]?.span.start ?? nameToken.start,
+            body.span.end,
+          ),
+          id: nextNodeId(),
+        };
+        let hasTrailingComma = false;
+        if (this.matchSymbol(",")) {
+          hasTrailingComma = true;
+        }
+        members.push({
+          kind: "record_value_field",
+          name: nameToken.value,
+          value: valueExpr,
+          hasTrailingComma,
+          span: this.spanFrom(nameToken.start, valueExpr.span.end),
+          id: nextNodeId(),
+        });
+        continue;
+      }
+
+      this.expectSymbol(":");
+      const valueStart = this.index;
+      let member: RecordMember | null = null;
+      let parsedType: TypeExpr | null = null;
+      const typeSnapshot = this.index;
+      try {
+        parsedType = this.parseTypeExpr();
+      } catch (_error) {
+        this.index = typeSnapshot;
+        parsedType = null;
+      }
+
+      if (parsedType && this.matchSymbol("=")) {
+        const valueExpr = this.parseExpression();
+        let hasTrailingComma = false;
+        if (this.matchSymbol(",")) {
+          hasTrailingComma = true;
+        }
+        member = {
+          kind: "record_value_field",
+          name: nameToken.value,
+          annotation: parsedType,
+          value: valueExpr,
+          hasTrailingComma,
+          span: this.spanFrom(nameToken.start, valueExpr.span.end),
+          id: nextNodeId(),
+        };
+      } else if (
+        parsedType && (this.checkSymbol(",") || this.checkSymbol("}"))
+      ) {
+        let hasTrailingComma = false;
+        if (this.matchSymbol(",")) {
+          hasTrailingComma = true;
+        }
+        member = {
+          kind: "record_typed_field",
+          name: nameToken.value,
+          annotation: parsedType,
+          hasTrailingComma,
+          span: this.spanFrom(nameToken.start, parsedType.span.end),
+          id: nextNodeId(),
+        };
+      } else {
+        this.index = valueStart;
+        const valueExpr = this.parseExpression();
+        let hasTrailingComma = false;
+        if (this.matchSymbol(",")) {
+          hasTrailingComma = true;
+        }
+        member = {
+          kind: "record_value_field",
+          name: nameToken.value,
+          value: valueExpr,
+          hasTrailingComma,
+          span: this.spanFrom(nameToken.start, valueExpr.span.end),
+          id: nextNodeId(),
+        };
+      }
+
+      members.push(member);
+    }
+    const close = this.expectSymbol("}");
+    return { members, endToken: close };
   }
 
   private parseInfixDeclaration(exportToken?: Token): InfixDeclaration {

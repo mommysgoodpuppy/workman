@@ -3,7 +3,7 @@ from "std/list" import { listRange, listMap, listFoldl, listSortInt };
 let square = (n) => {
   mul(n, n)
 };
-let addPair = match(acc, value) {
+let addPair = match(acc, value) => {
   (acc, value) => { add(acc, value) }
 };
 export let sumSquares = () => {
@@ -14,3 +14,4 @@ export let sumSquares = () => {
 export let sortedDemo = () => {
   listSortInt(Link(3, Link(1, Link(2, Empty))))
 };
+

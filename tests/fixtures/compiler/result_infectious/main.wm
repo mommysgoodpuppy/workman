@@ -1,6 +1,6 @@
 type ParseError = Missing | BadDigit;
 
-let parseMaybe = match(flag) {
+let parseMaybe = match(flag) => {
   true => { IOk(41) },
   false => { IErr(Missing) }
 };
@@ -9,7 +9,7 @@ let addOne = (value) => {
   value + 1
 };
 
-let stripErr = match(result) {
+let stripErr = match(result) => {
   IOk(value) => { value },
   IErr(_) => { 0 }
 };
@@ -29,3 +29,4 @@ export let badFlow = () => {
 export let stripped = () => {
   stripErr(parseMaybe(false))
 };
+

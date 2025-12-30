@@ -57,7 +57,11 @@ export function lowerAnalyzedModule(
     path: node.path,
     imports: convertImports(node, input.summary),
     typeDeclarations: extractTypeDeclarations(node),
-    values: lowerProgramToValues(program, analysis.layer2.resolvedNodeTypes),
+    values: lowerProgramToValues(
+      program,
+      analysis.layer2.resolvedNodeTypes,
+      analysis.layer1.recordDefaultExprs,
+    ),
     exports: convertExports(node, input.summary),
   };
 }

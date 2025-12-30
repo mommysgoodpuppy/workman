@@ -273,6 +273,23 @@ export interface TypeRecordField extends NodeBase {
   hasTrailingComma: boolean;
 }
 
+export interface RecordTypedField extends NodeBase {
+  kind: "record_typed_field";
+  name: string;
+  annotation: TypeExpr;
+  hasTrailingComma: boolean;
+}
+
+export interface RecordValueField extends NodeBase {
+  kind: "record_value_field";
+  name: string;
+  value: Expr;
+  annotation?: TypeExpr;
+  hasTrailingComma: boolean;
+}
+
+export type RecordMember = RecordTypedField | RecordValueField;
+
 export type TypeExpr =
   | TypeVariable
   | TypeFunction
@@ -368,6 +385,18 @@ export interface TypeDeclaration extends NodeBase {
   leadingComments?: CommentBlock[];
   trailingComment?: string;
   hasBlankLineBefore?: boolean; // True if there was a blank line before this declaration
+  hasTerminatingSemicolon?: boolean;
+}
+
+export interface RecordDeclaration extends NodeBase {
+  kind: "record_decl";
+  name: string;
+  typeParams: TypeParameter[];
+  members: RecordMember[];
+  export?: ExportModifier;
+  leadingComments?: CommentBlock[];
+  trailingComment?: string;
+  hasBlankLineBefore?: boolean;
   hasTerminatingSemicolon?: boolean;
 }
 
@@ -504,6 +533,7 @@ export interface AnnotateDeclaration extends NodeBase {
 export type TopLevel =
   | LetDeclaration
   | TypeDeclaration
+  | RecordDeclaration
   | InfixDeclaration
   | PrefixDeclaration
   | InfectiousDeclaration

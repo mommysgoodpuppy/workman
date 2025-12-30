@@ -1,11 +1,11 @@
 type Chain<A> = Done<A> | Step<Option<A>, ((A) => Chain<A>)>;
 
-let printOption = match(opt) {
+let printOption = match(opt) => {
   Some(v) => { print(v) },
   None => { print("None") }
 };
 
-let rec runChain = match(chain) {
+let rec runChain = match(chain) => {
   Done(v) => { Some(v) },
   Step(opt, k) => {
     match(opt) {

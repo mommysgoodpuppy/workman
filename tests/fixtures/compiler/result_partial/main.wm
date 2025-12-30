@@ -4,7 +4,7 @@ from "std/result/core" import { IOk, IErr };
 type ParseErr = Missing;
 type Direction = L | R;
 
-let parseDir = match(result) {
+let parseDir = match(result) => {
   "L" => { L },
   "R" => { R },
   _ => { L }
@@ -12,3 +12,4 @@ let parseDir = match(result) {
 
 export let okDirection = stripErr(parseDir(IOk("L")));
 export let propagatesErr = parseDir(IErr(Missing));
+

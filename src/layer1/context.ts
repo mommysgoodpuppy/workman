@@ -120,6 +120,7 @@ export interface Context {
     scopeId: number;
   }[];
   functionScopeCounter: number;
+  recordDefaultFields: Map<string, Set<string>>;
 }
 
 export interface InferOptions {
@@ -145,6 +146,7 @@ export interface InferResult {
   marksVersion: number;
   layer1Diagnostics: ConstraintDiagnostic[];
   infectionRegistry: InfectionRegistry;
+  recordDefaultExprs: Map<string, Map<string, MExpr>>;
 }
 
 export function createContext(options: InferOptions = {}): Context {
@@ -181,6 +183,7 @@ export function createContext(options: InferOptions = {}): Context {
     functionParamEffects: new Map(),
     functionParamStack: [],
     functionScopeCounter: 1,
+    recordDefaultFields: new Map(),
   };
 }
 
@@ -1014,7 +1017,7 @@ export function markUnsupportedExpr(
 
 export function markTypeDeclDuplicate(
   ctx: Context,
-  decl: TypeDeclaration,
+  decl: TypeDeclaration | import("../ast.ts").RecordDeclaration,
 ): MMarkTypeDeclDuplicate {
   const mark: MMarkTypeDeclDuplicate = {
     kind: "mark_type_decl_duplicate",
@@ -1032,8 +1035,8 @@ export function markTypeDeclDuplicate(
 
 export function markTypeDeclInvalidMember(
   ctx: Context,
-  decl: TypeDeclaration,
-  member: TypeDeclaration["members"][0],
+  decl: TypeDeclaration | import("../ast.ts").RecordDeclaration,
+  member: TypeDeclaration["members"][0] | import("../ast.ts").RecordMember,
 ): MMarkTypeDeclInvalidMember {
   const mark: MMarkTypeDeclInvalidMember = {
     kind: "mark_type_decl_invalid_member",

@@ -6,7 +6,7 @@ let sampleIds = () => {
 };
 
 -- Extract the first user id if it exists.
-let firstUserId = match(list) {
+let firstUserId = match(list) => {
   Link(id, _) => { Some(id) },
   Empty => { None }
 };
@@ -30,3 +30,4 @@ let mapOption = (transform) => {
     }
   }
 };
+

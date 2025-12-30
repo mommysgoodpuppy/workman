@@ -31,7 +31,7 @@ let applyTwice = (fn) => {
   }
 };
 
-let buildWindow = match(start, size) {
+let buildWindow = match(start, size) => {
   (start, size) => {
     let finish = () => {
       start + size - 1
@@ -68,7 +68,7 @@ let formatWindow = (window) => {
 };
 
 let sumList = (values) => {
-  let folder = match(acc, value) {
+  let folder = match(acc, value) => {
     (acc, value) => {
       acc + value
     }
@@ -111,7 +111,7 @@ let describeWindowSummary = (window) => {
   )
 };
 
-let describePhase = match(phase, iteration, window) {
+let describePhase = match(phase, iteration, window) => {
   (Counting, iteration, window) => {
     combineStrings(
       Link(
@@ -199,7 +199,7 @@ let renderState = (state) => {
   }
 };
 
-let advancePhase = match(phase, iteration) {
+let advancePhase = match(phase, iteration) => {
   (Counting, iteration) => {
     match(cmpInt(mod(iteration, 5), 0)) {
       EQ => { Sampling },
@@ -215,7 +215,7 @@ let advancePhase = match(phase, iteration) {
   (Narrating, _) => { Counting }
 };
 
-let nextState = match(state) {
+let nextState = match(state) => {
   State(phase, iteration, _) => {
     let nextIteration = () => {
       iteration + 1
@@ -230,7 +230,7 @@ let nextState = match(state) {
   }
 };
 
-let rec mainLoop = match(state) {
+let rec mainLoop = match(state) => {
   State(_, _, _) => {
     print(renderState(state));
     mainLoop(nextState(state))
@@ -244,3 +244,4 @@ let initialState = () => {
 export let main = () => {
   mainLoop(initialState())
 };
+

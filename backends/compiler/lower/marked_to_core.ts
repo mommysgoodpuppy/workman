@@ -41,6 +41,7 @@ interface LoweringState {
   tempIndex: number;
   readonly resolvedTypes: Map<number, Type>;
   readonly bundleArms: Map<string, MMatchArm[]>;
+  readonly recordDefaultExprs: Map<string, Map<string, MExpr>>;
 }
 
 const UNKNOWN_PROVENANCE = "core.lowering.unresolved_type";
@@ -48,8 +49,14 @@ const UNKNOWN_PROVENANCE = "core.lowering.unresolved_type";
 export function lowerProgramToValues(
   program: MProgram,
   resolvedTypes: Map<number, Type>,
+  recordDefaultExprs: Map<string, Map<string, MExpr>> = new Map(),
 ): CoreValueBinding[] {
-  const state: LoweringState = { tempIndex: 0, resolvedTypes, bundleArms: new Map() };
+  const state: LoweringState = {
+    tempIndex: 0,
+    resolvedTypes,
+    bundleArms: new Map(),
+    recordDefaultExprs,
+  };
   const values: CoreValueBinding[] = [];
   for (const declaration of program.declarations) {
     if (declaration.kind === "let") {
@@ -530,14 +537,53 @@ function lowerRecordLiteral(
   expr: MRecordLiteralExpr,
   state: LoweringState,
 ): CoreExpr {
+  const resolvedType = resolveNodeType(state, expr.id, expr.type);
+  const recordName = resolvedType.kind === "constructor"
+    ? resolvedType.name
+    : null;
+  const defaults = recordName
+    ? state.recordDefaultExprs.get(recordName)
+    : undefined;
+
+  const provided = new Map<string, CoreExpr>();
+  for (const field of expr.fields) {
+    provided.set(field.name, lowerExpr(field.value, state));
+  }
+
+  const fields: { name: string; value: CoreExpr }[] = [];
+  for (const field of expr.fields) {
+    const value = provided.get(field.name);
+    if (value) {
+      fields.push({ name: field.name, value });
+    }
+  }
+
+  if (defaults) {
+    for (const [name, defaultExpr] of defaults.entries()) {
+      if (provided.has(name)) continue;
+      const value = lowerDefaultFieldValue(defaultExpr, provided, state);
+      fields.push({ name, value });
+    }
+  }
+
   return {
     kind: "record",
-    fields: expr.fields.map((field) => ({
-      name: field.name,
-      value: lowerExpr(field.value, state),
-    })),
-    type: resolveNodeType(state, expr.id, expr.type),
+    fields,
+    type: resolvedType,
   };
+}
+
+function lowerDefaultFieldValue(
+  expr: MExpr,
+  provided: Map<string, CoreExpr>,
+  state: LoweringState,
+): CoreExpr {
+  let current = lowerExpr(expr, state);
+  const resultType = current.type;
+  for (const [name, value] of provided.entries()) {
+    current = createLetExpression(name, value, current, false, resultType);
+  }
+  return current;
 }
 
 function lowerBinaryExpr(expr: MBinaryExpr, state: LoweringState): CoreExpr {

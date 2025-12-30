@@ -902,6 +902,7 @@ export interface TypeInfo {
   alias?: Type;
   isAlias?: boolean;
   recordFields?: Map<string, number>;
+  recordDefaults?: Set<string>;
 }
 
 export type TypeEnvADT = Map<string, TypeInfo>;
@@ -1160,6 +1161,12 @@ export function cloneTypeInfo(info: TypeInfo): TypeInfo {
     constructors: info.constructors.map(cloneConstructorInfo),
     alias: info.alias ? cloneType(info.alias) : undefined,
     isAlias: info.isAlias,
+    recordFields: info.recordFields
+      ? new Map(info.recordFields)
+      : undefined,
+    recordDefaults: info.recordDefaults
+      ? new Set(info.recordDefaults)
+      : undefined,
   };
 }
 

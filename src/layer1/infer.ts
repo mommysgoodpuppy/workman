@@ -12,6 +12,7 @@ import type {
   Pattern,
   PrefixDeclaration,
   Program,
+  RecordDeclaration,
   TypeDeclaration,
   TypeExpr,
 } from "../ast.ts";
@@ -55,6 +56,7 @@ import {
 } from "../types.ts";
 import { formatScheme } from "../type_printer.ts";
 import type {
+  MExpr,
   MMarkPattern,
   MPattern,
   MProgram,
@@ -105,6 +107,7 @@ import {
 import {
   convertTypeExpr,
   registerPrelude,
+  registerRecordDeclaration,
   registerTypeConstructors,
   registerTypeName,
   resetTypeParamsCache,
@@ -1690,7 +1693,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         const missingFields = Array.from(
           recordInfo.recordFields!.keys(),
         ).filter((fieldName) => !fields.has(fieldName));
+        const availableDefaults = ctx.recordDefaultFields.get(recordName);
         for (const missingField of missingFields) {
+          if (availableDefaults?.has(missingField)) {
+            continue;
+          }
           recordLayer1Diagnostic(ctx, expr.id, "missing_field", {
             field: missingField,
           });
@@ -2827,8 +2834,9 @@ export function inferProgram(
   });
   const summaries: { name: string; scheme: TypeScheme }[] = [];
   const markedDeclarations: MTopLevel[] = [];
-  const successfulTypeDecls = new Set<TypeDeclaration>();
-  const skippedTypeDecls = new Set<TypeDeclaration>(); // Types from initialAdtEnv
+  const successfulTypeDecls = new Set<number>();
+  const skippedTypeDecls = new Set<number>(); // Types from initialAdtEnv
+  const recordDefaultExprs = new Map<string, Map<string, MExpr>>();
   const infectiousTypes = new Map<
     string,
     import("../ast.ts").InfectiousDeclaration
@@ -2862,7 +2870,7 @@ export function inferProgram(
   // Pass 1: Register all type names (allows forward references)
   const seenTypeDeclsPass1 = new Set<number>();
   for (const decl of canonicalProgram.declarations) {
-    if (decl.kind === "type") {
+    if (decl.kind === "type" || decl.kind === "record_decl") {
       if (seenTypeDeclsPass1.has(decl.id)) {
         continue;
       }
@@ -2871,9 +2879,9 @@ export function inferProgram(
       if (!result.success) {
         // Duplicate detected - mark it and skip further processing
         markedDeclarations.push(result.mark);
-        skippedTypeDecls.add(decl);
+        skippedTypeDecls.add(decl.id);
       } else {
-        successfulTypeDecls.add(decl);
+        successfulTypeDecls.add(decl.id);
       }
     }
   }
@@ -2886,17 +2894,19 @@ export function inferProgram(
   const seenTypeDeclsPass2 = new Set<number>();
   for (const decl of canonicalProgram.declarations) {
     if (
-      decl.kind === "type" &&
-      successfulTypeDecls.has(decl) &&
-      !skippedTypeDecls.has(decl)
+      (decl.kind === "type" || decl.kind === "record_decl") &&
+      successfulTypeDecls.has(decl.id) &&
+      !skippedTypeDecls.has(decl.id)
     ) {
       if (seenTypeDeclsPass2.has(decl.id)) continue;
       seenTypeDeclsPass2.add(decl.id);
       const infectiousDecl = infectiousTypes.get(decl.name);
-      const result = registerTypeConstructors(ctx, decl, infectiousDecl);
+      const result = decl.kind === "record_decl"
+        ? registerRecordDeclaration(ctx, decl)
+        : registerTypeConstructors(ctx, decl, infectiousDecl);
       if (!result.success) {
         markedDeclarations.push(result.mark);
-        successfulTypeDecls.delete(decl); // Remove from successful set
+        successfulTypeDecls.delete(decl.id); // Remove from successful set
       }
     }
   }
@@ -2931,8 +2941,13 @@ export function inferProgram(
       markedDeclarations.push({ kind: "policy", node: decl });
     } else if (decl.kind === "annotate") {
       markedDeclarations.push({ kind: "annotate", node: decl });
-    } else if (decl.kind === "type" && successfulTypeDecls.has(decl)) {
+    } else if (decl.kind === "type" && successfulTypeDecls.has(decl.id)) {
       markedDeclarations.push({ kind: "type", node: decl });
+    } else if (
+      decl.kind === "record_decl" && successfulTypeDecls.has(decl.id)
+    ) {
+      inferRecordDeclaration(ctx, decl, recordDefaultExprs);
+      markedDeclarations.push({ kind: "record_decl", node: decl });
     }
   }
 
@@ -2985,7 +3000,41 @@ export function inferProgram(
     marksVersion: 1,
     layer1Diagnostics: ctx.layer1Diagnostics,
     infectionRegistry: ctx.infectionRegistry,
+    recordDefaultExprs,
   };
+}
+
+function inferRecordDeclaration(
+  ctx: Context,
+  decl: RecordDeclaration,
+  defaults: Map<string, Map<string, MExpr>>,
+): void {
+  const info = ctx.adtEnv.get(decl.name);
+  const alias = info?.alias;
+  if (!info || !alias || alias.kind !== "record") {
+    return;
+  }
+
+  const defaultExprs = new Map<string, MExpr>();
+
+  withScopedEnv(ctx, () => {
+    for (const [fieldName, fieldType] of alias.fields.entries()) {
+      ctx.env.set(fieldName, { quantifiers: [], type: fieldType });
+    }
+    for (const member of decl.members) {
+      if (member.kind !== "record_value_field") continue;
+      const inferred = inferExpr(ctx, member.value);
+      const fieldType = alias.fields.get(member.name);
+      if (fieldType) {
+        unify(ctx, fieldType, inferred);
+      }
+      defaultExprs.set(member.name, materializeExpr(ctx, member.value));
+    }
+  });
+
+  if (defaultExprs.size > 0) {
+    defaults.set(decl.name, defaultExprs);
+  }
 }
 
 export function inferPattern(

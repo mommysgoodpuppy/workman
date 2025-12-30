@@ -1,7 +1,7 @@
-record Point { x: Int, y: Int, z: string };
+record Point { x: Int, y: Int, z: String };
 
 let test = () => {
-  let f = (p) => { ({ x: p.x, y: p.y }) };
+  let f = (p) => { .{ x: p.x, y: p.y } };
   f
 };
 
