@@ -1,0 +1,49 @@
+# Workman Language Configuration for Helix
+# 
+# Copy this file's contents to your Helix languages.toml:
+#   - Linux/macOS: ~/.config/helix/languages.toml
+#   - Windows: %AppData%\helix\languages.toml
+#
+# Or for per-project config: <project>/.helix/languages.toml
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Language Server Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+[language-server.workman-lsp]
+# Option 1: Use the system 'wm' command (if installed globally)
+command = "wm"
+args = ["lsp"]
+
+# Option 2: Use Deno to run the LSP server directly (uncomment and adjust path)
+# command = "deno"
+# args = ["run", "--allow-all", "C:/GIT/workman/lsp/server/src/server.ts"]
+
+# Option 3: Use a compiled binary (uncomment and adjust path)
+# command = "C:/GIT/workman/editorExtensions/vscodeExtension/server/workman-lsp.exe"
+# args = []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Language Definition
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[language]]
+name = "workman"
+scope = "source.workman"
+injection-regex = "workman|wm"
+file-types = ["wm"]
+roots = [".git", "workman.toml"]
+comment-tokens = "--"
+indent = { tab-width = 2, unit = "  " }
+grammar = "workman"
+language-servers = ["workman-lsp"]
+# auto-format = true
+# formatter = { command = "wm", args = ["fmt", "--stdin"] }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tree-sitter Grammar Source
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[grammar]]
+name = "workman"
+source = { git = "https://github.com/mommysgoodpuppy/tree-sitter-workman", rev = "a2ab886aba637457fa87ebd4c51c69316c3c437a" }

@@ -2,15 +2,34 @@ from "std/zig/mem" import { alloc, free, write, slice };
 from "std/zig/debug" import { print };
 
 let main = () => {
-  let buf = {
+  let buf = () => {
     let buffer = alloc(100);
 
     'H' >> buffer[0];
     'i' >> buffer[1];
-    
+
     print("Buffer says: {s}\n", slice(buffer, 0, 2));
     buffer
   };
-
-  free(buf);
+  free(buf());
 };
+
+let x = if (true) {
+  1
+} else {
+  2
+};
+
+-- const std = @import("std");
+-- 
+-- pub fn main() void {
+--     const allocator = std.heap.page_allocator;
+-- 
+--     const buffer = try allocator.alloc(u8, 100);
+--     defer allocator.free(buffer);
+-- 
+--     buffer[0] = 'H';
+--     buffer[1] = 'i';
+-- 
+--     std.debug.print("Buffer says: {s}\n", .{buffer[0..2]});
+-- }
