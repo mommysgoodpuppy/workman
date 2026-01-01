@@ -1549,7 +1549,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       return recordExprType(ctx, expr, instantiated);
     }
     case "literal": {
-      const litType = literalType(expr.literal);
+      let litType = literalType(expr.literal);
+      // In raw mode, numeric literals are polymorphic (like Zig's comptime_int)
+      if (ctx.rawMode && expr.literal.kind === "int") {
+        litType = freshTypeVar();
+      }
       // Check if it's an incomplete hole for unsupported literal
       const holeInfo = isHoleType(litType) ? splitCarrier(litType) : null;
       if (holeInfo) {
@@ -2878,14 +2882,12 @@ export function inferProgram(
 
   // Pass 1: Register all type names (allows forward references)
   const seenTypeDeclsPass1 = new Set<number>();
-  console.log("[DEBUG] Type declarations:", canonicalProgram.declarations.filter(d => d.kind === "type").map(d => ({ name: (d as any).name, id: d.id })));
   for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "type" || decl.kind === "record_decl") {
       if (seenTypeDeclsPass1.has(decl.id)) {
         continue;
       }
       seenTypeDeclsPass1.add(decl.id);
-      console.log("[DEBUG] Registering type:", decl.name, "id:", decl.id, "already in adtEnv:", ctx.adtEnv.has(decl.name));
       const result = registerTypeName(ctx, decl);
       if (!result.success) {
         // Duplicate detected - mark it and skip further processing

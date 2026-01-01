@@ -503,10 +503,7 @@ async function summarizeGraph(
   );
 
   let counterInitialized = false;
-  console.log("[DEBUG] graph.order:", graph.order);
-  console.log("[DEBUG] preludePath:", preludePath);
   for (const path of graph.order) {
-    console.log("[DEBUG] Processing:", path, "preludeSummary exists:", !!preludeSummary);
     const node = graph.nodes.get(path);
     if (!node) {
       throw moduleError(`Internal error: missing node for '${path}'`);
@@ -529,7 +526,6 @@ async function summarizeGraph(
     const initialBindings = skipEvaluation
       ? undefined
       : new Map<string, RuntimeValue>();
-    console.log("[DEBUG] initialAdtEnv for", path, ":", Array.from(initialAdtEnv.keys()));
     // Skip prelude for std/core modules only
     // Raw mode modules now use the zig prelude (set via restart in loadModuleGraph)
     const isRawMode = node.program.mode === "raw";

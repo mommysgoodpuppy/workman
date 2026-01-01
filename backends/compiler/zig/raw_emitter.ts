@@ -44,6 +44,23 @@ const RESERVED = new Set<string>([
   "unreachable", "usingnamespace", "var", "volatile", "while", "_",
 ]);
 
+// Map __op_* calls to native Zig operators
+const RAW_OPERATOR_MAP = new Map<string, string>([
+  ["__op_+", "+"],
+  ["__op_-", "-"],
+  ["__op_*", "*"],
+  ["__op_/", "/"],
+  ["__op_%", "%"],
+  ["__op_==", "=="],
+  ["__op_!=", "!="],
+  ["__op_<", "<"],
+  ["__op_>", ">"],
+  ["__op_<=", "<="],
+  ["__op_>=", ">="],
+  ["__op_&&", "and"],
+  ["__op_||", "or"],
+]);
+
 // Zig primitive types that should not be imported (they're built-in)
 const ZIG_PRIMITIVES = new Set<string>([
   // Signed integers
@@ -116,7 +133,8 @@ export function emitRawModule(
   // Emit value bindings
   for (const binding of module.values) {
     const bindingRef = resolveName(ctx.scope, binding.name, ctx.state);
-    const isExported = exportSet.has(binding.name);
+    // main must always be pub for Zig's entry point
+    const isExported = exportSet.has(binding.name) || binding.name === "main";
     
     // For lambdas, emit as named functions
     if (binding.value.kind === "lambda") {
@@ -278,9 +296,12 @@ function emitNamedLambda(
   name: string,
   ctx: EmitContext,
 ): string {
-  const params = expr.params.map((p) => {
+  // Extract parameter types from the lambda's function type
+  const paramTypes = getParamTypes(expr.type, expr.params.length);
+  const params = expr.params.map((p, i) => {
     const pname = sanitizeIdentifier(p, ctx.state);
-    return `${pname}: anytype`;
+    const ptype = paramTypes[i] ? emitType(paramTypes[i]) : "anytype";
+    return `${pname}: ${ptype}`;
   }).join(", ");
   
   const scope = new Map(ctx.scope);
@@ -309,6 +330,15 @@ function emitCall(
   expr: CoreExpr & { kind: "call" },
   ctx: EmitContext,
 ): string {
+  // Check if this is an operator call (__op_+, __op_-, etc.)
+  if (expr.callee.kind === "var" && RAW_OPERATOR_MAP.has(expr.callee.name)) {
+    const op = RAW_OPERATOR_MAP.get(expr.callee.name)!;
+    if (expr.args.length === 2) {
+      const left = emitExpr(expr.args[0], ctx);
+      const right = emitExpr(expr.args[1], ctx);
+      return `(${left} ${op} ${right})`;
+    }
+  }
   const fn = emitExpr(expr.callee, ctx);
   const args = expr.args.map((arg) => emitExpr(arg, ctx)).join(", ");
   return `${fn}(${args})`;
@@ -319,11 +349,17 @@ function emitLet(
   ctx: EmitContext,
 ): string {
   const scope = new Map(ctx.scope);
-  const ref = bindLocal(scope, expr.binding.name, ctx.state);
   const value = emitExpr(expr.binding.value, ctx);
   const innerCtx = { ...ctx, scope };
   const body = emitExpr(expr.body, innerCtx);
   const label = allocateTempName(ctx.state, "blk");
+  
+  // For discarded statement results (__stmt_*), use _ to avoid unused variable warning
+  if (expr.binding.name.startsWith("__stmt")) {
+    return `${label}: { _ = ${value}; break :${label} ${body}; }`;
+  }
+  
+  const ref = bindLocal(scope, expr.binding.name, ctx.state);
   return `${label}: { const ${ref.value} = ${value}; break :${label} ${body}; }`;
 }
 
@@ -528,4 +564,14 @@ function getReturnType(type: Type): Type {
     return getReturnType(type.to);
   }
   return type;
+}
+
+function getParamTypes(type: Type, count: number): Type[] {
+  const types: Type[] = [];
+  let current = type;
+  for (let i = 0; i < count && current.kind === "func"; i++) {
+    types.push(current.from);
+    current = current.to;
+  }
+  return types;
 }

@@ -3,6 +3,20 @@ import { emitModuleGraph as emitJsModuleGraph } from "../backends/compiler/js/gr
 import { emitModuleGraph as emitZigModuleGraph } from "../backends/compiler/zig/graph_emitter.ts";
 import { IO, relative, resolve } from "../src/io.ts";
 
+async function runZigFmt(files: string[]): Promise<void> {
+  if (files.length === 0) return;
+  const command = new Deno.Command("zig", {
+    args: ["fmt", ...files],
+    stdout: "null",
+    stderr: "piped",
+  });
+  const result = await command.output();
+  if (!result.success) {
+    const stderr = new TextDecoder().decode(result.stderr);
+    console.warn(`zig fmt warning: ${stderr}`);
+  }
+}
+
 export type CompileBackend = "js" | "zig";
 
 export interface CompileArgs {
@@ -83,6 +97,20 @@ export async function compileToDirectory(
     : await emitJsModuleGraph(compileResult.coreGraph, {
       outDir: resolvedOutDir,
     });
+
+  // Run zig fmt on all emitted .zig files
+  if (backend === "zig") {
+    const zigFiles = [...emitResult.moduleFiles.values()].filter((f) =>
+      f.endsWith(".zig")
+    );
+    if (emitResult.runtimePath.endsWith(".zig")) {
+      zigFiles.push(emitResult.runtimePath);
+    }
+    if ("rootPath" in emitResult && emitResult.rootPath.endsWith(".zig")) {
+      zigFiles.push(emitResult.rootPath);
+    }
+    await runZigFmt(zigFiles);
+  }
 
   console.log(
     `Emitted ${emitResult.moduleFiles.size} module(s) to ${resolvedOutDir}`,
