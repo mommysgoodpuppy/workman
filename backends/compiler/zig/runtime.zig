@@ -177,7 +177,7 @@ pub fn isData(value: Value, type_name: []const u8, tag: []const u8) bool {
 
 pub fn call(func_value: Value, args: []const Value) Value {
     const func = expectFunc(func_value);
-    const fn_ptr: FnPtr = @ptrCast(func.func);
+    const fn_ptr: FnPtr = @ptrCast(@alignCast(func.func));
     return fn_ptr(func.env, args);
 }
 
