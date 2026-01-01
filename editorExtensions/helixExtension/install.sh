@@ -48,10 +48,10 @@ fi
 
 # Fetch and build grammar
 echo -e "\033[33m[4/4] Fetching and building Tree-sitter grammar...\033[0m"
-echo "  Running: hx --grammar fetch"
-hx --grammar fetch
-echo "  Running: hx --grammar build"
-hx --grammar build
+echo "  Running: hx --grammar fetch workman"
+hx --grammar fetch workman
+echo "  Running: hx --grammar build workman"
+hx --grammar build workman
 
 echo ""
 echo -e "\033[32mInstallation complete!\033[0m"

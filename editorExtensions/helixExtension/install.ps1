@@ -70,15 +70,15 @@ if (-not $hxPath) {
 
 if ($hxPath) {
   Write-Host "  Found hx at: $hxPath"
-  Write-Host "  Running: hx --grammar fetch"
-  & $hxPath --grammar fetch
-  Write-Host "  Running: hx --grammar build"
-  & $hxPath --grammar build
+  Write-Host "  Running: hx --grammar fetch workman"
+  & $hxPath --grammar fetch workman
+  Write-Host "  Running: hx --grammar build workman"
+  & $hxPath --grammar build workman
 }
 else {
   Write-Host "  WARNING: 'hx' not found. Please run manually:" -ForegroundColor Red
-  Write-Host "    hx --grammar fetch"
-  Write-Host "    hx --grammar build"
+  Write-Host "    hx --grammar fetch workman"
+  Write-Host "    hx --grammar build workman"
 }
 
 Write-Host ""
