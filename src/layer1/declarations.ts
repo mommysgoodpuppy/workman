@@ -100,6 +100,10 @@ export function registerTypeConstructors(
   if (!isRecordTypeDeclaration(decl) && isAliasTypeDeclaration(decl)) {
     return registerTypeAlias(ctx, decl);
   }
+  // Opaque types have no members - they're already registered in adtEnv by registerTypeName
+  if (decl.opaque || decl.members.length === 0) {
+    return { success: true };
+  }
   const adtInfo = ctx.adtEnv.get(decl.name);
   if (!adtInfo) {
     // This should not happen if registerTypeName was called first, but handle gracefully
@@ -424,6 +428,30 @@ export function convertTypeExpr(
       if (existing) {
         return existing;
       }
+      // Check if this is actually a known type in adtEnv (e.g., lowercase Zig types like i32)
+      const typeInfo = ctx.adtEnv.get(typeExpr.name);
+      if (typeInfo) {
+        // Treat as a type reference, not a type variable
+        if (typeInfo.parameters.length > 0) {
+          const mark = markTypeExprArity(
+            ctx,
+            typeExpr,
+            typeInfo.parameters.length,
+            0,
+          );
+          ctx.typeExprMarks.set(typeExpr, mark);
+          return unknownType({
+            kind: "error_type_expr_arity",
+            expected: typeInfo.parameters.length,
+            actual: 0,
+          });
+        }
+        return {
+          kind: "constructor",
+          name: typeExpr.name,
+          args: [],
+        };
+      }
       if (!options.allowNewVariables) {
         const mark = markTypeExprUnknown(
           ctx,
@@ -719,6 +747,49 @@ export function registerPrelude(ctx: Context): void {
   registerMemPrimitive(ctx, "nativeMemcpy", ["int", "int", "int"], "unit");
 }
 
+export function registerRawPrelude(ctx: Context): void {
+  // Polymorphic arithmetic: a -> a -> a
+  registerPolymorphicBinaryPrimitive(ctx, "nativeAdd");
+  registerPolymorphicBinaryPrimitive(ctx, "nativeSub");
+  registerPolymorphicBinaryPrimitive(ctx, "nativeMul");
+  registerPolymorphicBinaryPrimitive(ctx, "nativeDiv");
+  
+  // Polymorphic comparison: a -> a -> Bool
+  registerPolymorphicComparisonPrimitive(ctx, "nativeEq");
+  registerPolymorphicComparisonPrimitive(ctx, "nativeNeq");
+  registerPolymorphicComparisonPrimitive(ctx, "nativeLt");
+  registerPolymorphicComparisonPrimitive(ctx, "nativeLte");
+  registerPolymorphicComparisonPrimitive(ctx, "nativeGt");
+  registerPolymorphicComparisonPrimitive(ctx, "nativeGte");
+  
+  // Boolean operations: Bool -> Bool -> Bool
+  registerBoolBinaryPrimitive(ctx, "nativeAnd");
+  registerBoolBinaryPrimitive(ctx, "nativeOr");
+  registerBoolUnaryPrimitive(ctx, "nativeNot");
+  
+  registerPrintPrimitive(ctx, "nativePrint");
+  
+  // Register polymorphic operator implementations for raw mode
+  // These map operators like + to the polymorphic nativeAdd
+  registerPolymorphicBinaryPrimitive(ctx, "__op_+");
+  registerPolymorphicBinaryPrimitive(ctx, "__op_-");
+  registerPolymorphicBinaryPrimitive(ctx, "__op_*");
+  registerPolymorphicBinaryPrimitive(ctx, "__op_/");
+  
+  // Comparison operators return Bool
+  registerPolymorphicComparisonPrimitive(ctx, "__op_==");
+  registerPolymorphicComparisonPrimitive(ctx, "__op_!=");
+  registerPolymorphicComparisonPrimitive(ctx, "__op_<");
+  registerPolymorphicComparisonPrimitive(ctx, "__op_<=");
+  registerPolymorphicComparisonPrimitive(ctx, "__op_>");
+  registerPolymorphicComparisonPrimitive(ctx, "__op_>=");
+  
+  // Boolean operators
+  registerBoolBinaryPrimitive(ctx, "__op_&&");
+  registerBoolBinaryPrimitive(ctx, "__op_||");
+  registerBoolUnaryPrimitive(ctx, "__prefix_!");
+}
+
 function buildConstructorInfo(
   ctx: Context,
   typeName: string,
@@ -943,6 +1014,80 @@ function registerMemPrimitive(
   const scheme: TypeScheme = {
     quantifiers: [],
     type,
+  };
+  ctx.env.set(name, scheme);
+}
+
+// Polymorphic primitives for raw mode (a -> a -> a)
+function registerPolymorphicBinaryPrimitive(ctx: Context, name: string): void {
+  const typeVar = freshTypeVar();
+  if (typeVar.kind !== "var") {
+    markInternal(ctx, "fresh_type_var_not_var");
+    return;
+  }
+  const scheme: TypeScheme = {
+    quantifiers: [typeVar.id],
+    type: {
+      kind: "func",
+      from: typeVar,
+      to: {
+        kind: "func",
+        from: typeVar,
+        to: typeVar,
+      },
+    },
+  };
+  ctx.env.set(name, scheme);
+}
+
+// Polymorphic comparison primitives for raw mode (a -> a -> Bool)
+function registerPolymorphicComparisonPrimitive(ctx: Context, name: string): void {
+  const typeVar = freshTypeVar();
+  if (typeVar.kind !== "var") {
+    markInternal(ctx, "fresh_type_var_not_var");
+    return;
+  }
+  const scheme: TypeScheme = {
+    quantifiers: [typeVar.id],
+    type: {
+      kind: "func",
+      from: typeVar,
+      to: {
+        kind: "func",
+        from: typeVar,
+        to: { kind: "bool" },
+      },
+    },
+  };
+  ctx.env.set(name, scheme);
+}
+
+// Boolean binary primitives (Bool -> Bool -> Bool)
+function registerBoolBinaryPrimitive(ctx: Context, name: string): void {
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: { kind: "bool" },
+      to: {
+        kind: "func",
+        from: { kind: "bool" },
+        to: { kind: "bool" },
+      },
+    },
+  };
+  ctx.env.set(name, scheme);
+}
+
+// Boolean unary primitives (Bool -> Bool)
+function registerBoolUnaryPrimitive(ctx: Context, name: string): void {
+  const scheme: TypeScheme = {
+    quantifiers: [],
+    type: {
+      kind: "func",
+      from: { kind: "bool" },
+      to: { kind: "bool" },
+    },
   };
   ctx.env.set(name, scheme);
 }

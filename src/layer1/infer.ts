@@ -107,6 +107,7 @@ import {
 import {
   convertTypeExpr,
   registerPrelude,
+  registerRawPrelude,
   registerRecordDeclaration,
   registerTypeConstructors,
   registerTypeName,
@@ -2616,7 +2617,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           accumulatedStates.set(domain, rightCarrierInfo.state);
         }
       }
-      if (NUMERIC_BINARY_OPERATORS.has(expr.operator)) {
+      // Skip numeric constraints in raw mode - operators are polymorphic
+      if (!ctx.rawMode && NUMERIC_BINARY_OPERATORS.has(expr.operator)) {
         recordNumericConstraint(
           ctx,
           expr,
@@ -2625,7 +2627,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         );
       }
       if (COMPARISON_OPERATORS.has(expr.operator)) {
-        if (ORDERING_COMPARISON_OPERATORS.has(expr.operator)) {
+        // Skip numeric constraints for ordering comparisons in raw mode
+        if (!ctx.rawMode && ORDERING_COMPARISON_OPERATORS.has(expr.operator)) {
           recordNumericConstraint(
             ctx,
             expr,
@@ -2751,7 +2754,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           accumulatedStates.set(domain, operandCarrierInfo.state);
         }
       }
-      if (NUMERIC_UNARY_OPERATORS.has(expr.operator)) {
+      // Skip numeric constraints in raw mode - operators are polymorphic
+      if (!ctx.rawMode && NUMERIC_UNARY_OPERATORS.has(expr.operator)) {
         recordNumericConstraint(ctx, expr, [expr.operand], expr.operator);
       }
       if (BOOLEAN_UNARY_OPERATORS.has(expr.operator)) {
@@ -2831,6 +2835,7 @@ export function inferProgram(
     resetCounter: options.resetCounter,
     source: options.source ?? undefined,
     infectionRegistry: options.infectionRegistry,
+    rawMode: options.rawMode,
   });
   const summaries: { name: string; scheme: TypeScheme }[] = [];
   const markedDeclarations: MTopLevel[] = [];
@@ -2849,7 +2854,11 @@ export function inferProgram(
   ctx.infectionRegistry.mergeSummary(infectionSummary);
 
   if (options.registerPrelude !== false) {
-    registerPrelude(ctx);
+    if (options.rawMode) {
+      registerRawPrelude(ctx);
+    } else {
+      registerPrelude(ctx);
+    }
   }
 
   // Pass 0: Collect infectious declarations (before type registration)
@@ -2869,12 +2878,14 @@ export function inferProgram(
 
   // Pass 1: Register all type names (allows forward references)
   const seenTypeDeclsPass1 = new Set<number>();
+  console.log("[DEBUG] Type declarations:", canonicalProgram.declarations.filter(d => d.kind === "type").map(d => ({ name: (d as any).name, id: d.id })));
   for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "type" || decl.kind === "record_decl") {
       if (seenTypeDeclsPass1.has(decl.id)) {
         continue;
       }
       seenTypeDeclsPass1.add(decl.id);
+      console.log("[DEBUG] Registering type:", decl.name, "id:", decl.id, "already in adtEnv:", ctx.adtEnv.has(decl.name));
       const result = registerTypeName(ctx, decl);
       if (!result.success) {
         // Duplicate detected - mark it and skip further processing

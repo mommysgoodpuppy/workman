@@ -126,6 +126,9 @@ function buildAnalysisOptions(
   seedImports(node, summaries, seedEnv, seedAdtEnv);
   seedPrelude(node, graph, summaries, seedEnv, seedAdtEnv, preludePath);
 
+  // Detect raw mode from the program
+  const rawMode = node.program.mode === "raw";
+
   return {
     ...base,
     initialEnv: seedEnv,
@@ -133,6 +136,7 @@ function buildAnalysisOptions(
     registerPrelude: base.registerPrelude ?? true,
     resetCounter: base.resetCounter ?? true,
     source: base.source ?? node.source,
+    rawMode,
   };
 }
 
@@ -214,6 +218,14 @@ function seedPrelude(
   if (!preludePath) return;
   if (node.path === preludePath) return;
   if (isStdCoreModule(node.path)) return;
+  
+  // Skip prelude seeding for modules that are dependencies of the prelude
+  // (they appear before the prelude in topological order)
+  const preludeIndex = graph.order.indexOf(preludePath);
+  const nodeIndex = graph.order.indexOf(node.path);
+  if (preludeIndex >= 0 && nodeIndex >= 0 && nodeIndex < preludeIndex) {
+    return;
+  }
 
   const preludeSummary = summaries.get(preludePath);
   if (!preludeSummary) return;

@@ -1,0 +1,71 @@
+@raw;
+
+-- Zig prelude for raw mode
+-- Provides polymorphic operators that work on Zig numeric types
+-- These are lowered to direct Zig operators in raw mode
+
+from "std/zig/types.wm" import { 
+  i8, i16, i32, i64, i128, isize,
+  u8, u16, u32, u64, u128, usize,
+  f16, f32, f64, f128,
+  bool, void
+};
+
+-- Re-export types
+export from "std/zig/types.wm" type i8;
+export from "std/zig/types.wm" type i16;
+export from "std/zig/types.wm" type i32;
+export from "std/zig/types.wm" type i64;
+export from "std/zig/types.wm" type i128;
+export from "std/zig/types.wm" type isize;
+export from "std/zig/types.wm" type u8;
+export from "std/zig/types.wm" type u16;
+export from "std/zig/types.wm" type u32;
+export from "std/zig/types.wm" type u64;
+export from "std/zig/types.wm" type u128;
+export from "std/zig/types.wm" type usize;
+export from "std/zig/types.wm" type f16;
+export from "std/zig/types.wm" type f32;
+export from "std/zig/types.wm" type f64;
+export from "std/zig/types.wm" type f128;
+export from "std/zig/types.wm" type bool;
+export from "std/zig/types.wm" type void;
+
+-- Polymorphic arithmetic operations
+-- These use nativeAdd etc. which are lowered to Zig's + operator
+export let zigAdd = (a, b) => { nativeAdd(a, b) };
+export let zigSub = (a, b) => { nativeSub(a, b) };
+export let zigMul = (a, b) => { nativeMul(a, b) };
+export let zigDiv = (a, b) => { nativeDiv(a, b) };
+
+-- Polymorphic comparison operations
+export let zigEq = (a, b) => { nativeEq(a, b) };
+export let zigNeq = (a, b) => { nativeNeq(a, b) };
+export let zigLt = (a, b) => { nativeLt(a, b) };
+export let zigLte = (a, b) => { nativeLte(a, b) };
+export let zigGt = (a, b) => { nativeGt(a, b) };
+export let zigGte = (a, b) => { nativeGte(a, b) };
+
+-- Boolean operations
+export let zigAnd = (a, b) => { nativeAnd(a, b) };
+export let zigOr = (a, b) => { nativeOr(a, b) };
+export let zigNot = (a) => { nativeNot(a) };
+
+-- Arithmetic operators (polymorphic)
+export infixl 6 + = zigAdd;
+export infixl 6 - = zigSub;
+export infixl 7 * = zigMul;
+export infixl 7 / = zigDiv;
+
+-- Comparison operators (polymorphic)
+export infix 4 == = zigEq;
+export infix 4 != = zigNeq;
+export infix 4 < = zigLt;
+export infix 4 > = zigGt;
+export infix 4 <= = zigLte;
+export infix 4 >= = zigGte;
+
+-- Boolean operators
+export infixr 3 && = zigAnd;
+export infixr 2 || = zigOr;
+export prefix ! = zigNot;

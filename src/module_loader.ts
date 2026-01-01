@@ -158,6 +158,13 @@ export async function loadModuleGraph(
     //console.log("  [DEBUG] loadModuleGraph: prelude resolved to", preludePath);
   }
 
+  const rawPreludePath = resolveModuleSpecifier(
+    normalizedEntry,
+    "std/zig/prelude",
+    normalizedOptions,
+  );
+  const isUsingRawPrelude = preludePath === rawPreludePath;
+
   //console.log("  [DEBUG] loadModuleGraph: creating context");
   const ctx: LoaderContext = {
     options: normalizedOptions,
@@ -177,6 +184,17 @@ export async function loadModuleGraph(
 
   //console.log("  [DEBUG] loadModuleGraph: visiting entry module");
   await visitModule(normalizedEntry, ctx);
+
+  // Check if entry module is in raw mode and we're not already using raw prelude
+  const entryNode = ctx.nodes.get(normalizedEntry);
+  if (entryNode?.program.mode === "raw" && !isUsingRawPrelude) {
+    // Restart with raw prelude
+    return loadModuleGraph(entryPath, {
+      ...options,
+      preludeModule: "std/zig/prelude",
+    });
+  }
+
   //console.log("  [DEBUG] loadModuleGraph: done");
   return {
     entry: normalizedEntry,
@@ -485,7 +503,10 @@ async function summarizeGraph(
   );
 
   let counterInitialized = false;
+  console.log("[DEBUG] graph.order:", graph.order);
+  console.log("[DEBUG] preludePath:", preludePath);
   for (const path of graph.order) {
+    console.log("[DEBUG] Processing:", path, "preludeSummary exists:", !!preludeSummary);
     const node = graph.nodes.get(path);
     if (!node) {
       throw moduleError(`Internal error: missing node for '${path}'`);
@@ -508,9 +529,11 @@ async function summarizeGraph(
     const initialBindings = skipEvaluation
       ? undefined
       : new Map<string, RuntimeValue>();
-    // Skip prelude for std/core modules and for raw mode modules
+    console.log("[DEBUG] initialAdtEnv for", path, ":", Array.from(initialAdtEnv.keys()));
+    // Skip prelude for std/core modules only
+    // Raw mode modules now use the zig prelude (set via restart in loadModuleGraph)
     const isRawMode = node.program.mode === "raw";
-    const skipPrelude = isStdCoreModule(path) || isRawMode;
+    const skipPrelude = isStdCoreModule(path);
     const initialRegistry = infectionPreludeRegistry.clone();
 
     for (const record of node.imports) {
@@ -601,6 +624,7 @@ async function summarizeGraph(
         resetCounter: shouldResetCounter,
         source: node.source,
         infectionRegistry: initialRegistry,
+        rawMode: isRawMode,
       });
     } catch (error) {
       if (error instanceof InferError) {

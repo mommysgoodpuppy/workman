@@ -77,6 +77,7 @@ export interface Context {
   adtEnv: TypeEnvADT;
   subst: Substitution;
   source?: string;
+  rawMode?: boolean;
   allBindings: Map<string, TypeScheme>;
   nonGeneralizable: Set<number>;
   marks: Map<Expr, MExpr>;
@@ -127,6 +128,7 @@ export interface InferOptions {
   initialEnv?: TypeEnv;
   initialAdtEnv?: TypeEnvADT;
   registerPrelude?: boolean;
+  rawMode?: boolean; // Use raw/zig prelude instead of standard prelude
   resetCounter?: boolean;
   source?: string;
   infectionRegistry?: InfectionRegistry;
@@ -160,6 +162,7 @@ export function createContext(options: InferOptions = {}): Context {
       : new Map(),
     subst: new Map(),
     source: options.source,
+    rawMode: options.rawMode,
     allBindings: new Map(),
     nonGeneralizable: new Set(),
     marks: new Map(),
