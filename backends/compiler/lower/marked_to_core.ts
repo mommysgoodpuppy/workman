@@ -361,6 +361,13 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
         literal: { kind: "unit" },
         type: resolveNodeType(state, expr.id, expr.type),
       };
+    case "enum_literal":
+      // Enum literal like .static - emit as-is for raw mode
+      return {
+        kind: "enum_literal",
+        name: expr.name,
+        type: resolveNodeType(state, expr.id, expr.type),
+      };
     case "mark_unfillable_hole":
       // Conflicted hole - lower the subject if available
       return lowerExpr(expr.subject, state);
@@ -690,6 +697,9 @@ function mapUnaryPrimOp(
 ): CorePrimOp | undefined {
   if (operator === "!" && isBoolType(operandType)) {
     return "bool_not";
+  }
+  if (operator === "&") {
+    return "address_of";
   }
   return undefined;
 }

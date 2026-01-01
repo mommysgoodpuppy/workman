@@ -128,6 +128,8 @@ class SurfaceParser {
       if (pragmaToken.kind === "identifier" && pragmaToken.value === "raw") {
         this.consume();
         mode = "raw";
+        // Register raw mode prefix operators
+        this.prefixOperators.add("&"); // address-of operator for Zig
         // Consume optional semicolon after pragma
         this.matchSymbol(";");
       } else {
@@ -2003,18 +2005,28 @@ class SurfaceParser {
             id: nextNodeId(),
           } as Expr;
         }
-        if (
-          token.value === "." &&
-          this.peek(1).kind === "symbol" &&
-          this.peek(1).value === "{"
-        ) {
-          const dotToken = this.consume();
-          const open = this.expectSymbol("{");
-          // Check if this is a tuple .{a, b} or record .{x: a, y: b}
-          if (this.looksLikeTupleLiteral()) {
-            return this.parseBraceTupleExpr(open, dotToken.start);
-          } else {
-            return this.parseRecordLiteralExprFromOpen(open, dotToken.start);
+        if (token.value === ".") {
+          const next = this.peek(1);
+          if (next.kind === "symbol" && next.value === "{") {
+            const dotToken = this.consume();
+            const open = this.expectSymbol("{");
+            // Check if this is a tuple .{a, b} or record .{x: a, y: b}
+            if (this.looksLikeTupleLiteral()) {
+              return this.parseBraceTupleExpr(open, dotToken.start);
+            } else {
+              return this.parseRecordLiteralExprFromOpen(open, dotToken.start);
+            }
+          }
+          // Enum literal: .identifier (for Zig interop in raw mode)
+          if (next.kind === "identifier") {
+            const dotToken = this.consume();
+            const nameToken = this.consume();
+            return {
+              kind: "enum_literal",
+              name: nameToken.value,
+              span: this.spanFrom(dotToken.start, nameToken.end),
+              id: nextNodeId(),
+            } as Expr;
           }
         }
         if (token.value === "(") {
@@ -2117,11 +2129,11 @@ class SurfaceParser {
     const close = this.expectSymbol("}");
 
     if (elements.length === 0) {
-      // Empty tuple .{}
+      // Empty tuple .{} - keep as empty record for Zig interop
       const span = this.spanFrom(start, close.end);
       return {
-        kind: "literal",
-        literal: { kind: "unit", span, id: nextNodeId() },
+        kind: "record_literal",
+        fields: [],
         span,
         id: nextNodeId(),
       } as Expr;
@@ -2182,9 +2194,47 @@ class SurfaceParser {
     if (token.kind === "symbol" && token.value === "(") {
       return this.parseTypeTupleOrGrouping();
     }
+    
+    // Pointer type: *T
+    if (token.kind === "operator" && token.value === "*") {
+      const star = this.consume();
+      const pointee = this.parseTypePrimary();
+      return {
+        kind: "type_pointer",
+        pointee,
+        span: this.spanFrom(star.start, pointee.span.end),
+        id: nextNodeId(),
+      };
+    }
 
     if (token.kind === "identifier") {
       const ident = this.consume();
+      // Check for qualified name: std.Build, std.mem.Allocator, etc.
+      const parts = [ident.value];
+      let endToken = ident;
+      while (this.matchSymbol(".")) {
+        const next = this.peek();
+        if (next.kind === "identifier" || next.kind === "constructor") {
+          const part = this.consume();
+          parts.push(part.value);
+          endToken = part;
+        } else {
+          throw this.error("Expected identifier after '.' in qualified type name", next);
+        }
+      }
+      const qualifiedName = parts.join(".");
+      const typeArgs = this.matchSymbol("<") ? this.parseTypeArguments() : [];
+      const end = typeArgs.length > 0 ? typeArgs[typeArgs.length - 1].span.end : endToken.end;
+      // If it's a qualified name or has type args, treat as type_ref
+      if (parts.length > 1 || typeArgs.length > 0) {
+        return {
+          kind: "type_ref",
+          name: qualifiedName,
+          typeArgs,
+          span: this.spanFrom(ident.start, end),
+          id: nextNodeId(),
+        };
+      }
       return {
         kind: "type_var",
         name: ident.value,
@@ -2195,12 +2245,26 @@ class SurfaceParser {
 
     if (token.kind === "constructor") {
       const ctor = this.consume();
+      // Check for qualified name after constructor: Build.Options, etc.
+      const parts = [ctor.value];
+      let endToken = ctor;
+      while (this.matchSymbol(".")) {
+        const next = this.peek();
+        if (next.kind === "identifier" || next.kind === "constructor") {
+          const part = this.consume();
+          parts.push(part.value);
+          endToken = part;
+        } else {
+          throw this.error("Expected identifier after '.' in qualified type name", next);
+        }
+      }
+      const qualifiedName = parts.join(".");
       const typeArgs = this.matchSymbol("<") ? this.parseTypeArguments() : [];
       const end =
-        typeArgs.length > 0 ? typeArgs[typeArgs.length - 1].span.end : ctor.end;
+        typeArgs.length > 0 ? typeArgs[typeArgs.length - 1].span.end : endToken.end;
       return {
         kind: "type_ref",
-        name: ctor.value,
+        name: qualifiedName,
         typeArgs,
         span: this.spanFrom(ctor.start, end),
         id: nextNodeId(),

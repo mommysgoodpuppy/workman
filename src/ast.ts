@@ -163,7 +163,8 @@ export type Expr =
   | MatchExpr
   | MatchFunctionExpr
   | MatchBundleLiteralExpr
-  | HoleExpr;
+  | HoleExpr
+  | EnumLiteralExpr;
 
 export interface IdentifierExpr extends NodeBase {
   kind: "identifier";
@@ -177,6 +178,11 @@ export interface LiteralExpr extends NodeBase {
 
 export interface HoleExpr extends NodeBase {
   kind: "hole";
+}
+
+export interface EnumLiteralExpr extends NodeBase {
+  kind: "enum_literal";
+  name: string;
 }
 
 export interface ConstructorExpr extends NodeBase {
@@ -297,7 +303,8 @@ export type TypeExpr =
   | TypeTuple
   | TypeRecordExpr
   | TypeUnit
-  | TypeEffectRowExpr;
+  | TypeEffectRowExpr
+  | TypePointer;
 
 export interface TypeVariable extends NodeBase {
   kind: "type_var";
@@ -340,6 +347,11 @@ export interface TypeEffectRowExpr extends NodeBase {
   kind: "type_effect_row";
   cases: TypeEffectRowCase[];
   hasTailWildcard: boolean;
+}
+
+export interface TypePointer extends NodeBase {
+  kind: "type_pointer";
+  pointee: TypeExpr;
 }
 
 export type TypeAliasMember = ConstructorAlias | TypeAliasExprMember;

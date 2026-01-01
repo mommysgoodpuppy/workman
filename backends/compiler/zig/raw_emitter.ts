@@ -257,6 +257,8 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
       return emitData(expr, ctx);
     case "tuple":
       return emitTuple(expr, ctx);
+    case "enum_literal":
+      return `.${expr.name}`;
     default:
       throw new Error(`Unsupported expression kind '${(expr as CoreExpr).kind}' in raw mode`);
   }
@@ -339,6 +341,15 @@ function emitCall(
       return `(${left} ${op} ${right})`;
     }
   }
+  
+  // Handle zigImport("module") -> @import("module")
+  if (expr.callee.kind === "var" && expr.callee.name === "zigImport") {
+    if (expr.args.length === 1 && expr.args[0].kind === "literal" && expr.args[0].literal.kind === "string") {
+      const moduleName = expr.args[0].literal.value;
+      return `@import("${moduleName}")`;
+    }
+  }
+  
   const fn = emitExpr(expr.callee, ctx);
   const args = expr.args.map((arg) => emitExpr(arg, ctx)).join(", ");
   return `${fn}(${args})`;
@@ -447,6 +458,19 @@ function emitIf(
 }
 
 function emitPrimOp(op: CorePrimOp, args: readonly CoreExpr[], ctx: EmitContext): string {
+  // Special case for record_get - extract field name from string literal
+  if (op === "record_get") {
+    const target = emitExpr(args[0], ctx);
+    const fieldArg = args[1];
+    // Field name is passed as a string literal
+    if (fieldArg.kind === "literal" && fieldArg.literal.kind === "string") {
+      const fieldName = fieldArg.literal.value;
+      return `${target}.${fieldName}`;
+    }
+    // Fallback - shouldn't happen
+    return `${target}.${emitExpr(fieldArg, ctx)}`;
+  }
+  
   const emittedArgs = [...args].map((a) => emitExpr(a, ctx));
   
   switch (op) {
@@ -484,10 +508,10 @@ function emitPrimOp(op: CorePrimOp, args: readonly CoreExpr[], ctx: EmitContext)
       return `${emittedArgs[0]}.len`;
     case "string_slice":
       return `${emittedArgs[0]}[${emittedArgs[1]}..${emittedArgs[2]}]`;
-    case "record_get":
-      return `${emittedArgs[0]}.${emittedArgs[1]}`;
     case "native_print":
       return `std.debug.print("{any}", .{${emittedArgs[0]}})`;
+    case "address_of":
+      return `&${emittedArgs[0]}`;
   }
 }
 
@@ -542,8 +566,17 @@ function emitType(type: Type): string {
       // For function types, we need the return type
       return emitType(getReturnType(type));
     case "constructor":
+      // Handle Ptr<T> -> *T
+      if (type.name === "Ptr" && type.args.length === 1) {
+        return `*${emitType(type.args[0])}`;
+      }
       // Opaque types like i32, u64 etc. - emit directly
-      return type.name;
+      if (type.args.length === 0) {
+        return type.name;
+      }
+      // Generic types like List<T> - emit as Type(args)
+      const typeArgs = type.args.map(emitType).join(", ");
+      return `${type.name}(${typeArgs})`;
     case "tuple":
       const elements = type.elements.map(emitType).join(", ");
       return `struct { ${elements} }`;

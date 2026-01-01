@@ -1,0 +1,20 @@
+@raw;
+
+-- Zig build file written in Workman
+-- Compiles to build.zig
+
+-- Import Zig's std library
+let std = zigImport("std");
+
+-- The build function - entry point for Zig build system
+let build = (b: *std.Build) => {
+  let exe = b.addExecutable(.{
+    name: "hello",
+    root_module: b.createModule(.{
+      root_source_file: b.path("src/main.zig"),
+      target: b.graph.host
+    })
+  });
+  
+  b.installArtifact(exe);
+};

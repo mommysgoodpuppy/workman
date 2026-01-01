@@ -1581,6 +1581,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const holeType = createUnknownAndRegister(ctx, origin, provenance);
       return recordExprType(ctx, expr, holeType);
     }
+    case "enum_literal": {
+      // Enum literal like .static - in raw mode, return a fresh type variable
+      // The actual enum type will be inferred from context in Zig
+      const enumType = freshTypeVar();
+      return recordExprType(ctx, expr, enumType);
+    }
     case "constructor": {
       const scheme = lookupEnv(ctx, expr.name);
       if (!scheme) {
@@ -1754,16 +1760,16 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         return recordExprType(ctx, expr, constructorType);
       }
 
-      const matches = candidateRecords.length;
-      const candidateNames = candidateRecords.map(([name]) => name);
-      const descriptor =
-        matches === 0
-          ? "no nominal record matches these fields"
-          : `ambiguous among: ${candidateNames.join(", ")}`;
-      recordLayer1Diagnostic(ctx, expr.id, "ambiguous_record", {
-        matches,
-        candidates: candidateNames,
-      });
+      // In raw mode, allow structural records without nominal matching
+      // This is needed for Zig interop where we pass anonymous structs to external functions
+      if (!ctx.rawMode) {
+        const matches = candidateRecords.length;
+        const candidateNames = candidateRecords.map(([name]) => name);
+        recordLayer1Diagnostic(ctx, expr.id, "ambiguous_record", {
+          matches,
+          candidates: candidateNames,
+        });
+      }
       const structuralRecord: Type = {
         kind: "record",
         fields: new Map(fields),
@@ -1795,7 +1801,13 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         applyCurrentSubst(ctx, targetType),
       );
       const targetCarrierInfo = splitCarrier(resolvedTarget);
-      const recordSubject = targetCarrierInfo?.value ?? resolvedTarget;
+      let recordSubject = targetCarrierInfo?.value ?? resolvedTarget;
+      
+      // Auto-deref pointer types: Ptr<T> -> T for field projection
+      if (recordSubject.kind === "constructor" && recordSubject.name === "Ptr" && recordSubject.args.length === 1) {
+        recordSubject = recordSubject.args[0];
+      }
+      
       const wrapWithCarrier = (value: Type): Type => {
         if (!targetCarrierInfo) {
           return value;
@@ -1812,6 +1824,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // First check if the subject type (either direct or carrier payload) is a nominal record
       if (recordSubject.kind === "constructor") {
         const info = ctx.adtEnv.get(recordSubject.name);
+        
+        // In raw mode, allow field projection on opaque/unknown constructor types
+        // This handles cases like std.Build from zigImport where we don't know the fields
+        if (ctx.rawMode && !info) {
+          const fieldType = freshTypeVar();
+          ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
+          registerHoleForType(ctx, holeOriginFromExpr(targetExpr), applyCurrentSubst(ctx, targetType));
+          registerHoleForType(ctx, holeOriginFromExpr(expr), fieldType);
+          return recordExprType(ctx, expr, fieldType);
+        }
+        
         if (info && info.recordFields) {
           const index = info.recordFields.get(expr.field);
           if (index !== undefined) {
@@ -1954,6 +1977,15 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
           return recordExprType(ctx, expr, projectionType);
         } else {
+          // In raw mode, allow field projection on type variables without nominal matching
+          // Return a fresh type variable - the field is assumed to exist
+          if (ctx.rawMode) {
+            const fieldType = freshTypeVar();
+            ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
+            registerHoleForType(ctx, holeOriginFromExpr(targetExpr), applyCurrentSubst(ctx, targetType));
+            registerHoleForType(ctx, holeOriginFromExpr(expr), fieldType);
+            return recordExprType(ctx, expr, fieldType);
+          }
           const matches = possibleRecords.length;
           const candidateNames = possibleRecords.map(([name]) => name);
           recordLayer1Diagnostic(ctx, expr.id, "ambiguous_record", {
@@ -2710,6 +2742,16 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // Unary operators are desugared to function calls
       // e.g., `!x` becomes `not(x)` where `not` is the implementation function
       const operandType = inferExpr(ctx, expr.operand);
+
+      // In raw mode, & is address-of - returns Ptr<T>
+      if (ctx.rawMode && expr.operator === "&") {
+        const ptrType: Type = {
+          kind: "constructor",
+          name: "Ptr",
+          args: [operandType],
+        };
+        return recordExprType(ctx, expr, ptrType);
+      }
 
       // Look up the prefix operator's implementation function
       const opFuncName = `__prefix_${expr.operator}`;

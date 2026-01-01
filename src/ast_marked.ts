@@ -40,6 +40,11 @@ export interface MHoleExpr extends MTypedNode {
   kind: "hole";
 }
 
+export interface MEnumLiteralExpr extends MTypedNode {
+  kind: "enum_literal";
+  name: string;
+}
+
 export interface MRecordField extends MNodeBase {
   kind: "record_field";
   name: string;
@@ -328,6 +333,7 @@ export type MExpr =
   | MMatchFunctionExpr
   | MMatchBundleLiteralExpr
   | MHoleExpr
+  | MEnumLiteralExpr
   | MMarkExpr
   | MTypeExprMark;
 

@@ -628,6 +628,14 @@ export function convertTypeExpr(
             args: [],
           };
         }
+        // In raw mode, allow unknown type constructors - they're external Zig types
+        if (ctx.rawMode) {
+          return {
+            kind: "constructor",
+            name: typeExpr.name,
+            args: [],
+          };
+        }
         if (options.allowNewVariables) {
           const fresh = freshTypeVar();
           scope.set(typeExpr.name, fresh);
@@ -646,6 +654,17 @@ export function convertTypeExpr(
       }
 
       if (!typeInfo) {
+        // In raw mode, allow unknown type constructors - they're external Zig types
+        if (ctx.rawMode) {
+          const args = typeExpr.typeArgs.map((arg) =>
+            convertTypeExpr(ctx, arg, scope, options)
+          );
+          return {
+            kind: "constructor",
+            name: typeExpr.name,
+            args,
+          };
+        }
         const mark = markTypeExprUnknown(
           ctx,
           typeExpr,
@@ -717,6 +736,14 @@ export function convertTypeExpr(
         tail,
       };
     }
+    case "type_pointer": {
+      const pointee = convertTypeExpr(ctx, typeExpr.pointee, scope, options);
+      return {
+        kind: "constructor",
+        name: "Ptr",
+        args: [pointee],
+      };
+    }
     default:
       const mark = markTypeExprUnsupported(ctx, typeExpr);
       ctx.typeExprMarks.set(typeExpr, mark);
@@ -768,6 +795,9 @@ export function registerRawPrelude(ctx: Context): void {
   registerBoolUnaryPrimitive(ctx, "nativeNot");
   
   registerPrintPrimitive(ctx, "nativePrint");
+  
+  // zigImport: String -> a (returns opaque type, used for @import in Zig)
+  registerZigImportPrimitive(ctx, "zigImport");
   
   // Register polymorphic operator implementations for raw mode
   // These map operators like + to the polymorphic nativeAdd
@@ -1087,6 +1117,24 @@ function registerBoolUnaryPrimitive(ctx: Context, name: string): void {
       kind: "func",
       from: { kind: "bool" },
       to: { kind: "bool" },
+    },
+  };
+  ctx.env.set(name, scheme);
+}
+
+// zigImport: String -> a (returns fresh type variable for opaque Zig type)
+function registerZigImportPrimitive(ctx: Context, name: string): void {
+  const resultVar = freshTypeVar();
+  if (resultVar.kind !== "var") {
+    markInternal(ctx, "fresh_type_var_not_var");
+    return;
+  }
+  const scheme: TypeScheme = {
+    quantifiers: [resultVar.id],
+    type: {
+      kind: "func",
+      from: { kind: "string" },
+      to: resultVar,
     },
   };
   ctx.env.set(name, scheme);

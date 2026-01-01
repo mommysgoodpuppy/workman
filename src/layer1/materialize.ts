@@ -348,6 +348,14 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
         type,
       };
     }
+    case "enum_literal":
+      return {
+        kind: "enum_literal",
+        span: expr.span,
+        id: expr.id,
+        name: expr.name,
+        type: getExprTypeOrUnknown(ctx, expr, `expr.enum_literal:${expr.name}`),
+      };
     default:
       return {
         kind: "block",

@@ -119,6 +119,11 @@ export interface CoreMatchExpr extends CoreNodeMeta {
   readonly effectRowCoverage?: CoreMatchCoverage;
 }
 
+export interface CoreEnumLiteralExpr extends CoreNodeMeta {
+  readonly kind: "enum_literal";
+  readonly name: string;
+}
+
 export type CoreExpr =
   | CoreLiteralExpr
   | CoreVarExpr
@@ -132,7 +137,8 @@ export type CoreExpr =
   | CoreLetRecExpr
   | CoreIfExpr
   | CorePrimExpr
-  | CoreMatchExpr;
+  | CoreMatchExpr
+  | CoreEnumLiteralExpr;
 
 export type CorePrimOp =
   | "int_add"
@@ -153,7 +159,8 @@ export type CorePrimOp =
   | "string_length"
   | "string_slice"
   | "record_get"
-  | "native_print";
+  | "native_print"
+  | "address_of";
 
 interface CorePatternBase extends CoreNodeMeta {
   readonly kind: string;
