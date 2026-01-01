@@ -609,6 +609,22 @@ export function toFileUrl(path: string): URL {
 }
 
 /**
+ * Convert a file:// URL to a file path
+ */
+export function fromFileUrl(url: string | URL): string {
+  const urlObj = typeof url === "string" ? new URL(url) : url;
+  if (urlObj.protocol !== "file:") {
+    throw new Error(`Expected file:// URL, got ${urlObj.protocol}`);
+  }
+  let path = decodeURIComponent(urlObj.pathname);
+  // Windows: /C:/path -> C:/path
+  if (/^\/[a-zA-Z]:/.test(path)) {
+    path = path.slice(1);
+  }
+  return normalizePath(path);
+}
+
+/**
  * Get the directory name of a path
  */
 export function dirname(path: string): string {

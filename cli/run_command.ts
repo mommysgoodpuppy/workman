@@ -11,7 +11,9 @@ import {
 import { formatScheme } from "../src/type_printer.ts";
 import { cloneType } from "../src/types.ts";
 import type { Type } from "../src/types.ts";
-import { IO, relative, resolve, toFileUrl } from "../src/io.ts";
+import { dirname, fromFileUrl, IO, relative, resolve, toFileUrl } from "../src/io.ts";
+
+const WORKMAN_ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 import {
   RuntimeError as WorkmanRuntimeError,
   WorkmanError,
@@ -131,7 +133,7 @@ export async function runProgramCommand(
   try {
     const compileResult = await compileWorkmanGraph(filePath, {
       loader: {
-        stdRoots: [resolve("std")],
+        stdRoots: [resolve(WORKMAN_ROOT, "std")],
         preludeModule: "std/prelude",
         skipEvaluation: true,
       },

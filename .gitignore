@@ -14,3 +14,4 @@ andr/
 vscodeExtension/out/
 dist_zig/
 *.pdb
+.zig-cache/

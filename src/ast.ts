@@ -380,6 +380,7 @@ export interface TypeDeclaration extends NodeBase {
   typeParams: TypeParameter[];
   members: TypeAliasMember[];
   declarationKind?: "record";
+  opaque?: boolean; // True for extern/primitive types with no constructors
   infectious?: InfectiousModifier; // Optional infectious modifier
   export?: ExportModifier;
   leadingComments?: CommentBlock[];
@@ -542,9 +543,12 @@ export type TopLevel =
   | PolicyDeclaration
   | AnnotateDeclaration;
 
+export type ModuleMode = "runtime" | "raw";
+
 export interface Program {
   imports: ModuleImport[];
   reexports: ModuleReexport[];
   declarations: TopLevel[];
   trailingComments?: CommentBlock[];
+  mode?: ModuleMode;
 }

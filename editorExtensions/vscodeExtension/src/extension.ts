@@ -55,9 +55,9 @@ export async function activate(context: ExtensionContext) {
       `Workspace server dir: ${workspaceServerDir}`,
     );
 
-    if (!hasCompiled && !hasWorkspaceSource) {
+    if (!systemWm && !hasCompiled && !hasWorkspaceSource) {
       const message =
-        "Workman language server binary not found and workspace source missing. Run `npm run build-server` or ensure lsp/server/src/server.ts exists.";
+        "Workman language server not available: no system 'wm' command, no bundled binary, and no workspace source. Run `npm run build-server` or ensure lsp/server/src/server.ts exists.";
       outputChannel.appendLine(message);
       window.showErrorMessage(message);
       return;
@@ -367,22 +367,31 @@ async function cleanupOutputFile(target: string): Promise<void> {
 
 function detectSystemWm(outputChannel: import("vscode").OutputChannel): string | null {
   const isWindows = process.platform === "win32";
-  const command = isWindows ? "cmd.exe" : "wm";
-  const args = isWindows ? ["/c", "wm", "--help"] : ["--help"];
+  // On Windows, explicitly use wm.bat to avoid picking up a Unix shell script named 'wm'
+  const wmCmd = isWindows ? "wm.bat" : "wm";
+  const command = isWindows ? "cmd.exe" : wmCmd;
+  const args = isWindows ? ["/c", wmCmd, "--help"] : ["--help"];
+  outputChannel.appendLine(
+    `Detecting system wm: platform=${process.platform}, command=${command}, args=${JSON.stringify(args)}`,
+  );
   try {
     const result = spawnSync(command, args, {
-      stdio: "ignore",
+      stdio: "pipe",
     });
+    outputChannel.appendLine(
+      `Detection result: status=${result.status}, error=${result.error ?? "none"}, stderr=${result.stderr?.toString().slice(0, 200) ?? "none"}`,
+    );
     if (result.error || result.status !== 0) {
+      outputChannel.appendLine(`System '${wmCmd}' detection failed.`);
       return null;
     }
     outputChannel.appendLine(
-      "Using system 'wm' command for Workman language server.",
+      `Using system '${wmCmd}' command for Workman language server.`,
     );
-    return "wm";
+    return wmCmd;
   } catch (error) {
     outputChannel.appendLine(
-      `System 'wm' command not available: ${error}`,
+      `System '${wmCmd}' command not available: ${error}`,
     );
     return null;
   }

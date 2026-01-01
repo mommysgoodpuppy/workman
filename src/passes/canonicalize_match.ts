@@ -280,7 +280,12 @@ function rewriteIfExpression(expr: IfExpr): Expr {
   const elseBranch = canonicalizeExpr(expr.elseBranch);
 
   const truePattern = createBoolPattern(true, condition.span);
-  const falsePattern = createBoolPattern(false, condition.span);
+  // Use wildcard for else branch - catches false and any other value
+  const wildcardPattern: Pattern = {
+    kind: "wildcard",
+    span: condition.span,
+    id: nextNodeId(),
+  };
 
   const thenArm: MatchArm = {
     kind: "match_pattern",
@@ -293,10 +298,10 @@ function rewriteIfExpression(expr: IfExpr): Expr {
 
   const elseArm: MatchArm = {
     kind: "match_pattern",
-    pattern: falsePattern,
+    pattern: wildcardPattern,
     body: elseBranch,
     hasTrailingComma: false,
-    span: { start: falsePattern.span.start, end: elseBranch.span.end },
+    span: { start: wildcardPattern.span.start, end: elseBranch.span.end },
     id: nextNodeId(),
   };
 

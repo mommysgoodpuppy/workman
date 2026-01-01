@@ -120,6 +120,21 @@ class SurfaceParser {
     let hasPreviousItem = false;
     let lastTopLevel: ModuleImport | ModuleReexport | TopLevel | null = null;
 
+    // Check for @raw pragma at the start of the file
+    let mode: import("./ast.ts").ModuleMode | undefined;
+    if (this.checkSymbol("@")) {
+      this.consume(); // consume @
+      const pragmaToken = this.peek();
+      if (pragmaToken.kind === "identifier" && pragmaToken.value === "raw") {
+        this.consume();
+        mode = "raw";
+        // Consume optional semicolon after pragma
+        this.matchSymbol(";");
+      } else {
+        this.error(`Unknown module pragma: @${pragmaToken.value}`);
+      }
+    }
+
     while (!this.isEOF()) {
       // Check if there's a blank line before this declaration
       let hasBlankLineBefore = false;
@@ -229,6 +244,7 @@ class SurfaceParser {
       declarations,
       trailingComments:
         trailingComments.length > 0 ? trailingComments : undefined,
+      mode,
     };
   }
 
@@ -935,8 +951,20 @@ class SurfaceParser {
     const typeToken = this.expectKeyword("type");
     const nameToken = this.expectTypeName();
     const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
-    this.expectSymbol("=");
-    const members = this.parseTypeAliasMembers();
+    
+    // Support opaque types: `type Foo;` or `type Foo<T>;` without `= members`
+    // These are extern/primitive types with no Workman-side constructors
+    let members: TypeAliasMember[];
+    let isOpaque = false;
+    if (this.checkSymbol(";") || this.isEOF()) {
+      // Opaque type - no constructors
+      members = [];
+      isOpaque = true;
+    } else {
+      this.expectSymbol("=");
+      members = this.parseTypeAliasMembers();
+    }
+    
     const endToken = this.previous();
     const declaration: TypeDeclaration = {
       kind: "type",
@@ -946,6 +974,9 @@ class SurfaceParser {
       span: this.spanFrom(typeToken.start, endToken.end),
       id: nextNodeId(),
     };
+    if (isOpaque) {
+      declaration.opaque = true;
+    }
     if (exportToken) {
       declaration.export = {
         kind: "export",

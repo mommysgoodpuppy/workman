@@ -264,12 +264,15 @@ export interface CoreValueBinding {
   readonly origin?: NodeId;
 }
 
+export type CoreModuleMode = "runtime" | "raw";
+
 export interface CoreModule {
   readonly path: string;
   readonly imports: readonly CoreImport[];
   readonly typeDeclarations: readonly CoreTypeDeclaration[];
   readonly values: readonly CoreValueBinding[];
   readonly exports: readonly CoreExport[];
+  readonly mode?: CoreModuleMode;
 }
 
 export interface CoreModuleGraph {

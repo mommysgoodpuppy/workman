@@ -143,7 +143,7 @@ function seedImports(
   adtEnv: Map<string, TypeInfo>,
 ): void {
   for (const record of node.imports) {
-    if (record.kind === "js" || record.kind === "zig") {
+    if (record.kind === "js" || record.kind === "zig" || record.kind === "c_header") {
       for (const spec of record.specifiers) {
         env.set(spec.local, createForeignImportScheme(spec, record));
       }

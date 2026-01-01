@@ -58,7 +58,7 @@ export interface ModuleNode {
   exportedPrefixOperators: Set<string>;
 }
 
-type ModuleSourceKind = "workman" | "js" | "zig";
+type ModuleSourceKind = "workman" | "js" | "zig" | "c_header";
 
 export interface ModuleImportRecord {
   sourcePath: string;
@@ -508,11 +508,13 @@ async function summarizeGraph(
     const initialBindings = skipEvaluation
       ? undefined
       : new Map<string, RuntimeValue>();
-    const skipPrelude = isStdCoreModule(path);
+    // Skip prelude for std/core modules and for raw mode modules
+    const isRawMode = node.program.mode === "raw";
+    const skipPrelude = isStdCoreModule(path) || isRawMode;
     const initialRegistry = infectionPreludeRegistry.clone();
 
     for (const record of node.imports) {
-      if (record.kind === "js" || record.kind === "zig") {
+      if (record.kind === "js" || record.kind === "zig" || record.kind === "c_header") {
         seedForeignImports(record, initialEnv);
         continue;
       }
@@ -1118,7 +1120,7 @@ function resolveImports(
         path,
       );
     }
-    if ((kind === "js" || kind === "zig") && !existsSync(resolvedPath)) {
+    if ((kind === "js" || kind === "zig" || kind === "c_header") && !existsSync(resolvedPath)) {
       throw moduleError(
         `Foreign module '${entry.source}' imported by '${path}' was not found at '${resolvedPath}'`,
         path,
@@ -1260,22 +1262,16 @@ function resolveModuleSpecifier(
   specifier: string,
   options: ModuleLoaderOptions,
 ): string {
-  if (specifier.startsWith("zig:")) {
-    const rawPath = specifier.slice(4);
-    if (rawPath.startsWith("./") || rawPath.startsWith("../")) {
-      return resolve(dirname(importerPath), rawPath);
-    }
-    if (isAbsolute(rawPath)) {
-      return rawPath;
-    }
-    throw moduleError(
-      `Zig imports must be relative or absolute: '${specifier}' in '${importerPath}'`,
-    );
-  }
-
+  // Handle relative imports (including .zig and .h files)
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     const target = resolve(dirname(importerPath), specifier);
     return ensureWmExtension(target);
+  }
+
+  // Handle bare .zig or .h imports (treat as relative to importer)
+  const ext = extname(specifier).toLowerCase();
+  if (ext === ".zig" || ext === ".h") {
+    return resolve(dirname(importerPath), specifier);
   }
 
   if (isAbsolute(specifier)) {
@@ -1313,6 +1309,9 @@ function detectModuleKind(path: string): ModuleSourceKind {
   }
   if (extension === ".zig") {
     return "zig";
+  }
+  if (extension === ".h") {
+    return "c_header";
   }
   return "workman";
 }

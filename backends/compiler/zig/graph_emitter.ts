@@ -11,6 +11,7 @@ import { isStdCoreModule } from "../../../src/module_loader.ts";
 
 import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
 import { emitModule } from "./emitter.ts";
+import { emitRawModule } from "./raw_emitter.ts";
 
 export interface EmitGraphOptions {
   readonly outDir: string;
@@ -127,16 +128,23 @@ export async function emitModuleGraph(
         names: preludeValueExports,
       }
       : undefined;
-    const code = emitModule(module, graph, {
-      extension,
-      runtimeModule: runtimeSpecifier,
-      baseDir: dirname(outputPath),
-      preludeModule: preludeImport,
-      invokeEntrypoint: options.invokeEntrypoint ?? false,
-      forcedValueExports: module.path === entryModule.path
-        ? forcedEntryExports
-        : undefined,
-    });
+    
+    // Use raw emitter for raw mode modules, runtime emitter otherwise
+    const code = module.mode === "raw"
+      ? emitRawModule(module, graph, {
+          extension,
+          baseDir: dirname(outputPath),
+        })
+      : emitModule(module, graph, {
+          extension,
+          runtimeModule: runtimeSpecifier,
+          baseDir: dirname(outputPath),
+          preludeModule: preludeImport,
+          invokeEntrypoint: options.invokeEntrypoint ?? false,
+          forcedValueExports: module.path === entryModule.path
+            ? forcedEntryExports
+            : undefined,
+        });
     await writeTextFile(outputPath, code);
     moduleFiles.set(module.path, outputPath);
   }

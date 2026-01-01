@@ -63,6 +63,7 @@ export function lowerAnalyzedModule(
       analysis.layer1.recordDefaultExprs,
     ),
     exports: convertExports(node, input.summary),
+    mode: node.program?.mode,
   };
 }
 

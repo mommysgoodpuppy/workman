@@ -1,0 +1,13 @@
+.{
+    .name = .raylibtest,
+    .version = "0.0.1",
+    .fingerprint = 0x9015dfb14bf92bdf,
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{
+        .raylib = .{
+            .url = "https://github.com/raysan5/raylib/archive/refs/tags/5.0.tar.gz",
+            .hash = "N-V-__8AAGwkvwPCiEfKjodWc0roQ1WAK3ZMnZz03gV9vG_C",
+        },
+    },
+    .paths = .{""},
+}
