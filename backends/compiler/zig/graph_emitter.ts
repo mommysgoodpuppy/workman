@@ -19,13 +19,21 @@ export interface EmitGraphOptions {
   readonly runtimeFileName?: string;
   readonly runtimeSourcePath?: string;
   readonly invokeEntrypoint?: boolean;
+  /** If false, skip emitting runtime.zig */
+  readonly emitRuntime?: boolean;
+  /** If false, skip emitting main.zig wrapper */
+  readonly emitRootMain?: boolean;
+  /** If set, use this as the common root instead of computing from module paths */
+  readonly commonRoot?: string;
 }
 
 export interface EmitGraphResult {
   readonly moduleFiles: ReadonlyMap<string, string>;
-  readonly runtimePath: string;
+  readonly runtimePath?: string;
   readonly entryPath: string;
-  readonly rootPath: string;
+  readonly rootPath?: string;
+  /** .wm source file paths found in raw mode modules (relative paths as written) */
+  readonly wmSourcePaths: readonly string[];
 }
 
 export async function emitModuleGraph(
@@ -40,10 +48,12 @@ export async function emitModuleGraph(
     filePathFromModule(import.meta, "./runtime.zig");
 
   const modules = Array.from(graph.modules.values());
-  const absoluteModulePaths = modules.map((module) => resolve(module.path));
-  let commonRoot = common(absoluteModulePaths);
-  if (!commonRoot || commonRoot.length === 0) {
-    commonRoot = resolve(".");
+  let commonRoot: string;
+  if (options.commonRoot) {
+    commonRoot = resolve(options.commonRoot);
+  } else {
+    const absoluteModulePaths = modules.map((module) => resolve(module.path));
+    commonRoot = common(absoluteModulePaths) ?? resolve(".");
   }
   const preludePath = graph.prelude;
   const preludeModule = preludePath
@@ -69,16 +79,18 @@ export async function emitModuleGraph(
 
   const moduleFiles = new Map<string, string>();
   const copiedFiles = new Set<string>();
+  const collectedWmPaths = new Set<string>();
 
   for (const module of modules) {
     // Copy Zig imports
     for (const imp of module.imports) {
       if (imp.source.endsWith(".zig")) {
         const absoluteSource = resolve(imp.source);
-        const relativePath = normalizeSlashes(
-          relative(commonRoot, absoluteSource),
+        const destPath = computeOutputPathForFile(
+          absoluteSource,
+          commonRoot,
+          outDir,
         );
-        const destPath = join(outDir, relativePath);
 
         if (!copiedFiles.has(absoluteSource)) {
           const content = await IO.readTextFile(absoluteSource);
@@ -130,28 +142,41 @@ export async function emitModuleGraph(
       : undefined;
     
     // Use raw emitter for raw mode modules, runtime emitter otherwise
-    const code = module.mode === "raw"
-      ? emitRawModule(module, graph, {
-          extension,
-          baseDir: dirname(outputPath),
-        })
-      : emitModule(module, graph, {
-          extension,
-          runtimeModule: runtimeSpecifier,
-          baseDir: dirname(outputPath),
-          preludeModule: preludeImport,
-          invokeEntrypoint: options.invokeEntrypoint ?? false,
-          forcedValueExports: module.path === entryModule.path
-            ? forcedEntryExports
-            : undefined,
-        });
+    let code: string;
+    if (module.mode === "raw") {
+      const rawResult = emitRawModule(module, graph, {
+        extension,
+        baseDir: dirname(outputPath),
+      });
+      code = rawResult.code;
+      for (const wmPath of rawResult.wmSourcePaths) {
+        collectedWmPaths.add(wmPath);
+      }
+    } else {
+      code = emitModule(module, graph, {
+        extension,
+        runtimeModule: runtimeSpecifier,
+        baseDir: dirname(outputPath),
+        preludeModule: preludeImport,
+        invokeEntrypoint: options.invokeEntrypoint ?? false,
+        forcedValueExports: module.path === entryModule.path
+          ? forcedEntryExports
+          : undefined,
+      });
+    }
     await writeTextFile(outputPath, code);
     moduleFiles.set(module.path, outputPath);
   }
 
-  const runtimeTargetPath = join(outDir, runtimeFileName);
-  const runtimeCode = await IO.readTextFile(runtimeSourcePath);
-  await writeTextFile(runtimeTargetPath, runtimeCode);
+  const shouldEmitRuntime = options.emitRuntime ?? true;
+  const shouldEmitRootMain = options.emitRootMain ?? true;
+
+  let runtimeTargetPath: string | undefined;
+  if (shouldEmitRuntime) {
+    runtimeTargetPath = join(outDir, runtimeFileName);
+    const runtimeCode = await IO.readTextFile(runtimeSourcePath);
+    await writeTextFile(runtimeTargetPath, runtimeCode);
+  }
 
   const entryOutputPath = computeOutputPath(
     entryModule,
@@ -159,15 +184,19 @@ export async function emitModuleGraph(
     outDir,
     extension,
   );
-  const rootMainPath = join(outDir, "main.zig");
-  const rootMainCode = buildRootMain(entryOutputPath, outDir, entryModule);
-  await writeTextFile(rootMainPath, rootMainCode);
+  let rootMainPath: string | undefined;
+  if (shouldEmitRootMain) {
+    rootMainPath = join(outDir, "main.zig");
+    const rootMainCode = buildRootMain(entryOutputPath, outDir, entryModule);
+    await writeTextFile(rootMainPath, rootMainCode);
+  }
 
   return {
     moduleFiles,
     runtimePath: runtimeTargetPath,
     entryPath: entryOutputPath,
     rootPath: rootMainPath,
+    wmSourcePaths: Array.from(collectedWmPaths),
   };
 }
 
@@ -179,11 +208,38 @@ function computeOutputPath(
 ): string {
   const absolutePath = resolve(module.path);
   const relativePath = normalizeSlashes(relative(commonRoot, absolutePath));
-  const currentExt = extname(relativePath);
+  const rebasedPath = rebaseIfOutsideRoot(relativePath, absolutePath);
+  const currentExt = extname(rebasedPath);
   const withoutExt = currentExt.length > 0
-    ? relativePath.slice(0, relativePath.length - currentExt.length)
-    : relativePath;
+    ? rebasedPath.slice(0, rebasedPath.length - currentExt.length)
+    : rebasedPath;
   return join(outDir, `${withoutExt}${extension}`);
+}
+
+function computeOutputPathForFile(
+  absolutePath: string,
+  commonRoot: string,
+  outDir: string,
+): string {
+  const relativePath = normalizeSlashes(relative(commonRoot, absolutePath));
+  const rebasedPath = rebaseIfOutsideRoot(relativePath, absolutePath);
+  return join(outDir, rebasedPath);
+}
+
+function rebaseIfOutsideRoot(
+  relativePath: string,
+  absolutePath: string,
+): string {
+  if (relativePath === ".." || relativePath.startsWith("../")) {
+    const sanitized = sanitizeAbsolutePath(absolutePath);
+    return normalizeSlashes(join(".wm-cache", sanitized));
+  }
+  return relativePath;
+}
+
+function sanitizeAbsolutePath(path: string): string {
+  const normalized = normalizeSlashes(path).replace(/:/g, "_");
+  return normalized.replace(/^\/+/, "");
 }
 
 function makeModuleSpecifier(fromPath: string, toPath: string): string {

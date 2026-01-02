@@ -2,32 +2,32 @@ from "std/option/core" import { Some, None };
 from "std/list/core" import { Empty, Link };
 export from "std/option/core" type Option(..);
 
-export let map = match(f, option) {
+export let map = match(f, option) => {
   (f, Some(value)) => { Some(f(value)) },
   (_, None) => { None }
 };
 
-export let flatMap = match(f, option) {
+export let flatMap = match(f, option) =>{
   (f, Some(value)) => { f(value) },
   (_, None) => { None }
 };
 
-export let withDefault = match(defaultValue, option) {
+export let withDefault = match(defaultValue, option) => {
   (defaultValue, Some(value)) => { value },
   (defaultValue, None) => { defaultValue }
 };
 
-export let orElse = match(fallback, option) {
+export let orElse = match(fallback, option) => {
   (fallback, Some(value)) => { Some(value) },
   (fallback, None) => { fallback() }
 };
 
-export let fromBool = match(condition, value) {
+export let fromBool = match(condition, value) => {
   (true, value) => { Some(value) },
   (false, _) => { None }
 };
 
-export let toList = match(option) {
+export let toList = match(option) => {
   Some(value) => { Link(value, Empty) },
   None => { Empty }
 };

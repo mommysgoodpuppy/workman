@@ -1,0 +1,23 @@
+@raw;
+
+let zig = zigImport("std");
+from "std/zig/types.wm" import { Optional };
+
+-- Raw-only intrinsics lowered by the Zig raw emitter.
+let zig_optional_is_non_null: (Optional<T>) => Bool = ?;
+let zig_optional_unwrap: (Optional<T>) => T = ?;
+let zig_optional_unwrap_or: (Optional<T>, T) => T = ?;
+
+export let isSome = (value: Optional<T>): Bool => { zig_optional_is_non_null(value) };
+export let isNone = (value: Optional<T>): Bool => { !(zig_optional_is_non_null(value)) };
+export let unwrap = (value: Optional<T>): T => { zig_optional_unwrap(value) };
+export let unwrapOr = (value: Optional<T>, defaultValue: T): T => {
+  zig_optional_unwrap_or(value, defaultValue)
+};
+export let expect = (value: Optional<T>, message: string): T => {
+  if (zig_optional_is_non_null(value)) {
+    zig_optional_unwrap(value)
+  } else {
+    zig.debug.panic("{s}", .{message})
+  }
+};

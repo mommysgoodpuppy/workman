@@ -16,6 +16,17 @@ interface NameState {
   counter: number;
 }
 
+function getOrCreateCImportBinding(ctx: EmitContext, source: string): string {
+  const existing = ctx.cImports.get(source);
+  if (existing) {
+    return existing;
+  }
+  const binding = allocateTempName(ctx.state, "c_import");
+  ctx.cImports.set(source, binding);
+  ctx.hoisted.push(`const ${binding} = @cImport(@cInclude("${source}"));`);
+  return binding;
+}
+
 interface VarRef {
   value: string;
   address: string;
@@ -24,14 +35,32 @@ interface VarRef {
 interface EmitContext {
   state: NameState;
   scope: Map<string, VarRef>;
+  typeBindings: Map<string, string>;
+  captureInfo?: Map<string, string[]>;
   options: EmitModuleOptions;
   modulePath: string;
   hoisted: string[];
+  /** Collected .wm source file paths referenced in string literals */
+  wmSourcePaths: Set<string>;
+  /** Module-level names (imports and top-level bindings) - these don't need to be captured */
+  moduleNames: Set<string>;
+  /** Map of function names to their captured variables (for let_rec) */
+  capturedVarsMap: Map<string, string[]>;
+  /** Cached c header imports so we only @cImport each header once */
+  cImports: Map<string, string>;
 }
 
 export interface EmitModuleOptions {
   readonly extension?: string;
   readonly baseDir?: string;
+  /** If true, rewrite .wm paths to .zig in string literals */
+  readonly rewriteWmPaths?: boolean;
+}
+
+export interface EmitRawResult {
+  readonly code: string;
+  /** .wm source file paths found in string literals (before rewriting) */
+  readonly wmSourcePaths: readonly string[];
 }
 
 const RESERVED = new Set<string>([
@@ -61,6 +90,20 @@ const RAW_OPERATOR_MAP = new Map<string, string>([
   ["__op_||", "or"],
 ]);
 
+const RAW_OMITTED_BINDINGS = new Set<string>([
+  "zig_optional_is_non_null",
+  "zig_optional_unwrap",
+  "zig_optional_unwrap_or",
+]);
+
+const RAW_STD_ZIG_OPTION_HELPERS = new Set<string>([
+  "isSome",
+  "isNone",
+  "unwrap",
+  "unwrapOr",
+  "expect",
+]);
+
 // Zig primitive types that should not be imported (they're built-in)
 const ZIG_PRIMITIVES = new Set<string>([
   // Signed integers
@@ -84,17 +127,39 @@ export function emitRawModule(
   module: CoreModule,
   _graph: CoreModuleGraph,
   options: EmitModuleOptions = {},
-): string {
+): EmitRawResult {
   const extension = options.extension ?? ".zig";
+  const isStdZigOption = normalizeSlashes(module.path)
+    .toLowerCase()
+    .endsWith("/std/zig/option.wm");
 
   const state: NameState = { used: new Set(), counter: 0 };
   const scope = new Map<string, VarRef>();
+  
+  // Collect module-level names (imports and top-level bindings)
+  const moduleNames = new Set<string>();
+  for (const imp of module.imports) {
+    for (const spec of imp.specifiers) {
+      if (spec.kind === "value") {
+        moduleNames.add(spec.local);
+      }
+    }
+  }
+  for (const binding of module.values) {
+    moduleNames.add(binding.name);
+  }
+  
   const ctx: EmitContext = {
     state,
     scope,
+    typeBindings: new Map(),
     options: { ...options, extension },
     modulePath: module.path,
     hoisted: [],
+    wmSourcePaths: new Set(),
+    moduleNames,
+    capturedVarsMap: new Map(),
+    cImports: new Map(),
   };
 
   preallocateNames(module, ctx);
@@ -104,7 +169,9 @@ export function emitRawModule(
 
   // Emit imports (skip Zig primitives - they're built-in)
   for (const imp of module.imports) {
-    const relPath = computeRelativePath(module.path, imp.source, extension, options.baseDir);
+    // Check if this is a C header import
+    const isCHeader = imp.source.endsWith(".h");
+    
     for (const spec of imp.specifiers) {
       if (spec.kind === "value") {
         // Skip importing Zig primitive types - they're built-in
@@ -112,7 +179,15 @@ export function emitRawModule(
           continue;
         }
         const ref = resolveName(ctx.scope, spec.local, ctx.state);
-        lines.push(`const ${ref} = @import("${relPath}").${sanitizeIdentifier(spec.imported, ctx.state)};`);
+        ctx.typeBindings.set(spec.local, ref);
+        
+        if (isCHeader) {
+          const cImportBinding = getOrCreateCImportBinding(ctx, imp.source);
+          lines.push(`const ${ref} = ${cImportBinding}.${sanitizeIdentifier(spec.imported, ctx.state)};`);
+        } else {
+          const relPath = computeRelativePath(module.path, imp.source, extension, options.baseDir);
+          lines.push(`const ${ref} = @import("${relPath}").${sanitizeIdentifier(spec.imported, ctx.state)};`);
+        }
       }
     }
   }
@@ -132,14 +207,21 @@ export function emitRawModule(
 
   // Emit value bindings
   for (const binding of module.values) {
+    if (RAW_OMITTED_BINDINGS.has(binding.name)) {
+      continue;
+    }
     const bindingRef = resolveName(ctx.scope, binding.name, ctx.state);
     // main must always be pub for Zig's entry point
     const isExported = exportSet.has(binding.name) || binding.name === "main";
     
     // For lambdas, emit as named functions
     if (binding.value.kind === "lambda") {
-      const fnCode = emitNamedLambda(binding.value, bindingRef, ctx);
-      lines.push(`${isExported ? "pub " : ""}${fnCode}`);
+      if (isStdZigOption && RAW_STD_ZIG_OPTION_HELPERS.has(binding.name)) {
+        lines.push(emitRawZigOptionHelper(binding.name, bindingRef, isExported));
+      } else {
+        const fnCode = emitNamedLambda(binding.value, bindingRef, ctx);
+        lines.push(`${isExported ? "pub " : ""}${fnCode}`);
+      }
     } else {
       const expr = emitExpr(binding.value, ctx);
       lines.push(`${isExported ? "pub " : ""}const ${bindingRef} = ${expr};`);
@@ -150,7 +232,32 @@ export function emitRawModule(
     lines.unshift(...ctx.hoisted);
   }
 
-  return `${lines.join("\n")}\n`;
+  return {
+    code: `${lines.join("\n")}\n`,
+    wmSourcePaths: Array.from(ctx.wmSourcePaths),
+  };
+}
+
+function emitRawZigOptionHelper(
+  name: string,
+  ref: string,
+  isExported: boolean,
+): string {
+  const prefix = isExported ? "pub " : "";
+  switch (name) {
+    case "isSome":
+      return `${prefix}fn ${ref}(value: anytype) bool { return (value != null); }`;
+    case "isNone":
+      return `${prefix}fn ${ref}(value: anytype) bool { return (value == null); }`;
+    case "unwrap":
+      return `${prefix}fn ${ref}(value: anytype) @TypeOf((value).?) { return (value).?; }`;
+    case "unwrapOr":
+      return `${prefix}fn ${ref}(value: anytype, defaultValue: anytype) @TypeOf((value) orelse defaultValue) { return (value) orelse defaultValue; }`;
+    case "expect":
+      return `${prefix}fn ${ref}(value: anytype, message: []const u8) @TypeOf((value).?) { if (value != null) return (value).?; zig.debug.panic("{s}", .{message}); }`;
+    default:
+      return `${prefix}fn ${ref}() void { }`;
+  }
 }
 
 function preallocateNames(module: CoreModule, ctx: EmitContext): void {
@@ -165,7 +272,7 @@ function computeRelativePath(
   extension: string,
   baseDir?: string,
 ): string {
-  const fromDir = dirname(fromPath);
+  const fromDir = baseDir ?? dirname(fromPath);
   let rel = relative(fromDir, toPath);
   const ext = extname(rel);
   if (ext) {
@@ -175,6 +282,10 @@ function computeRelativePath(
     rel = "./" + rel;
   }
   return rel.replace(/\\/g, "/");
+}
+
+function normalizeSlashes(path: string): string {
+  return path.replace(/\\/g, "/");
 }
 
 function sanitizeIdentifier(name: string, state: NameState): string {
@@ -232,8 +343,11 @@ function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): strin
 function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
   switch (expr.kind) {
     case "literal":
-      return emitLiteral(expr.literal);
+      return emitLiteral(expr.literal, ctx);
     case "var":
+      if (expr.name === "null" && !ctx.scope.has("null")) {
+        return "null";
+      }
       return resolveName(ctx.scope, expr.name, ctx.state);
     case "lambda":
       return emitLambda(expr, ctx);
@@ -264,7 +378,7 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
   }
 }
 
-function emitLiteral(lit: CoreLiteral): string {
+function emitLiteral(lit: CoreLiteral, ctx: EmitContext): string {
   switch (lit.kind) {
     case "int":
       return String(lit.value);
@@ -272,8 +386,17 @@ function emitLiteral(lit: CoreLiteral): string {
       return lit.value ? "true" : "false";
     case "char":
       return `'\\x${lit.value.toString(16).padStart(2, "0")}'`;
-    case "string":
-      return `"${lit.value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
+    case "string": {
+      let value = lit.value;
+      // Track and optionally rewrite .wm paths to .zig
+      if (value.endsWith(".wm")) {
+        ctx.wmSourcePaths.add(value);
+        if (ctx.options.rewriteWmPaths !== false) {
+          value = value.slice(0, -3) + ".zig";
+        }
+      }
+      return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
+    }
     case "unit":
       return "{}";
   }
@@ -283,14 +406,19 @@ function emitRecord(
   expr: CoreExpr & { kind: "record" },
   ctx: EmitContext,
 ): string {
-  if (expr.fields.length === 0) {
-    return ".{}";
-  }
   const fields = expr.fields.map((field) => {
     const value = emitExpr(field.value, ctx);
     return `.${sanitizeIdentifier(field.name, ctx.state)} = ${value}`;
   }).join(", ");
-  return `.{ ${fields} }`;
+  const literal = expr.fields.length === 0 ? ".{}" : `.{ ${fields} }`;
+  const recordTypeRef = resolveRecordTypeReference(expr.type, ctx);
+  if (recordTypeRef) {
+    if (expr.fields.length === 0) {
+      return `${recordTypeRef}{}`;
+    }
+    return `${recordTypeRef}{ ${fields} }`;
+  }
+  return literal;
 }
 
 function emitNamedLambda(
@@ -341,12 +469,43 @@ function emitCall(
       return `(${left} ${op} ${right})`;
     }
   }
+
+  if (expr.callee.kind === "var") {
+    if (expr.callee.name === "zig_optional_is_non_null" && expr.args.length === 1) {
+      const value = emitExpr(expr.args[0], ctx);
+      return `(${value} != null)`;
+    }
+    if (expr.callee.name === "zig_optional_unwrap" && expr.args.length === 1) {
+      const value = emitExpr(expr.args[0], ctx);
+      return `(${value}).?`;
+    }
+    if (expr.callee.name === "zig_optional_unwrap_or" && expr.args.length === 2) {
+      const value = emitExpr(expr.args[0], ctx);
+      const fallback = emitExpr(expr.args[1], ctx);
+      return `(${value} orelse ${fallback})`;
+    }
+  }
   
   // Handle zigImport("module") -> @import("module")
   if (expr.callee.kind === "var" && expr.callee.name === "zigImport") {
     if (expr.args.length === 1 && expr.args[0].kind === "literal" && expr.args[0].literal.kind === "string") {
       const moduleName = expr.args[0].literal.value;
       return `@import("${moduleName}")`;
+    }
+  }
+  
+  // Check if this is a call to a function with captured vars
+  if (expr.callee.kind === "var") {
+    const captureMap = ctx.captureInfo ?? ctx.capturedVarsMap;
+    const captures = captureMap.get(expr.callee.name);
+    if (captures && captures.length > 0) {
+      const fn = resolveName(ctx.scope, expr.callee.name, ctx.state);
+      const args = expr.args.map((arg) => emitExpr(arg, ctx));
+      // Add captured vars as extra args
+      for (const v of captures) {
+        args.push(resolveName(ctx.scope, v, ctx.state));
+      }
+      return `${fn}(${args.join(", ")})`;
     }
   }
   
@@ -361,16 +520,19 @@ function emitLet(
 ): string {
   const scope = new Map(ctx.scope);
   const value = emitExpr(expr.binding.value, ctx);
-  const innerCtx = { ...ctx, scope };
-  const body = emitExpr(expr.body, innerCtx);
   const label = allocateTempName(ctx.state, "blk");
   
   // For discarded statement results (__stmt_*), use _ to avoid unused variable warning
   if (expr.binding.name.startsWith("__stmt")) {
+    const innerCtx = { ...ctx, scope };
+    const body = emitExpr(expr.body, innerCtx);
     return `${label}: { _ = ${value}; break :${label} ${body}; }`;
   }
   
+  // Bind the variable BEFORE emitting the body so it's in scope
   const ref = bindLocal(scope, expr.binding.name, ctx.state);
+  const innerCtx = { ...ctx, scope };
+  const body = emitExpr(expr.body, innerCtx);
   return `${label}: { const ${ref.value} = ${value}; break :${label} ${body}; }`;
 }
 
@@ -379,8 +541,12 @@ function emitMatch(
   ctx: EmitContext,
 ): string {
   const scrutinee = emitExpr(expr.scrutinee, ctx);
-  const cases = expr.cases.map((c) => emitMatchCase(c, scrutinee, ctx)).join(", ");
-  return `switch (${scrutinee}) { ${cases} }`;
+  const clauses = expr.cases.map((c) => emitMatchCase(c, scrutinee, ctx));
+  if (expr.fallback) {
+    const fallbackBody = emitExpr(expr.fallback, ctx);
+    clauses.push(`else => ${fallbackBody}`);
+  }
+  return `switch (${scrutinee}) { ${clauses.join(", ")} }`;
 }
 
 function emitMatchCase(
@@ -388,12 +554,34 @@ function emitMatchCase(
   scrutinee: string,
   ctx: EmitContext,
 ): string {
-  const pattern = emitPattern(matchCase.pattern, ctx);
   const scope = new Map(ctx.scope);
   bindPatternVars(matchCase.pattern, scope, ctx.state);
   const innerCtx = { ...ctx, scope };
   const body = emitExpr(matchCase.body, innerCtx);
+  if (isWildcardPattern(matchCase.pattern)) {
+    return `else => ${body}`;
+  }
+  if (matchCase.pattern.kind === "constructor" && matchCase.pattern.fields.length > 0) {
+    const args = matchCase.pattern.fields.map((a) => emitPattern(a, ctx)).join(", ");
+    return `.${matchCase.pattern.constructor} => |${args}| ${body}`;
+  }
+  const pattern = emitPattern(matchCase.pattern, ctx);
+  if (pattern === "_") {
+    return `else => ${body}`;
+  }
   return `${pattern} => ${body}`;
+}
+
+function isWildcardPattern(pattern: CorePattern): boolean {
+  switch (pattern.kind) {
+    case "wildcard":
+    case "all_errors":
+      return true;
+    case "binding":
+      return pattern.name === "_";
+    default:
+      return false;
+  }
 }
 
 function emitPattern(pattern: CorePattern, ctx: EmitContext): string {
@@ -403,13 +591,12 @@ function emitPattern(pattern: CorePattern, ctx: EmitContext): string {
     case "binding":
       return sanitizeIdentifier(pattern.name, ctx.state);
     case "literal":
-      return emitLiteral(pattern.literal);
+      return emitLiteral(pattern.literal, ctx);
     case "constructor":
       if (pattern.fields.length === 0) {
         return `.${pattern.constructor}`;
       }
-      const args = pattern.fields.map((a) => emitPattern(a, ctx)).join(", ");
-      return `.${pattern.constructor} => |${args}|`;
+      return `.${pattern.constructor}`;
     case "tuple":
       const elements = pattern.elements.map((e) => emitPattern(e, ctx)).join(", ");
       return `.{ ${elements} }`;
@@ -534,20 +721,207 @@ function emitTuple(
   return `.{ ${elements} }`;
 }
 
+function resolveRecordTypeReference(type: Type | undefined, ctx: EmitContext): string | null {
+  if (!type) return null;
+  if (type.kind === "constructor") {
+    const aliased = ctx.typeBindings.get(type.name);
+    if (aliased) {
+      return aliased;
+    }
+    const scoped = ctx.scope.get(type.name);
+    if (scoped) {
+      return scoped.value;
+    }
+    return sanitizeIdentifier(type.name, ctx.state);
+  }
+  return null;
+}
+
 function emitLetRec(
   expr: CoreExpr & { kind: "let_rec" },
   ctx: EmitContext,
 ): string {
   const scope = new Map(ctx.scope);
-  const bindings: string[] = [];
+  const refs: string[] = [];
+  const capturedVarsMap = new Map<string, string[]>();
+  
+  // First pass: bind all recursive function names so they can reference each other
   for (const binding of expr.bindings) {
-    const ref = bindLocal(scope, binding.name, ctx.state);
-    bindings.push(`const ${ref.value} = ${emitExpr(binding.value, { ...ctx, scope })};`);
+    bindLocal(scope, binding.name, ctx.state);
   }
+  
+  // For let rec, we need to hoist lambda definitions to module level
+  // but also handle captured variables by passing them as extra parameters
+  for (const binding of expr.bindings) {
+    const ref = scope.get(binding.name)!;
+    refs.push(ref.value);
+    
+    if (binding.value.kind === "lambda") {
+      // Find free variables that are captured from outer scope
+      const lambdaParams = new Set(binding.value.params);
+      const recNames = new Set(expr.bindings.map(b => b.name));
+      const freeVars = collectFreeVars(binding.value.body, lambdaParams, recNames);
+      
+      // Filter out module-level names and built-in operators
+      const capturedVars = freeVars.filter(v => 
+        !ctx.moduleNames.has(v) && !RAW_OPERATOR_MAP.has(v)
+      );
+      capturedVarsMap.set(binding.name, capturedVars);
+      
+      // Also store in context so emitCall can find it
+      ctx.capturedVarsMap.set(binding.name, capturedVars);
+      
+      // Hoist the function with extra parameters for captured vars
+      const fnCode = emitNamedLambdaWithCaptures(binding.value, ref.value, capturedVars, { ...ctx, scope });
+      ctx.hoisted.push(fnCode);
+    } else {
+      // Non-lambda bindings can't really be recursive, emit inline
+      ctx.hoisted.push(`const ${ref.value} = ${emitExpr(binding.value, { ...ctx, scope })};`);
+    }
+  }
+  
+  const innerCtx = { ...ctx, scope, captureInfo: mergeCaptureInfo(ctx, capturedVarsMap) };
+  
+  return emitExpr(expr.body, innerCtx);
+}
+
+/** Collect free variables in an expression that aren't bound locally */
+function collectFreeVars(expr: CoreExpr, bound: Set<string>, recNames: Set<string>): string[] {
+  const free = new Set<string>();
+  
+  function walk(e: CoreExpr, localBound: Set<string>): void {
+    switch (e.kind) {
+      case "var":
+        if (!localBound.has(e.name) && !recNames.has(e.name)) {
+          free.add(e.name);
+        }
+        break;
+      case "lambda": {
+        const newBound = new Set(localBound);
+        for (const p of e.params) newBound.add(p);
+        walk(e.body, newBound);
+        break;
+      }
+      case "let": {
+        walk(e.binding.value, localBound);
+        const newBound = new Set(localBound);
+        newBound.add(e.binding.name);
+        walk(e.body, newBound);
+        break;
+      }
+      case "let_rec": {
+        const newBound = new Set(localBound);
+        for (const b of e.bindings) newBound.add(b.name);
+        for (const b of e.bindings) walk(b.value, newBound);
+        walk(e.body, newBound);
+        break;
+      }
+      case "call":
+        walk(e.callee, localBound);
+        for (const arg of e.args) walk(arg, localBound);
+        break;
+      case "if":
+        walk(e.condition, localBound);
+        walk(e.thenBranch, localBound);
+        walk(e.elseBranch, localBound);
+        break;
+      case "match":
+        walk(e.scrutinee, localBound);
+        for (const c of e.cases) {
+          const caseBound = new Set(localBound);
+          collectPatternBindings(c.pattern, caseBound);
+          walk(c.body, caseBound);
+        }
+        break;
+      case "record":
+        for (const f of e.fields) walk(f.value, localBound);
+        break;
+      case "tuple":
+        for (const el of e.elements) walk(el, localBound);
+        break;
+      case "tuple_get":
+        walk(e.target, localBound);
+        break;
+      case "data":
+        for (const f of e.fields) walk(f, localBound);
+        break;
+      case "prim":
+        for (const arg of e.args) walk(arg, localBound);
+        break;
+      case "literal":
+      case "enum_literal":
+        break;
+    }
+  }
+  
+  walk(expr, bound);
+  return Array.from(free);
+}
+
+function collectPatternBindings(pattern: CorePattern, bound: Set<string>): void {
+  switch (pattern.kind) {
+    case "binding":
+      bound.add(pattern.name);
+      break;
+    case "constructor":
+      for (const f of pattern.fields) collectPatternBindings(f, bound);
+      break;
+    case "tuple":
+      for (const el of pattern.elements) collectPatternBindings(el, bound);
+      break;
+  }
+}
+
+function emitNamedLambdaWithCaptures(
+  expr: CoreExpr & { kind: "lambda" },
+  name: string,
+  capturedVars: string[],
+  ctx: EmitContext,
+): string {
+  const paramTypes = getParamTypes(expr.type, expr.params.length);
+  
+  // Create a fresh scope for the function parameters
+  const scope = new Map<string, VarRef>();
+  
+  // Build params list: original params + captured vars
+  // Bind each parameter FIRST so we get consistent names
+  const params: string[] = [];
+  for (let i = 0; i < expr.params.length; i++) {
+    const ref = bindLocal(scope, expr.params[i], ctx.state);
+    const ptype = paramTypes[i] ? emitType(paramTypes[i]) : "anytype";
+    params.push(`${ref.value}: ${ptype}`);
+  }
+  
+  // Add captured vars as anytype parameters
+  for (const v of capturedVars) {
+    const ref = bindLocal(scope, v, ctx.state);
+    params.push(`${ref.value}: anytype`);
+  }
+  
   const innerCtx = { ...ctx, scope };
-  const body = emitExpr(expr.body, innerCtx);
-  const label = allocateTempName(ctx.state, "blk");
-  return `${label}: { ${bindings.join(" ")} break :${label} ${body}; }`;
+  
+  // For recursive calls within the body, we need to pass captured vars
+  const capturesMap = new Map<string, string[]>();
+  capturesMap.set(name, capturedVars);
+  const bodyCtx = { ...innerCtx, captureInfo: mergeCaptureInfo(ctx, capturesMap) };
+  const body = emitExpr(expr.body, bodyCtx);
+  const returnType = emitType(expr.type);
+  
+  return `fn ${name}(${params.join(", ")}) ${returnType} { return ${body}; }`;
+}
+
+function mergeCaptureInfo(
+  ctx: EmitContext,
+  localCaptures: Map<string, string[]>,
+): Map<string, string[]> {
+  if (!ctx.captureInfo) {
+    return localCaptures;
+  }
+  const merged = new Map(ctx.captureInfo);
+  for (const [name, captures] of localCaptures.entries()) {
+    merged.set(name, captures);
+  }
+  return merged;
 }
 
 function emitType(type: Type): string {
@@ -566,6 +940,14 @@ function emitType(type: Type): string {
       // For function types, we need the return type
       return emitType(getReturnType(type));
     case "constructor":
+      // Optional<T> maps to Zig ?T
+      if (type.name === "Optional" && type.args.length === 1) {
+        return `?${emitType(type.args[0])}`;
+      }
+      // Null is a raw-only placeholder that maps to Zig's null-capable type.
+      if (type.name === "Null" && type.args.length === 0) {
+        return "?anyopaque";
+      }
       // Handle Ptr<T> -> *T
       if (type.name === "Ptr" && type.args.length === 1) {
         return `*${emitType(type.args[0])}`;

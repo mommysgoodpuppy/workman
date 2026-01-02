@@ -324,9 +324,21 @@ class SurfaceParser {
         const importedToken = this.expectImportableName();
         let endToken = importedToken;
         let localToken = importedToken;
+        if (importedToken.kind === "string" && !this.checkKeyword("as")) {
+          throw this.error(
+            "String import specifiers must use 'as <binding>'",
+            this.peek(),
+          );
+        }
         if (this.matchKeyword("as")) {
           localToken = this.expectImportBindingName();
           endToken = localToken;
+        } else if (importedToken.kind === "string") {
+          // Defensive - should have thrown above, but keep TypeScript happy
+          throw this.error(
+            "String import specifiers must use 'as <binding>'",
+            importedToken,
+          );
         }
         const specifier: NamedImport = {
           kind: "named",
@@ -399,7 +411,11 @@ class SurfaceParser {
 
   private expectImportableName(): Token {
     const token = this.consume();
-    if (token.kind === "identifier" || token.kind === "constructor") {
+    if (
+      token.kind === "identifier" ||
+      token.kind === "constructor" ||
+      token.kind === "string"
+    ) {
       return token;
     }
     throw this.error("Expected import name", token);

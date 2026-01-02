@@ -3,7 +3,7 @@ import { startRepl } from "./tools/repl.ts";
 import { runFormatter } from "./tools/fmt.ts";
 import { WorkmanError } from "./src/error.ts";
 import { HELP_TEXT } from "./cli/help.ts";
-import { compileToDirectory, parseCompileArgs } from "./cli/compile.ts";
+import { compileToDirectory, parseCompileArgs, runBuildCommand } from "./cli/compile.ts";
 import { runProgramCommand } from "./cli/run_command.ts";
 import { startWorkmanLanguageServer } from "./lsp/server/src/server.ts";
 
@@ -48,10 +48,21 @@ async function runCli(): Promise<void> {
     IO.exit(0);
   }
 
-  if (command === "compile" || command === "build") {
+  if (command === "compile") {
     try {
       const { entryPath, outDir, backend } = parseCompileArgs(args.slice(1));
       await compileToDirectory(entryPath, outDir, backend);
+    } catch (error) {
+      handleCliError(error);
+      IO.exit(1);
+    }
+    IO.exit(0);
+  }
+
+  if (command === "build") {
+    try {
+      // 'wm build' works like 'zig build' - auto-detects build.wm
+      await runBuildCommand(args.slice(1));
     } catch (error) {
       handleCliError(error);
       IO.exit(1);

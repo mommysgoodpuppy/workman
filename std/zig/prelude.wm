@@ -8,7 +8,7 @@ from "std/zig/types.wm" import {
   i8, i16, i32, i64, i128, isize,
   u8, u16, u32, u64, u128, usize,
   f16, f32, f64, f128,
-  bool, void
+  void, Optional, Null
 };
 
 -- Re-export types
@@ -28,8 +28,9 @@ export from "std/zig/types.wm" type f16;
 export from "std/zig/types.wm" type f32;
 export from "std/zig/types.wm" type f64;
 export from "std/zig/types.wm" type f128;
-export from "std/zig/types.wm" type bool;
 export from "std/zig/types.wm" type void;
+export from "std/zig/types.wm" type Optional;
+export from "std/zig/types.wm" type Null;
 
 -- Polymorphic arithmetic operations
 -- These use nativeAdd etc. which are lowered to Zig's + operator

@@ -663,8 +663,12 @@ async function executeZigModule(
     const emitResult = await emitZigModuleGraph(coreGraph, {
       outDir: tempDir,
     });
+    const rootPath = emitResult.rootPath;
+    if (!rootPath) {
+      throw new Error("Zig backend did not produce a root module to run");
+    }
     const command = new Deno.Command("zig", {
-      args: ["run", emitResult.rootPath],
+      args: ["run", rootPath],
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",

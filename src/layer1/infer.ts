@@ -521,6 +521,43 @@ function instantiateRecordAlias(
   return applied.kind === "record" ? applied : null;
 }
 
+function buildRecordConstructorType(
+  recordName: string,
+  recordInfo: TypeInfo,
+  fields: Map<string, Type>,
+): Type {
+  const args: (Type | null)[] = Array(recordInfo.recordFields!.size).fill(null);
+  for (const [fieldName, fieldType] of fields.entries()) {
+    const index = recordInfo.recordFields!.get(fieldName);
+    if (index !== undefined) {
+      args[index] = fieldType;
+    }
+  }
+  if (recordInfo.alias?.kind === "record") {
+    for (const [fieldName, index] of recordInfo.recordFields!.entries()) {
+      if (!args[index]) {
+        const aliasFieldType = recordInfo.alias.fields.get(fieldName);
+        if (aliasFieldType) {
+          args[index] = aliasFieldType;
+        }
+      }
+    }
+  }
+  for (let index = 0; index < args.length; index++) {
+    if (!args[index]) {
+      args[index] = unknownType({
+        kind: "incomplete",
+        reason: "record_missing_field",
+      });
+    }
+  }
+  return {
+    kind: "constructor",
+    name: recordName,
+    args: args.map((arg) => arg!),
+  };
+}
+
 function storeAnnotationType(
   ctx: Context,
   annotation: TypeExpr,
@@ -1722,48 +1759,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               unify(ctx, aliasFieldType, fieldType);
             }
           }
-          return recordExprType(ctx, expr, aliasInstance);
         }
-
-        const args: (Type | null)[] = Array(recordInfo.recordFields!.size).fill(
-          null,
+        const constructorType = buildRecordConstructorType(
+          recordName,
+          recordInfo,
+          fields,
         );
-        for (const [fieldName, fieldType] of fields.entries()) {
-          const index = recordInfo.recordFields!.get(fieldName);
-          if (index !== undefined) {
-            args[index] = fieldType;
-          }
-        }
-        if (recordInfo.alias?.kind === "record") {
-          for (const [fieldName, index] of recordInfo.recordFields!.entries()) {
-            if (!args[index]) {
-              const aliasFieldType = recordInfo.alias.fields.get(fieldName);
-              if (aliasFieldType) {
-                args[index] = aliasFieldType;
-              }
-            }
-          }
-        }
-        for (let index = 0; index < args.length; index++) {
-          if (!args[index]) {
-            args[index] = unknownType({
-              kind: "incomplete",
-              reason: "record_missing_field",
-            });
-          }
-        }
-        const constructorType: Type = {
-          kind: "constructor",
-          name: recordName,
-          args: args.map((arg) => arg!),
-        };
         return recordExprType(ctx, expr, constructorType);
       }
 
-      // In raw mode, allow structural records without nominal matching
-      // This is needed for Zig interop where we pass anonymous structs to external functions
-      if (!ctx.rawMode) {
-        const matches = candidateRecords.length;
+      const matches = candidateRecords.length;
+      if (matches > 1) {
         const candidateNames = candidateRecords.map(([name]) => name);
         recordLayer1Diagnostic(ctx, expr.id, "ambiguous_record", {
           matches,
@@ -1774,7 +1780,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         kind: "record",
         fields: new Map(fields),
       };
-      return recordExprType(ctx, expr, structuralRecord);
+      if (ctx.rawMode) {
+        return recordExprType(ctx, expr, structuralRecord);
+      }
+      const fallbackUnknown = unknownType({
+        kind: "incomplete",
+        reason: matches > 1 ? "record_ambiguous" : "record_unmatched",
+      });
+      return recordExprType(ctx, expr, fallbackUnknown);
     }
     case "record_projection": {
       const targetExpr = expr.target;

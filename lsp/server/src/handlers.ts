@@ -837,72 +837,64 @@ async function handleInlayHint(
         return { jsonrpc: "2.0", id: message.id, result: [] };
       }
     }
-    const { env, layer3 } = context;
+
+    const { layer3 } = context;
     const addedHoleHints = new Set<number>();
-    for (const [name, scheme] of env.entries()) {
-      if (name.startsWith("__op_") || name.startsWith("__prefix_")) {
+    const letHintTargets = collectLetDeclarationTargets(context);
+    for (const target of letHintTargets) {
+      const type = getBestAvailableType(layer3.nodeViews, target.nodeId);
+      if (!type) {
         continue;
       }
-      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-      const regex = new RegExp(
-        `\\blet\\s+(?:rec\\s+)?${escapedName}\\b`,
-        "g",
-      );
-      let match: RegExpExecArray | null;
-      while ((match = regex.exec(text)) !== null) {
-        const endPos = match.index + match[0].length;
-        const position = offsetToPosition(text, endPos);
-        // Use Layer 3 partial types for accurate display
-        let typeStr = ctx.formatSchemeWithPartials(
-          scheme,
-          layer3,
-          context.adtEnv,
-        );
-        // For inlay hints prefer a compact form for Result types: show only the
-        // Ok type with the ⚡ prefix (no effect summary). Keep hover unchanged.
-        try {
-          const substitutedScheme = ctx.applyHoleSolutionsToScheme(
-            scheme,
-            layer3,
-          );
-
-          let returnType = substitutedScheme.type;
-          while (returnType.kind === "func") {
-            returnType = returnType.to;
-          }
-          if (
-            returnType.kind === "constructor" && returnType.args.length > 0
-          ) {
-            // Recognize both named Result and IResult forms by checking name
-            const name = (returnType as { name?: string }).name;
-            if (
-              name === "Result" || name === "IResult" ||
-              typeStr.includes("IResult<") || typeStr.startsWith("⚡")
-            ) {
-              typeStr = `⚡${
-                formatType(returnType.args[0], { names: new Map(), next: 0 }, 0)
-              }`;
-            }
-          }
-        } catch {
-          // ignore errors and fall back to full string
-        }
-        let label = `: ${typeStr}`;
-        if (label.length > MAX_LABEL_LENGTH) {
-          label = label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
-        }
-        hints.push({
-          position,
-          label,
-          kind: 1,
-          paddingLeft: true,
-          paddingRight: false,
-        });
-        ctx.log(
-          `[LSP] Type hint: ${name} : ${label} at line ${position.line}, char ${position.character}`,
-        );
+      const typeStr = formatTypeForInlay(ctx, type, context);
+      if (!typeStr) {
+        continue;
       }
+      let label = `: ${typeStr}`;
+      if (label.length > MAX_LABEL_LENGTH) {
+        label = label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
+      }
+      const position = offsetToPosition(text, target.nameSpan.end);
+      hints.push({
+        position,
+        label,
+        kind: 1,
+        paddingLeft: true,
+        paddingRight: false,
+      });
+      ctx.log(
+        `[LSP] Type hint: node ${target.nodeId} -> ${label} at line ${position.line}, char ${position.character}`,
+      );
+    }
+
+    const recordFieldTargets = collectRecordFieldTargets(context);
+    for (const target of recordFieldTargets) {
+      const type = getBestAvailableType(layer3.nodeViews, target.valueNodeId);
+      if (!type) {
+        continue;
+      }
+      const typeStr = formatTypeForInlay(ctx, type, context);
+      if (!typeStr) continue;
+      let label = `${typeStr}`;
+      if (label.length > MAX_LABEL_LENGTH) {
+        label = label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
+      }
+      const colonOffset = findColonOffset(
+        text,
+        target.fieldSpanStart,
+        target.valueSpanStart,
+      );
+      const position = offsetToPosition(text, colonOffset);
+      hints.push({
+        position,
+        label,
+        kind: 1,
+        paddingLeft: true,
+        paddingRight: true,
+      });
+      ctx.log(
+        `[LSP] Record field hint: ${target.fieldName} -> ${label} at line ${position.line}, char ${position.character}`,
+      );
     }
 
     for (const view of layer3.nodeViews.values()) {
@@ -1360,6 +1352,7 @@ function getBestAvailableType(
   nodeId: number,
 ): Type | null {
   const view = views.get(nodeId);
+
   if (!view) {
     return null;
   }
@@ -1373,6 +1366,126 @@ function getBestAvailableType(
     return view.observed.type;
   }
   return null;
+}
+
+function collectLetDeclarationTargets(
+  context: {
+    layer3: import("../../../src/layer3/mod.ts").Layer3Result;
+    program: import("../../../src/ast_marked.ts").MProgram;
+  },
+): Array<{
+  nodeId: number;
+  nameSpan: { start: number; end: number };
+}> {
+  const nodeIndex = buildNodeIndex(context);
+  const targets: Array<{
+    nodeId: number;
+    nameSpan: { start: number; end: number };
+  }> = [];
+  for (const node of nodeIndex.values()) {
+    if (
+      node &&
+      node.kind === "let" &&
+      typeof node.id === "number" &&
+      node.nameSpan &&
+      typeof node.nameSpan.start === "number" &&
+      typeof node.nameSpan.end === "number"
+    ) {
+      targets.push({
+        nodeId: node.id,
+        nameSpan: {
+          start: node.nameSpan.start,
+          end: node.nameSpan.end,
+        },
+      });
+    }
+  }
+  return targets;
+}
+
+function collectRecordFieldTargets(
+  context: {
+    layer3: import("../../../src/layer3/mod.ts").Layer3Result;
+    program: import("../../../src/ast_marked.ts").MProgram;
+  },
+): Array<{
+  fieldName: string;
+  valueNodeId: number;
+  fieldSpanStart: number;
+  valueSpanStart: number;
+}> {
+  const nodeIndex = buildNodeIndex(context);
+  const targets: Array<{
+    fieldName: string;
+    valueNodeId: number;
+    fieldSpanStart: number;
+    valueSpanStart: number;
+  }> = [];
+  for (const node of nodeIndex.values()) {
+    if (
+      node &&
+      node.kind === "record_field" &&
+      typeof node.value?.id === "number" &&
+      typeof node.value?.span?.start === "number" &&
+      typeof node.span?.start === "number"
+    ) {
+      targets.push({
+        fieldName: node.name ?? "",
+        valueNodeId: node.value.id,
+        fieldSpanStart: node.span.start,
+        valueSpanStart: node.value.span.start,
+      });
+    }
+  }
+  return targets;
+}
+
+function findColonOffset(
+  text: string,
+  fieldSpanStart: number,
+  valueSpanStart: number,
+): number {
+  const start = Math.max(0, Math.min(fieldSpanStart, text.length));
+  const end = Math.max(start, Math.min(valueSpanStart, text.length));
+  for (let i = start; i < end; i++) {
+    const ch = text[i];
+    if (ch === ":") {
+      return i;
+    }
+  }
+  return end;
+}
+
+function formatTypeForInlay(
+  ctx: LspServerContext,
+  type: Type,
+  context: {
+    layer3: import("../../../src/layer3/mod.ts").Layer3Result;
+    adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>;
+  },
+): string | null {
+  try {
+    const substituted = ctx.substituteTypeWithLayer3(type, context.layer3);
+    const printCtx = { names: new Map(), next: 0 };
+    let typeStr = ctx.replaceIResultFormats(
+      formatType(substituted, printCtx, 0),
+    );
+    const summary = ctx.summarizeEffectRowFromType(
+      substituted,
+      context.adtEnv,
+    );
+    if (
+      summary && substituted.kind === "constructor" &&
+      substituted.args.length > 0
+    ) {
+      typeStr = `⚡${
+        formatType(substituted.args[0], printCtx, 0)
+      } [<${summary}>]`;
+    }
+    return typeStr;
+  } catch {
+    return null;
+  }
 }
 
 function peelFuncType(

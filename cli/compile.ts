@@ -1,7 +1,9 @@
 import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
 import { emitModuleGraph as emitJsModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import { emitModuleGraph as emitZigModuleGraph } from "../backends/compiler/zig/graph_emitter.ts";
-import { IO, relative, resolve } from "../src/io.ts";
+import { IO, relative, resolve, dirname, fromFileUrl } from "../src/io.ts";
+
+const WORKMAN_ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 
 async function runZigFmt(files: string[]): Promise<void> {
   if (files.length === 0) return;
@@ -25,7 +27,7 @@ export interface CompileArgs {
   backend: CompileBackend;
 }
 
-export function parseCompileArgs(args: string[]): CompileArgs {
+export function parseCompileArgs(args: string[], allowEmpty = false): CompileArgs {
   let entryPath: string | undefined;
   let outDir: string | undefined;
   let backend: CompileBackend | undefined;
@@ -62,13 +64,13 @@ export function parseCompileArgs(args: string[]): CompileArgs {
     entryPath = arg;
   }
 
-  if (!entryPath) {
+  if (!entryPath && !allowEmpty) {
     throw new Error(
       "Usage: wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>]",
     );
   }
 
-  return { entryPath, outDir, backend: backend ?? "zig" };
+  return { entryPath: entryPath ?? "", outDir, backend: backend ?? "zig" };
 }
 
 export async function compileToDirectory(
@@ -85,7 +87,7 @@ export async function compileToDirectory(
 
   const compileResult = await compileWorkmanGraph(resolvedEntry, {
     loader: {
-      stdRoots: [resolve("std")],
+      stdRoots: [resolve(WORKMAN_ROOT, "std")],
       preludeModule: "std/prelude",
     },
   });
@@ -103,10 +105,10 @@ export async function compileToDirectory(
     const zigFiles = [...emitResult.moduleFiles.values()].filter((f) =>
       f.endsWith(".zig")
     );
-    if (emitResult.runtimePath.endsWith(".zig")) {
+    if (emitResult.runtimePath?.endsWith(".zig")) {
       zigFiles.push(emitResult.runtimePath);
     }
-    if ("rootPath" in emitResult && emitResult.rootPath.endsWith(".zig")) {
+    if (emitResult.rootPath?.endsWith(".zig")) {
       zigFiles.push(emitResult.rootPath);
     }
     await runZigFmt(zigFiles);
@@ -116,11 +118,93 @@ export async function compileToDirectory(
     `Emitted ${emitResult.moduleFiles.size} module(s) to ${resolvedOutDir}`,
   );
   const entryRelative = relative(IO.cwd(), emitResult.entryPath);
-  const runtimeRelative = relative(IO.cwd(), emitResult.runtimePath);
   console.log(`Entry module: ${entryRelative}`);
-  console.log(`Runtime module: ${runtimeRelative}`);
-  if ("rootPath" in emitResult) {
+  if (emitResult.runtimePath) {
+    const runtimeRelative = relative(IO.cwd(), emitResult.runtimePath);
+    console.log(`Runtime module: ${runtimeRelative}`);
+  }
+  if (emitResult.rootPath) {
     const rootRelative = relative(IO.cwd(), emitResult.rootPath);
     console.log(`Root module: ${rootRelative}`);
+  }
+}
+
+/**
+ * Handle 'wm build' command - like 'zig build' but for workman.
+ * Auto-detects build.wm in cwd, compiles to build.zig, then runs zig build.
+ */
+export async function runBuildCommand(args: string[]): Promise<void> {
+  const buildWmPath = resolve("build.wm");
+  
+  // Check if build.wm exists
+  try {
+    await Deno.stat(buildWmPath);
+  } catch {
+    throw new Error("No build.wm found in current directory");
+  }
+
+  const buildDir = dirname(buildWmPath);
+  const buildZigPath = resolve(buildDir, "build.zig");
+
+  // Compile build.wm to build.zig
+  console.log("Compiling build.wm to build.zig...");
+  const compileResult = await compileWorkmanGraph(buildWmPath, {
+    loader: {
+      stdRoots: [resolve(WORKMAN_ROOT, "std")],
+      preludeModule: "std/prelude",
+    },
+  });
+
+  // Emit to the build directory (will create build.zig from build.wm)
+  // Use buildDir as commonRoot so build.wm emits directly as build.zig
+  const emitResult = await emitZigModuleGraph(compileResult.coreGraph, {
+    outDir: buildDir,
+    commonRoot: buildDir,
+    emitRuntime: false,
+    emitRootMain: false,
+  });
+
+  // Compile any referenced .wm source files to .zig
+  const zigFilesToFormat = [buildZigPath];
+  for (const wmPath of emitResult.wmSourcePaths) {
+    const absoluteWmPath = resolve(buildDir, wmPath);
+    const zigOutputPath = resolve(buildDir, wmPath.slice(0, -3) + ".zig");
+    
+    console.log(`Compiling ${wmPath} to ${wmPath.slice(0, -3)}.zig...`);
+    
+    const sourceCompileResult = await compileWorkmanGraph(absoluteWmPath, {
+      loader: {
+        stdRoots: [resolve(WORKMAN_ROOT, "std")],
+        preludeModule: "std/prelude",
+      },
+    });
+    
+    await emitZigModuleGraph(sourceCompileResult.coreGraph, {
+      outDir: buildDir,
+      commonRoot: buildDir,
+      emitRuntime: false,
+      emitRootMain: false,
+    });
+    
+    zigFilesToFormat.push(zigOutputPath);
+  }
+
+  // Run zig fmt on all generated .zig files
+  await runZigFmt(zigFilesToFormat);
+
+  console.log("Running zig build...");
+  
+  // Pass through any additional args to zig build
+  const zigArgs = ["build", ...args];
+  const command = new Deno.Command("zig", {
+    args: zigArgs,
+    cwd: buildDir,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  
+  const result = await command.output();
+  if (!result.success) {
+    throw new Error(`zig build failed with exit code ${result.code}`);
   }
 }

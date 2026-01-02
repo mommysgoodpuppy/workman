@@ -1,5 +1,6 @@
 @raw;
 let std = zigImport("std");
+from "std/zig/option" import { isSome, unwrap };
 
 export let build = (b: *std.Build) => {
   let target = b.graph.host;
@@ -48,7 +49,7 @@ export let build = (b: *std.Build) => {
   let exe = b.addExecutable(.{
     name: "raylibtest",
     root_module: b.createModule(.{
-      root_source_file: b.path("raylibtest.zig"),
+      root_source_file: b.path("main.wm"),
       target: target,
       optimize: optimize
     })
@@ -58,4 +59,15 @@ export let build = (b: *std.Build) => {
   exe.root_module.linkLibrary(raylib);
 
   b.installArtifact(exe);
+
+  let runCmd = b.addRunArtifact(exe);
+  runCmd.step.dependOn(b.getInstallStep());
+  if (isSome(b.args)) {
+    runCmd.addArgs(unwrap(b.args))
+  } else {
+    ()
+  };
+
+  let runStep = b.step("run", "Run raylibtest");
+  runStep.dependOn(&runCmd.step);
 };

@@ -26,12 +26,15 @@ export type f64;
 export type f128;
 
 -- Special types
-export type bool;
 export type void;
 export type noreturn;
 export type anyerror;
 export type comptime_int;
 export type comptime_float;
+
+-- Optional and null interop (raw-only)
+export type Optional<T>;
+export type Null;
 
 -- Pointer types would need special syntax, e.g.:
 -- type Ptr a;  -- *a
