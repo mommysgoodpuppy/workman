@@ -1591,6 +1591,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (ctx.rawMode && expr.literal.kind === "int") {
         litType = freshTypeVar();
       }
+      // In raw mode, treat string literals as C-style pointers for interop.
+      if (ctx.rawMode && expr.literal.kind === "string") {
+        litType = {
+          kind: "constructor",
+          name: "Ptr",
+          args: [{ kind: "constructor", name: "u8", args: [] }],
+        };
+      }
       // Check if it's an incomplete hole for unsupported literal
       const holeInfo = isHoleType(litType) ? splitCarrier(litType) : null;
       if (holeInfo) {

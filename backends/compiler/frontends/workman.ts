@@ -2,6 +2,7 @@ import {
   buildInfectionRegistryForModule,
   isStdCoreModule,
   loadModuleSummaries,
+  type ForeignTypeResult,
   type ModuleGraph,
   type ModuleLoaderOptions,
   type ModuleNode,
@@ -76,12 +77,13 @@ export async function compileWorkmanGraph(
     const analysis = analyzeAndPresent(
       node.program,
       {
-        ...buildAnalysisOptions(
+        ...await buildAnalysisOptions(
           node,
           moduleGraph,
           summaries,
           analysisOptions,
           preludePath,
+          loaderOptions,
         ),
         infectionRegistry,
       },
@@ -113,13 +115,14 @@ export async function compileWorkmanGraph(
   };
 }
 
-function buildAnalysisOptions(
+async function buildAnalysisOptions(
   node: ModuleNode,
   graph: ModuleGraph,
   summaries: Map<string, ModuleSummary>,
   base: AnalysisOptions,
   preludePath?: string,
-): AnalysisOptions {
+  loaderOptions?: ModuleLoaderOptions,
+): Promise<AnalysisOptions> {
   const seedEnv = cloneSchemeMap(base.initialEnv);
   const seedAdtEnv = cloneAdtMap(base.initialAdtEnv);
 
@@ -128,6 +131,7 @@ function buildAnalysisOptions(
 
   // Detect raw mode from the program
   const rawMode = node.program.mode === "raw";
+  await seedForeignTypeImports(node, loaderOptions, seedEnv, seedAdtEnv, rawMode);
 
   return {
     ...base,
@@ -147,10 +151,13 @@ function seedImports(
   adtEnv: Map<string, TypeInfo>,
 ): void {
   for (const record of node.imports) {
-    if (record.kind === "js" || record.kind === "zig" || record.kind === "c_header") {
+    if (record.kind === "js" || record.kind === "zig") {
       for (const spec of record.specifiers) {
         env.set(spec.local, createForeignImportScheme(spec, record));
       }
+      continue;
+    }
+    if (record.kind === "c_header") {
       continue;
     }
     const provider = summaries.get(record.sourcePath);
@@ -189,6 +196,77 @@ function seedImports(
       throw new Error(
         `Module '${record.sourcePath}' does not export '${spec.imported}' (imported by '${node.path}')`,
       );
+    }
+  }
+}
+
+async function seedForeignTypeImports(
+  node: ModuleNode,
+  loaderOptions: ModuleLoaderOptions | undefined,
+  env: Map<string, TypeScheme>,
+  adtEnv: Map<string, TypeInfo>,
+  rawMode: boolean,
+): Promise<void> {
+  const config = loaderOptions?.foreignTypes;
+  const provider = config?.provider;
+  for (const record of node.imports) {
+    if (record.kind !== "c_header") {
+      continue;
+    }
+    if (!rawMode || !provider) {
+      for (const spec of record.specifiers) {
+        env.set(spec.local, createForeignImportScheme(spec, record));
+      }
+      continue;
+    }
+    const result = await provider({
+      headerPath: record.sourcePath,
+      specifiers: record.specifiers,
+      includeDirs: config?.includeDirs ?? [],
+      defines: config?.defines ?? [],
+      buildWmPath: config?.buildWmPath,
+      importerPath: record.importerPath,
+      rawMode: true,
+    });
+    applyForeignTypeResult(record, result, env, adtEnv);
+  }
+}
+
+function applyForeignTypeResult(
+  record: ModuleNode["imports"][number],
+  result: ForeignTypeResult,
+  env: Map<string, TypeScheme>,
+  adtEnv: Map<string, TypeInfo>,
+): void {
+  for (const spec of record.specifiers) {
+    const valueExport = result.values.get(spec.imported);
+    const typeExport = result.types.get(spec.imported);
+
+    if (valueExport) {
+      if (env.has(spec.local)) {
+        throw new Error(
+          `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
+        );
+      }
+      env.set(spec.local, cloneTypeScheme(valueExport));
+    }
+
+    if (typeExport) {
+      if (spec.local !== spec.imported) {
+        throw new Error(
+          `Type import aliasing is not supported (imported '${spec.imported}' as '${spec.local}')`,
+        );
+      }
+      if (adtEnv.has(spec.imported)) {
+        throw new Error(
+          `Duplicate imported type '${spec.imported}' in module '${record.importerPath}'`,
+        );
+      }
+      adtEnv.set(spec.imported, cloneTypeInfo(typeExport));
+    }
+
+    if (!valueExport && !typeExport) {
+      env.set(spec.local, createForeignImportScheme(spec, record));
     }
   }
 }
