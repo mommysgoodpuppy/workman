@@ -72,8 +72,10 @@ export function createDefaultForeignTypeConfig(
   entryPath: string,
 ): ForeignTypeConfig {
   const buildWmPath = findNearestBuildWm(entryPath);
+  const cacheDir = resolveCacheDir(entryPath);
+  const zigPath = resolveZigPath();
   return {
-    provider: createZigCHeaderProvider(),
+    provider: createZigCHeaderProvider({ cacheDir, zigPath }),
     buildWmPath,
     includeDirs: [],
     defines: [],
@@ -87,9 +89,6 @@ export function createZigCHeaderProvider(
   const cacheDir = options.cacheDir ?? DEFAULT_CACHE_DIR;
   return async (request: ForeignTypeRequest): Promise<ForeignTypeResult> => {
     if (!request.rawMode) {
-      return { values: new Map(), types: new Map() };
-    }
-    if (!request.buildWmPath) {
       return { values: new Map(), types: new Map() };
     }
     const symbols = request.specifiers.map((spec) => spec.imported);
@@ -114,6 +113,9 @@ export function createZigCHeaderProvider(
       return mapExtractedResult(extracted);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[c_header] failed for ${request.headerPath}: ${detail}`,
+      );
       return {
         values: new Map(),
         types: new Map(),
@@ -378,6 +380,63 @@ function findNearestBuildWm(entryPath: string): string | undefined {
     const candidate = join(current, "build.wm");
     if (existsSync(candidate)) {
       return candidate;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return undefined;
+    }
+    current = parent;
+  }
+}
+
+function resolveCacheDir(entryPath: string): string {
+  const root = findProjectRoot(entryPath) ?? IO.cwd();
+  return join(root, "dist_zig", "__wm_cache", "c_headers");
+}
+
+function resolveZigPath(): string {
+  const envPath = getEnv("WM_ZIG_PATH") ?? getEnv("ZIG") ?? getEnv("ZIG_PATH");
+  if (envPath && existsSync(envPath)) {
+    return envPath;
+  }
+  const home = getEnv("USERPROFILE") ?? getEnv("HOME");
+  if (home) {
+    const zigName = isWindowsRuntime() ? "zig.exe" : "zig";
+    const zvmCandidate = join(home, ".zvm", "bin", zigName);
+    if (existsSync(zvmCandidate)) {
+      return zvmCandidate;
+    }
+  }
+  return "zig";
+}
+
+function getEnv(key: string): string | undefined {
+  if (typeof Deno !== "undefined") {
+    try {
+      return Deno.env.get(key);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function isWindowsRuntime(): boolean {
+  if (typeof Deno !== "undefined") {
+    return Deno.build.os === "windows";
+  }
+  return false;
+}
+
+function findProjectRoot(entryPath: string): string | undefined {
+  let current = dirname(resolve(entryPath));
+  while (true) {
+    if (
+      existsSync(join(current, ".git")) ||
+      existsSync(join(current, "deno.json")) ||
+      existsSync(join(current, "wm.ts"))
+    ) {
+      return current;
     }
     const parent = dirname(current);
     if (parent === current) {

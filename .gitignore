@@ -15,3 +15,4 @@ vscodeExtension/out/
 dist_zig/
 *.pdb
 .zig-cache/
+.wm-cache/

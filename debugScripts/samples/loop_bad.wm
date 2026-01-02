@@ -1,3 +1,4 @@
-let rec loop = match(x) {
+let rec loop = match(x) => {
   _ => { loop(loop) }
 };
+

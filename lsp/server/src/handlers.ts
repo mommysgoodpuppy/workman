@@ -492,6 +492,45 @@ async function handleHover(
     const offset = positionToOffset(text, position);
     const nodeId = findNodeAtOffset(layer3.spanIndex, offset);
     if (nodeId) {
+      const nodeIndex = buildNodeIndex(context);
+      const node = nodeIndex.get(nodeId);
+      if (node?.kind === "identifier") {
+        const scheme = env.get(node.name);
+        if (scheme) {
+          const localParamNames = collectLocalParamNameMap(context);
+          const cHeaderImports = collectCHeaderImportMap(context);
+          const paramNames =
+            localParamNames.get(node.name) ??
+            await getCHeaderParamNames(cHeaderImports.get(node.name));
+          const namedSignature = formatNamedFunctionSignature(
+            ctx,
+            node.name,
+            scheme.type,
+            layer3,
+            context.adtEnv,
+            paramNames,
+          );
+          const typeStr = ctx.formatSchemeWithPartials(
+            scheme,
+            layer3,
+            context.adtEnv,
+          );
+          const hoverLines = namedSignature
+            ? [namedSignature, `${node.name} : ${typeStr}`]
+            : [`${node.name} : ${typeStr}`];
+          const hoverText = `\`\`\`workman\n${hoverLines.join("\n")}\n\`\`\``;
+          return {
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              contents: {
+                kind: "markdown",
+                value: hoverText,
+              },
+            },
+          };
+        }
+      }
       const view = layer3.nodeViews.get(nodeId);
       if (view) {
         const coverage = layer3.matchCoverages.get(nodeId);
@@ -528,7 +567,23 @@ async function handleHover(
       );
       ctx.log(`[LSP] Found type for ${word}: ${typeStr}`);
 
-      const hoverText = `\`\`\`workman\n${word} : ${typeStr}\n\`\`\``;
+      const localParamNames = collectLocalParamNameMap(context);
+      const cHeaderImports = collectCHeaderImportMap(context);
+      const paramNames =
+        localParamNames.get(word) ??
+        await getCHeaderParamNames(cHeaderImports.get(word));
+      const namedSignature = formatNamedFunctionSignature(
+        ctx,
+        word,
+        scheme.type,
+        layer3,
+        context.adtEnv,
+        paramNames,
+      );
+      const hoverLines = namedSignature
+        ? [namedSignature, `${word} : ${typeStr}`]
+        : [`${word} : ${typeStr}`];
+      const hoverText = `\`\`\`workman\n${hoverLines.join("\n")}\n\`\`\``;
 
       return {
         jsonrpc: "2.0",
@@ -841,7 +896,7 @@ async function handleInlayHint(
     const { layer3 } = context;
     const addedHoleHints = new Set<number>();
     const letHintTargets = collectLetDeclarationTargets(context);
-    const legacyLetTargets = collectLetTargetsFromIndex(context);
+    /* const legacyLetTargets = collectLetTargetsFromIndex(context);
     if (legacyLetTargets.length !== letHintTargets.length) {
       const legacyIds = new Set(legacyLetTargets.map((t) => t.nodeId));
       const missing = letHintTargets.filter((t) => !legacyIds.has(t.nodeId));
@@ -853,7 +908,7 @@ async function handleInlayHint(
           `[LSP] Legacy let collector missed ${missing.length} node(s): ${summary}`,
         );
       }
-    }
+    } */
     for (const target of letHintTargets) {
       const spanSummary = `${target.nameSpan.start}-${target.nameSpan.end}`;
       const spanText = text.slice(target.nameSpan.start, target.nameSpan.end)
@@ -921,6 +976,36 @@ async function handleInlayHint(
       ctx.log(
         `[LSP] Record field hint: ${target.fieldName} -> ${label} at line ${position.line}, char ${position.character}`,
       );
+    }
+
+    const callTargets = collectCallArgumentTargets(context);
+    const localParamNames = collectLocalParamNameMap(context);
+    const cHeaderImports = collectCHeaderImportMap(context);
+    for (const target of callTargets) {
+      const paramNames =
+        localParamNames.get(target.calleeName) ??
+        await getCHeaderParamNames(
+          cHeaderImports.get(target.calleeName),
+        );
+      if (!paramNames || paramNames.length === 0) {
+        continue;
+      }
+      const paramName = paramNames[target.argIndex];
+      if (!paramName) {
+        continue;
+      }
+      const label = `${paramName}:`;
+      if (label.length > MAX_LABEL_LENGTH) {
+        continue;
+      }
+      const position = offsetToPosition(text, target.argSpanStart);
+      hints.push({
+        position,
+        label,
+        kind: 1,
+        paddingLeft: false,
+        paddingRight: true,
+      });
     }
 
     for (const view of layer3.nodeViews.values()) {
@@ -1588,6 +1673,318 @@ function collectRecordFieldTargets(
   return targets;
 }
 
+function collectCallArgumentTargets(
+  context: {
+    program: import("../../../src/ast_marked.ts").MProgram;
+  },
+): Array<{
+  calleeName: string;
+  argIndex: number;
+  argSpanStart: number;
+}> {
+  const targets: Array<{
+    calleeName: string;
+    argIndex: number;
+    argSpanStart: number;
+  }> = [];
+
+  const visitExpr = (expr?: import("../../../src/ast_marked.ts").MExpr) => {
+    if (!expr) return;
+    switch (expr.kind) {
+      case "call": {
+        if (expr.callee.kind === "identifier") {
+          const calleeName = expr.callee.name;
+          expr.arguments.forEach((arg, index) => {
+            targets.push({
+              calleeName,
+              argIndex: index,
+              argSpanStart: arg.span.start,
+            });
+          });
+        } else {
+          visitExpr(expr.callee);
+        }
+        expr.arguments.forEach((arg) => visitExpr(arg));
+        break;
+      }
+      case "block":
+        expr.statements.forEach((stmt) => {
+          if (stmt.kind === "let_statement") {
+            visitExpr(stmt.declaration.body);
+          } else if (stmt.kind === "expr_statement") {
+            visitExpr(stmt.expression);
+          }
+        });
+        if (expr.result) visitExpr(expr.result);
+        break;
+      case "arrow":
+        visitExpr(expr.body);
+        break;
+      case "constructor":
+        expr.args.forEach((arg) => visitExpr(arg));
+        break;
+      case "tuple":
+        expr.elements.forEach((el) => visitExpr(el));
+        break;
+      case "record_literal":
+        expr.fields.forEach((field) => visitExpr(field.value));
+        break;
+      case "record_projection":
+        visitExpr(expr.target);
+        break;
+      case "binary":
+        visitExpr(expr.left);
+        visitExpr(expr.right);
+        break;
+      case "unary":
+        visitExpr(expr.operand);
+        break;
+      case "match":
+        visitExpr(expr.scrutinee);
+        expr.bundle.arms.forEach((arm) => {
+          if (arm.kind === "match_pattern") {
+            visitExpr(arm.body);
+          }
+        });
+        break;
+      case "match_fn":
+        expr.parameters.forEach((param) => visitExpr(param));
+        expr.bundle.arms.forEach((arm) => {
+          if (arm.kind === "match_pattern") {
+            visitExpr(arm.body);
+          }
+        });
+        break;
+      case "match_bundle_literal":
+        expr.bundle.arms.forEach((arm) => {
+          if (arm.kind === "match_pattern") {
+            visitExpr(arm.body);
+          }
+        });
+        break;
+      default:
+        break;
+    }
+  };
+
+  for (const decl of context.program.declarations ?? []) {
+    if (decl.kind === "let") {
+      visitExpr(decl.body);
+    }
+  }
+
+  return targets;
+}
+
+function collectLocalParamNameMap(
+  context: {
+    program: import("../../../src/ast_marked.ts").MProgram;
+  },
+): Map<string, string[]> {
+  const names = new Map<string, string[]>();
+
+  const getParamName = (
+    param: import("../../../src/ast_marked.ts").MParameter,
+  ): string | null => {
+    if (param.name) return param.name;
+    if (param.pattern?.kind === "variable") return param.pattern.name;
+    return null;
+  };
+
+  const visitLet = (
+    decl?: import("../../../src/ast_marked.ts").MLetDeclaration,
+  ) => {
+    if (!decl) return;
+    const params = decl.parameters
+      ?.map((param) => getParamName(param))
+      .filter((name): name is string => Boolean(name)) ?? [];
+    if (params.length > 0) {
+      names.set(decl.name, params);
+    }
+    if (decl.mutualBindings) {
+      decl.mutualBindings.forEach((binding) => visitLet(binding));
+    }
+    if (decl.body) {
+      visitBlock(decl.body);
+    }
+  };
+
+  const visitBlock = (
+    block?: import("../../../src/ast_marked.ts").MBlockExpr,
+  ) => {
+    if (!block) return;
+    for (const stmt of block.statements) {
+      if (stmt.kind === "let_statement") {
+        visitLet(stmt.declaration);
+      } else if (stmt.kind === "expr_statement") {
+        visitExpr(stmt.expression);
+      }
+    }
+    if (block.result) {
+      visitExpr(block.result);
+    }
+  };
+
+  const visitExpr = (expr?: import("../../../src/ast_marked.ts").MExpr) => {
+    if (!expr) return;
+    if (expr.kind === "block") {
+      visitBlock(expr);
+      return;
+    }
+    if (expr.kind === "arrow") {
+      visitBlock(expr.body);
+      return;
+    }
+  };
+
+  for (const decl of context.program.declarations ?? []) {
+    if (decl.kind === "let") {
+      visitLet(decl);
+    }
+  }
+
+  return names;
+}
+
+function collectCHeaderImportMap(
+  context: {
+    entryPath: string;
+    graph: import("../../../src/module_loader.ts").ModuleGraph;
+  },
+): Map<string, { headerPath: string; importedName: string }> {
+  const map = new Map<
+    string,
+    { headerPath: string; importedName: string }
+  >();
+  const node = context.graph.nodes.get(context.entryPath);
+  if (!node) return map;
+  for (const record of node.imports) {
+    if (record.kind !== "c_header") continue;
+    for (const spec of record.specifiers) {
+      map.set(spec.local, {
+        headerPath: record.sourcePath,
+        importedName: spec.imported,
+      });
+    }
+  }
+  return map;
+}
+
+const cHeaderParamCache = new Map<string, Map<string, string[] | null>>();
+const cHeaderSourceCache = new Map<string, string>();
+
+async function getCHeaderParamNames(
+  importInfo: { headerPath: string; importedName: string } | undefined,
+): Promise<string[] | null> {
+  if (!importInfo) return null;
+  const headerPath = importInfo.headerPath;
+  const fnName = importInfo.importedName;
+  if (!fnName) return null;
+
+  let table = cHeaderParamCache.get(headerPath);
+  if (!table) {
+    const source = await readHeaderSource(headerPath);
+    if (!source) return null;
+    table = new Map();
+    cHeaderParamCache.set(headerPath, table);
+    cHeaderSourceCache.set(headerPath, source);
+  }
+  if (table.has(fnName)) {
+    return table.get(fnName) ?? null;
+  }
+  const source = cHeaderSourceCache.get(headerPath);
+  if (!source) return null;
+  const names = extractParamNamesFromHeader(source, fnName);
+  table.set(fnName, names);
+  return names;
+}
+
+async function readHeaderSource(path: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(path);
+  } catch {
+    return null;
+  }
+}
+
+function extractParamNamesFromHeader(
+  source: string,
+  fnName: string,
+): string[] | null {
+  const cleaned = stripCComments(source);
+  const pattern = new RegExp(
+    `\\b${escapeRegExp(fnName)}\\s*\\(([^;]*?)\\)\\s*;`,
+    "s",
+  );
+  const match = cleaned.match(pattern);
+  if (!match) return null;
+  const params = match[1].trim();
+  if (!params || params === "void") {
+    return [];
+  }
+  return splitParams(params)
+    .map(extractParamName)
+    .filter((name) => name.length > 0);
+}
+
+function splitParams(input: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === "(") depth++;
+    if (ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0) {
+      parts.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim().length > 0) {
+    parts.push(current.trim());
+  }
+  return parts;
+}
+
+const C_PARAM_KEYWORDS = new Set([
+  "const",
+  "volatile",
+  "signed",
+  "unsigned",
+  "short",
+  "long",
+  "int",
+  "char",
+  "float",
+  "double",
+  "void",
+  "struct",
+  "enum",
+  "union",
+  "bool",
+  "_Bool",
+]);
+
+function extractParamName(param: string): string {
+  const tokens = param.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
+  if (tokens.length === 0) return "";
+  const name = tokens[tokens.length - 1];
+  if (C_PARAM_KEYWORDS.has(name)) return "";
+  return name;
+}
+
+function stripCComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/.*$/gm, " ");
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function findColonOffset(
   text: string,
   fieldSpanStart: number,
@@ -1641,6 +2038,80 @@ function formatTypeForInlay(
   } catch {
     return null;
   }
+}
+
+function formatNamedFunctionSignature(
+  ctx: LspServerContext,
+  name: string,
+  type: Type,
+  layer3: import("../../../src/layer3/mod.ts").Layer3Result,
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
+  paramNames?: string[] | null,
+): string | null {
+  if (!paramNames || paramNames.length === 0) {
+    return null;
+  }
+  const substituted = ctx.substituteTypeWithLayer3(type, layer3);
+  const parts = collectFunctionTypeParts(substituted);
+  if (!parts) return null;
+  const params = parts.params.map((paramType, index) => {
+    const displayName = paramNames[index] ?? `arg${index + 1}`;
+    const typeStr = formatTypeForSignature(
+      ctx,
+      normalizeCarrierType(paramType),
+      adtEnv,
+    );
+    return `${displayName}: ${typeStr}`;
+  });
+  const resultStr = formatTypeForSignature(
+    ctx,
+    normalizeCarrierType(parts.result),
+    adtEnv,
+  );
+  return `fn ${name}(${params.join(", ")}) -> ${resultStr}`;
+}
+
+function formatTypeForSignature(
+  ctx: LspServerContext,
+  type: Type,
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
+): string {
+  const printCtx = { names: new Map(), next: 0 };
+  let typeStr = ctx.replaceIResultFormats(
+    formatType(type, printCtx, 0),
+  );
+  const simplified = simplifyRecordConstructorDisplay(type, adtEnv);
+  if (simplified) {
+    typeStr = simplified;
+  }
+  const carrier = splitCarrier(type);
+  if (carrier && carrier.domain === "effect") {
+    const summary = ctx.summarizeEffectRowFromType(type, adtEnv);
+    if (
+      summary && type.kind === "constructor" &&
+      type.args.length > 0
+    ) {
+      typeStr = `?${
+        formatType(type.args[0], printCtx, 0)
+      } [<${summary}>]`;
+    }
+  }
+  return typeStr;
+}
+
+function collectFunctionTypeParts(
+  type: Type,
+): { params: Type[]; result: Type } | null {
+  const params: Type[] = [];
+  let current: Type | null = type;
+  while (current && current.kind === "func") {
+    params.push(current.from);
+    current = current.to;
+  }
+  if (params.length === 0 || !current) {
+    return null;
+  }
+  return { params, result: current };
 }
 
 function simplifyRecordConstructorDisplay(

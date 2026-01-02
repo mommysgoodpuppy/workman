@@ -17,8 +17,6 @@ from "raylib.h" import {
 
 from "std/zig/types" import {u8, f32};
 
-record Color { r: u8, g: u8, b: u8, a: u8 };
-record Vector2 { x: f32, y: f32 };
 
 let main = () => {
   let screenWidth = 800;
@@ -36,7 +34,7 @@ let main = () => {
     if (windowShouldClose()) {
       () 
     } else {
-      
+
       let newX = posX + velX;
       let newY = posY + velY;
 

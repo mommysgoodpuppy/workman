@@ -1129,11 +1129,18 @@ function registerZigImportPrimitive(ctx: Context, name: string): void {
     markInternal(ctx, "fresh_type_var_not_var");
     return;
   }
+  const argType: Type = ctx.rawMode
+    ? {
+      kind: "constructor",
+      name: "Ptr",
+      args: [{ kind: "constructor", name: "u8", args: [] }],
+    }
+    : { kind: "string" };
   const scheme: TypeScheme = {
     quantifiers: [resultVar.id],
     type: {
       kind: "func",
-      from: { kind: "string" },
+      from: argType,
       to: resultVar,
     },
   };
