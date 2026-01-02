@@ -2,7 +2,7 @@
 
 import { fromFileUrl } from "std/path/from_file_url.ts";
 import { LSPMessage } from "./server.ts";
-import { splitCarrier, Type } from "../../../src/types.ts";
+import { splitCarrier, Type, type TypeInfo } from "../../../src/types.ts";
 import { formatType } from "../../../src/type_printer.ts";
 
 import { findNodeAtOffset } from "../../../src/layer3/mod.ts";
@@ -842,7 +842,8 @@ async function handleInlayHint(
     const addedHoleHints = new Set<number>();
     const letHintTargets = collectLetDeclarationTargets(context);
     for (const target of letHintTargets) {
-      const type = getBestAvailableType(layer3.nodeViews, target.nodeId);
+      const type = getBestAvailableType(layer3.nodeViews, target.nodeId) ??
+        target.fallbackType;
       if (!type) {
         continue;
       }
@@ -854,6 +855,12 @@ async function handleInlayHint(
       if (label.length > MAX_LABEL_LENGTH) {
         label = label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
       }
+      const spanSummary = `${target.nameSpan.start}-${target.nameSpan.end}`;
+      const spanText = text.slice(target.nameSpan.start, target.nameSpan.end)
+        .replace(/\r?\n/g, "\\n");
+      ctx.log(
+        `[LSP] Let hint target node ${target.nodeId} span ${spanSummary} text="${spanText}"`,
+      );
       const position = offsetToPosition(text, target.nameSpan.end);
       hints.push({
         position,
@@ -1376,11 +1383,13 @@ function collectLetDeclarationTargets(
 ): Array<{
   nodeId: number;
   nameSpan: { start: number; end: number };
+  fallbackType?: Type;
 }> {
   const nodeIndex = buildNodeIndex(context);
   const targets: Array<{
     nodeId: number;
     nameSpan: { start: number; end: number };
+    fallbackType?: Type;
   }> = [];
   for (const node of nodeIndex.values()) {
     if (
@@ -1397,6 +1406,7 @@ function collectLetDeclarationTargets(
           start: node.nameSpan.start,
           end: node.nameSpan.end,
         },
+        fallbackType: node.type,
       });
     }
   }
@@ -1470,6 +1480,13 @@ function formatTypeForInlay(
     let typeStr = ctx.replaceIResultFormats(
       formatType(substituted, printCtx, 0),
     );
+    const simplified = simplifyRecordConstructorDisplay(
+      substituted,
+      context.adtEnv,
+    );
+    if (simplified) {
+      typeStr = simplified;
+    }
     const summary = ctx.summarizeEffectRowFromType(
       substituted,
       context.adtEnv,
@@ -1486,6 +1503,27 @@ function formatTypeForInlay(
   } catch {
     return null;
   }
+}
+
+function simplifyRecordConstructorDisplay(
+  type: Type,
+  adtEnv: Map<string, TypeInfo>,
+): string | null {
+  if (type.kind !== "constructor" || type.args.length === 0) {
+    return null;
+  }
+  const info = adtEnv.get(type.name);
+  if (!info) {
+    return null;
+  }
+  if (info.parameters.length > 0) {
+    return null;
+  }
+  const alias = info.alias;
+  if (!alias || alias.kind !== "record") {
+    return null;
+  }
+  return type.name;
 }
 
 function peelFuncType(

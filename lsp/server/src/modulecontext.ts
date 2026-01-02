@@ -6,6 +6,7 @@ import { cloneTypeScheme, TypeScheme } from "../../../src//types.ts";
 import { MProgram } from "../../../src/ast_marked.ts";
 import { Layer3Result } from "../../../src/layer3/mod.ts";
 import { ModuleGraph, ModuleLoaderError } from "../../../src/module_loader.ts";
+import { createDefaultForeignTypeConfig } from "../../../src/foreign_types/c_header_provider.ts";
 import type { WorkmanLanguageServer } from "./server.ts";
 type LspServerContext = WorkmanLanguageServer;
 
@@ -32,6 +33,7 @@ export async function buildModuleContext(
       skipEvaluation: true,
       sourceOverrides,
       tolerantParsing,
+      foreignTypes: createDefaultForeignTypeConfig(entryPath),
     },
   });
 

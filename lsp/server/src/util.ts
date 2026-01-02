@@ -40,14 +40,19 @@ export function offsetToPosition(
 ): { line: number; character: number } {
   let line = 0;
   let character = 0;
+  const clampedOffset = Math.max(0, Math.min(offset, text.length));
 
-  for (let i = 0; i < offset && i < text.length; i++) {
-    if (text[i] === "\n") {
+  for (let i = 0; i < clampedOffset; i++) {
+    const ch = text[i];
+    if (ch === "\r") {
+      continue;
+    }
+    if (ch === "\n") {
       line++;
       character = 0;
-    } else {
-      character++;
+      continue;
     }
+    character++;
   }
 
   return { line, character };
@@ -57,20 +62,28 @@ export function positionToOffset(
   text: string,
   position: { line: number; character: number },
 ): number {
-  let offset = 0;
-  let currentLine = 0;
+  const targetLine = Math.max(0, position.line);
+  const targetChar = Math.max(0, position.character);
+  let line = 0;
+  let character = 0;
 
-  for (let i = 0; i < text.length; i++) {
-    if (currentLine === position.line) {
-      return offset + position.character;
+  for (let i = 0; i <= text.length; i++) {
+    if (line === targetLine && character === targetChar) {
+      return i;
     }
-    if (text[i] === "\n") {
-      currentLine++;
+    const ch = text[i];
+    if (ch === "\r") {
+      continue;
     }
-    offset++;
+    if (ch === "\n") {
+      line++;
+      character = 0;
+      continue;
+    }
+    character++;
   }
 
-  return offset;
+  return text.length;
 }
 
 export function spanToRange(

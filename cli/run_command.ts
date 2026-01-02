@@ -4,6 +4,7 @@ import {
 } from "../backends/compiler/frontends/workman.ts";
 import { emitModuleGraph as emitJsModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import { emitModuleGraph as emitZigModuleGraph } from "../backends/compiler/zig/graph_emitter.ts";
+import { createDefaultForeignTypeConfig } from "../src/foreign_types/c_header_provider.ts";
 import {
   collectCompiledValues,
   invokeMainIfPresent,
@@ -136,6 +137,7 @@ export async function runProgramCommand(
         stdRoots: [resolve(WORKMAN_ROOT, "std")],
         preludeModule: "std/prelude",
         skipEvaluation: true,
+        foreignTypes: createDefaultForeignTypeConfig(filePath),
       },
       lowering: {
         showAllErrors: skipEvaluation,

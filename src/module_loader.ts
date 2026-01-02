@@ -37,6 +37,8 @@ export interface ModuleLoaderOptions {
   sourceOverrides?: Map<string, string>;
   /** Enable tolerant parsing (used by LSP for incomplete code) */
   tolerantParsing?: boolean;
+  /** Optional foreign type provider for C header imports in raw mode */
+  foreignTypes?: ForeignTypeConfig;
 }
 
 export interface ModuleGraph {
@@ -59,6 +61,34 @@ export interface ModuleNode {
 }
 
 type ModuleSourceKind = "workman" | "js" | "zig" | "c_header";
+
+export interface ForeignTypeRequest {
+  headerPath: string;
+  specifiers: NamedImportRecord[];
+  includeDirs: string[];
+  defines: string[];
+  buildWmPath?: string;
+  importerPath: string;
+  rawMode: boolean;
+}
+
+export interface ForeignTypeResult {
+  values: Map<string, TypeScheme>;
+  types: Map<string, TypeInfo>;
+  diagnostics?: { message: string; detail?: string }[];
+}
+
+export type ForeignTypeProvider = (
+  request: ForeignTypeRequest,
+) => Promise<ForeignTypeResult>;
+
+export interface ForeignTypeConfig {
+  provider?: ForeignTypeProvider;
+  includeDirs?: string[];
+  defines?: string[];
+  // When using C headers in raw mode, build.wm should supply include/define info.
+  buildWmPath?: string;
+}
 
 export interface ModuleImportRecord {
   sourcePath: string;
@@ -533,9 +563,21 @@ async function summarizeGraph(
     const initialRegistry = infectionPreludeRegistry.clone();
 
     for (const record of node.imports) {
-      if (record.kind === "js" || record.kind === "zig" || record.kind === "c_header") {
+      if (record.kind === "js" || record.kind === "zig") {
         seedForeignImports(record, initialEnv);
         continue;
+      }
+      if (record.kind === "c_header") {
+        const handled = await applyForeignTypeImports(
+          record,
+          initialEnv,
+          initialAdtEnv,
+          normalizedOptions,
+          isRawMode,
+        );
+        if (handled) {
+          continue;
+        }
       }
       const provider = moduleSummaries.get(record.sourcePath);
       if (!provider) {
@@ -747,6 +789,7 @@ function normalizeOptions(options: ModuleLoaderOptions): ModuleLoaderOptions {
   const skipEvaluation = options.skipEvaluation ?? true;
   const sourceOverrides = options.sourceOverrides;
   const tolerantParsing = options.tolerantParsing ?? false;
+  const foreignTypes = options.foreignTypes;
   return {
     stdRoots,
     preludeModule,
@@ -754,6 +797,7 @@ function normalizeOptions(options: ModuleLoaderOptions): ModuleLoaderOptions {
     skipEvaluation,
     sourceOverrides,
     tolerantParsing,
+    foreignTypes,
   };
 }
 
@@ -1413,18 +1457,98 @@ function applyImports(
   }
 }
 
+async function applyForeignTypeImports(
+  record: ModuleImportRecord,
+  targetEnv: Map<string, TypeScheme>,
+  targetAdtEnv: Map<string, TypeInfo>,
+  options: ModuleLoaderOptions,
+  rawMode: boolean,
+): Promise<boolean> {
+  if (record.kind !== "c_header") {
+    return false;
+  }
+  if (!rawMode) {
+    seedForeignImports(record, targetEnv);
+    return true;
+  }
+  const config = options.foreignTypes;
+  const provider = config?.provider;
+  if (!provider) {
+    seedForeignImports(record, targetEnv);
+    return true;
+  }
+  const result = await provider({
+    headerPath: record.sourcePath,
+    specifiers: record.specifiers,
+    includeDirs: config?.includeDirs ?? [],
+    defines: config?.defines ?? [],
+    buildWmPath: config?.buildWmPath,
+    importerPath: record.importerPath,
+    rawMode: true,
+  });
+  applyForeignTypeResult(record, result, targetEnv, targetAdtEnv);
+  return true;
+}
+
+function applyForeignTypeResult(
+  record: ModuleImportRecord,
+  result: ForeignTypeResult,
+  targetEnv: Map<string, TypeScheme>,
+  targetAdtEnv: Map<string, TypeInfo>,
+): void {
+  for (const spec of record.specifiers) {
+    const valueExport = result.values.get(spec.imported);
+    const typeExport = result.types.get(spec.imported);
+
+    if (valueExport) {
+      if (targetEnv.has(spec.local)) {
+        throw moduleError(
+          `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
+        );
+      }
+      targetEnv.set(spec.local, cloneTypeScheme(valueExport));
+    }
+
+    if (typeExport) {
+      if (spec.local !== spec.imported) {
+        throw moduleError(
+          `Type import aliasing is not supported in Stage M1 (imported '${spec.imported}' as '${spec.local}')`,
+        );
+      }
+      if (targetAdtEnv.has(spec.imported)) {
+        throw moduleError(
+          `Duplicate imported type '${spec.imported}' in module '${record.importerPath}'`,
+        );
+      }
+      targetAdtEnv.set(spec.imported, cloneTypeInfo(typeExport));
+    }
+
+    if (!valueExport && !typeExport) {
+      seedForeignImportSpec(record, spec, targetEnv);
+    }
+  }
+}
+
 function seedForeignImports(
   record: ModuleImportRecord,
   targetEnv: Map<string, TypeScheme>,
 ): void {
   for (const spec of record.specifiers) {
-    if (targetEnv.has(spec.local)) {
-      throw moduleError(
-        `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
-      );
-    }
-    targetEnv.set(spec.local, createForeignImportScheme(spec, record));
+    seedForeignImportSpec(record, spec, targetEnv);
   }
+}
+
+function seedForeignImportSpec(
+  record: ModuleImportRecord,
+  spec: NamedImportRecord,
+  targetEnv: Map<string, TypeScheme>,
+): void {
+  if (targetEnv.has(spec.local)) {
+    throw moduleError(
+      `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
+    );
+  }
+  targetEnv.set(spec.local, createForeignImportScheme(spec, record));
 }
 
 function createForeignImportScheme(
@@ -1436,7 +1560,7 @@ function createForeignImportScheme(
     type: unknownType({
       kind: "incomplete",
       reason:
-        `js import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
+        `${record.kind} import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
     }),
   };
 }

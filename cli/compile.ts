@@ -2,6 +2,7 @@ import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
 import { emitModuleGraph as emitJsModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import { emitModuleGraph as emitZigModuleGraph } from "../backends/compiler/zig/graph_emitter.ts";
 import { IO, relative, resolve, dirname, fromFileUrl } from "../src/io.ts";
+import { createDefaultForeignTypeConfig } from "../src/foreign_types/c_header_provider.ts";
 
 const WORKMAN_ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 
@@ -89,6 +90,7 @@ export async function compileToDirectory(
     loader: {
       stdRoots: [resolve(WORKMAN_ROOT, "std")],
       preludeModule: "std/prelude",
+      foreignTypes: createDefaultForeignTypeConfig(resolvedEntry),
     },
   });
 
@@ -152,6 +154,7 @@ export async function runBuildCommand(args: string[]): Promise<void> {
     loader: {
       stdRoots: [resolve(WORKMAN_ROOT, "std")],
       preludeModule: "std/prelude",
+      foreignTypes: createDefaultForeignTypeConfig(buildWmPath),
     },
   });
 
@@ -176,6 +179,7 @@ export async function runBuildCommand(args: string[]): Promise<void> {
       loader: {
         stdRoots: [resolve(WORKMAN_ROOT, "std")],
         preludeModule: "std/prelude",
+        foreignTypes: createDefaultForeignTypeConfig(absoluteWmPath),
       },
     });
     

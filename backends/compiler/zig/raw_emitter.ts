@@ -298,6 +298,10 @@ function sanitizeIdentifier(name: string, state: NameState): string {
   return `@"${name}"`;
 }
 
+function isIntentionallyUnusedName(name: string): boolean {
+  return name.length > 1 && name.startsWith("_") && !name.startsWith("__");
+}
+
 function allocateTempName(state: NameState, prefix: string): string {
   let name: string;
   do {
@@ -531,9 +535,12 @@ function emitLet(
   
   // Bind the variable BEFORE emitting the body so it's in scope
   const ref = bindLocal(scope, expr.binding.name, ctx.state);
+  const unusedGuard = isIntentionallyUnusedName(expr.binding.name)
+    ? ` _ = ${ref.value};`
+    : "";
   const innerCtx = { ...ctx, scope };
   const body = emitExpr(expr.body, innerCtx);
-  return `${label}: { const ${ref.value} = ${value}; break :${label} ${body}; }`;
+  return `${label}: { const ${ref.value} = ${value};${unusedGuard} break :${label} ${body}; }`;
 }
 
 function emitMatch(

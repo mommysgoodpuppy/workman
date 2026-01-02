@@ -1,6 +1,7 @@
 import { toFileUrl } from "./io.ts";
 import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
 import { emitModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
+import { createDefaultForeignTypeConfig } from "./foreign_types/c_header_provider.ts";
 import { formatScheme } from "./type_printer.ts";
 import {
   collectCompiledValues,
@@ -41,7 +42,11 @@ if (import.meta.main) {
     console.log(`\n# ${path}`);
 
     try {
-      const compileResult = await compileWorkmanGraph(path);
+      const compileResult = await compileWorkmanGraph(path, {
+        loader: {
+          foreignTypes: createDefaultForeignTypeConfig(path),
+        },
+      });
       const entryKey = compileResult.coreGraph.entry;
       const artifact = compileResult.modules.get(entryKey);
       const coreModule = compileResult.coreGraph.modules.get(entryKey);
