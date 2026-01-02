@@ -895,20 +895,9 @@ async function handleInlayHint(
 
     const { layer3 } = context;
     const addedHoleHints = new Set<number>();
-    const letHintTargets = collectLetDeclarationTargets(context);
-    /* const legacyLetTargets = collectLetTargetsFromIndex(context);
-    if (legacyLetTargets.length !== letHintTargets.length) {
-      const legacyIds = new Set(legacyLetTargets.map((t) => t.nodeId));
-      const missing = letHintTargets.filter((t) => !legacyIds.has(t.nodeId));
-      if (missing.length > 0) {
-        const summary = missing.map((m) =>
-          `${m.nodeId}@${m.nameSpan.start}-${m.nameSpan.end}`
-        ).join(", ");
-        ctx.log(
-          `[LSP] Legacy let collector missed ${missing.length} node(s): ${summary}`,
-        );
-      }
-    } */
+
+    const letHintTargets = collectLetTargetsFromIndex(context);
+
     for (const target of letHintTargets) {
       const spanSummary = `${target.nameSpan.start}-${target.nameSpan.end}`;
       const spanText = text.slice(target.nameSpan.start, target.nameSpan.end)
@@ -1479,7 +1468,7 @@ function getBestAvailableType(
   return null;
 }
 
-function collectLetDeclarationTargets(
+function collectLetTargetsFromIndex(
   context: {
     layer3: import("../../../src/layer3/mod.ts").Layer3Result;
     program: import("../../../src/ast_marked.ts").MProgram;
@@ -1489,150 +1478,31 @@ function collectLetDeclarationTargets(
   nameSpan: { start: number; end: number };
   fallbackType?: Type;
 }> {
+  const nodeIndex = buildNodeIndex(context);
   const targets: Array<{
     nodeId: number;
     nameSpan: { start: number; end: number };
     fallbackType?: Type;
   }> = [];
-  const visitedDecls = new Set<number>();
-
-  const recordTarget = (
-    decl: import("../../../src/ast_marked.ts").MLetDeclaration,
-  ) => {
-    if (typeof decl.id !== "number") {
-      return;
-    }
-    if (visitedDecls.has(decl.id)) {
-      return;
-    }
-    visitedDecls.add(decl.id);
+  for (const node of nodeIndex.values()) {
     if (
-      decl.nameSpan &&
-      typeof decl.nameSpan.start === "number" &&
-      typeof decl.nameSpan.end === "number"
+      node &&
+      node.kind === "let" &&
+      typeof node.id === "number" &&
+      node.nameSpan &&
+      typeof node.nameSpan.start === "number" &&
+      typeof node.nameSpan.end === "number"
     ) {
       targets.push({
-        nodeId: decl.id,
+        nodeId: node.id,
         nameSpan: {
-          start: decl.nameSpan.start,
-          end: decl.nameSpan.end,
+          start: node.nameSpan.start,
+          end: node.nameSpan.end,
         },
-        fallbackType: decl.type,
+        fallbackType: node.type,
       });
     }
-  };
-
-  const visitLet = (
-    decl?: import("../../../src/ast_marked.ts").MLetDeclaration,
-  ) => {
-    if (!decl) {
-      return;
-    }
-    recordTarget(decl);
-    visitBlock(decl.body);
-    if (decl.mutualBindings) {
-      for (const binding of decl.mutualBindings) {
-        visitLet(binding);
-      }
-    }
-  };
-
-  const visitBlock = (
-    block?: import("../../../src/ast_marked.ts").MBlockExpr,
-  ) => {
-    if (!block) {
-      return;
-    }
-    for (const stmt of block.statements) {
-      if (stmt.kind === "let_statement") {
-        visitLet(stmt.declaration);
-      } else if (stmt.kind === "expr_statement") {
-        visitExpr(stmt.expression);
-      }
-    }
-    if (block.result) {
-      visitExpr(block.result);
-    }
-  };
-
-  const visitMatchBundle = (
-    bundle: import("../../../src/ast_marked.ts").MMatchBundle,
-  ) => {
-    for (const arm of bundle.arms) {
-      if (arm.kind === "match_pattern") {
-        visitExpr(arm.body);
-      }
-    }
-  };
-
-  const visitExpr = (
-    expr?: import("../../../src/ast_marked.ts").MExpr,
-  ) => {
-    if (!expr) {
-      return;
-    }
-    switch (expr.kind) {
-      case "block":
-        visitBlock(expr);
-        break;
-      case "arrow":
-        visitBlock(expr.body);
-        break;
-      case "call":
-        visitExpr(expr.callee);
-        for (const arg of expr.arguments) {
-          visitExpr(arg);
-        }
-        break;
-      case "constructor":
-        for (const arg of expr.args) {
-          visitExpr(arg);
-        }
-        break;
-      case "tuple":
-        for (const element of expr.elements) {
-          visitExpr(element);
-        }
-        break;
-      case "record_literal":
-        for (const field of expr.fields) {
-          visitExpr(field.value);
-        }
-        break;
-      case "record_projection":
-        visitExpr(expr.target);
-        break;
-      case "binary":
-        visitExpr(expr.left);
-        visitExpr(expr.right);
-        break;
-      case "unary":
-        visitExpr(expr.operand);
-        break;
-      case "match":
-        visitExpr(expr.scrutinee);
-        visitMatchBundle(expr.bundle);
-        break;
-      case "match_fn":
-        for (const param of expr.parameters) {
-          visitExpr(param);
-        }
-        visitMatchBundle(expr.bundle);
-        break;
-      case "match_bundle_literal":
-        visitMatchBundle(expr.bundle);
-        break;
-      default:
-        break;
-    }
-  };
-
-  for (const decl of context.program.declarations ?? []) {
-    if (decl.kind === "let") {
-      visitLet(decl);
-    }
   }
-
   return targets;
 }
 
