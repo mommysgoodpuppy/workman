@@ -51,6 +51,12 @@ interface ExtractedEnum {
   backing?: ExtractedTypeDesc;
 }
 
+interface ExtractedAlias {
+  kind: "alias";
+  name: string;
+  target: ExtractedTypeDesc;
+}
+
 interface ExtractedFn {
   name: string;
   params: ExtractedTypeDesc[];
@@ -63,7 +69,7 @@ interface ExtractedValue {
 }
 
 interface ExtractedResult {
-  types: Array<ExtractedStruct | ExtractedEnum>;
+  types: Array<ExtractedStruct | ExtractedEnum | ExtractedAlias>;
   fns: ExtractedFn[];
   values: ExtractedValue[];
 }
@@ -104,6 +110,7 @@ export function createZigCHeaderProvider(
     const symbols = request.specifiers.map((spec) => spec.imported);
     try {
       const cacheKey = await hashKey({
+        schemaVersion: 2,
         headerPath: request.headerPath,
         includeDirs: request.includeDirs,
         defines: request.defines,
@@ -224,11 +231,31 @@ function mapExtractedResult(extracted: ExtractedResult): ForeignTypeResult {
   }
 
   for (const entry of extracted.types) {
-    if (!values.has(entry.name)) {
-      values.set(entry.name, {
-        quantifiers: [],
-        type: { kind: "constructor", name: entry.name, args: [] },
+    if (entry.kind === "alias") {
+      const target = mapTypeDesc(entry.target, types);
+      types.set(entry.name, {
+        name: entry.name,
+        parameters: [],
+        constructors: [],
+        alias: target,
+        isAlias: true,
       });
+    }
+  }
+
+  for (const entry of extracted.types) {
+    if (!values.has(entry.name)) {
+      if (entry.kind === "alias") {
+        values.set(entry.name, {
+          quantifiers: [],
+          type: mapTypeDesc(entry.target, types),
+        });
+      } else {
+        values.set(entry.name, {
+          quantifiers: [],
+          type: { kind: "constructor", name: entry.name, args: [] },
+        });
+      }
     }
   }
 
@@ -313,6 +340,15 @@ function mapTypeDesc(
         name: "Ptr",
         args: [desc.child ? mapTypeDesc(desc.child, types) : unknownForeignType()],
       };
+    case "unknown": {
+      if (desc.name) {
+        const name = normalizeCImportName(desc.name);
+        if (name === "anyopaque") {
+          return mapNamedType(name, types);
+        }
+      }
+      return unknownForeignType();
+    }
     default:
       return unknownForeignType();
   }

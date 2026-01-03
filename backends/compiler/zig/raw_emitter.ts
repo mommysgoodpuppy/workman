@@ -97,7 +97,9 @@ const RAW_OMITTED_BINDINGS = new Set<string>([
   "zig_alloc_struct",
   "zig_alloc_struct_uninit",
   "zig_alloc_struct_init",
+  "zig_alloc_slice",
   "zig_free",
+  "zig_free_slice",
 ]);
 
 const RAW_STD_ZIG_OPTION_HELPERS = new Set<string>([
@@ -492,9 +494,18 @@ function emitCall(
       const valueExpr = emitExpr(expr.args[1], ctx);
       return emitRawAllocStruct(typeExpr, ctx, "allocStructInit", valueExpr);
     }
+    if (expr.callee.name === "zig_alloc_slice" && expr.args.length === 2) {
+      const typeExpr = emitExpr(expr.args[0], ctx);
+      const lenExpr = emitExpr(expr.args[1], ctx);
+      return emitRawAllocSlice(typeExpr, lenExpr, ctx);
+    }
     if (expr.callee.name === "zig_free" && expr.args.length === 1) {
       const ptrExpr = emitExpr(expr.args[0], ctx);
       return `@import("std").heap.page_allocator.destroy(${ptrExpr})`;
+    }
+    if (expr.callee.name === "zig_free_slice" && expr.args.length === 1) {
+      const sliceExpr = emitExpr(expr.args[0], ctx);
+      return `@import("std").heap.page_allocator.free(${sliceExpr}.ptr[0..${sliceExpr}.len])`;
     }
     if (expr.callee.name === "zig_optional_is_non_null" && expr.args.length === 1) {
       const value = emitExpr(expr.args[0], ctx);
@@ -552,6 +563,18 @@ function emitRawAllocStruct(
     ? `${ptrName}.* = ${initExpr};`
     : `${ptrName}.* = ${stdImport}.mem.zeroes(${typeExpr});`;
   return `${blockName}: { const ${ptrName} = ${stdImport}.heap.page_allocator.create(${typeExpr}) catch @panic("${label} failed"); ${initLine} break :${blockName} ${ptrName}; }`;
+}
+
+function emitRawAllocSlice(
+  typeExpr: string,
+  lenExpr: string,
+  ctx: EmitContext,
+): string {
+  const sliceName = allocateTempName(ctx.state, "alloc_slice");
+  const blockName = allocateTempName(ctx.state, "alloc_blk");
+  const stdImport = `@import("std")`;
+  const lenCast = `@as(usize, @intCast(${lenExpr}))`;
+  return `${blockName}: { const ${sliceName} = ${stdImport}.heap.page_allocator.alloc(${typeExpr}, ${lenCast}) catch @panic("allocSlice failed"); break :${blockName} .{ .ptr = ${sliceName}.ptr, .len = ${sliceName}.len }; }`;
 }
 
 function emitLet(

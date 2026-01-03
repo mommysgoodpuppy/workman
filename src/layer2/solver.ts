@@ -422,7 +422,12 @@ function solveCallConstraint(
     : getTypeForNode(state, stub.argument);
   const result = applySubstitution(stub.resultType, state.substitution);
   const target: Type = { kind: "func", from: argumentValue, to: result };
-  const unified = unifyTypes(stageCallee, target, state.substitution);
+  const unified = unifyTypes(
+    stageCallee,
+    target,
+    state.substitution,
+    state.adtEnv,
+  );
   if (unified.success) {
     state.substitution = unified.subst;
     return;
@@ -454,9 +459,17 @@ function solveHasFieldConstraint(
 
   // Use generic carrier splitting instead of Result-specific flattening
   const targetCarrierInfo = splitCarrier(resolvedTarget);
-  const targetValue = targetCarrierInfo
+  let targetValue = targetCarrierInfo
     ? applySubstitution(targetCarrierInfo.value, state.substitution)
     : resolvedTarget;
+
+  // Raw-mode implicit deref: allow Ptr<T> to be treated as T for field access.
+  if (
+    targetValue.kind === "constructor" && targetValue.name === "Ptr" &&
+    targetValue.args.length === 1
+  ) {
+    targetValue = targetValue.args[0];
+  }
   const projectedValue = stub.projectedValueType
     ? applySubstitution(stub.projectedValueType, state.substitution)
     : null;
@@ -1071,7 +1084,12 @@ function peelFunctionType(type: Type, depth: number): Type {
   return cloneType(current);
 }
 
-function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
+function unifyTypes(
+  left: Type,
+  right: Type,
+  subst: Substitution,
+  adtEnv?: Map<string, import("../types.ts").TypeInfo>,
+): UnifyResult {
   const resolvedLeft = applySubstitution(left, subst);
   const resolvedRight = applySubstitution(right, subst);
 
@@ -1094,14 +1112,36 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
   }
 
   if (resolvedLeft.kind === "func" && resolvedRight.kind === "func") {
-    const first = unifyTypes(resolvedLeft.from, resolvedRight.from, subst);
+    const first = unifyTypes(
+      resolvedLeft.from,
+      resolvedRight.from,
+      subst,
+      adtEnv,
+    );
     if (!first.success) return first;
-    return unifyTypes(resolvedLeft.to, resolvedRight.to, first.subst);
+    return unifyTypes(resolvedLeft.to, resolvedRight.to, first.subst, adtEnv);
   }
 
   if (
     resolvedLeft.kind === "constructor" && resolvedRight.kind === "constructor"
   ) {
+    if (
+      adtEnv &&
+      resolvedLeft.name === resolvedRight.name &&
+      resolvedLeft.args.length !== resolvedRight.args.length
+    ) {
+      const adtInfo = adtEnv.get(resolvedLeft.name);
+      const recordArity = adtInfo?.recordFields?.size;
+      if (recordArity !== undefined) {
+        const leftIsBare = resolvedLeft.args.length === 0;
+        const rightIsBare = resolvedRight.args.length === 0;
+        const leftIsRecord = resolvedLeft.args.length === recordArity;
+        const rightIsRecord = resolvedRight.args.length === recordArity;
+        if ((leftIsBare && rightIsRecord) || (rightIsBare && leftIsRecord)) {
+          return { success: true, subst };
+        }
+      }
+    }
     if (
       resolvedLeft.name !== resolvedRight.name ||
       resolvedLeft.args.length !== resolvedRight.args.length
@@ -1123,6 +1163,7 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
         resolvedLeft.args[index],
         resolvedRight.args[index],
         current,
+        adtEnv,
       );
       if (!result.success) return result;
       current = result.subst;
@@ -1147,6 +1188,7 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
         resolvedLeft.elements[index],
         resolvedRight.elements[index],
         current,
+        adtEnv,
       );
       if (!result.success) return result;
       current = result.subst;
@@ -1178,7 +1220,7 @@ function unifyTypes(left: Type, right: Type, subst: Substitution): UnifyResult {
           },
         };
       }
-      const result = unifyTypes(leftType, rightType, current);
+      const result = unifyTypes(leftType, rightType, current, adtEnv);
       if (!result.success) {
         return result;
       }

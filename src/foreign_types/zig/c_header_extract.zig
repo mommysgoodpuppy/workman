@@ -80,7 +80,20 @@ fn emitType(
             return true;
         },
         else => {
-            return false;
+            try list.append(allocator, '{');
+            try writeJsonString(allocator, list, "kind");
+            try list.append(allocator, ':');
+            try writeJsonString(allocator, list, "alias");
+            try list.append(allocator, ',');
+            try writeJsonString(allocator, list, "name");
+            try list.append(allocator, ':');
+            try writeJsonString(allocator, list, name);
+            try list.append(allocator, ',');
+            try writeJsonString(allocator, list, "target");
+            try list.append(allocator, ':');
+            try writeTypeDesc(allocator, list, T);
+            try list.append(allocator, '}');
+            return true;
         },
     }
 }

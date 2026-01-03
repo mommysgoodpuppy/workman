@@ -1855,11 +1855,31 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           registerHoleForType(ctx, holeOriginFromExpr(expr), fieldType);
           return recordExprType(ctx, expr, fieldType);
         }
+
+        // In raw mode, if the type is known but opaque, allow field projection anyway.
+        if (ctx.rawMode && info && !info.recordFields) {
+          const fieldType = freshTypeVar();
+          ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
+          registerHoleForType(ctx, holeOriginFromExpr(targetExpr), applyCurrentSubst(ctx, targetType));
+          registerHoleForType(ctx, holeOriginFromExpr(expr), fieldType);
+          return recordExprType(ctx, expr, fieldType);
+        }
         
         if (info && info.recordFields) {
           const index = info.recordFields.get(expr.field);
           if (index !== undefined) {
-            const projectedValueType = recordSubject.args[index];
+            let projectedValueType = recordSubject.args[index];
+            if (!projectedValueType && info.alias?.kind === "record") {
+              const aliasInstance = instantiateRecordAlias(info);
+              projectedValueType = aliasInstance?.fields.get(expr.field);
+            }
+            if (!projectedValueType) {
+              const unknown = unknownType({
+                kind: "incomplete",
+                reason: "missing_field",
+              });
+              return recordExprType(ctx, expr, unknown);
+            }
             const projectionType = wrapWithCarrier(projectedValueType);
             recordHasFieldConstraint(
               ctx,
@@ -2022,6 +2042,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       }
 
       // Field projection must be on nominal record types (HM requirement)
+      if (ctx.rawMode) {
+        const fieldType = freshTypeVar();
+        ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
+        registerHoleForType(
+          ctx,
+          holeOriginFromExpr(targetExpr),
+          applyCurrentSubst(ctx, targetType),
+        );
+        registerHoleForType(ctx, holeOriginFromExpr(expr), fieldType);
+        return recordExprType(ctx, expr, fieldType);
+      }
       recordLayer1Diagnostic(ctx, expr.id, "not_record", {
         actual: resolvedTarget.kind,
       });

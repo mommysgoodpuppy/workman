@@ -515,9 +515,21 @@ async function handleHover(
             layer3,
             context.adtEnv,
           );
+          const typeInfo = context.adtEnv.get(node.name);
+          const typeInfoText = typeInfo
+            ? formatTypeInfoHover(
+              ctx,
+              node.name,
+              typeInfo,
+              context.adtEnv,
+            )
+            : null;
           const hoverLines = namedSignature
             ? [namedSignature, `${node.name} : ${typeStr}`]
             : [`${node.name} : ${typeStr}`];
+          if (typeInfoText) {
+            hoverLines.push("", typeInfoText);
+          }
           const hoverText = `\`\`\`workman\n${hoverLines.join("\n")}\n\`\`\``;
           return {
             jsonrpc: "2.0",
@@ -529,6 +541,28 @@ async function handleHover(
               },
             },
           };
+        }
+        const typeInfo = context.adtEnv.get(node.name);
+        if (typeInfo) {
+          const typeText = formatTypeInfoHover(
+            ctx,
+            node.name,
+            typeInfo,
+            context.adtEnv,
+          );
+          if (typeText) {
+            const hoverText = `\`\`\`workman\n${typeText}\n\`\`\``;
+            return {
+              jsonrpc: "2.0",
+              id: message.id,
+              result: {
+                contents: {
+                  kind: "markdown",
+                  value: hoverText,
+                },
+              },
+            };
+          }
         }
       }
       const view = layer3.nodeViews.get(nodeId);
@@ -580,9 +614,21 @@ async function handleHover(
         context.adtEnv,
         paramNames,
       );
+      const typeInfo = context.adtEnv.get(word);
+      const typeInfoText = typeInfo
+        ? formatTypeInfoHover(
+          ctx,
+          word,
+          typeInfo,
+          context.adtEnv,
+        )
+        : null;
       const hoverLines = namedSignature
         ? [namedSignature, `${word} : ${typeStr}`]
         : [`${word} : ${typeStr}`];
+      if (typeInfoText) {
+        hoverLines.push("", typeInfoText);
+      }
       const hoverText = `\`\`\`workman\n${hoverLines.join("\n")}\n\`\`\``;
 
       return {
@@ -595,6 +641,28 @@ async function handleHover(
           },
         },
       };
+    }
+    const typeInfo = context.adtEnv.get(word);
+    if (typeInfo) {
+      const typeText = formatTypeInfoHover(
+        ctx,
+        word,
+        typeInfo,
+        context.adtEnv,
+      );
+      if (typeText) {
+        const hoverText = `\`\`\`workman\n${typeText}\n\`\`\``;
+        return {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            contents: {
+              kind: "markdown",
+              value: hoverText,
+            },
+          },
+        };
+      }
     }
 
     ctx.log(`[LSP] No type found for '${word}'`);
@@ -1967,6 +2035,35 @@ function formatTypeForSignature(
     }
   }
   return typeStr;
+}
+
+function formatTypeInfoHover(
+  ctx: LspServerContext,
+  name: string,
+  info: TypeInfo,
+  adtEnv: Map<string, TypeInfo>,
+): string | null {
+  if (!info.alias || info.alias.kind !== "record") {
+    return null;
+  }
+  const entries = Array.from(info.alias.fields.entries());
+  const order = info.recordFields
+    ? Array.from(info.recordFields.entries())
+      .sort((a, b) => a[1] - b[1])
+      .map(([field]) => field)
+    : entries.map(([field]) => field);
+  const fieldMap = new Map(entries);
+  const fieldLines = order.map((field) => {
+    const fieldType = fieldMap.get(field);
+    const rendered = fieldType
+      ? formatTypeForSignature(ctx, fieldType, adtEnv)
+      : "Unknown";
+    return `  ${field}: ${rendered}`;
+  });
+  if (fieldLines.length === 0) {
+    return `type ${name} = {}`;
+  }
+  return `type ${name} = {\n${fieldLines.join("\n")}\n}`;
 }
 
 function collectFunctionTypeParts(

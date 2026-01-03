@@ -1509,12 +1509,7 @@ function applyForeignTypeResult(
       targetEnv.set(spec.local, cloneTypeScheme(valueExport));
     }
 
-    if (typeExport) {
-      if (spec.local !== spec.imported) {
-        throw moduleError(
-          `Type import aliasing is not supported in Stage M1 (imported '${spec.imported}' as '${spec.local}')`,
-        );
-      }
+    if (typeExport && spec.local === spec.imported) {
       if (targetAdtEnv.has(spec.imported)) {
         throw moduleError(
           `Duplicate imported type '${spec.imported}' in module '${record.importerPath}'`,

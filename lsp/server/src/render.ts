@@ -54,6 +54,14 @@ export function renderNodeView(
     result += `\n\nErrors: ${summary}`;
   }
 
+  const recordInfo = resolveRecordInfo(t, adtEnv);
+  if (recordInfo) {
+    const recordText = formatRecordInfo(ctx, recordInfo, adtEnv);
+    if (recordText) {
+      result += `\n\n\`\`\`workman\n${recordText}\n\`\`\``;
+    }
+  }
+
   if (coverage) {
     const rowStr = formatScheme({ quantifiers: [], type: coverage.row });
     const handled = [...coverage.coveredConstructors];
@@ -149,6 +157,50 @@ export function renderNodeView(
   }
 
   return result;
+}
+
+function resolveRecordInfo(
+  type: Type | undefined,
+  adtEnv?: Map<string, import("../../../src/types.ts").TypeInfo>,
+): { name: string; info: import("../../../src/types.ts").TypeInfo } | null {
+  if (!type || !adtEnv || type.kind !== "constructor") {
+    return null;
+  }
+  const info = adtEnv.get(type.name);
+  if (!info || !info.alias || info.alias.kind !== "record") {
+    return null;
+  }
+  return { name: type.name, info };
+}
+
+function formatRecordInfo(
+  ctx: LspServerContext,
+  record: { name: string; info: import("../../../src/types.ts").TypeInfo },
+  adtEnv?: Map<string, import("../../../src/types.ts").TypeInfo>,
+): string | null {
+  const alias = record.info.alias;
+  if (!alias || alias.kind !== "record") {
+    return null;
+  }
+  const entries = Array.from(alias.fields.entries());
+  const order = record.info.recordFields
+    ? Array.from(record.info.recordFields.entries())
+      .sort((a, b) => a[1] - b[1])
+      .map(([field]) => field)
+    : entries.map(([field]) => field);
+  const fieldMap = new Map(entries);
+  const printCtx = { names: new Map(), next: 0 };
+  const fieldLines = order.map((field) => {
+    const fieldType = fieldMap.get(field);
+    const rendered = fieldType
+      ? formatType(fieldType, printCtx, 0)
+      : "?";
+    return `  ${field}: ${rendered}`;
+  });
+  if (fieldLines.length === 0) {
+    return `type ${record.name} = {}`;
+  }
+  return `type ${record.name} = {\n${fieldLines.join("\n")}\n}`;
 }
 
 function partialTypeToString(

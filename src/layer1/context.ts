@@ -1248,6 +1248,20 @@ function unifyTypes(
       );
     }
 
+    if (left.name === right.name && left.args.length !== right.args.length) {
+      const adtInfo = adtEnv.get(left.name);
+      const recordArity = adtInfo?.recordFields?.size;
+      if (recordArity !== undefined) {
+        const leftIsBare = left.args.length === 0;
+        const rightIsBare = right.args.length === 0;
+        const leftIsRecord = left.args.length === recordArity;
+        const rightIsRecord = right.args.length === recordArity;
+        if ((leftIsBare && rightIsRecord) || (rightIsBare && leftIsRecord)) {
+          return { success: true, subst };
+        }
+      }
+    }
+
     // Normal constructor unification - require exact name match
     if (left.name !== right.name || left.args.length !== right.args.length) {
       return {
