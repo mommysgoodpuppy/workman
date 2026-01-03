@@ -74,19 +74,29 @@ export function createDefaultForeignTypeConfig(
   const buildWmPath = findNearestBuildWm(entryPath);
   const cacheDir = resolveCacheDir(entryPath);
   const zigPath = resolveZigPath();
+  const useWinSdk = getEnv("WM_C_HEADER_USE_WINSDK") === "1";
+  const includeDirs = [
+    ...readEnvList("WM_C_HEADER_INCLUDE_DIRS"),
+    ...(useWinSdk ? defaultMsvcIncludeDirs() : []),
+    ...(useWinSdk ? defaultWindowsSdkIncludeDirs() : []),
+  ];
+  const defines = [
+    ...readEnvList("WM_C_HEADER_DEFINES"),
+  ];
   return {
-    provider: createZigCHeaderProvider({ cacheDir, zigPath }),
+    provider: createZigCHeaderProvider({ cacheDir, zigPath, useWinSdk }),
     buildWmPath,
-    includeDirs: [],
-    defines: [],
+    includeDirs,
+    defines,
   };
 }
 
 export function createZigCHeaderProvider(
-  options: ZigCHeaderProviderOptions = {},
+  options: ZigCHeaderProviderOptions & { useWinSdk?: boolean } = {},
 ): ForeignTypeProvider {
   const zigPath = options.zigPath ?? "zig";
   const cacheDir = options.cacheDir ?? DEFAULT_CACHE_DIR;
+  const useWinSdk = options.useWinSdk ?? false;
   return async (request: ForeignTypeRequest): Promise<ForeignTypeResult> => {
     if (!request.rawMode) {
       return { values: new Map(), types: new Map() };
@@ -109,6 +119,7 @@ export function createZigCHeaderProvider(
         includeDirs: request.includeDirs,
         defines: request.defines,
         symbols,
+        useWinSdk,
       });
       return mapExtractedResult(extracted);
     } catch (error) {
@@ -133,6 +144,7 @@ async function runZigExtractor(options: {
   includeDirs: string[];
   defines: string[];
   symbols: string[];
+  useWinSdk: boolean;
 }): Promise<ExtractedResult> {
   await ensureDir(options.cacheDir);
   const source = await buildZigSource(options.headerPath, options.symbols);
@@ -143,6 +155,7 @@ async function runZigExtractor(options: {
     zigPath,
     options.includeDirs,
     options.defines,
+    options.useWinSdk,
   );
   await IO.writeTextFile(options.cacheFile, result);
   return JSON.parse(result) as ExtractedResult;
@@ -171,8 +184,13 @@ async function runZig(
   sourcePath: string,
   includeDirs: string[],
   defines: string[],
+  useWinSdk: boolean,
 ): Promise<string> {
   const args: string[] = ["run"];
+  if (isWindowsRuntime()) {
+    args.push("-target", detectWindowsTarget(useWinSdk));
+    args.push("-lc");
+  }
   for (const include of includeDirs) {
     args.push(`-I${include}`);
   }
@@ -202,6 +220,15 @@ function mapExtractedResult(extracted: ExtractedResult): ForeignTypeResult {
       types.set(entry.name, buildStructInfo(entry, types));
     } else if (entry.kind === "enum") {
       types.set(entry.name, buildEnumInfo(entry));
+    }
+  }
+
+  for (const entry of extracted.types) {
+    if (!values.has(entry.name)) {
+      values.set(entry.name, {
+        quantifiers: [],
+        type: { kind: "constructor", name: entry.name, args: [] },
+      });
     }
   }
 
@@ -313,11 +340,19 @@ function mapNamedType(
   name: string,
   types: Map<string, TypeInfo>,
 ): Type {
+  if (name.startsWith("_")) {
+    const stripped = name.replace(/^_+/, "");
+    if (types.has(stripped)) {
+      name = stripped;
+    }
+  }
   switch (name) {
     case "bool":
       return { kind: "bool" };
     case "void":
       return { kind: "unit" };
+    case "anyopaque":
+      return { kind: "constructor", name: "Null", args: [] };
     default:
       return buildNamedConstructorType(name, types);
   }
@@ -342,18 +377,10 @@ function buildNamedConstructorType(
   types: Map<string, TypeInfo>,
 ): Type {
   const info = types.get(name);
-  if (!info?.recordFields || info.recordFields.size === 0) {
+  if (!info || info.parameters.length === 0) {
     return { kind: "constructor", name, args: [] };
   }
-  const args: Type[] = Array(info.recordFields.size).fill(unknownForeignType());
-  if (info.alias?.kind === "record") {
-    for (const [fieldName, index] of info.recordFields.entries()) {
-      const fieldType = info.alias.fields.get(fieldName);
-      if (fieldType) {
-        args[index] = fieldType;
-      }
-    }
-  }
+  const args: Type[] = Array(info.parameters.length).fill(unknownForeignType());
   return { kind: "constructor", name, args };
 }
 
@@ -426,6 +453,151 @@ function isWindowsRuntime(): boolean {
     return Deno.build.os === "windows";
   }
   return false;
+}
+
+function readEnvList(key: string): string[] {
+  const value = getEnv(key);
+  if (!value) return [];
+  return value.split(";").map((part) => part.trim()).filter((part) => part);
+}
+
+function defaultWindowsSdkIncludeDirs(): string[] {
+  if (!isWindowsRuntime()) return [];
+
+  const sdkDir = getEnv("WindowsSdkDir") ?? getEnv("WindowsSDKDir");
+  const sdkVersionRaw = getEnv("WindowsSDKVersion") ?? getEnv("WindowsSdkVersion");
+  const sdkVersion = sdkVersionRaw?.replace(/[/\\]+$/, "");
+  if (sdkDir && sdkVersion) {
+    return collectWindowsSdkIncludeDirs(join(sdkDir, "Include", sdkVersion));
+  }
+
+  const roots = [
+    "C:/Program Files (x86)/Windows Kits/10/Include",
+    "C:/Program Files/Windows Kits/10/Include",
+  ];
+  for (const root of roots) {
+    const version = findLatestWindowsSdkVersion(root);
+    if (version) {
+      return collectWindowsSdkIncludeDirs(join(root, version));
+    }
+  }
+  return [];
+}
+
+function defaultMsvcIncludeDirs(): string[] {
+  if (!isWindowsRuntime()) return [];
+
+  const vcTools = getEnv("VCToolsInstallDir");
+  if (vcTools) {
+    const candidate = join(vcTools, "include");
+    if (existsSync(candidate)) {
+      return [candidate];
+    }
+  }
+
+  const vcInstall = getEnv("VCINSTALLDIR");
+  if (vcInstall) {
+    const candidate = join(vcInstall, "Tools", "MSVC");
+    const version = findLatestWindowsSdkVersion(candidate);
+    if (version) {
+      const includeDir = join(candidate, version, "include");
+      if (existsSync(includeDir)) {
+        return [includeDir];
+      }
+    }
+  }
+
+  const roots = [
+    "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC",
+    "C:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/MSVC",
+    "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC",
+    "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC",
+    "C:/Program Files (x86)/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC",
+    "C:/Program Files (x86)/Microsoft Visual Studio/2022/Professional/VC/Tools/MSVC",
+    "C:/Program Files (x86)/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC",
+    "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC",
+    "C:/Program Files/Microsoft Visual Studio/2019/Community/VC/Tools/MSVC",
+    "C:/Program Files/Microsoft Visual Studio/2019/Professional/VC/Tools/MSVC",
+    "C:/Program Files/Microsoft Visual Studio/2019/Enterprise/VC/Tools/MSVC",
+    "C:/Program Files/Microsoft Visual Studio/2019/BuildTools/VC/Tools/MSVC",
+    "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Tools/MSVC",
+    "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/VC/Tools/MSVC",
+    "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/VC/Tools/MSVC",
+    "C:/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Tools/MSVC",
+  ];
+
+  for (const root of roots) {
+    const version = findLatestWindowsSdkVersion(root);
+    if (!version) continue;
+    const includeDir = join(root, version, "include");
+    if (existsSync(includeDir)) {
+      return [includeDir];
+    }
+  }
+
+  return [];
+}
+
+function collectWindowsSdkIncludeDirs(baseDir: string): string[] {
+  const dirs = ["um", "shared", "ucrt", "winrt"];
+  const result: string[] = [];
+  for (const dir of dirs) {
+    const full = join(baseDir, dir);
+    if (existsSync(full)) {
+      result.push(full);
+    }
+  }
+  return result;
+}
+
+function detectWindowsTarget(useWinSdk: boolean): string {
+  if (!isWindowsRuntime()) return "native";
+  const override = getEnv("WM_C_HEADER_TARGET");
+  if (override) return override;
+  const arch = (getEnv("PROCESSOR_ARCHITECTURE") ??
+    getEnv("PROCESSOR_ARCHITEW6432") ?? "").toLowerCase();
+  const abi = useWinSdk ? "msvc" : "gnu";
+  if (arch.includes("arm64")) return `aarch64-windows-${abi}`;
+  if (arch.includes("arm")) return `arm-windows-${abi}`;
+  if (arch.includes("86")) return `x86-windows-${abi}`;
+  return `x86_64-windows-${abi}`;
+}
+
+function findLatestWindowsSdkVersion(root: string): string | undefined {
+  const entries = listDirNames(root);
+  if (entries.length === 0) return undefined;
+  const versions = entries.filter((name) => /^\d+\.\d+\.\d+(?:\.\d+)?$/.test(name));
+  const candidates = versions.length > 0 ? versions : entries;
+  if (candidates.length === 0) return undefined;
+  candidates.sort(compareWindowsSdkVersions);
+  return candidates[candidates.length - 1];
+}
+
+function compareWindowsSdkVersions(a: string, b: string): number {
+  const aParts = a.split(".").map((v) => parseInt(v, 10));
+  const bParts = b.split(".").map((v) => parseInt(v, 10));
+  const len = Math.max(aParts.length, bParts.length);
+  for (let i = 0; i < len; i++) {
+    const av = aParts[i] ?? 0;
+    const bv = bParts[i] ?? 0;
+    if (av !== bv) return av - bv;
+  }
+  return 0;
+}
+
+function listDirNames(path: string): string[] {
+  try {
+    if (typeof Deno !== "undefined") {
+      const entries: string[] = [];
+      for (const entry of Deno.readDirSync(path)) {
+        if (entry.isDirectory) entries.push(entry.name);
+      }
+      return entries;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
 }
 
 function findProjectRoot(entryPath: string): string | undefined {

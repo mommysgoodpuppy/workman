@@ -1,0 +1,50 @@
+@raw;
+-- Workman WinAPI pointer + heap test
+from "winapi.h" import {
+  "GetSystemInfo" as getSystemInfo,
+  "GetComputerNameW" as getComputerNameW,
+  "GetProcessHeap" as getProcessHeap,
+  "HeapAlloc" as heapAlloc,
+  "HeapFree" as heapFree,
+  SYSTEM_INFO,
+  DWORD,
+  WCHAR
+};
+from "std/zig/rawmem" import { allocStructUninit, free };
+
+let main = () => {
+  let sys_info = allocStructUninit(SYSTEM_INFO);
+  getSystemInfo(sys_info);
+
+  let heap = getProcessHeap();
+  let bytes = 256;
+  let buffer = heapAlloc(heap, 0, bytes);
+  let freed = heapFree(heap, 0, buffer);
+
+  --let name_capacity = 256;
+  --let name_bytes = name_capacity * 2;
+  --let name_buf = heapAlloc(heap, 0, name_bytes);
+  --let name_len: DWORD = name_capacity;
+  --let got_name = getComputerNameW(name_buf, &name_len);
+  --let name_freed = heapFree(heap, 0, name_buf);
+--
+  --if (got_name == 0) {
+  --  ()
+  --} else {
+  --  ()
+  --};
+--
+  --if (freed == 0) {
+  --  ()
+  --} else {
+  --  ()
+  --};
+
+  --if (name_freed == 0) {
+  --  ()
+  --} else {
+  --  ()
+  --};
+
+  --free(sys_info);
+};

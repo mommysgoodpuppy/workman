@@ -94,6 +94,10 @@ const RAW_OMITTED_BINDINGS = new Set<string>([
   "zig_optional_is_non_null",
   "zig_optional_unwrap",
   "zig_optional_unwrap_or",
+  "zig_alloc_struct",
+  "zig_alloc_struct_uninit",
+  "zig_alloc_struct_init",
+  "zig_free",
 ]);
 
 const RAW_STD_ZIG_OPTION_HELPERS = new Set<string>([
@@ -475,6 +479,23 @@ function emitCall(
   }
 
   if (expr.callee.kind === "var") {
+    if (expr.callee.name === "zig_alloc_struct" && expr.args.length === 1) {
+      const typeExpr = emitExpr(expr.args[0], ctx);
+      return emitRawAllocStruct(typeExpr, ctx, "allocStruct");
+    }
+    if (expr.callee.name === "zig_alloc_struct_uninit" && expr.args.length === 1) {
+      const typeExpr = emitExpr(expr.args[0], ctx);
+      return `@import("std").heap.page_allocator.create(${typeExpr}) catch @panic("allocStructUninit failed")`;
+    }
+    if (expr.callee.name === "zig_alloc_struct_init" && expr.args.length === 2) {
+      const typeExpr = emitExpr(expr.args[0], ctx);
+      const valueExpr = emitExpr(expr.args[1], ctx);
+      return emitRawAllocStruct(typeExpr, ctx, "allocStructInit", valueExpr);
+    }
+    if (expr.callee.name === "zig_free" && expr.args.length === 1) {
+      const ptrExpr = emitExpr(expr.args[0], ctx);
+      return `@import("std").heap.page_allocator.destroy(${ptrExpr})`;
+    }
     if (expr.callee.name === "zig_optional_is_non_null" && expr.args.length === 1) {
       const value = emitExpr(expr.args[0], ctx);
       return `(${value} != null)`;
@@ -516,6 +537,21 @@ function emitCall(
   const fn = emitExpr(expr.callee, ctx);
   const args = expr.args.map((arg) => emitExpr(arg, ctx)).join(", ");
   return `${fn}(${args})`;
+}
+
+function emitRawAllocStruct(
+  typeExpr: string,
+  ctx: EmitContext,
+  label: string,
+  initExpr?: string,
+): string {
+  const ptrName = allocateTempName(ctx.state, "alloc_ptr");
+  const blockName = allocateTempName(ctx.state, "alloc_blk");
+  const stdImport = `@import("std")`;
+  const initLine = initExpr
+    ? `${ptrName}.* = ${initExpr};`
+    : `${ptrName}.* = ${stdImport}.mem.zeroes(${typeExpr});`;
+  return `${blockName}: { const ${ptrName} = ${stdImport}.heap.page_allocator.create(${typeExpr}) catch @panic("${label} failed"); ${initLine} break :${blockName} ${ptrName}; }`;
 }
 
 function emitLet(
