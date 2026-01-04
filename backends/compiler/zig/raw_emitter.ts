@@ -73,6 +73,12 @@ const RESERVED = new Set<string>([
   "unreachable", "usingnamespace", "var", "volatile", "while", "_",
 ]);
 
+// Compiler builtins that should not be captured as free variables
+const RAW_BUILTINS = new Set<string>([
+  "zigImport",
+  "zigField",
+]);
+
 // Map __op_* calls to native Zig operators
 const RAW_OPERATOR_MAP = new Map<string, string>([
   ["__op_+", "+"],
@@ -574,6 +580,29 @@ function emitCall(
       const moduleName = expr.args[0].literal.value;
       return `@import("${moduleName}")`;
     }
+  }
+  
+  // Handle zigField(obj, "fieldname") -> @field(obj, "fieldname")
+  // This is for accessing fields with reserved names like "type"
+  if (expr.callee.kind === "var" && expr.callee.name === "zigField") {
+    if (expr.args.length === 2 && expr.args[1].kind === "literal" && expr.args[1].literal.kind === "string") {
+      const obj = emitExpr(expr.args[0], ctx);
+      const fieldName = expr.args[1].literal.value;
+      return `@field(${obj}, "${fieldName}")`;
+    }
+  }
+  
+  // Handle curried zigField(obj)("fieldname") -> @field(obj, "fieldname")
+  if (expr.callee.kind === "app" && 
+      expr.callee.callee.kind === "var" && 
+      expr.callee.callee.name === "zigField" &&
+      expr.callee.args.length === 1 &&
+      expr.args.length === 1 && 
+      expr.args[0].kind === "literal" && 
+      expr.args[0].literal.kind === "string") {
+    const obj = emitExpr(expr.callee.args[0], ctx);
+    const fieldName = expr.args[0].literal.value;
+    return `@field(${obj}, "${fieldName}")`;
   }
   
   // Check if this is a call to a function with captured vars
@@ -1124,9 +1153,9 @@ function emitLetRec(
       const recNames = new Set(expr.bindings.map(b => b.name));
       const freeVars = collectFreeVars(binding.value.body, lambdaParams, recNames);
       
-      // Filter out module-level names and built-in operators
+      // Filter out module-level names, built-in operators, and compiler builtins
       const capturedVars = freeVars.filter(v => 
-        !ctx.moduleNames.has(v) && !RAW_OPERATOR_MAP.has(v)
+        !ctx.moduleNames.has(v) && !RAW_OPERATOR_MAP.has(v) && !RAW_BUILTINS.has(v)
       );
       capturedVarsMap.set(binding.name, capturedVars);
       
@@ -1306,6 +1335,12 @@ function emitType(type: Type): string {
       // For function types, we need the return type
       return emitType(getReturnType(type));
     case "constructor":
+      // Hole<T, Row> is an unresolved type hole - emit the inner type or anyopaque
+      if (type.name === "Hole" && type.args.length >= 1) {
+        const inner = emitType(type.args[0]);
+        // If inner is also unresolved, fall back to anyopaque
+        return inner === "anyopaque" || inner === "anytype" ? "anyopaque" : inner;
+      }
       // Optional<T> maps to Zig ?T
       if ((type.name === "Optional" || type.name === "Opt") && type.args.length === 1) {
         return `?${emitType(type.args[0])}`;

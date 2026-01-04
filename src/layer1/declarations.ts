@@ -807,6 +807,9 @@ export function registerRawPrelude(ctx: Context): void {
   // zigImport: String -> a (returns opaque type, used for @import in Zig)
   registerZigImportPrimitive(ctx, "zigImport");
   
+  // zigField: (a, String) -> b (access field by string name, for reserved words like "type")
+  registerZigFieldPrimitive(ctx, "zigField");
+  
   // Register polymorphic operator implementations for raw mode
   // These map operators like + to the polymorphic nativeAdd
   registerPolymorphicBinaryPrimitive(ctx, "__op_+");
@@ -1155,6 +1158,46 @@ function registerZigImportPrimitive(ctx: Context, name: string): void {
       kind: "func",
       from: argType,
       to: resultVar,
+    },
+  };
+  ctx.env.set(name, scheme);
+}
+
+// zigField: (a, String) -> b (access field by string name, for reserved words like "type")
+function registerZigFieldPrimitive(ctx: Context, name: string): void {
+  const objVar = freshTypeVar();
+  if (objVar.kind !== "var") {
+    markInternal(ctx, "fresh_type_var_not_var");
+    return;
+  }
+  const resultVar = freshTypeVar();
+  if (resultVar.kind !== "var") {
+    markInternal(ctx, "fresh_type_var_not_var");
+    return;
+  }
+  const stateVar = freshTypeVar();
+  if (stateVar.kind !== "var") {
+    markInternal(ctx, "fresh_type_var_not_var");
+    return;
+  }
+  const stringType: Type = ctx.rawMode
+    ? {
+      kind: "constructor",
+      name: "Ptr",
+      args: [{ kind: "constructor", name: "U8", args: [] }, stateVar],
+    }
+    : { kind: "string" };
+  // Type: (a, String) -> b
+  const scheme: TypeScheme = {
+    quantifiers: [objVar.id, resultVar.id, stateVar.id],
+    type: {
+      kind: "func",
+      from: objVar,
+      to: {
+        kind: "func",
+        from: stringType,
+        to: resultVar,
+      },
     },
   };
   ctx.env.set(name, scheme);
