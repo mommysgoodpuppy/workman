@@ -11,13 +11,14 @@ let zig_alloc_struct: (t) => Ptr<t> = ?;
 let zig_alloc_struct_uninit: (t) => Ptr<t> = ?;
 let zig_alloc_struct_init: (t, t) => Ptr<t> = ?;
 let zig_alloc_slice: (t, usize) => Slice<t> = ?;
+let zig_alloc_array_uninit: (t, usize) => t = ?;
 let zig_free: (t) => () = ?;
 let zig_free_slice: (Slice<t>) => () = ?;
 
 export let allocStruct = (t) => { zig_alloc_struct(t) };
 export let allocStructUninit = (t) => { zig_alloc_struct_uninit(t) };
 export let allocStructInit = (t, value) => { zig_alloc_struct_init(t, value) };
-export let allocSlice = 
-(t, len) => { zig_alloc_slice(t, len) };
+export let allocSlice = (t, len) => { zig_alloc_slice(t, len) };
+export let allocArrayUninit = (t, len) => { zig_alloc_array_uninit(t, len) };
 export let free = (ptr) => { zig_free(ptr); };
 export let freeSlice = (slice) => { zig_free_slice(slice); };

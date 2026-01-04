@@ -1262,6 +1262,24 @@ function unifyTypes(
       }
     }
 
+    if (
+      left.name !== right.name &&
+      areNumericConstructorsCompatible(left.name, right.name)
+    ) {
+      return { success: true, subst };
+    }
+
+    if (left.name !== right.name) {
+      const leftInfo = adtEnv.get(left.name);
+      if (leftInfo?.alias) {
+        return unifyTypes(leftInfo.alias, right, subst, adtEnv);
+      }
+      const rightInfo = adtEnv.get(right.name);
+      if (rightInfo?.alias) {
+        return unifyTypes(left, rightInfo.alias, subst, adtEnv);
+      }
+    }
+
     // Normal constructor unification - require exact name match
     if (left.name !== right.name || left.args.length !== right.args.length) {
       return {
@@ -1301,6 +1319,16 @@ function unifyTypes(
       current = res.subst;
     }
     return { success: true, subst: current };
+  }
+
+  if (left.kind === "array" && right.kind === "array") {
+    if (left.length !== right.length) {
+      return {
+        success: false,
+        reason: { kind: "type_mismatch", left, right },
+      };
+    }
+    return unifyTypes(left.element, right.element, subst, adtEnv);
   }
 
   if (left.kind === "record" && right.kind === "record") {
@@ -1362,6 +1390,17 @@ function unifyTypes(
     success: false,
     reason: { kind: "type_mismatch", left, right },
   };
+}
+
+const RAW_NUMERIC_COMPAT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["usize", new Set(["c_ulonglong", "c_ulong"])],
+  ["c_ulonglong", new Set(["usize"])],
+  ["c_ulong", new Set(["usize"])],
+]);
+
+function areNumericConstructorsCompatible(left: string, right: string): boolean {
+  const leftSet = RAW_NUMERIC_COMPAT.get(left);
+  return leftSet ? leftSet.has(right) : false;
 }
 
 function bindVar(id: number, type: Type, subst: Substitution): UnifyResult {

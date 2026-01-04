@@ -2210,6 +2210,24 @@ class SurfaceParser {
     if (token.kind === "symbol" && token.value === "(") {
       return this.parseTypeTupleOrGrouping();
     }
+
+    if (token.kind === "symbol" && token.value === "[") {
+      const open = this.consume();
+      const lengthToken = this.peek();
+      if (lengthToken.kind !== "number") {
+        throw this.error("Expected array length number in type", lengthToken);
+      }
+      const length = Number(this.consume().value);
+      this.expectSymbol("]");
+      const element = this.parseTypePrimary();
+      return {
+        kind: "type_array",
+        length,
+        element,
+        span: this.spanFrom(open.start, element.span.end),
+        id: nextNodeId(),
+      };
+    }
     
     // Pointer type: *T
     if (token.kind === "operator" && token.value === "*") {

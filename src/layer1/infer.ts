@@ -1828,7 +1828,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (recordSubject.kind === "constructor" && recordSubject.name === "Ptr" && recordSubject.args.length === 1) {
         recordSubject = recordSubject.args[0];
       }
-      
+
       const wrapWithCarrier = (value: Type): Type => {
         if (!targetCarrierInfo) {
           return value;
@@ -1841,6 +1841,19 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           ) ?? value
         );
       };
+
+      if (recordSubject.kind === "array" && expr.field === "len") {
+        const lenType = ctx.rawMode ? freshTypeVar() : { kind: "int" };
+        const projectionType = wrapWithCarrier(lenType);
+        ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
+        registerHoleForType(
+          ctx,
+          holeOriginFromExpr(targetExpr),
+          applyCurrentSubst(ctx, targetType),
+        );
+        registerHoleForType(ctx, holeOriginFromExpr(expr), projectionType);
+        return recordExprType(ctx, expr, projectionType);
+      }
 
       // First check if the subject type (either direct or carrier payload) is a nominal record
       if (recordSubject.kind === "constructor") {
@@ -2066,6 +2079,37 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       );
     }
     case "call": {
+      if (ctx.rawMode && expr.callee.kind === "identifier") {
+        const calleeName = expr.callee.name;
+        if (
+          calleeName === "allocArrayUninit" && expr.arguments.length === 2
+        ) {
+          const elementType = inferExpr(ctx, expr.arguments[0]);
+          const lengthArg = expr.arguments[1];
+          if (lengthArg.kind === "literal" && lengthArg.literal.kind === "int") {
+            const arrayType: Type = {
+              kind: "array",
+              length: lengthArg.literal.value,
+              element: elementType,
+            };
+            ctx.nodeTypes.set(
+              expr.callee.id,
+              applyCurrentSubst(ctx, elementType),
+            );
+            registerHoleForType(
+              ctx,
+              holeOriginFromExpr(expr.arguments[0]),
+              applyCurrentSubst(ctx, elementType),
+            );
+            registerHoleForType(
+              ctx,
+              holeOriginFromExpr(expr),
+              arrayType,
+            );
+            return recordExprType(ctx, expr, arrayType);
+          }
+        }
+      }
       const rawCalleeType = inferExpr(ctx, expr.callee);
       let fnType = collapseCarrier(applyCurrentSubst(ctx, rawCalleeType));
 
@@ -2797,10 +2841,13 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // In raw mode, & is address-of - returns Ptr<T>
       if (ctx.rawMode && expr.operator === "&") {
+        const pointerTarget = operandType.kind === "array"
+          ? operandType.element
+          : operandType;
         const ptrType: Type = {
           kind: "constructor",
           name: "Ptr",
-          args: [operandType],
+          args: [pointerTarget],
         };
         return recordExprType(ctx, expr, ptrType);
       }

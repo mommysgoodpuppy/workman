@@ -1,9 +1,11 @@
 // lspHandlers.ts
 
 import { fromFileUrl } from "std/path/from_file_url.ts";
+import { dirname, isAbsolute, normalize, resolve } from "std/path/mod.ts";
 import { LSPMessage } from "./server.ts";
 import { splitCarrier, Type, type TypeInfo } from "../../../src/types.ts";
 import { formatType } from "../../../src/type_printer.ts";
+import { createDefaultForeignTypeConfig } from "../../../src/foreign_types/c_header_provider.ts";
 
 import { findNodeAtOffset } from "../../../src/layer3/mod.ts";
 
@@ -499,9 +501,13 @@ async function handleHover(
         if (scheme) {
           const localParamNames = collectLocalParamNameMap(context);
           const cHeaderImports = collectCHeaderImportMap(context);
+          const includeDirs = getCHeaderIncludeDirs(context.entryPath);
           const paramNames =
             localParamNames.get(node.name) ??
-            await getCHeaderParamNames(cHeaderImports.get(node.name));
+            await getCHeaderParamNames(
+              cHeaderImports.get(node.name),
+              includeDirs,
+            );
           const namedSignature = formatNamedFunctionSignature(
             ctx,
             node.name,
@@ -603,9 +609,10 @@ async function handleHover(
 
       const localParamNames = collectLocalParamNameMap(context);
       const cHeaderImports = collectCHeaderImportMap(context);
+      const includeDirs = getCHeaderIncludeDirs(context.entryPath);
       const paramNames =
         localParamNames.get(word) ??
-        await getCHeaderParamNames(cHeaderImports.get(word));
+        await getCHeaderParamNames(cHeaderImports.get(word), includeDirs);
       const namedSignature = formatNamedFunctionSignature(
         ctx,
         word,
@@ -1038,11 +1045,13 @@ async function handleInlayHint(
     const callTargets = collectCallArgumentTargets(context);
     const localParamNames = collectLocalParamNameMap(context);
     const cHeaderImports = collectCHeaderImportMap(context);
+    const includeDirs = getCHeaderIncludeDirs(context.entryPath);
     for (const target of callTargets) {
       const paramNames =
         localParamNames.get(target.calleeName) ??
         await getCHeaderParamNames(
           cHeaderImports.get(target.calleeName),
+          includeDirs,
         );
       if (!paramNames || paramNames.length === 0) {
         continue;
@@ -1810,38 +1819,137 @@ function collectCHeaderImportMap(
 
 const cHeaderParamCache = new Map<string, Map<string, string[] | null>>();
 const cHeaderSourceCache = new Map<string, string>();
+const cHeaderIncludeDirCache = new Map<string, string[]>();
+const MAX_HEADER_INCLUDE_VISITS = 200;
+
+function getCHeaderIncludeDirs(entryPath: string): string[] {
+  const cached = cHeaderIncludeDirCache.get(entryPath);
+  if (cached) return cached;
+  const config = createDefaultForeignTypeConfig(entryPath);
+  const includeDirs = config.includeDirs ?? [];
+  cHeaderIncludeDirCache.set(entryPath, includeDirs);
+  return includeDirs;
+}
 
 async function getCHeaderParamNames(
   importInfo: { headerPath: string; importedName: string } | undefined,
+  includeDirs: string[],
 ): Promise<string[] | null> {
   if (!importInfo) return null;
   const headerPath = importInfo.headerPath;
   const fnName = importInfo.importedName;
   if (!fnName) return null;
 
-  let table = cHeaderParamCache.get(headerPath);
+  const cacheKey = `${headerPath}::${includeDirs.join(";")}`;
+  let table = cHeaderParamCache.get(cacheKey);
   if (!table) {
-    const source = await readHeaderSource(headerPath);
-    if (!source) return null;
     table = new Map();
-    cHeaderParamCache.set(headerPath, table);
-    cHeaderSourceCache.set(headerPath, source);
+    cHeaderParamCache.set(cacheKey, table);
   }
   if (table.has(fnName)) {
     return table.get(fnName) ?? null;
   }
-  const source = cHeaderSourceCache.get(headerPath);
-  if (!source) return null;
-  const names = extractParamNamesFromHeader(source, fnName);
+  const names = await findParamNamesInHeader(
+    headerPath,
+    fnName,
+    includeDirs,
+    new Set(),
+    { count: 0 },
+  );
   table.set(fnName, names);
   return names;
 }
 
 async function readHeaderSource(path: string): Promise<string | null> {
+  const cached = cHeaderSourceCache.get(path);
+  if (cached) return cached;
   try {
-    return await Deno.readTextFile(path);
+    const source = await Deno.readTextFile(path);
+    cHeaderSourceCache.set(path, source);
+    return source;
   } catch {
     return null;
+  }
+}
+
+async function findParamNamesInHeader(
+  path: string,
+  fnName: string,
+  includeDirs: string[],
+  visited: Set<string>,
+  budget: { count: number },
+): Promise<string[] | null> {
+  const normalized = normalize(path);
+  if (visited.has(normalized)) return null;
+  if (budget.count >= MAX_HEADER_INCLUDE_VISITS) return null;
+  budget.count += 1;
+  visited.add(normalized);
+
+  const source = await readHeaderSource(normalized);
+  if (!source) return null;
+  if (source.includes(fnName)) {
+    const names = extractParamNamesFromHeader(source, fnName);
+    if (names) return names;
+  }
+  const includes = extractIncludePaths(source);
+  for (const include of includes) {
+    const resolved = await resolveIncludePath(normalized, include, includeDirs);
+    if (!resolved) continue;
+    const names = await findParamNamesInHeader(
+      resolved,
+      fnName,
+      includeDirs,
+      visited,
+      budget,
+    );
+    if (names) return names;
+  }
+  return null;
+}
+
+type IncludeSpec = { path: string; isSystem: boolean };
+
+function extractIncludePaths(source: string): IncludeSpec[] {
+  const cleaned = stripCComments(source);
+  const includes: IncludeSpec[] = [];
+  const regex = /^\s*#\s*include\s*([<"])([^">]+)[">]/gm;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(cleaned)) !== null) {
+    includes.push({ path: match[2].trim(), isSystem: match[1] === "<" });
+  }
+  return includes;
+}
+
+async function resolveIncludePath(
+  basePath: string,
+  include: IncludeSpec,
+  includeDirs: string[],
+): Promise<string | null> {
+  const candidates: string[] = [];
+  if (isAbsolute(include.path)) {
+    candidates.push(include.path);
+  } else {
+    if (!include.isSystem) {
+      candidates.push(resolve(dirname(basePath), include.path));
+    }
+    for (const dir of includeDirs) {
+      candidates.push(resolve(dir, include.path));
+    }
+  }
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 

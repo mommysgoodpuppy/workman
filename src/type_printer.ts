@@ -71,6 +71,8 @@ export function formatType(
         .join(", ");
       return `(${elements})`;
     }
+    case "array":
+      return `[${type.length}]${formatType(type.element, context, 2)}`;
     case "record": {
       const entries = Array.from(type.fields.entries());
       entries.sort(([a], [b]) => a.localeCompare(b));
@@ -210,6 +212,10 @@ function formatTypeWithCarriersInternal(
         .join(", ");
       return `(${elements})`;
     }
+    case "array":
+      return `[${type.length}]${
+        formatTypeWithCarriersInternal(type.element, context, 2)
+      }`;
     case "record": {
       const entries = Array.from(type.fields.entries());
       entries.sort(([a], [b]) => a.localeCompare(b));

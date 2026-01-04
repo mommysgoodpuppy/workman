@@ -438,22 +438,60 @@ function emitNamedLambda(
 ): string {
   // Extract parameter types from the lambda's function type
   const paramTypes = getParamTypes(expr.type, expr.params.length);
-  const params = expr.params.map((p, i) => {
-    const pname = sanitizeIdentifier(p, ctx.state);
-    const ptype = paramTypes[i] ? emitType(paramTypes[i]) : "anytype";
-    return `${pname}: ${ptype}`;
-  }).join(", ");
-  
+  const typeParamNames = new Map<number, string>();
   const scope = new Map(ctx.scope);
-  for (const p of expr.params) {
-    bindLocal(scope, p, ctx.state);
+  const rawMem = isRawMemModule(ctx.modulePath);
+  const rawMemTypeParams = rawMem && RAW_MEM_TYPE_PARAM_FUNCS.has(name);
+
+  const boundParams = expr.params.map((p) => ({
+    name: p,
+    ref: bindLocal(scope, p, ctx.state),
+  }));
+
+  if (rawMem && name === "allocArrayUninit") {
+    const typeParam = boundParams[0]?.ref.value ?? "t";
+    const lenParam = boundParams[1]?.ref.value ?? "len";
+    const innerCtx = { ...ctx, scope };
+    const body = emitExpr(expr.body, innerCtx);
+    return `fn ${name}(comptime ${typeParam}: type, comptime ${lenParam}: usize) [${lenParam}]${typeParam} { return ${body}; }`;
   }
+
+  const params = boundParams.map((p, i) => {
+    const pname = p.ref.value;
+    if (rawMem && name === "freeSlice") {
+      return `${pname}: anytype`;
+    }
+    const ptype = paramTypes[i];
+    if (
+      rawMem &&
+      name === "freeSlice" &&
+      ptype &&
+      ptype.kind === "constructor" &&
+      ptype.name === "Slice" &&
+      ptype.args.length === 1 &&
+      ptype.args[0].kind === "var"
+    ) {
+      return `${pname}: anytype`;
+    }
+    if (rawMemTypeParams && ptype && ptype.kind === "var") {
+      const existing = typeParamNames.get(ptype.id);
+      if (!existing) {
+        typeParamNames.set(ptype.id, pname);
+        return `comptime ${pname}: type`;
+      }
+      return `${pname}: ${existing}`;
+    }
+    const rendered = ptype ? emitType(ptype) : "anytype";
+    return `${pname}: ${rendered}`;
+  }).join(", ");
   
   const innerCtx = { ...ctx, scope };
   const body = emitExpr(expr.body, innerCtx);
   
   // Get return type from the lambda's type annotation
-  const returnType = emitType(expr.type);
+  const returnType = rawMemTypeParams && typeParamNames.size > 0
+    ? emitTypeWithTypeParams(getReturnType(expr.type), typeParamNames)
+    : emitType(expr.type);
   
   return `fn ${name}(${params}) ${returnType} { return ${body}; }`;
 }
@@ -480,7 +518,7 @@ function emitCall(
     }
   }
 
-  if (expr.callee.kind === "var") {
+    if (expr.callee.kind === "var") {
     if (expr.callee.name === "zig_alloc_struct" && expr.args.length === 1) {
       const typeExpr = emitExpr(expr.args[0], ctx);
       return emitRawAllocStruct(typeExpr, ctx, "allocStruct");
@@ -499,13 +537,18 @@ function emitCall(
       const lenExpr = emitExpr(expr.args[1], ctx);
       return emitRawAllocSlice(typeExpr, lenExpr, ctx);
     }
+    if (expr.callee.name === "zig_alloc_array_uninit" && expr.args.length === 2) {
+      const typeExpr = emitExpr(expr.args[0], ctx);
+      const lenExpr = emitExpr(expr.args[1], ctx);
+      return `@as([${lenExpr}]${typeExpr}, undefined)`;
+    }
     if (expr.callee.name === "zig_free" && expr.args.length === 1) {
       const ptrExpr = emitExpr(expr.args[0], ctx);
       return `@import("std").heap.page_allocator.destroy(${ptrExpr})`;
     }
     if (expr.callee.name === "zig_free_slice" && expr.args.length === 1) {
       const sliceExpr = emitExpr(expr.args[0], ctx);
-      return `@import("std").heap.page_allocator.free(${sliceExpr}.ptr[0..${sliceExpr}.len])`;
+      return `@import("std").heap.page_allocator.free(@as([*]@TypeOf(${sliceExpr}.ptr.*), @ptrCast(${sliceExpr}.ptr))[0..${sliceExpr}.len])`;
     }
     if (expr.callee.name === "zig_optional_is_non_null" && expr.args.length === 1) {
       const value = emitExpr(expr.args[0], ctx);
@@ -550,6 +593,81 @@ function emitCall(
   return `${fn}(${args})`;
 }
 
+const RAW_MEM_TYPE_PARAM_FUNCS = new Set<string>([
+  "allocStruct",
+  "allocStructUninit",
+  "allocStructInit",
+  "allocSlice",
+  "allocArrayUninit",
+]);
+
+function emitTypeWithTypeParams(
+  type: Type,
+  typeParamNames: Map<number, string>,
+): string {
+  switch (type.kind) {
+    case "var": {
+      const mapped = typeParamNames.get(type.id);
+      return mapped ?? "anytype";
+    }
+    case "int":
+      return "i32";
+    case "bool":
+      return "bool";
+    case "char":
+      return "u8";
+    case "string":
+      return "[]const u8";
+    case "unit":
+      return "void";
+    case "func":
+      return emitTypeWithTypeParams(getReturnType(type), typeParamNames);
+    case "constructor":
+      if ((type.name === "Optional" || type.name === "Opt") && type.args.length === 1) {
+        return `?${emitTypeWithTypeParams(type.args[0], typeParamNames)}`;
+      }
+      if (type.name === "Null" && type.args.length === 0) {
+        return "?anyopaque";
+      }
+      if (
+        (type.name === "Opaque" || type.name === "Anyopaque") &&
+        type.args.length === 0
+      ) {
+        return "anyopaque";
+      }
+      if (type.name === "Ptr" && type.args.length === 1) {
+        return `*${emitTypeWithTypeParams(type.args[0], typeParamNames)}`;
+      }
+      if (type.args.length === 0) {
+        return type.name;
+      }
+      return `${type.name}(${type.args.map((arg) => emitTypeWithTypeParams(arg, typeParamNames)).join(", ")})`;
+    case "tuple": {
+      const elements = type.elements.map((el) =>
+        emitTypeWithTypeParams(el, typeParamNames)
+      ).join(", ");
+      return `struct { ${elements} }`;
+    }
+    case "array":
+      return `[${type.length}]${emitTypeWithTypeParams(type.element, typeParamNames)}`;
+    case "record": {
+      const fields = Array.from(type.fields.entries())
+        .map(([name, t]) =>
+          `${name}: ${emitTypeWithTypeParams(t, typeParamNames)}`
+        )
+        .join(", ");
+      return `struct { ${fields} }`;
+    }
+    default:
+      return "anytype";
+  }
+}
+
+function isRawMemModule(modulePath: string): boolean {
+  const normalized = normalizeSlashes(modulePath).toLowerCase();
+  return normalized.endsWith("/std/zig/rawmem.wm");
+}
+
 function emitRawAllocStruct(
   typeExpr: string,
   ctx: EmitContext,
@@ -574,7 +692,7 @@ function emitRawAllocSlice(
   const blockName = allocateTempName(ctx.state, "alloc_blk");
   const stdImport = `@import("std")`;
   const lenCast = `@as(usize, @intCast(${lenExpr}))`;
-  return `${blockName}: { const ${sliceName} = ${stdImport}.heap.page_allocator.alloc(${typeExpr}, ${lenCast}) catch @panic("allocSlice failed"); break :${blockName} .{ .ptr = ${sliceName}.ptr, .len = ${sliceName}.len }; }`;
+  return `${blockName}: { const ${sliceName} = ${stdImport}.heap.page_allocator.alloc(${typeExpr}, ${lenCast}) catch @panic("allocSlice failed"); break :${blockName} .{ .ptr = @as(*${typeExpr}, @ptrCast(${sliceName}.ptr)), .len = ${sliceName}.len }; }`;
 }
 
 function emitLet(
@@ -584,6 +702,7 @@ function emitLet(
   const scope = new Map(ctx.scope);
   const value = emitExpr(expr.binding.value, ctx);
   const label = allocateTempName(ctx.state, "blk");
+  const useVar = needsVarBinding(expr.body, expr.binding.name);
   
   // For discarded statement results (__stmt_*), use _ to avoid unused variable warning
   if (expr.binding.name.startsWith("__stmt")) {
@@ -599,7 +718,87 @@ function emitLet(
     : "";
   const innerCtx = { ...ctx, scope };
   const body = emitExpr(expr.body, innerCtx);
-  return `${label}: { const ${ref.value} = ${value};${unusedGuard} break :${label} ${body}; }`;
+  const bindingKeyword = useVar ? "var" : "const";
+  const bindingType = useVar
+    ? emitType(expr.binding.value.type)
+    : null;
+  const typeAnnotation = useVar && bindingType && bindingType !== "anytype"
+    ? `: ${bindingType}`
+    : "";
+  return `${label}: { ${bindingKeyword} ${ref.value}${typeAnnotation} = ${value};${unusedGuard} break :${label} ${body}; }`;
+}
+
+function needsVarBinding(expr: CoreExpr, name: string): boolean {
+  return containsAddressOf(expr, name, new Set());
+}
+
+function containsAddressOf(
+  expr: CoreExpr,
+  name: string,
+  shadowed: Set<string>,
+): boolean {
+  switch (expr.kind) {
+    case "var":
+    case "literal":
+    case "enum_literal":
+      return false;
+    case "prim":
+      if (
+        expr.op === "address_of" &&
+        expr.args[0]?.kind === "var" &&
+        expr.args[0].name === name &&
+        !shadowed.has(name)
+      ) {
+        return true;
+      }
+      return expr.args.some((arg) => containsAddressOf(arg, name, shadowed));
+    case "call":
+      return containsAddressOf(expr.callee, name, shadowed) ||
+        expr.args.some((arg) => containsAddressOf(arg, name, shadowed));
+    case "if":
+      return containsAddressOf(expr.condition, name, shadowed) ||
+        containsAddressOf(expr.thenBranch, name, shadowed) ||
+        containsAddressOf(expr.elseBranch, name, shadowed);
+    case "match":
+      return containsAddressOf(expr.scrutinee, name, shadowed) ||
+        expr.cases.some((c) => containsAddressOf(c.body, name, shadowed)) ||
+        (expr.fallback ? containsAddressOf(expr.fallback, name, shadowed) : false);
+    case "record":
+      return expr.fields.some((f) => containsAddressOf(f.value, name, shadowed));
+    case "tuple":
+      return expr.elements.some((el) => containsAddressOf(el, name, shadowed));
+    case "data":
+      return expr.fields.some((el) => containsAddressOf(el, name, shadowed));
+    case "tuple_get":
+      return containsAddressOf(expr.target, name, shadowed);
+    case "lambda": {
+      const nextShadowed = new Set(shadowed);
+      for (const param of expr.params) {
+        nextShadowed.add(param);
+      }
+      return containsAddressOf(expr.body, name, nextShadowed);
+    }
+    case "let": {
+      const inValue = containsAddressOf(expr.binding.value, name, shadowed);
+      const nextShadowed = new Set(shadowed);
+      nextShadowed.add(expr.binding.name);
+      const inBody = containsAddressOf(expr.body, name, nextShadowed);
+      return inValue || inBody;
+    }
+    case "let_rec": {
+      const nextShadowed = new Set(shadowed);
+      for (const binding of expr.bindings) {
+        nextShadowed.add(binding.name);
+      }
+      const inBindings = expr.bindings.some((binding) =>
+        containsAddressOf(binding.value, name, nextShadowed)
+      );
+      const inBody = containsAddressOf(expr.body, name, nextShadowed);
+      return inBindings || inBody;
+    }
+    default:
+      return false;
+  }
 }
 
 function emitMatch(
@@ -772,7 +971,16 @@ function emitData(
   expr: CoreExpr & { kind: "data" },
   ctx: EmitContext,
 ): string {
+  if (expr.fields.length === 0 && expr.typeName === expr.constructor) {
+    const typeRef = resolveRecordTypeReference(expr.type, ctx);
+    if (typeRef) {
+      return typeRef;
+    }
+  }
   if (expr.fields.length === 0) {
+    if (ctx.moduleNames.has(expr.constructor)) {
+      return resolveName(ctx.scope, expr.constructor, ctx.state);
+    }
     return `.${expr.constructor}`;
   }
   const args = expr.fields.map((a) => emitExpr(a, ctx)).join(", ");
@@ -1007,12 +1215,18 @@ function emitType(type: Type): string {
       return emitType(getReturnType(type));
     case "constructor":
       // Optional<T> maps to Zig ?T
-      if (type.name === "Optional" && type.args.length === 1) {
+      if ((type.name === "Optional" || type.name === "Opt") && type.args.length === 1) {
         return `?${emitType(type.args[0])}`;
       }
       // Null is a raw-only placeholder that maps to Zig's null-capable type.
       if (type.name === "Null" && type.args.length === 0) {
         return "?anyopaque";
+      }
+      if (
+        (type.name === "Opaque" || type.name === "Anyopaque") &&
+        type.args.length === 0
+      ) {
+        return "anyopaque";
       }
       // Handle Ptr<T> -> *T
       if (type.name === "Ptr" && type.args.length === 1) {
@@ -1028,6 +1242,8 @@ function emitType(type: Type): string {
     case "tuple":
       const elements = type.elements.map(emitType).join(", ");
       return `struct { ${elements} }`;
+    case "array":
+      return `[${type.length}]${emitType(type.element)}`;
     case "record":
       const fields = Array.from(type.fields.entries())
         .map(([name, t]) => `${name}: ${emitType(t)}`)

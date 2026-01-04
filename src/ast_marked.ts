@@ -271,6 +271,12 @@ export interface MTypeTuple extends MNodeBase {
   elements: MTypeExpr[];
 }
 
+export interface MTypeArray extends MNodeBase {
+  kind: "type_array";
+  length: number;
+  element: MTypeExpr;
+}
+
 export interface MTypeRecordField extends MNodeBase {
   kind: "type_record_field";
   name: string;
@@ -304,6 +310,7 @@ export type MTypeExpr =
   | MTypeFunction
   | MTypeReference
   | MTypeTuple
+  | MTypeArray
   | MTypeRecordExpr
   | MTypeUnit
   | MTypeEffectRowExpr

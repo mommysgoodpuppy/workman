@@ -50,10 +50,6 @@ function isRecordTypeDeclaration(
 
 const typeParamsCache = new Map<string, Type[]>();
 
-const RAW_TYPE_ALIASES = new Map<string, string>([
-  ["DWORD", "c_ulong"],
-]);
-
 export function resetTypeParamsCache(): void {
   typeParamsCache.clear();
 }
@@ -428,12 +424,6 @@ export function convertTypeExpr(
 ): Type {
   switch (typeExpr.kind) {
     case "type_var": {
-      if (ctx.rawMode) {
-        const alias = RAW_TYPE_ALIASES.get(typeExpr.name);
-        if (alias) {
-          return { kind: "constructor", name: alias, args: [] };
-        }
-      }
       const existing = scope.get(typeExpr.name);
       if (existing) {
         return existing;
@@ -499,12 +489,6 @@ export function convertTypeExpr(
       }, result);
     }
     case "type_ref": {
-      if (ctx.rawMode) {
-        const alias = RAW_TYPE_ALIASES.get(typeExpr.name);
-        if (alias) {
-          return { kind: "constructor", name: alias, args: [] };
-        }
-      }
       const scoped = scope.get(typeExpr.name);
       if (scoped && typeExpr.typeArgs.length === 0) {
         return scoped;
@@ -723,6 +707,14 @@ export function convertTypeExpr(
         elements: typeExpr.elements.map((el) =>
           convertTypeExpr(ctx, el, scope, options)
         ),
+      };
+    }
+    case "type_array": {
+      const element = convertTypeExpr(ctx, typeExpr.element, scope, options);
+      return {
+        kind: "array",
+        length: typeExpr.length,
+        element,
       };
     }
     case "type_record": {

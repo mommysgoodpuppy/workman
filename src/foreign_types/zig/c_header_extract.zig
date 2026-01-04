@@ -343,6 +343,10 @@ fn writeTypeDesc(
             try list.append(allocator, ':');
             try writeJsonString(allocator, list, "array");
             try list.append(allocator, ',');
+            try writeJsonString(allocator, list, "length");
+            try list.append(allocator, ':');
+            try writeInt(allocator, list, array_info.len);
+            try list.append(allocator, ',');
             try writeJsonString(allocator, list, "child");
             try list.append(allocator, ':');
             try writeTypeDesc(allocator, list, array_info.child);

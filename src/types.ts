@@ -18,6 +18,7 @@ export type Type =
   | { kind: "func"; from: Type; to: Type }
   | { kind: "constructor"; name: string; args: Type[] }
   | { kind: "tuple"; elements: Type[] }
+  | { kind: "array"; length: number; element: Type }
   | { kind: "record"; fields: Map<string, Type> }
   | { kind: "effect_row"; cases: Map<string, Type | null>; tail?: Type | null }
   | { kind: "unit" }
@@ -706,6 +707,12 @@ export function applySubstitution(type: Type, subst: Substitution): Type {
         kind: "tuple",
         elements: type.elements.map((el) => applySubstitution(el, subst)),
       };
+    case "array":
+      return {
+        kind: "array",
+        length: type.length,
+        element: applySubstitution(type.element, subst),
+      };
     case "record": {
       let changed = false;
       const updated = new Map<string, Type>();
@@ -796,6 +803,8 @@ export function occursInType(id: number, type: Type): boolean {
       return type.args.some((arg) => occursInType(id, arg));
     case "tuple":
       return type.elements.some((el) => occursInType(id, el));
+    case "array":
+      return occursInType(id, type.element);
     case "record":
       for (const fieldType of type.fields.values()) {
         if (occursInType(id, fieldType)) {
@@ -829,6 +838,8 @@ export function freeTypeVars(type: Type): Set<number> {
       const sets = type.elements.map(freeTypeVars);
       return unionMany(sets);
     }
+    case "array":
+      return freeTypeVars(type.element);
     case "record": {
       const sets = Array.from(type.fields.values()).map(freeTypeVars);
       return unionMany(sets);
@@ -927,6 +938,12 @@ export function cloneType(type: Type): Type {
       return {
         kind: "tuple",
         elements: type.elements.map(cloneType),
+      };
+    case "array":
+      return {
+        kind: "array",
+        length: type.length,
+        element: cloneType(type.element),
       };
     case "record": {
       const clonedFields = new Map<string, Type>();

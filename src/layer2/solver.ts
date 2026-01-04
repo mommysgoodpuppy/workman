@@ -384,6 +384,12 @@ function transformTypeWithSolutions(
           transformTypeWithSolutions(el, solutions)
         ),
       };
+    case "array":
+      return {
+        kind: "array",
+        length: type.length,
+        element: transformTypeWithSolutions(type.element, solutions),
+      };
     case "record": {
       const fields = new Map<string, Type>();
       for (const [name, fieldType] of type.fields.entries()) {
@@ -1037,6 +1043,12 @@ function flattenNestedEffectRows(type: Type): Type {
         kind: "tuple",
         elements: type.elements.map(flattenNestedEffectRows),
       };
+    case "array":
+      return {
+        kind: "array",
+        length: type.length,
+        element: flattenNestedEffectRows(type.element),
+      };
     case "record":
       const flattenedFields = new Map();
       for (const [name, fieldType] of type.fields) {
@@ -1126,6 +1138,22 @@ function unifyTypes(
     resolvedLeft.kind === "constructor" && resolvedRight.kind === "constructor"
   ) {
     if (
+      resolvedLeft.name !== resolvedRight.name &&
+      areNumericConstructorsCompatible(resolvedLeft.name, resolvedRight.name)
+    ) {
+      return { success: true, subst };
+    }
+    if (adtEnv && resolvedLeft.name !== resolvedRight.name) {
+      const leftInfo = adtEnv.get(resolvedLeft.name);
+      if (leftInfo?.alias) {
+        return unifyTypes(leftInfo.alias, resolvedRight, subst, adtEnv);
+      }
+      const rightInfo = adtEnv.get(resolvedRight.name);
+      if (rightInfo?.alias) {
+        return unifyTypes(resolvedLeft, rightInfo.alias, subst, adtEnv);
+      }
+    }
+    if (
       adtEnv &&
       resolvedLeft.name === resolvedRight.name &&
       resolvedLeft.args.length !== resolvedRight.args.length
@@ -1194,6 +1222,21 @@ function unifyTypes(
       current = result.subst;
     }
     return { success: true, subst: current };
+  }
+
+  if (resolvedLeft.kind === "array" && resolvedRight.kind === "array") {
+    if (resolvedLeft.length !== resolvedRight.length) {
+      return {
+        success: false,
+        reason: { kind: "type_mismatch", left: resolvedLeft, right: resolvedRight },
+      };
+    }
+    return unifyTypes(
+      resolvedLeft.element,
+      resolvedRight.element,
+      subst,
+      adtEnv,
+    );
   }
 
   if (resolvedLeft.kind === "record" && resolvedRight.kind === "record") {
@@ -1294,6 +1337,12 @@ function typesEqual(a: Type, b: Type): boolean {
         if (!typesEqual(a.elements[i], b.elements[i])) return false;
       }
       return true;
+    }
+    case "array": {
+      if (b.kind !== "array" || a.length !== b.length) {
+        return false;
+      }
+      return typesEqual(a.element, b.element);
     }
     case "record": {
       if (b.kind !== "record" || a.fields.size !== b.fields.size) {
@@ -1572,6 +1621,17 @@ interface ConstraintFlow {
 
   // Alias equivalence classes (union-find) - future use for memory domain
   aliases: Map<number, number>; // Simple parent-pointer structure
+}
+
+const RAW_NUMERIC_COMPAT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["usize", new Set(["c_ulonglong", "c_ulong"])],
+  ["c_ulonglong", new Set(["usize"])],
+  ["c_ulong", new Set(["usize"])],
+]);
+
+function areNumericConstructorsCompatible(left: string, right: string): boolean {
+  const leftSet = RAW_NUMERIC_COMPAT.get(left);
+  return leftSet ? leftSet.has(right) : false;
 }
 
 function isRowLabel(label: ConstraintLabel): label is {

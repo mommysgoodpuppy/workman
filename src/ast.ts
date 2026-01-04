@@ -301,6 +301,7 @@ export type TypeExpr =
   | TypeFunction
   | TypeReference
   | TypeTuple
+  | TypeArray
   | TypeRecordExpr
   | TypeUnit
   | TypeEffectRowExpr
@@ -326,6 +327,12 @@ export interface TypeReference extends NodeBase {
 export interface TypeTuple extends NodeBase {
   kind: "type_tuple";
   elements: TypeExpr[];
+}
+
+export interface TypeArray extends NodeBase {
+  kind: "type_array";
+  length: number;
+  element: TypeExpr;
 }
 
 export interface TypeRecordExpr extends NodeBase {

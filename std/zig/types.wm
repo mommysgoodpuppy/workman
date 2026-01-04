@@ -34,6 +34,9 @@ export type comptime_float;
 
 -- Optional and null interop (raw-only)
 export type Optional<T>;
+export type Opt<T> = Optional<T>;
+export type Anyopaque;
+export type Opaque = Anyopaque;
 export type Null;
 
 -- Pointer types would need special syntax, e.g.:

@@ -583,6 +583,14 @@ export function materializeTypeExpr(
         id: typeExpr.id,
         elements: typeExpr.elements.map((el) => materializeTypeExpr(ctx, el)),
       };
+    case "type_array":
+      return {
+        kind: "type_array",
+        span: typeExpr.span,
+        id: typeExpr.id,
+        length: typeExpr.length,
+        element: materializeTypeExpr(ctx, typeExpr.element),
+      };
     case "type_record":
       return {
         kind: "type_record",

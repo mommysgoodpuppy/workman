@@ -10,8 +10,9 @@ from "winapi.h" import {
   DWORD,
   WCHAR
 };
-from "std/zig/rawmem" import { allocStruct, allocSlice, free, freeSlice };
+from "std/zig/rawmem" import { allocStruct, allocArrayUninit, free };
 from "std/zig/types" import { usize };
+from "std/zig/option" import { isSome };
 
 let std = zigImport("std");
 
@@ -20,14 +21,15 @@ let main = () => {
   getSystemInfo(sys_info);
 
   let heap = getProcessHeap();
-  let bytes = 256;
+  let bytes: usize = 256;
   let buffer = heapAlloc(heap, 0, bytes);
-  let _freed = heapFree(heap, 0, buffer);
-
-  let buf_len: usize = 256;
-  let name_buf = allocSlice(WCHAR, buf_len);
-  let name_len: DWORD = 256;
-  let got_name = getComputerNameW(name_buf.ptr, &name_len);
+  if ( buffer >> isSome ) {
+    heapFree(heap, 0, buffer);
+  } else {()};
+  
+  let name_buf = allocArrayUninit(WCHAR, 256);
+  let name_len: DWORD = name_buf.len;
+  let got_name = getComputerNameW(&name_buf, &name_len);
 
   std.debug.print("System info: processors={d}, page_size={d}\n", .{
     sys_info.dwNumberOfProcessors,
@@ -38,8 +40,6 @@ let main = () => {
     name_len
   });
 
-  freeSlice(name_buf);
+  -- name_buf is a stack array; no free needed.
   free(sys_info);
-
-
 };
