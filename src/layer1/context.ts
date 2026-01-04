@@ -1419,9 +1419,24 @@ function unifyTypes(
 }
 
 export const RAW_NUMERIC_COMPAT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  // Pointer-sized types
   ["Usize", new Set(["CULongLong", "CULong"])],
   ["CULongLong", new Set(["Usize"])],
   ["CULong", new Set(["Usize"])],
+  // 32-bit unsigned types (CUInt is typically 32-bit)
+  ["U32", new Set(["CUInt"])],
+  ["CUInt", new Set(["U32"])],
+  // 32-bit signed types (CInt is typically 32-bit)
+  ["I32", new Set(["CInt"])],
+  ["CInt", new Set(["I32"])],
+  // 16-bit types
+  ["U16", new Set(["CUShort"])],
+  ["CUShort", new Set(["U16"])],
+  ["I16", new Set(["CShort"])],
+  ["CShort", new Set(["I16"])],
+  // 8-bit types (CChar is typically 8-bit signed)
+  ["I8", new Set(["CChar"])],
+  ["CChar", new Set(["I8"])],
 ]);
 
 function areNumericConstructorsCompatible(left: string, right: string): boolean {
