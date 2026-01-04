@@ -464,6 +464,11 @@ function mapTypeDesc(
         if (name === "anyopaque") {
           return mapNamedType(name, types);
         }
+        // Treat opaque C types (structs/unions we don't have full info for) as named types
+        // rather than unknown holes - this gives better type inference for pointers to opaque types
+        if (desc.name.startsWith("cimport.struct_") || desc.name.startsWith("cimport.union_")) {
+          return { kind: "constructor", name, args: [] };
+        }
       }
       return unknownForeignType();
     }

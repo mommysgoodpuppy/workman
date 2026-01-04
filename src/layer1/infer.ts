@@ -182,9 +182,9 @@ function getIdentityTags(
   const domainTags = ctx.identityStates.get(identityId)?.get(domain);
   if (!domainTags || domainTags.size === 0) return [];
   const tags: string[] = [];
-  for (const [tag, count] of domainTags.entries()) {
-    for (let index = 1; index <= count; index += 1) {
-      tags.push(`${tagWithIdentity(tag, identityId)}@${index}`);
+  for (const [tag, originNodes] of domainTags.entries()) {
+    for (const originNode of originNodes) {
+      tags.push(`${tagWithIdentity(tag, identityId)}@${originNode}`);
     }
   }
   return tags;
@@ -195,22 +195,24 @@ function addIdentityTags(
   domain: string,
   identityId: number,
   tags: string[],
+  originNodeId: number,
 ): string[] {
   let domainTags = ctx.identityStates.get(identityId);
   if (!domainTags) {
-    domainTags = new Map<string, Map<string, number>>();
+    domainTags = new Map<string, Map<string, number[]>>();
     ctx.identityStates.set(identityId, domainTags);
   }
-  let tagCounts = domainTags.get(domain);
-  if (!tagCounts) {
-    tagCounts = new Map<string, number>();
-    domainTags.set(domain, tagCounts);
+  let tagOrigins = domainTags.get(domain);
+  if (!tagOrigins) {
+    tagOrigins = new Map<string, number[]>();
+    domainTags.set(domain, tagOrigins);
   }
   const tagged: string[] = [];
   for (const tag of tags) {
-    const nextCount = (tagCounts.get(tag) ?? 0) + 1;
-    tagCounts.set(tag, nextCount);
-    tagged.push(`${tagWithIdentity(tag, identityId)}@${nextCount}`);
+    const origins = tagOrigins.get(tag) ?? [];
+    origins.push(originNodeId);
+    tagOrigins.set(tag, origins);
+    tagged.push(`${tagWithIdentity(tag, identityId)}@${originNodeId}`);
   }
   return tagged;
 }
@@ -546,6 +548,7 @@ function applyParamEffectsToCall(
                 domain,
                 identityId,
                 addTags,
+                argExpr.id,
               );
               tagged.push(...identityTags);
               emitIdentityTagsToUsage(
@@ -2621,6 +2624,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
                 opRule.domain,
                 identity.id,
                 opRule.adds,
+                expr.id,
               );
               callIdentityTags = addedTags;
               setExprIdentities(
@@ -2718,6 +2722,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
                     opRule.domain,
                     identityId,
                     opRule.adds,
+                    expr.id,
                   );
                   tagged.push(...identityTags);
                   emitIdentityTagsToUsage(

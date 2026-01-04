@@ -478,120 +478,26 @@ async function displayTopLevelSummaries(
 }
 
 async function reportErrorsOnly(
-  filePath: string,
+  _filePath: string,
   layer3: any,
 ): Promise<void> {
-  const source = await IO.readTextFile(filePath);
-  const hasDiagnostics = layer3.diagnostics.solver.length > 0 ||
-    layer3.diagnostics.conflicts.length > 0;
+  // Solver diagnostics are already printed by workman_to_core.ts during lowering
+  // with better formatting. This function only handles conflicts.
+  const hasErrors = layer3.diagnostics.solver.length > 0;
+  const hasConflicts = layer3.diagnostics.conflicts.length > 0;
 
-  if (hasDiagnostics) {
+  if (hasConflicts) {
     let errorMessage = "";
-
-    for (const diag of layer3.diagnostics.solver) {
-      if (diag.span && source) {
-        const lines = source.split("\n");
-        const line = lines[diag.span.start] || "";
-        let message = `Type Error: `;
-
-        if (diag.reason === "pattern_binding_required" && diag.details) {
-          const details = diag.details as Record<string, unknown>;
-          const name = typeof details.name === "string"
-            ? details.name
-            : "value";
-          message +=
-            `Pattern '${name}' would bind a new name. Use Var(${name}) to bind or ^${name} to pin an existing value.`;
-        } else if (diag.reason === "call_rejects_domains" && diag.details) {
-          const details = diag.details as Record<string, unknown>;
-          const domains = Array.isArray(details.domains)
-            ? (details.domains as string[]).join(", ")
-            : "unknown";
-          const policy = typeof details.policy === "string"
-            ? ` (${details.policy})`
-            : "";
-          message += `Call rejects domains${policy}: ${domains}`;
-        } else if (diag.reason === "non_exhaustive_match" && diag.details) {
-          const details = diag.details as Record<string, unknown>;
-          message += "Match expression is not exhaustive";
-          const missing = Array.isArray(details.missingCases)
-            ? (details.missingCases as string[]).join(", ")
-            : null;
-          if (missing) {
-            message += ` - missing cases: ${missing}`;
-          }
-          const hint = typeof details.hint === "string" ? details.hint : null;
-          if (hint) {
-            message += `\n    Hint: ${hint}`;
-          }
-        } else if (
-          (diag.reason === "require_exact_state" ||
-            diag.reason === "require_any_state") &&
-          diag.details
-        ) {
-          const details = diag.details as Record<string, unknown>;
-          const domain = typeof details.domain === "string"
-            ? details.domain
-            : "unknown";
-          const expected = Array.isArray(details.expected)
-            ? details.expected.join(", ")
-            : String(details.expected ?? "?");
-          const actual = typeof details.actual === "string"
-            ? details.actual
-            : "?";
-          const verb = diag.reason === "require_exact_state"
-            ? "exactly"
-            : "at least one of";
-          message +=
-            `Memory state error in domain '${domain}': operation requires ${verb} [${expected}] but value has state ${actual}`;
-        } else if (diag.details && typeof diag.details === "object") {
-          const details = diag.details as Record<string, unknown>;
-          if (details.expected && details.actual) {
-            const foundResolved = substituteHoleSolutionsInType(
-              cloneType(details.actual as Type),
-              layer3,
-            );
-            const expectedResolved = substituteHoleSolutionsInType(
-              cloneType(details.expected as Type),
-              layer3,
-            );
-            const foundType = formatScheme({
-              quantifiers: [],
-              type: foundResolved,
-            });
-            const expectedType = formatScheme({
-              quantifiers: [],
-              type: expectedResolved,
-            });
-            message += "Type mismatch";
-            message +=
-              `\n    Expected: ${expectedType}\n    Found: ${foundType}`;
-          } else {
-            message += `${diag.reason}`;
-          }
-        } else {
-          message += `${diag.reason}`;
-        }
-
-        errorMessage += `\n${message}\n`;
-        errorMessage += `  ${line}\n`;
-      } else {
-        errorMessage += `\nType Error: ${diag.reason}\n`;
-      }
-    }
-
     for (const conflict of layer3.diagnostics.conflicts) {
       errorMessage += `\n${conflict.message}\n`;
-      if (conflict.span && source) {
-        const lines = source.split("\n");
-        const line = lines[conflict.span.start] || "";
-        errorMessage += `  ${line}\n`;
-      }
     }
-
     if (errorMessage) {
       console.error(errorMessage.trim());
-      IO.exit(1);
     }
+  }
+
+  if (hasErrors || hasConflicts) {
+    IO.exit(1);
   }
 }
 
@@ -765,4 +671,22 @@ function findNodeLocation(
     }
   }
   return undefined;
+}
+
+function getLineFromOffset(source: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < source.length; i++) {
+    if (source[i] === "\n") {
+      line++;
+    }
+  }
+  return line;
+}
+
+function getColumnFromOffset(source: string, offset: number): number {
+  let col = 1;
+  for (let i = offset - 1; i >= 0 && source[i] !== "\n"; i--) {
+    col++;
+  }
+  return col;
 }

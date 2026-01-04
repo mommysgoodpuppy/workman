@@ -2121,10 +2121,14 @@ function reifyConstraintLabelsIntoTypes(
 
 function splitIdentityTag(
   tag: string,
-): { base: string; identity: number } | null {
+): { base: string; identity: number; originNode: number | null } | null {
   const match = /^(.*)#r(\d+)(?:@(\d+))?$/.exec(tag);
   if (!match) return null;
-  return { base: match[1], identity: Number.parseInt(match[2], 10) };
+  return {
+    base: match[1],
+    identity: Number.parseInt(match[2], 10),
+    originNode: match[3] ? Number.parseInt(match[3], 10) : null,
+  };
 }
 
 function collectIdentityTags(
@@ -2169,6 +2173,23 @@ function rowHasAnyTag(row: EffectRowType, tags: string[]): boolean {
     return false;
   }
   return tags.some((tag) => row.cases.has(tag));
+}
+
+function collectForbiddenOrigins(
+  row: EffectRowType,
+  forbiddenTags: string[],
+): number[] {
+  const origins: number[] = [];
+  const forbiddenSet = new Set(forbiddenTags);
+  for (const tag of row.cases.keys()) {
+    const parsed = splitIdentityTag(tag);
+    if (parsed && forbiddenSet.has(parsed.base) && parsed.originNode !== null) {
+      origins.push(parsed.originNode);
+    } else if (!parsed && forbiddenSet.has(tag)) {
+      // Non-identity tag matches forbidden - no origin info available
+    }
+  }
+  return origins;
 }
 
 function rowMatchesExactTags(row: EffectRowType, tags: string[]): boolean {
@@ -2236,6 +2257,15 @@ function checkDomainStubs(
       const labels = flow.labels.get(stub.node);
       const label = labels?.get(stub.domain);
       if (label && isRowLabel(label) && rowHasAnyTag(label.row, stub.tags)) {
+        // Find source nodes that flow into this node
+        const sourceNodes: number[] = [];
+        for (const [fromId, toIds] of flow.edges.entries()) {
+          if (toIds.has(stub.node)) {
+            sourceNodes.push(fromId);
+          }
+        }
+        // Extract origin nodes where the forbidden states were introduced
+        const forbiddenOrigins = collectForbiddenOrigins(label.row, stub.tags);
         diagnostics.push({
           origin: stub.node,
           reason: "require_not_state" as ConstraintDiagnosticReason,
@@ -2243,6 +2273,8 @@ function checkDomainStubs(
             domain: stub.domain,
             forbidden: stub.tags,
             actual: formatLabel(label),
+            sourceNodes,
+            forbiddenOrigins,
           },
         });
       }

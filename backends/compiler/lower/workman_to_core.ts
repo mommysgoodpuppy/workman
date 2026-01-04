@@ -44,7 +44,7 @@ export function lowerAnalyzedModule(
     console.error(`\n⚠️  Type errors in ${node.path}:\n`);
     for (const diagnostic of diagnostics) {
       const span = spanIndex.get(diagnostic.origin);
-      const error = createDiagnosticError(diagnostic, span, node.source);
+      const error = createDiagnosticError(diagnostic, span, node.source, spanIndex);
       console.error(error.format(node.source));
       console.error(); // blank line between errors
     }
@@ -284,8 +284,9 @@ function createDiagnosticError(
   diagnostic: ConstraintDiagnostic,
   span: SourceSpan | undefined,
   source?: string,
+  spanIndex?: Map<NodeId, SourceSpan>,
 ): InferError {
-  const message = formatDiagnosticMessage(diagnostic);
+  const message = formatDiagnosticMessage(diagnostic, source, spanIndex);
   return new InferError(message, span, source);
 }
 
@@ -343,7 +344,11 @@ function unwrapCarrier(type: Type): { name: string; value: Type } | null {
   return { name: type.name, value: info.value };
 }
 
-function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
+function formatDiagnosticMessage(
+  diagnostic: ConstraintDiagnostic,
+  source?: string,
+  spanIndex?: Map<NodeId, SourceSpan>,
+): string {
   switch (diagnostic.reason) {
     case "not_function": {
       const calleeType = diagnostic.details?.calleeType as Type | undefined;
@@ -550,7 +555,75 @@ function formatDiagnosticMessage(diagnostic: ConstraintDiagnostic): string {
       return "Invalid type declaration member";
     case "internal_error":
       return "Internal compiler error during type checking";
+    case "require_not_state": {
+      const domain = diagnostic.details?.domain as string | undefined;
+      const forbidden = diagnostic.details?.forbidden as string[] | undefined;
+      const actual = diagnostic.details?.actual as string | undefined;
+      const sourceNodes = diagnostic.details?.sourceNodes as number[] | undefined;
+      const forbiddenOrigins = diagnostic.details?.forbiddenOrigins as number[] | undefined;
+      const domainLabel = domain ? `'${domain}'` : "memory";
+      const forbiddenLabel = forbidden && forbidden.length > 0
+        ? forbidden.join(", ")
+        : "certain states";
+      const actualLabel = actual ? ` (current state: ${actual})` : "";
+      let originLabel = "";
+      if (forbiddenOrigins && forbiddenOrigins.length > 0 && spanIndex && source) {
+        const originLocations = forbiddenOrigins
+          .map((nodeId) => {
+            const span = spanIndex.get(nodeId);
+            if (span) {
+              const line = getLineNumber(source, span.start);
+              return `line ${line}`;
+            }
+            return null;
+          })
+          .filter((loc): loc is string => loc !== null);
+        if (originLocations.length > 0) {
+          originLabel = `\n  [${forbiddenLabel}] state introduced at: ${originLocations.join(", ")}`;
+        }
+      }
+      let sourceLabel = "";
+      if (sourceNodes && sourceNodes.length > 0 && spanIndex && source) {
+        const sourceLocations = sourceNodes
+          .map((nodeId) => {
+            const span = spanIndex.get(nodeId);
+            if (span) {
+              const line = getLineNumber(source, span.start);
+              return `line ${line}`;
+            }
+            return null;
+          })
+          .filter((loc): loc is string => loc !== null);
+        if (sourceLocations.length > 0) {
+          sourceLabel = `\n  State flows from: ${sourceLocations.join(", ")}`;
+        }
+      }
+      return `Operation requires ${domainLabel} state to NOT be [${forbiddenLabel}]${actualLabel}${originLabel}${sourceLabel}`;
+    }
+    case "require_at_return": {
+      const domain = diagnostic.details?.domain as string | undefined;
+      const expected = diagnostic.details?.expected as string[] | undefined;
+      const actual = diagnostic.details?.actual as string | undefined;
+      const policy = diagnostic.details?.policy as string | undefined;
+      const domainLabel = domain ? `'${domain}'` : "memory";
+      const expectedLabel = expected && expected.length > 0
+        ? expected.join(", ")
+        : "specific state";
+      const actualLabel = actual ? ` (current: ${actual})` : "";
+      const policyLabel = policy ? ` [policy: ${policy}]` : "";
+      return `Return requires ${domainLabel} state to be [${expectedLabel}]${actualLabel}${policyLabel}`;
+    }
     default:
       return `Type error: ${diagnostic.reason}`;
   }
+}
+
+function getLineNumber(source: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < source.length; i++) {
+    if (source[i] === "\n") {
+      line++;
+    }
+  }
+  return line;
 }

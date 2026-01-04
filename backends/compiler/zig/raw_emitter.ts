@@ -498,9 +498,14 @@ function emitNamedLambda(
   const body = emitExpr(expr.body, innerCtx);
   
   // Get return type from the lambda's type annotation
-  const returnType = rawMemTypeParams && typeParamNames.size > 0
+  let returnType = rawMemTypeParams && typeParamNames.size > 0
     ? emitTypeWithTypeParams(getReturnType(expr.type), typeParamNames)
     : emitType(expr.type);
+  
+  // main function must return void for Zig's entry point
+  if (name === "main" && (returnType === "anyopaque" || returnType === "anytype")) {
+    returnType = "void";
+  }
   
   return `fn ${name}(${params}) ${returnType} { return ${body}; }`;
 }
@@ -607,8 +612,8 @@ function emitCall(
   
   // Check if this is a call to a function with captured vars
   if (expr.callee.kind === "var") {
-    const captureMap = ctx.captureInfo ?? ctx.capturedVarsMap;
-    const captures = captureMap.get(expr.callee.name);
+    // Check both captureInfo (local let_rec context) and capturedVarsMap (global hoisted functions)
+    const captures = ctx.captureInfo?.get(expr.callee.name) ?? ctx.capturedVarsMap.get(expr.callee.name);
     if (captures && captures.length > 0) {
       const fn = resolveName(ctx.scope, expr.callee.name, ctx.state);
       const args = expr.args.map((arg) => emitExpr(arg, ctx));
@@ -637,6 +642,11 @@ function emitTypeWithTypeParams(
   type: Type,
   typeParamNames: Map<number, string>,
 ): string {
+  // Check for Zig primitives first (Usize -> usize, etc.)
+  const zigPrimitive = mapZigPrimitive(type);
+  if (zigPrimitive) {
+    return zigPrimitive;
+  }
   switch (type.kind) {
     case "var": {
       const mapped = typeParamNames.get(type.id);
@@ -1392,6 +1402,8 @@ function mapZigPrimitive(type: Type): string | null {
   if (type.kind === "bool") return "bool";
   if (type.kind !== "constructor" || type.args.length !== 0) return null;
   switch (type.name) {
+    case "Bool":
+      return "bool";
     case "I8":
       return "i8";
     case "I16":

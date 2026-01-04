@@ -92,7 +92,7 @@ export interface Context {
   layer1Diagnostics: ConstraintDiagnostic[];
   infectionRegistry: InfectionRegistry;
   identityBindings: Map<string, Map<string, Set<number>>>;
-  identityStates: Map<number, Map<string, Map<string, number>>>;
+  identityStates: Map<number, Map<string, Map<string, number[]>>>;
   exprIdentities: Map<NodeId, Map<string, Set<number>>>;
   identityUsage: Map<
     number,
