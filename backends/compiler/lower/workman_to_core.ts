@@ -290,13 +290,8 @@ function createDiagnosticError(
   return new InferError(message, span, source);
 }
 
+// Format type for error messages - shows explicit Ptr<T> instead of ⚡T
 function simpleFormatType(type: Type): string {
-  const carrierInfo = splitCarrier(type);
-  if (carrierInfo && carrierInfo.domain !== "hole") {
-    const valueStr = simpleFormatType(carrierInfo.value);
-    const stateStr = simpleFormatType(carrierInfo.state);
-    return `⚡${valueStr} [${stateStr}]`;
-  }
   switch (type.kind) {
     case "var":
       return `T${type.id}`;
@@ -366,17 +361,28 @@ function formatDiagnosticMessage(
       return "Cannot call a non-function value";
     }
     case "type_mismatch": {
-      const expected = diagnostic.details?.expected;
-      const actual = diagnostic.details?.actual;
+      // Layer1 uses expected/actual, Layer2 uses left/right
+      const expected = diagnostic.details?.expected ?? diagnostic.details?.left;
+      const actual = diagnostic.details?.actual ?? diagnostic.details?.right;
       if (expected && actual) {
         const expectedType = expected as Type;
         const actualType = actual as Type;
         const actualCarrier = unwrapCarrier(actualType);
+        const expectedCarrier = unwrapCarrier(expectedType);
         const expectedLabel = simpleFormatType(expectedType);
         const actualLabel = simpleFormatType(actualType);
         const extraNotes: string[] = [];
-
         const actualValueType = actualCarrier?.value ?? actualType;
+
+        // Detect when types look identical but are different (carrier state mismatch)
+        if (expectedLabel === actualLabel && expectedCarrier && actualCarrier) {
+          extraNotes.push(
+            `Note: Both types are '${expectedCarrier.name}' carriers but have incompatible infection states.`,
+          );
+          extraNotes.push(
+            `This typically happens when the same pointer is used in different control flow branches with different states.`,
+          );
+        }
 
         if (
           expectedType.kind === "record" && actualValueType.kind === "record"
@@ -406,7 +412,7 @@ function formatDiagnosticMessage(
             extraNotes.push(
               "Note: tuples are positional; records require named fields.",
             );
-          } else if (actualCarrier) {
+          } else if (actualCarrier && !expectedCarrier) {
             extraNotes.push(
               `Note: '${actualCarrier.name}' is infectious; its value type is ${simpleFormatType(actualCarrier.value)}.`,
             );
@@ -427,7 +433,7 @@ function formatDiagnosticMessage(
               "Note: tuples are positional; records require named fields.",
             );
           }
-        } else if (actualCarrier) {
+        } else if (actualCarrier && !expectedCarrier) {
           extraNotes.push(
             `Note: '${actualCarrier.name}' is infectious; its value type is ${simpleFormatType(actualCarrier.value)}.`,
           );
@@ -612,6 +618,14 @@ function formatDiagnosticMessage(
       const actualLabel = actual ? ` (current: ${actual})` : "";
       const policyLabel = policy ? ` [policy: ${policy}]` : "";
       return `Return requires ${domainLabel} state to be [${expectedLabel}]${actualLabel}${policyLabel}`;
+    }
+    case "incompatible_constraints": {
+      const label1 = diagnostic.details?.label1 as string | undefined;
+      const label2 = diagnostic.details?.label2 as string | undefined;
+      if (label1 && label2) {
+        return `Incompatible infection states: '${label1}' conflicts with '${label2}'`;
+      }
+      return "Incompatible infection states on the same value";
     }
     default:
       return `Type error: ${diagnostic.reason}`;

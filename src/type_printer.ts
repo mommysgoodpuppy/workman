@@ -11,6 +11,7 @@ interface PrintContext {
   names: Map<number, string>;
   next: number;
   showVarIds: boolean;
+  forDiagnostic: boolean;
 }
 
 const GENERIC_NAMES = ["T", "U", "V", "W", "X", "Y", "Z"];
@@ -23,6 +24,7 @@ export function formatScheme(
     names: new Map(),
     next: 0,
     showVarIds: options.showVarIds ?? false,
+    forDiagnostic: false,
   };
   const quantifiers = [...new Set(scheme.quantifiers)].sort((a, b) => a - b);
   for (const id of quantifiers) {
@@ -141,12 +143,13 @@ function ensureName(context: PrintContext, id: number): string {
 
 export function formatTypeWithCarriers(
   type: Type,
-  options: { showVarIds?: boolean } = {},
+  options: { showVarIds?: boolean; forDiagnostic?: boolean } = {},
 ): string {
   const context: PrintContext = {
     names: new Map(),
     next: 0,
     showVarIds: options.showVarIds ?? false,
+    forDiagnostic: options.forDiagnostic ?? false,
   };
   return formatTypeWithCarriersInternal(type, context, 0);
 }
@@ -156,19 +159,22 @@ function formatTypeWithCarriersInternal(
   context: PrintContext,
   prec: number,
 ): string {
-  const carrier = splitCarrier(type);
-  if (carrier && carrier.domain !== "hole") {
-    const valueStr = formatTypeWithCarriersInternal(
-      carrier.value,
-      context,
-      0,
-    );
-    const stateStr = formatTypeWithCarriersInternal(
-      carrier.state,
-      context,
-      0,
-    );
-    return `⚡${valueStr} [${stateStr}]`;
+  // For diagnostics, skip carrier formatting and show explicit Ptr<T>
+  if (!context.forDiagnostic) {
+    const carrier = splitCarrier(type);
+    if (carrier && carrier.domain !== "hole") {
+      const valueStr = formatTypeWithCarriersInternal(
+        carrier.value,
+        context,
+        0,
+      );
+      const stateStr = formatTypeWithCarriersInternal(
+        carrier.state,
+        context,
+        0,
+      );
+      return `⚡${valueStr} [${stateStr}]`;
+    }
   }
   switch (type.kind) {
     case "var":

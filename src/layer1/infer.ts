@@ -2487,8 +2487,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             return recordExprType(ctx, expr, mark.type);
           }
 
-          const expectedArg = applyCurrentSubst(ctx, resolvedFn.from);
-          const actualArg = applyCurrentSubst(ctx, argType);
+          // Use the actual types from the unification failure when available,
+          // since post-substitution types can look identical even when the
+          // actual failure was between different types (e.g., Ptr<T> vs T)
+          const expectedArg = failure?.left ?? applyCurrentSubst(ctx, resolvedFn.from);
+          const actualArg = failure?.right ?? applyCurrentSubst(ctx, argType);
           const mark = markInconsistent(
             ctx,
             expr,

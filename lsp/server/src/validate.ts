@@ -628,7 +628,7 @@ function formatTypeForDiagnostics(
   layer3: Layer3Result,
 ): string {
   const substituted = ctx.substituteTypeWithLayer3(type, layer3);
-  return formatTypeWithCarriers(substituted);
+  return formatTypeWithCarriers(substituted, { forDiagnostic: true });
 }
 
 function hasExistingDiagnostic(
