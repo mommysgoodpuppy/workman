@@ -5,30 +5,30 @@
 -- These are lowered to direct Zig operators in raw mode
 
 from "std/zig/types.wm" import { 
-  i8, i16, i32, i64, i128, isize,
-  u8, u16, u32, u64, u128, usize,
-  f16, f32, f64, f128,
-  void, Optional, Opt, Anyopaque, Opaque, Null
+  I8, I16, I32, I64, I128, Isize,
+  U8, U16, U32, U64, U128, Usize,
+  F16, F32, F64, F128,
+  Void, Optional, Opt, Anyopaque, Opaque, Null
 };
 
 -- Re-export types
-export from "std/zig/types.wm" type i8;
-export from "std/zig/types.wm" type i16;
-export from "std/zig/types.wm" type i32;
-export from "std/zig/types.wm" type i64;
-export from "std/zig/types.wm" type i128;
-export from "std/zig/types.wm" type isize;
-export from "std/zig/types.wm" type u8;
-export from "std/zig/types.wm" type u16;
-export from "std/zig/types.wm" type u32;
-export from "std/zig/types.wm" type u64;
-export from "std/zig/types.wm" type u128;
-export from "std/zig/types.wm" type usize;
-export from "std/zig/types.wm" type f16;
-export from "std/zig/types.wm" type f32;
-export from "std/zig/types.wm" type f64;
-export from "std/zig/types.wm" type f128;
-export from "std/zig/types.wm" type void;
+export from "std/zig/types.wm" type I8;
+export from "std/zig/types.wm" type I16;
+export from "std/zig/types.wm" type I32;
+export from "std/zig/types.wm" type I64;
+export from "std/zig/types.wm" type I128;
+export from "std/zig/types.wm" type Isize;
+export from "std/zig/types.wm" type U8;
+export from "std/zig/types.wm" type U16;
+export from "std/zig/types.wm" type U32;
+export from "std/zig/types.wm" type U64;
+export from "std/zig/types.wm" type U128;
+export from "std/zig/types.wm" type Usize;
+export from "std/zig/types.wm" type F16;
+export from "std/zig/types.wm" type F32;
+export from "std/zig/types.wm" type F64;
+export from "std/zig/types.wm" type F128;
+export from "std/zig/types.wm" type Void;
 export from "std/zig/types.wm" type Optional;
 export from "std/zig/types.wm" type Opt;
 export from "std/zig/types.wm" type Anyopaque;

@@ -1018,7 +1018,7 @@ export function typeToString(type: Type): string {
     case "string":
       return "String";
     case "unit":
-      return "()";
+      return "Void";
     case "func":
       return `(${typeToString(type.from)} -> ${typeToString(type.to)})`;
     case "constructor": {

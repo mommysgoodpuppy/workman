@@ -542,7 +542,7 @@ export function convertTypeExpr(
             });
           }
           return { kind: "char" };
-        case "Unit":
+        case "Void":
           if (typeExpr.typeArgs.length > 0) {
             const mark = markTypeExprArity(
               ctx,
@@ -749,7 +749,7 @@ export function convertTypeExpr(
       return {
         kind: "constructor",
         name: "Ptr",
-        args: [pointee],
+        args: [pointee, freshTypeVar()],
       };
     }
     default:
@@ -1137,15 +1137,20 @@ function registerZigImportPrimitive(ctx: Context, name: string): void {
     markInternal(ctx, "fresh_type_var_not_var");
     return;
   }
+  const stateVar = freshTypeVar();
+  if (stateVar.kind !== "var") {
+    markInternal(ctx, "fresh_type_var_not_var");
+    return;
+  }
   const argType: Type = ctx.rawMode
     ? {
       kind: "constructor",
       name: "Ptr",
-      args: [{ kind: "constructor", name: "u8", args: [] }],
+      args: [{ kind: "constructor", name: "U8", args: [] }, stateVar],
     }
     : { kind: "string" };
   const scheme: TypeScheme = {
-    quantifiers: [resultVar.id],
+    quantifiers: [resultVar.id, stateVar.id],
     type: {
       kind: "func",
       from: argType,

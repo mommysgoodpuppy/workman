@@ -16,6 +16,7 @@ export interface DomainRuleDefinition {
   conflict?: string;
   conflictPairs?: [string, string][];
   boundary?: string;
+  defaultRule?: OpRuleDefinition;
   entries: RuleEntry[];
 }
 
@@ -25,6 +26,7 @@ export interface OpRuleDefinition {
   target?: string;
   requiresExact?: string[];
   requiresAny?: string[];
+  requiresNot?: string[];
   adds?: string[];
   removes?: string[];
   callPolicy?: string;
@@ -122,6 +124,13 @@ export function collectInfectionDeclarations(
 }
 
 function parseDomainRule(decl: DomainDeclaration): DomainRuleDefinition {
+  const defaultRule = decl.defaultEntries
+    ? parseOpRuleEntries(
+      `__default_${decl.name}`,
+      decl.defaultEntries,
+      decl.name,
+    )
+    : undefined;
   return {
     name: decl.name,
     stateKind: getNameByKey(decl.entries, "stateKind"),
@@ -130,24 +139,35 @@ function parseDomainRule(decl: DomainDeclaration): DomainRuleDefinition {
     conflict: getNameByKey(decl.entries, "conflict"),
     conflictPairs: getPairListByKey(decl.entries, "conflict"),
     boundary: getNameByKey(decl.entries, "boundary"),
+    defaultRule,
     entries: decl.entries,
   };
 }
 
 function parseOpRule(decl: OpRuleDeclaration): OpRuleDefinition {
+  return parseOpRuleEntries(decl.name, decl.entries);
+}
+
+function parseOpRuleEntries(
+  name: string,
+  entries: RuleEntry[],
+  domainOverride?: string,
+): OpRuleDefinition {
   return {
-    name: decl.name,
-    domain: getNameByKey(decl.entries, "domain"),
-    target: getNameByKey(decl.entries, "target"),
-    requiresExact: getListByKey(decl.entries, "requiresExact"),
-    requiresAny: getListByKey(decl.entries, "requiresAny"),
-    adds: getListByKey(decl.entries, "adds"),
-    removes: getListByKey(decl.entries, "removes"),
-    callPolicy: getNameByKey(decl.entries, "callPolicy") ??
-      getNameByKey(decl.entries, "call_policy"),
-    rejectDomains: getListByKey(decl.entries, "rejectDomains") ??
-      getListByKey(decl.entries, "reject_domains"),
-    entries: decl.entries,
+    name,
+    domain: getNameByKey(entries, "domain") ?? domainOverride,
+    target: getNameByKey(entries, "target"),
+    requiresExact: getListByKey(entries, "requiresExact"),
+    requiresAny: getListByKey(entries, "requiresAny"),
+    requiresNot: getListByKey(entries, "requiresNot") ??
+      getListByKey(entries, "requires_not"),
+    adds: getListByKey(entries, "adds"),
+    removes: getListByKey(entries, "removes"),
+    callPolicy: getNameByKey(entries, "callPolicy") ??
+      getNameByKey(entries, "call_policy"),
+    rejectDomains: getListByKey(entries, "rejectDomains") ??
+      getListByKey(entries, "reject_domains"),
+    entries,
   };
 }
 

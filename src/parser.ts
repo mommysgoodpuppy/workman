@@ -480,19 +480,20 @@ class SurfaceParser {
 
   private parseLetDeclaration(exportToken?: Token): LetDeclaration {
     const letToken = this.expectKeyword("let");
-    const isRecursive = this.matchKeyword("rec");
+    const { isRecursive, isMutable } = this.parseLetModifiers();
 
     const firstBinding = this.parseLetBinding(
       letToken.start,
       isRecursive,
       true,
+      isMutable,
     );
 
     // Parse mutual bindings with "and"
     const mutualBindings: LetDeclaration[] = [];
     while (this.matchKeyword("and")) {
       const andStart = this.previous().start;
-      mutualBindings.push(this.parseLetBinding(andStart, true, true));
+      mutualBindings.push(this.parseLetBinding(andStart, isRecursive, true));
     }
     if (mutualBindings.length > 0) {
       firstBinding.mutualBindings = mutualBindings;
@@ -514,11 +515,48 @@ class SurfaceParser {
     return firstBinding;
   }
 
+  private parseLetModifiers(): {
+    isRecursive: boolean;
+    isMutable: boolean;
+  } {
+    let isRecursive = false;
+    let isMutable = false;
+    let advanced = true;
+    while (advanced) {
+      advanced = false;
+      if (this.matchKeyword("mut")) {
+        if (isMutable) {
+          throw this.error("Duplicate 'mut' modifier", this.previous());
+        }
+        isMutable = true;
+        advanced = true;
+        continue;
+      }
+      if (this.matchKeyword("rec")) {
+        if (isRecursive) {
+          throw this.error("Duplicate 'rec' modifier", this.previous());
+        }
+        isRecursive = true;
+        advanced = true;
+        continue;
+      }
+    }
+    return { isRecursive, isMutable };
+  }
+
   private parseLetBinding(
     startPos: number,
     isRecursive: boolean,
     isTopLevel: boolean = false,
+    isMutablePrefix: boolean = false,
   ): LetDeclaration {
+    let isMutable = isMutablePrefix;
+    if (this.matchKeyword("mut")) {
+      if (isMutable) {
+        throw this.error("Duplicate 'mut' modifier", this.previous());
+      }
+      isMutable = true;
+    }
     const nameToken = this.expectIdentifier();
     const nameSpan = this.spanFrom(nameToken.start, nameToken.end);
     const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
@@ -579,6 +617,7 @@ class SurfaceParser {
         annotation,
         body,
         isRecursive,
+        isMutable,
         isFirstClassMatch: true,
         span: this.spanFrom(startPos, body.span.end),
         id: nextNodeId(),
@@ -600,6 +639,7 @@ class SurfaceParser {
         annotation,
         body: initializer,
         isRecursive,
+        isMutable,
         span: this.spanFrom(startPos, initializer.span.end),
         id: nextNodeId(),
       };
@@ -616,6 +656,7 @@ class SurfaceParser {
         returnAnnotation,
         body,
         isRecursive,
+        isMutable,
         isArrowSyntax: true,
         span: this.spanFrom(startPos, body.span.end),
         id: nextNodeId(),
@@ -645,6 +686,7 @@ class SurfaceParser {
       annotation,
       body,
       isRecursive,
+      isMutable,
       span: this.spanFrom(startPos, body.span.end),
       id: nextNodeId(),
     };
@@ -782,16 +824,25 @@ class SurfaceParser {
       }
       if (this.checkKeyword("let")) {
         const letToken = this.expectKeyword("let");
-        if (this.tryParseTupleLetStatement(letToken, statements)) {
-          continue;
+        const { isRecursive, isMutable } = this.parseLetModifiers();
+        if (this.checkSymbol("(")) {
+          if (isRecursive || isMutable) {
+            throw this.error(
+              "Tuple destructuring does not support 'mut' or 'rec'",
+              this.peek(),
+            );
+          }
+          if (this.tryParseTupleLetStatement(letToken, statements)) {
+            continue;
+          }
         }
-        const isRecursive = this.matchKeyword("rec");
         // For let statements inside blocks, pass isTopLevel = false
         // This limits first-class match transformation to recursive helpers
         const declaration = this.parseLetBinding(
           letToken.start,
           isRecursive,
           false,
+          isMutable,
         );
         statements.push({
           kind: "let_statement",
@@ -887,7 +938,7 @@ class SurfaceParser {
           nextOffset += 1;
         }
         const nextToken = this.peek(nextOffset);
-        return nextToken.kind === "symbol" && nextToken.value === ":";
+        return nextToken.kind === "symbol" && nextToken.value === "=";
       }
       return false;
     }
@@ -913,8 +964,8 @@ class SurfaceParser {
           nextOffset += 1;
         }
         const nextToken = this.peek(nextOffset);
-        // If there's a colon, it's a record literal
-        if (nextToken.kind === "symbol" && nextToken.value === ":") {
+        // If there's an equals, it's a record literal
+        if (nextToken.kind === "symbol" && nextToken.value === "=") {
           return false;
         }
         // Otherwise it's a tuple (identifier followed by something else like comma or })
@@ -934,7 +985,7 @@ class SurfaceParser {
     const fields: RecordField[] = [];
     while (!this.checkSymbol("}")) {
       const nameToken = this.expectIdentifier();
-      this.expectSymbol(":");
+      this.expectSymbol("=");
       const valueExpr = this.parseExpression();
       let hasTrailingComma = false;
       if (this.matchSymbol(",")) {
@@ -1313,11 +1364,12 @@ class SurfaceParser {
   private parseDomainDeclaration(exportToken?: Token): DomainDeclaration {
     const domainToken = this.expectKeyword("domain");
     const nameToken = this.expectIdentifier();
-    const { entries, closeToken } = this.parseRuleBlock();
+    const { entries, defaultEntries, closeToken } = this.parseDomainRuleBlock();
     const declaration: DomainDeclaration = {
       kind: "domain",
       name: nameToken.value,
       entries,
+      defaultEntries,
       span: this.spanFrom(domainToken.start, closeToken.end),
       id: nextNodeId(),
     };
@@ -1407,6 +1459,37 @@ class SurfaceParser {
     }
     const closeToken = this.expectSymbol("}");
     return { entries, closeToken };
+  }
+
+  private parseDomainRuleBlock(): {
+    entries: RuleEntry[];
+    defaultEntries?: RuleEntry[];
+    closeToken: Token;
+  } {
+    this.expectSymbol("{");
+    const entries: RuleEntry[] = [];
+    let defaultEntries: RuleEntry[] | undefined;
+    while (!this.checkSymbol("}")) {
+      const token = this.peek();
+      const next = this.peek(1);
+      if (
+        token.kind === "identifier" && token.value === "default" &&
+        this.isSymbolToken(next, "{")
+      ) {
+        if (defaultEntries) {
+          throw this.error("Duplicate default rule block", token);
+        }
+        this.consume();
+        const parsed = this.parseRuleBlock();
+        defaultEntries = parsed.entries;
+        this.matchSymbol(";") || this.matchSymbol(",");
+        continue;
+      }
+      entries.push(this.parseRuleEntry());
+      this.matchSymbol(";") || this.matchSymbol(",");
+    }
+    const closeToken = this.expectSymbol("}");
+    return { entries, defaultEntries, closeToken };
   }
 
   private parseRuleEntry(): RuleEntry {
@@ -1947,6 +2030,19 @@ class SurfaceParser {
         } as Expr;
       }
       case "constructor": {
+        if (token.value === "Void") {
+          const voidToken = this.consume();
+          return {
+            kind: "literal",
+            literal: {
+              kind: "unit",
+              span: this.createSpan(voidToken, voidToken),
+              id: nextNodeId(),
+            },
+            span: this.createSpan(voidToken, voidToken),
+            id: nextNodeId(),
+          } as Expr;
+        }
         const ctor = this.consume();
         return {
           kind: "constructor",
@@ -2477,6 +2573,19 @@ class SurfaceParser {
         span: this.spanFrom(varToken.start, close.end),
         id: nextNodeId(),
       };
+    }
+
+    if (
+      (token.kind === "constructor" || token.kind === "identifier") &&
+      token.value === "Void"
+    ) {
+      const voidToken = this.consume();
+      const literal = {
+        kind: "unit" as const,
+        span: this.createSpan(voidToken, voidToken),
+        id: nextNodeId(),
+      };
+      return { kind: "literal", literal, span: literal.span, id: nextNodeId() };
     }
 
     if (token.kind === "identifier") {

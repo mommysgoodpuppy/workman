@@ -9,6 +9,8 @@ import {
   type Type,
   type TypeInfo,
   type TypeScheme,
+  createEffectRow,
+  freshTypeVar,
   unknownType,
 } from "../types.ts";
 import type {
@@ -83,7 +85,11 @@ export function createDefaultForeignTypeConfig(
   const buildWmPath = findNearestBuildWm(entryPath);
   const cacheDir = resolveCacheDir(entryPath);
   const zigPath = resolveZigPath();
+  const buildWmIncludeDirs = buildWmPath
+    ? extractIncludePathsFromBuildWm(buildWmPath)
+    : [];
   const includeDirs = dedupePaths([
+    ...buildWmIncludeDirs,
     ...readEnvList("WM_C_HEADER_INCLUDE_DIRS"),
     ...getZigNativeIncludeDirs(zigPath),
   ]);
@@ -323,7 +329,7 @@ function mapExtractedResult(extracted: ExtractedResult): ForeignTypeResult {
   for (const entry of extracted.types) {
     if (!values.has(entry.name)) {
       if (entry.kind === "alias") {
-        const target = mapTypeDesc(entry.target, types);
+        const target = mapTypeDesc(entry.target, types, { position: "value" });
         values.set(entry.name, { quantifiers: [], type: target });
       } else {
         values.set(entry.name, {
@@ -334,11 +340,16 @@ function mapExtractedResult(extracted: ExtractedResult): ForeignTypeResult {
     }
   }
 
-  const mapDesc = (desc: ExtractedTypeDesc): Type => mapTypeDesc(desc, types);
+  const mapDesc = (
+    desc: ExtractedTypeDesc,
+    position?: "param" | "return" | "field" | "value",
+  ): Type => mapTypeDesc(desc, types, { position });
 
   for (const fn of extracted.fns) {
-    const params = fn.params.map(mapDesc);
-    const returnType = fn.return ? mapDesc(fn.return) : { kind: "unit" };
+    const params = fn.params.map((param) => mapDesc(param, "param"));
+    const returnType = fn.return
+      ? mapDesc(fn.return, "return")
+      : { kind: "unit" };
     values.set(fn.name, {
       quantifiers: [],
       type: makeFunctionType(params, returnType),
@@ -348,7 +359,7 @@ function mapExtractedResult(extracted: ExtractedResult): ForeignTypeResult {
   for (const value of extracted.values) {
     values.set(value.name, {
       quantifiers: [],
-      type: mapDesc(value.type),
+      type: mapDesc(value.type, "value"),
     });
   }
 
@@ -362,7 +373,7 @@ function buildStructInfo(
   const fields = new Map<string, Type>();
   const recordFields = new Map<string, number>();
   entry.fields.forEach((field, index) => {
-    fields.set(field.name, mapTypeDesc(field.type, types));
+    fields.set(field.name, mapTypeDesc(field.type, types, { position: "field" }));
     recordFields.set(field.name, index);
   });
   return {
@@ -385,6 +396,7 @@ function buildEnumInfo(entry: ExtractedEnum): TypeInfo {
 function mapTypeDesc(
   desc: ExtractedTypeDesc,
   types: Map<string, TypeInfo>,
+  options: { position?: "param" | "return" | "field" | "value" } = {},
 ): Type {
   switch (desc.kind) {
     case "void":
@@ -399,13 +411,42 @@ function mapTypeDesc(
       return {
         kind: "constructor",
         name: "Ptr",
-        args: [desc.child ? mapTypeDesc(desc.child, types) : unknownForeignType()],
+        args: [
+          desc.child
+            ? mapTypeDesc(desc.child, types, { position: options.position })
+            : unknownForeignType(),
+          freshTypeVar(),
+        ],
       };
     case "optional":
+      if (desc.child?.kind === "pointer") {
+        const childType = mapTypeDesc(desc.child, types, {
+          position: options.position,
+        });
+        if (
+          childType.kind === "constructor" && childType.name === "Ptr" &&
+          childType.args.length >= 1
+        ) {
+          if (options.position === "param") {
+            return childType;
+          }
+          const tail = childType.args[1] ?? freshTypeVar();
+          const state = createEffectRow([["Null", null]], tail);
+          return {
+            kind: "constructor",
+            name: "Ptr",
+            args: [childType.args[0], state],
+          };
+        }
+      }
       return {
         kind: "constructor",
-        name: "Opt",
-        args: [desc.child ? mapTypeDesc(desc.child, types) : unknownForeignType()],
+        name: "Optional",
+        args: [
+          desc.child
+            ? mapTypeDesc(desc.child, types, { position: options.position })
+            : unknownForeignType(),
+        ],
       };
     case "named":
       return mapNamedType(normalizeCImportName(desc.name ?? "Unknown"), types);
@@ -413,7 +454,9 @@ function mapTypeDesc(
       return {
         kind: "array",
         length: desc.length ?? 0,
-        element: desc.child ? mapTypeDesc(desc.child, types) : unknownForeignType(),
+        element: desc.child
+          ? mapTypeDesc(desc.child, types, { position: options.position })
+          : unknownForeignType(),
       };
     case "unknown": {
       if (desc.name) {
@@ -451,6 +494,7 @@ function mapNamedType(
   name: string,
   types: Map<string, TypeInfo>,
 ): Type {
+  name = normalizeZigPrimitiveName(name);
   if (name.startsWith("_")) {
     const stripped = name.replace(/^_+/, "");
     if (types.has(stripped)) {
@@ -461,11 +505,80 @@ function mapNamedType(
     case "bool":
       return { kind: "bool" };
     case "void":
+    case "Void":
       return { kind: "unit" };
     case "anyopaque":
-      return { kind: "constructor", name: "Opaque", args: [] };
+    case "Anyopaque":
+      return { kind: "constructor", name: "Anyopaque", args: [] };
     default:
       return buildNamedConstructorType(name, types);
+  }
+}
+
+function normalizeZigPrimitiveName(name: string): string {
+  switch (name) {
+    case "i8":
+      return "I8";
+    case "i16":
+      return "I16";
+    case "i32":
+      return "I32";
+    case "i64":
+      return "I64";
+    case "i128":
+      return "I128";
+    case "isize":
+      return "Isize";
+    case "u8":
+      return "U8";
+    case "u16":
+      return "U16";
+    case "u32":
+      return "U32";
+    case "u64":
+      return "U64";
+    case "u128":
+      return "U128";
+    case "usize":
+      return "Usize";
+    case "f16":
+      return "F16";
+    case "f32":
+      return "F32";
+    case "f64":
+      return "F64";
+    case "f128":
+      return "F128";
+    case "void":
+      return "Void";
+    case "noreturn":
+      return "NoReturn";
+    case "anyerror":
+      return "Anyerror";
+    case "comptime_int":
+      return "ComptimeInt";
+    case "comptime_float":
+      return "ComptimeFloat";
+    case "c_short":
+      return "CShort";
+    case "c_ushort":
+      return "CUShort";
+    case "c_int":
+      return "CInt";
+    case "c_uint":
+      return "CUInt";
+    case "c_long":
+      return "CLong";
+    case "c_ulong":
+      return "CULong";
+    case "c_longlong":
+      return "CLongLong";
+    case "c_ulonglong":
+      return "CULongLong";
+    case "c_char":
+      return "CChar";
+    default:
+      return name;
   }
 }
 
@@ -524,6 +637,34 @@ function findNearestBuildWm(entryPath: string): string | undefined {
       return undefined;
     }
     current = parent;
+  }
+}
+
+/**
+ * Parse build.wm to extract include paths from addIncludePath(b.path("...")) calls.
+ * Returns absolute paths resolved relative to the build.wm directory.
+ */
+function extractIncludePathsFromBuildWm(buildWmPath: string): string[] {
+  try {
+    const source = IO.readTextFileSync(buildWmPath);
+    const buildDir = dirname(resolve(buildWmPath));
+    const includePaths: string[] = [];
+    
+    // Match patterns like: addIncludePath(b.path("sdl3-mingw/include"))
+    // or: .addIncludePath(b.path("path/to/include"))
+    const pattern = /\.?addIncludePath\s*\(\s*b\.path\s*\(\s*["']([^"']+)["']\s*\)/g;
+    let match;
+    while ((match = pattern.exec(source)) !== null) {
+      const relativePath = match[1];
+      const absolutePath = resolve(buildDir, relativePath);
+      if (existsSync(absolutePath)) {
+        includePaths.push(absolutePath);
+      }
+    }
+    
+    return includePaths;
+  } catch {
+    return [];
   }
 }
 

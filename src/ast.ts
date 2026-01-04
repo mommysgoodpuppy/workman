@@ -429,6 +429,7 @@ export interface LetDeclaration extends NodeBase {
   returnAnnotation?: TypeExpr;
   body: BlockExpr;
   isRecursive: boolean;
+  isMutable?: boolean;
   isFirstClassMatch?: boolean; // True if originally written as `let f = match(x) => { ... }`
   isArrowSyntax?: boolean; // True if originally written with arrow syntax `() => { ... }`
   mutualBindings?: LetDeclaration[];
@@ -510,6 +511,7 @@ export interface DomainDeclaration extends NodeBase {
   kind: "domain";
   name: string;
   entries: RuleEntry[];
+  defaultEntries?: RuleEntry[];
   export?: ExportModifier;
   leadingComments?: CommentBlock[];
   trailingComment?: string;

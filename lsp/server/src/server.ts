@@ -13,6 +13,7 @@ import {
   getCarrierRegistrySize,
   getProvenance,
   isHoleType,
+  splitCarrier,
   type Type,
   type TypeScheme,
 } from "../../../src/types.ts";
@@ -472,11 +473,9 @@ export class WorkmanLanguageServer {
     adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
   ): string | null {
     if (!type) return null;
-    if (
-      type.kind !== "constructor" ||
-      type.args.length !== 2
-    ) return null;
-    const errArg = type.args[1];
+    const carrier = splitCarrier(type);
+    if (!carrier || carrier.domain !== "effect") return null;
+    const errArg = carrier.state;
     const ensureRow = (
       t: Type,
     ): import("../../../src/types.ts").EffectRowType => (

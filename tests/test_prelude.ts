@@ -53,7 +53,7 @@ export function freshPreludeTypeEnv(): {
  */
 function formatCompiledValue(value: unknown): string {
   if (value === null || value === undefined) {
-    return "Unit";
+    return "Void";
   }
   if (typeof value === "number") {
     return String(value);

@@ -2,8 +2,8 @@ from "std/mem/core" import { MemVal };
 from "std/core/int" import { intAdd, intSub };
 
 -- Low-level pointer + slice types (Zig-like surface).
-export type Ptr<T> = { addr: Int };
-export type Slice<T> = { ptr: Ptr<T>, len: Int };
+export type Ptr<T, S> = { addr: Int };
+export type Slice<T, S> = { ptr: Ptr<T, S>, len: Int };
 
 -- Minimal mem API (backed by runtime primitives).
 export let alloc = (len) => {

@@ -5,10 +5,15 @@ import {
   NodeView,
   PartialType,
 } from "../../../src/layer3/mod.ts";
-import { formatScheme, formatType } from "../../../src/type_printer.ts";
+import {
+  formatScheme,
+  formatType,
+  formatTypeWithCarriers,
+} from "../../../src/type_printer.ts";
 import {
   getCarrierRegistrySize,
   getRegisteredCarrierInfo,
+  splitCarrier,
   Type,
 } from "../../../src/types.ts";
 
@@ -52,6 +57,12 @@ export function renderNodeView(
   let result = "```workman\n" + typeStr + "\n```";
   if (summary) {
     result += `\n\nErrors: ${summary}`;
+  }
+
+  const carrierInfo = t ? splitCarrier(t) : null;
+  if (carrierInfo) {
+    const carrierName = t && t.kind === "constructor" ? t.name : "carrier";
+    result += `\n\ncarrier: ${carrierName} (domain ${carrierInfo.domain})`;
   }
 
   const recordInfo = resolveRecordInfo(t, adtEnv);
@@ -216,17 +227,18 @@ function partialTypeToString(
         partial.type,
         layer3,
       );
-      let str = substituted ? formatType(substituted, printCtx, 0) : "?";
+      let str = substituted
+        ? formatTopLevelType(substituted, printCtx)
+        : "?";
       // Post-process to format Result types using a robust replacer
       str = ctx.replaceIResultFormats(str);
       return str;
     }
     case "concrete": {
       let str = partial.type
-        ? formatType(
+        ? formatTopLevelType(
           ctx.substituteTypeWithLayer3(partial.type, layer3),
           printCtx,
-          0,
         )
         : null;
       if (str) {
@@ -238,4 +250,13 @@ function partialTypeToString(
     default:
       return null;
   }
+}
+
+function formatTopLevelType(
+  type: Type,
+  printCtx: { names: Map<number, string>; next: number },
+): string {
+  return splitCarrier(type)
+    ? formatTypeWithCarriers(type)
+    : formatType(type, printCtx, 0);
 }

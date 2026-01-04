@@ -253,7 +253,7 @@ function typeToString(type: Type): string {
     case "char":
       return "Char";
     case "unit":
-      return "Unit";
+      return "Void";
     case "var":
       return `'${type.id}`;
     case "func":

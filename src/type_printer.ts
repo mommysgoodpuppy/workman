@@ -114,7 +114,7 @@ export function formatType(
       return `<${parts.join(" | ")}>`;
     }
     case "unit":
-      return "Unit";
+      return "Void";
     case "int":
       return "Int";
     case "bool":
@@ -263,7 +263,7 @@ function formatTypeWithCarriersInternal(
       return `<${parts.join(" | ")}>`;
     }
     case "unit":
-      return "Unit";
+      return "Void";
     case "int":
       return "Int";
     case "bool":

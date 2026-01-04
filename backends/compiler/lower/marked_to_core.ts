@@ -482,15 +482,22 @@ function lowerPattern(pattern: MPattern, state: LoweringState): CorePattern {
       };
     case "constructor": {
       const resolved = resolveNodeType(state, pattern.id, pattern.type);
-      if (resolved.kind !== "constructor") {
+      if (
+        resolved.kind !== "constructor" &&
+        pattern.name !== "Null" &&
+        pattern.name !== "NonNull"
+      ) {
         throw new CoreLoweringError(
           `Constructor pattern '${pattern.name}' missing type information`,
           pattern.id,
         );
       }
+      const typeName = resolved.kind === "constructor"
+        ? resolved.name
+        : "__mem_nullability";
       return {
         kind: "constructor",
-        typeName: resolved.name,
+        typeName,
         constructor: pattern.name,
         fields: pattern.args.map((arg) => lowerPattern(arg, state)),
         type: resolved,

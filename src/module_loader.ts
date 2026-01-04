@@ -1332,9 +1332,24 @@ function resolveModuleSpecifier(
     return ensureWmExtension(target);
   }
 
-  // Handle bare .zig or .h imports (treat as relative to importer)
   const ext = extname(specifier).toLowerCase();
-  if (ext === ".zig" || ext === ".h") {
+
+  // Handle bare .h imports - search include directories first, then fall back to relative
+  if (ext === ".h") {
+    // First check include directories from foreignTypes config
+    const includeDirs = options.foreignTypes?.includeDirs ?? [];
+    for (const includeDir of includeDirs) {
+      const candidate = join(includeDir, specifier);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    // Fall back to relative to importer
+    return resolve(dirname(importerPath), specifier);
+  }
+
+  // Handle bare .zig imports (treat as relative to importer)
+  if (ext === ".zig") {
     return resolve(dirname(importerPath), specifier);
   }
 

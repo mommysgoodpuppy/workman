@@ -848,7 +848,7 @@ function describePattern(pattern: CorePattern): string {
 function describeLiteral(literal: CoreLiteral): string {
   switch (literal.kind) {
     case "unit":
-      return "()";
+      return "Void";
     case "int":
       return literal.value.toString();
     case "bool":

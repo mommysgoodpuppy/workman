@@ -28,10 +28,12 @@ export type ConstraintDiagnosticReason =
   | "type_decl_invalid_member"
   | "unfillable_hole"
   | "internal_error"
+  | "mutable_shadowing"
   | "boundary_violation"
   | "incompatible_constraints"
   | "require_exact_state"
   | "require_any_state"
+  | "require_not_state"
   | "require_at_return"
   | "call_rejects_infection"
   | "call_rejects_domains";

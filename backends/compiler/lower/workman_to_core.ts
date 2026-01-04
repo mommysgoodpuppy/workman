@@ -307,7 +307,7 @@ function simpleFormatType(type: Type): string {
     case "tuple":
       return `(${type.elements.map(simpleFormatType).join(", ")})`;
     case "unit":
-      return "Unit";
+      return "Void";
     case "int":
       return "Int";
     case "bool":

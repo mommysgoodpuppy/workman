@@ -30,7 +30,10 @@ export function lex(source: string, sourceName?: string): Token[] {
       continue;
     }
 
-    if (char === "-" && source[index + 1] === "-") {
+    if (
+      (char === "-" && source[index + 1] === "-") ||
+      (char === "/" && source[index + 1] === "/")
+    ) {
       const commentStart = index;
       index += 2;
       let value = "";

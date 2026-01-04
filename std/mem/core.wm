@@ -4,8 +4,8 @@
 -- can “see” a `mem` carrier in the same way it already sees `effect`, `hole`, and `async`.
 --
 -- The *semantics* (shape requirements, duplicates as bag, boundary cancellation, no_leak/pure)
--- are planned to be std-declared via `domain` / `op` / `policy` metadata (see
--- `std/infection/domains.wm`), but those declarations are not implemented yet.
+-- are std-declared via `domain` / `op` / `policy` metadata (see
+-- `std/infection/domains.wm`).
 
 -- Carrier type for the `mem` domain.
 -- `T` is the underlying value (e.g., a pointer-like handle).

@@ -403,6 +403,7 @@ export interface MLetDeclaration extends MTypedNode {
   returnAnnotation?: MTypeExpr;
   body: MBlockExpr;
   isRecursive: boolean;
+  isMutable?: boolean;
   isFirstClassMatch?: boolean;
   isArrowSyntax?: boolean;
   mutualBindings?: MLetDeclaration[];

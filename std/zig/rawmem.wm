@@ -1,19 +1,19 @@
 @raw;
 
 -- Raw-only memory helpers for FFI allocation.
-from "std/zig/types.wm" import { usize };
+from "std/zig/types.wm" import { Usize };
 
-export type Ptr<t>;
-export type Slice<t> = { ptr: Ptr<t>, len: usize };
+export infectious mem type Ptr<t, s> = @value PtrVal<t>;
+export type Slice<t, s> = { ptr: Ptr<t, s>, len: Usize };
 
 -- Raw-only intrinsics lowered by the Zig raw emitter.
-let zig_alloc_struct: (t) => Ptr<t> = ?;
-let zig_alloc_struct_uninit: (t) => Ptr<t> = ?;
-let zig_alloc_struct_init: (t, t) => Ptr<t> = ?;
-let zig_alloc_slice: (t, usize) => Slice<t> = ?;
-let zig_alloc_array_uninit: (t, usize) => t = ?;
-let zig_free: (t) => () = ?;
-let zig_free_slice: (Slice<t>) => () = ?;
+let zig_alloc_struct: (t) => Ptr<t, s> = ?;
+let zig_alloc_struct_uninit: (t) => Ptr<t, s> = ?;
+let zig_alloc_struct_init: (t, t) => Ptr<t, s> = ?;
+let zig_alloc_slice: (t, Usize) => Slice<t, s> = ?;
+let zig_alloc_array_uninit: (t, Usize) => t = ?;
+let zig_free: (Ptr<t, s>) => () = ?;
+let zig_free_slice: (Slice<t, s>) => () = ?;
 
 export let allocStruct = (t) => { zig_alloc_struct(t) };
 export let allocStructUninit = (t) => { zig_alloc_struct_uninit(t) };
@@ -22,3 +22,48 @@ export let allocSlice = (t, len) => { zig_alloc_slice(t, len) };
 export let allocArrayUninit = (t, len) => { zig_alloc_array_uninit(t, len) };
 export let free = (ptr) => { zig_free(ptr); };
 export let freeSlice = (slice) => { zig_free_slice(slice); };
+
+record Allocator {
+  id: String,
+  allocStruct: (t) => { zig_alloc_struct(t) },
+  allocStructUninit: (t) => { zig_alloc_struct_uninit(t) },
+  allocStructInit: (t, value) => { zig_alloc_struct_init(t, value) },
+  allocSlice: (t, len) => { zig_alloc_slice(t, len) },
+  allocArrayUninit: (t, len) => { zig_alloc_array_uninit(t, len) },
+  free: (ptr) => { zig_free(ptr); },
+  freeSlice: (slice) => { zig_free_slice(slice); },
+};
+
+export let allocator = .{ id = "alloc" };
+
+export op mem.allocStruct {
+  domain mem;
+  adds [Opened];
+};
+
+export op mem.allocStructUninit {
+  domain mem;
+  adds [Opened];
+};
+
+export op mem.allocStructInit {
+  domain mem;
+  adds [Opened];
+};
+
+export op mem.allocSlice {
+  domain mem;
+  adds [Opened];
+};
+
+export op mem.free {
+  domain mem;
+  target arg0;
+  adds [Closed];
+};
+
+export op mem.freeSlice {
+  domain mem;
+  target arg0;
+  adds [Closed];
+};

@@ -113,16 +113,16 @@ const RAW_STD_ZIG_OPTION_HELPERS = new Set<string>([
 // Zig primitive types that should not be imported (they're built-in)
 const ZIG_PRIMITIVES = new Set<string>([
   // Signed integers
-  "i8", "i16", "i32", "i64", "i128", "isize",
+  "I8", "I16", "I32", "I64", "I128", "Isize",
   // Unsigned integers
-  "u8", "u16", "u32", "u64", "u128", "usize",
+  "U8", "U16", "U32", "U64", "U128", "Usize",
   // Floating point
-  "f16", "f32", "f64", "f128",
+  "F16", "F32", "F64", "F128",
   // Special types
-  "bool", "void", "noreturn", "anyerror", "comptime_int", "comptime_float",
+  "Bool", "Void", "NoReturn", "Anyerror", "ComptimeInt", "ComptimeFloat",
   // C interop types
-  "c_short", "c_ushort", "c_int", "c_uint", "c_long", "c_ulong",
-  "c_longlong", "c_ulonglong", "c_char",
+  "CShort", "CUShort", "CInt", "CUInt", "CLong", "CULong",
+  "CLongLong", "CULongLong", "CChar",
 ]);
 
 /**
@@ -482,6 +482,9 @@ function emitNamedLambda(
       return `${pname}: ${existing}`;
     }
     const rendered = ptype ? emitType(ptype) : "anytype";
+    if (rendered === "anyopaque" || rendered === "*anyopaque" || rendered === "?*anyopaque") {
+      return `${pname}: anytype`;
+    }
     return `${pname}: ${rendered}`;
   }).join(", ");
   
@@ -635,8 +638,13 @@ function emitTypeWithTypeParams(
       ) {
         return "anyopaque";
       }
-      if (type.name === "Ptr" && type.args.length === 1) {
-        return `*${emitTypeWithTypeParams(type.args[0], typeParamNames)}`;
+      if (type.name === "Ptr" && type.args.length >= 1) {
+        const base = emitTypeWithTypeParams(type.args[0], typeParamNames);
+        const state = type.args[1];
+        if (state && state.kind === "effect_row" && state.cases.has("Null")) {
+          return `?*${base}`;
+        }
+        return `*${base}`;
       }
       if (type.args.length === 0) {
         return type.name;
@@ -722,7 +730,8 @@ function emitLet(
   const bindingType = useVar
     ? emitType(expr.binding.value.type)
     : null;
-  const typeAnnotation = useVar && bindingType && bindingType !== "anytype"
+  const typeAnnotation = useVar && bindingType && bindingType !== "anytype" &&
+      bindingType !== "anyopaque"
     ? `: ${bindingType}`
     : "";
   return `${label}: { ${bindingKeyword} ${ref.value}${typeAnnotation} = ${value};${unusedGuard} break :${label} ${body}; }`;
@@ -806,12 +815,91 @@ function emitMatch(
   ctx: EmitContext,
 ): string {
   const scrutinee = emitExpr(expr.scrutinee, ctx);
+  const nullability = tryEmitNullabilityMatch(expr, scrutinee, ctx);
+  if (nullability) {
+    return nullability;
+  }
   const clauses = expr.cases.map((c) => emitMatchCase(c, scrutinee, ctx));
   if (expr.fallback) {
     const fallbackBody = emitExpr(expr.fallback, ctx);
     clauses.push(`else => ${fallbackBody}`);
   }
   return `switch (${scrutinee}) { ${clauses.join(", ")} }`;
+}
+
+function tryEmitNullabilityMatch(
+  expr: CoreExpr & { kind: "match" },
+  scrutinee: string,
+  ctx: EmitContext,
+): string | null {
+  let nullCase: CoreMatchCase | null = null;
+  let nonNullCase: CoreMatchCase | null = null;
+  let wildcardCase: CoreMatchCase | null = null;
+  for (const matchCase of expr.cases) {
+    const pattern = matchCase.pattern;
+    if (pattern.kind === "constructor") {
+      const ctor = pattern.constructor;
+      if (ctor === "Null" && pattern.fields.length === 0) {
+        if (!nullCase) {
+          nullCase = matchCase;
+          continue;
+        }
+      } else if (
+        ctor === "NonNull" &&
+        pattern.fields.length === 1 &&
+        (pattern.fields[0].kind === "binding" ||
+          pattern.fields[0].kind === "wildcard")
+      ) {
+        if (!nonNullCase) {
+          nonNullCase = matchCase;
+          continue;
+        }
+      }
+    } else if (isWildcardPattern(pattern)) {
+      if (!wildcardCase) {
+        wildcardCase = matchCase;
+        continue;
+      }
+    }
+    return null;
+  }
+
+  if (!nullCase && !nonNullCase) {
+    return null;
+  }
+
+  const emitCase = (matchCase: CoreMatchCase): { body: string; scope: Map<string, VarRef> } => {
+    const scope = new Map(ctx.scope);
+    bindPatternVars(matchCase.pattern, scope, ctx.state);
+    const innerCtx = { ...ctx, scope };
+    return { body: emitExpr(matchCase.body, innerCtx), scope };
+  };
+
+  const fallbackBody = expr.fallback ? emitExpr(expr.fallback, ctx) : null;
+  const nullInfo = nullCase
+    ? emitCase(nullCase)
+    : wildcardCase
+    ? emitCase(wildcardCase)
+    : null;
+  const nonNullInfo = nonNullCase ? emitCase(nonNullCase) : null;
+
+  const nullBody = nullInfo?.body ?? fallbackBody ?? "unreachable";
+  const nonNullBody = nonNullInfo?.body ??
+    (wildcardCase ? emitCase(wildcardCase).body : fallbackBody ?? "unreachable");
+
+  let binding = "_";
+  if (nonNullCase?.pattern.kind === "constructor") {
+    const field = nonNullCase.pattern.fields[0];
+    if (field) {
+      if (field.kind === "binding" && nonNullInfo) {
+        binding = resolveName(nonNullInfo.scope, field.name, ctx.state);
+      } else {
+        binding = emitPattern(field, ctx);
+      }
+    }
+  }
+
+  return `if (${scrutinee}) |${binding}| ${nonNullBody} else ${nullBody}`;
 }
 
 function emitMatchCase(
@@ -1199,6 +1287,10 @@ function mergeCaptureInfo(
 }
 
 function emitType(type: Type): string {
+  const zigPrimitive = mapZigPrimitive(type);
+  if (zigPrimitive) {
+    return zigPrimitive;
+  }
   switch (type.kind) {
     case "int":
       return "i32"; // Default to i32 for now
@@ -1228,9 +1320,14 @@ function emitType(type: Type): string {
       ) {
         return "anyopaque";
       }
-      // Handle Ptr<T> -> *T
-      if (type.name === "Ptr" && type.args.length === 1) {
-        return `*${emitType(type.args[0])}`;
+      // Handle Ptr<T, S> -> *T
+      if (type.name === "Ptr" && type.args.length >= 1) {
+        const base = emitType(type.args[0]);
+        const state = type.args[1];
+        if (state && state.kind === "effect_row" && state.cases.has("Null")) {
+          return `?*${base}`;
+        }
+        return `*${base}`;
       }
       // Opaque types like i32, u64 etc. - emit directly
       if (type.args.length === 0) {
@@ -1250,9 +1347,78 @@ function emitType(type: Type): string {
         .join(", ");
       return `struct { ${fields} }`;
     case "var":
-      return "anytype";
+      return "anyopaque";
     default:
       return "anytype";
+  }
+}
+
+function mapZigPrimitive(type: Type): string | null {
+  if (type.kind === "bool") return "bool";
+  if (type.kind !== "constructor" || type.args.length !== 0) return null;
+  switch (type.name) {
+    case "I8":
+      return "i8";
+    case "I16":
+      return "i16";
+    case "I32":
+      return "i32";
+    case "I64":
+      return "i64";
+    case "I128":
+      return "i128";
+    case "Isize":
+      return "isize";
+    case "U8":
+      return "u8";
+    case "U16":
+      return "u16";
+    case "U32":
+      return "u32";
+    case "U64":
+      return "u64";
+    case "U128":
+      return "u128";
+    case "Usize":
+      return "usize";
+    case "F16":
+      return "f16";
+    case "F32":
+      return "f32";
+    case "F64":
+      return "f64";
+    case "F128":
+      return "f128";
+    case "Void":
+      return "void";
+    case "NoReturn":
+      return "noreturn";
+    case "Anyerror":
+      return "anyerror";
+    case "ComptimeInt":
+      return "comptime_int";
+    case "ComptimeFloat":
+      return "comptime_float";
+    case "CShort":
+      return "c_short";
+    case "CUShort":
+      return "c_ushort";
+    case "CInt":
+      return "c_int";
+    case "CUInt":
+      return "c_uint";
+    case "CLong":
+      return "c_long";
+    case "CULong":
+      return "c_ulong";
+    case "CLongLong":
+      return "c_longlong";
+    case "CULongLong":
+      return "c_ulonglong";
+    case "CChar":
+      return "c_char";
+    default:
+      return null;
   }
 }
 

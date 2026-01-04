@@ -32,6 +32,10 @@ domain mem {
   stateKind rowBag;
   merge singleton;
   mergeRow bagUnion;
+  default {
+    target arg0;
+    requiresNot [Closed];
+  };
 };
 
 -- ---------------------------------------------------------------------------
@@ -43,51 +47,6 @@ domain hole {
   mergeRow union;
 };
 
--- ---------------------------------------------------------------------------
--- Example op rules (MVP)
--- ---------------------------------------------------------------------------
-op mem.alloc {
-  domain mem;
-  adds [Opened];
-};
-
-op mem.close {
-  domain mem;
-  target arg0;
-  adds [Closed];
-};
-
-op mem.free {
-  domain mem;
-  target arg0;
-  adds [Closed];
-};
-
-op mem.fill {
-  domain mem;
-  target arg0;
-  requiresExact [Opened];
-};
-
-op mem.len {
-  domain mem;
-  target arg0;
-  requiresExact [Opened];
-};
-
-op mem.read {
-  domain mem;
-  target arg0;
-  requiresExact [Opened];
-};
-
-op mem.write {
-  domain mem;
-  target arg0;
-  requiresExact [Opened];
-  rejectDomains [effect];
-};
-
 policy pure {
   rejectsAllDomains;
 };
@@ -96,8 +55,3 @@ policy noLeakMem {
   domain mem;
   requireAtReturn [Closed];
 };
-
--- ---------------------------------------------------------------------------
--- Example annotations (exercise policy plumbing)
--- ---------------------------------------------------------------------------
-annotate abs { pure };

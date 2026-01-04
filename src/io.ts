@@ -134,6 +134,7 @@ export interface IOApi {
 
   // File system - sync
   statSync(path: string): StatInfo;
+  readTextFileSync(path: string): string;
 
   // Errors
   errors: {
@@ -208,6 +209,11 @@ const denoIO: IOApi = {
       };
     }
     throw new Error("statSync not implemented for current runtime");
+  },
+
+  readTextFileSync: (path: string) => {
+    if (isDeno) return Deno.readTextFileSync(path);
+    throw new Error("readTextFileSync not implemented for current runtime");
   },
 
   errors: {
@@ -317,6 +323,14 @@ const bunIO: IOApi = {
       };
     }
     throw new Error("statSync not implemented for current runtime");
+  },
+
+  readTextFileSync: (path: string) => {
+    if (isBun) {
+      const fs = getBunFSSync();
+      return fs.readFileSync(path, "utf-8");
+    }
+    throw new Error("readTextFileSync not implemented for current runtime");
   },
 
   errors: {
@@ -448,6 +462,11 @@ const andromedaIO: IOApi = {
       };
     }
     throw new Error("statSync not implemented for Andromeda");
+  },
+
+  readTextFileSync: (path: string) => {
+    if (isAndromeda) return getAndromeda().readTextFileSync(path);
+    throw new Error("readTextFileSync not implemented for Andromeda");
   },
 
   errors: {

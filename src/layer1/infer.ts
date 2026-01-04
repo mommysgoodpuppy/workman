@@ -77,6 +77,7 @@ import {
   emitRequireAnyState,
   emitRequireAtReturn,
   emitRequireExactState,
+  emitRequireNotState,
   expectFunctionType,
   generalizeInContext,
   holeOriginFromExpr,
@@ -224,6 +225,23 @@ function createNewBindingForVar(ctx: Context, varName: string): number {
   return newId;
 }
 
+function recordMutableBinding(
+  ctx: Context,
+  varName: string,
+  isMutable?: boolean,
+): void {
+  ctx.mutableBindings.set(varName, Boolean(isMutable));
+}
+
+function checkMutableShadowing(ctx: Context, decl: LetDeclaration): void {
+  if (!decl.isMutable) return;
+  if (ctx.mutableBindings.get(decl.name) === true) {
+    recordLayer1Diagnostic(ctx, decl.id, "mutable_shadowing", {
+      name: decl.name,
+    });
+  }
+}
+
 function recordIdentityUsage(
   ctx: Context,
   domain: string,
@@ -366,6 +384,74 @@ function parseTargetIndex(target: string): number | null {
   return Number.isNaN(index) ? null : index;
 }
 
+function removeTagFromRow(state: Type, tag: string): Type {
+  if (state.kind !== "effect_row") {
+    return state;
+  }
+  if (!state.cases.has(tag)) {
+    return state;
+  }
+  const cases = new Map(state.cases);
+  cases.delete(tag);
+  return { kind: "effect_row", cases, tail: state.tail };
+}
+
+function addTagToRow(state: Type, tag: string): Type {
+  const row = ensureRow(state);
+  if (row.cases.has(tag)) {
+    return row;
+  }
+  const cases = new Map(row.cases);
+  cases.set(tag, null);
+  return { kind: "effect_row", cases, tail: row.tail };
+}
+
+function refineNullabilityType(
+  type: Type,
+  mode: "nonnull" | "null",
+): Type | null {
+  const carrierInfo = splitCarrier(type);
+  if (carrierInfo && carrierInfo.domain === "mem") {
+    const refinedState = mode === "nonnull"
+      ? removeTagFromRow(carrierInfo.state, "Null")
+      : addTagToRow(carrierInfo.state, "Null");
+    const rejoined = joinCarrier(
+      carrierInfo.domain,
+      carrierInfo.value,
+      refinedState,
+    );
+    if (rejoined) return rejoined;
+  }
+
+  if (type.kind === "constructor" && type.args.length >= 2) {
+    const state = type.args[1];
+    if (state.kind !== "effect_row") {
+      return null;
+    }
+    const refinedState = mode === "nonnull"
+      ? removeTagFromRow(state, "Null")
+      : addTagToRow(state, "Null");
+    const nextArgs = type.args.slice();
+    nextArgs[1] = refinedState;
+    return {
+      kind: "constructor",
+      name: type.name,
+      args: nextArgs,
+    };
+  }
+
+  if (
+    type.kind === "constructor" &&
+    (type.name === "Optional" || type.name === "Opt") &&
+    type.args.length === 1
+  ) {
+    return mode === "nonnull" ? type.args[0] : type;
+  }
+
+  return null;
+}
+
+
 function getCurrentFunctionScope(ctx: Context) {
   if (ctx.functionParamStack.length === 0) return null;
   return ctx.functionParamStack[ctx.functionParamStack.length - 1];
@@ -379,7 +465,7 @@ function recordParamEffect(
   ctx: Context,
   paramIndex: number,
   domain: string,
-  kind: "requiresExact" | "requiresAny" | "adds",
+  kind: "requiresExact" | "requiresAny" | "requiresNot" | "adds",
   tags: string[],
 ): void {
   const scope = getCurrentFunctionScope(ctx);
@@ -399,6 +485,7 @@ function recordParamEffect(
     rule = {
       requiresExact: new Set(),
       requiresAny: new Set(),
+      requiresNot: new Set(),
       adds: new Set(),
     };
     paramEffects.set(domain, rule);
@@ -434,6 +521,14 @@ function applyParamEffectsToCall(
           argExpr.id,
           domain,
           Array.from(effects.requiresAny),
+        );
+      }
+      if (effects.requiresNot.size > 0) {
+        emitRequireNotState(
+          ctx,
+          argExpr.id,
+          domain,
+          Array.from(effects.requiresNot),
         );
       }
       if (effects.adds.size > 0) {
@@ -656,6 +751,38 @@ function resolveOpRule(
   );
   if (suffixMatches.length === 1) {
     return suffixMatches[0];
+  }
+  return undefined;
+}
+
+function resolveDefaultOpRule(
+  ctx: Context,
+  args: Expr[],
+): OpRuleDefinition | undefined {
+  for (const domainRule of ctx.infectionRegistry.domains.values()) {
+    const defaultRule = domainRule.defaultRule;
+    if (!defaultRule?.domain) {
+      continue;
+    }
+    const targetIndex = defaultRule.target
+      ? parseTargetIndex(defaultRule.target)
+      : 0;
+    if (targetIndex === null) {
+      continue;
+    }
+    const targetExpr = args[targetIndex];
+    if (!targetExpr) {
+      continue;
+    }
+    const targetType = ctx.nodeTypes.get(targetExpr.id);
+    if (!targetType) {
+      continue;
+    }
+    const resolvedTarget = applyCurrentSubst(ctx, targetType);
+    const carrierInfo = splitCarrier(resolvedTarget);
+    if (carrierInfo && carrierInfo.domain === defaultRule.domain) {
+      return defaultRule;
+    }
   }
   return undefined;
 }
@@ -966,6 +1093,7 @@ function inferLetDeclaration(
 ): { name: string; scheme: TypeScheme }[] {
   // Non-recursive case
   if (!decl.isRecursive) {
+    checkMutableShadowing(ctx, decl);
     let fnType = inferLetBinding(
       ctx,
       decl.parameters,
@@ -976,7 +1104,7 @@ function inferLetDeclaration(
       decl.isArrowSyntax,
     );
 
-    // Zero-parameter arrow functions () => { ... } should have type Unit -> T
+    // Zero-parameter arrow functions () => { ... } should have type Void -> T
     // But block expressions { ... } and block let statements should NOT be wrapped
     if (decl.isArrowSyntax && decl.parameters.length === 0) {
       fnType = {
@@ -990,6 +1118,7 @@ function inferLetDeclaration(
     ctx.nodeTypes.set(decl.id, resolvedType);
     const scheme = generalizeInContext(ctx, fnType);
     ctx.env.set(decl.name, scheme);
+    recordMutableBinding(ctx, decl.name, decl.isMutable);
     ctx.allBindings.set(decl.name, scheme); // Track in allBindings
     if (decl.annotation) {
       recordAnnotationConstraint(
@@ -1017,10 +1146,12 @@ function inferLetDeclaration(
   // STEP 1: Pre-bind all names with fresh type variables
   const preBoundTypes = new Map<string, Type>();
   for (const binding of allBindings) {
+    checkMutableShadowing(ctx, binding);
     const freshVar = freshTypeVar();
     preBoundTypes.set(binding.name, freshVar);
     // Add to environment with empty quantifiers so recursive calls can find it
     ctx.env.set(binding.name, { quantifiers: [], type: freshVar });
+    recordMutableBinding(ctx, binding.name, binding.isMutable);
   }
 
   // STEP 2: Infer each body with all names in scope
@@ -1070,7 +1201,7 @@ function inferLetDeclaration(
     let inferredType = inferredTypes.get(binding.name)!;
     let resolvedType = applyCurrentSubst(ctx, inferredType);
 
-    // Zero-parameter arrow functions () => { ... } should have type Unit -> T
+    // Zero-parameter arrow functions () => { ... } should have type Void -> T
     // But block expressions { ... } and block let statements should NOT be wrapped
     if (binding.isArrowSyntax && binding.parameters.length === 0) {
       resolvedType = {
@@ -1083,6 +1214,7 @@ function inferLetDeclaration(
     ctx.nodeTypes.set(binding.id, resolvedType);
     const scheme = generalizeInContext(ctx, resolvedType);
     ctx.env.set(binding.name, scheme);
+    recordMutableBinding(ctx, binding.name, binding.isMutable);
     ctx.allBindings.set(binding.name, scheme); // Track in allBindings
     results.push({ name: binding.name, scheme });
   }
@@ -1186,15 +1318,16 @@ function inferLetBinding(
   let result: Type;
   try {
     result = withScopedEnv(ctx, () => {
-      parameters.forEach((param, index) => {
-        const paramName = expectParameterName(param);
-        ctx.env.set(paramName, {
-          quantifiers: [],
-          type: paramTypes[index],
+        parameters.forEach((param, index) => {
+          const paramName = expectParameterName(param);
+          ctx.env.set(paramName, {
+            quantifiers: [],
+            type: paramTypes[index],
+          });
+          recordMutableBinding(ctx, paramName, false);
+          // Parameters shadow outer variables, so clear any identity bindings
+          ctx.identityBindings.delete(paramName);
         });
-        // Parameters shadow outer variables, so clear any identity bindings
-        ctx.identityBindings.delete(paramName);
-      });
 
       let bodyType = applyCurrentSubst(ctx, inferBlockExpr(ctx, body));
 
@@ -1323,13 +1456,14 @@ function inferBlockStatement(ctx: Context, statement: BlockStatement): void {
     case "pattern_let_statement": {
       const valueType = inferExpr(ctx, statement.initializer);
       const patternInfo = inferPattern(ctx, statement.pattern, valueType);
-      for (const [name, type] of patternInfo.bindings.entries()) {
-        // Create a new binding ID for this variable (handles shadowing)
-        createNewBindingForVar(ctx, name);
-        const scheme = generalizeInContext(ctx, type);
-        ctx.env.set(name, scheme);
-        ctx.allBindings.set(name, scheme);
-      }
+        for (const [name, type] of patternInfo.bindings.entries()) {
+          // Create a new binding ID for this variable (handles shadowing)
+          createNewBindingForVar(ctx, name);
+          const scheme = generalizeInContext(ctx, type);
+          ctx.env.set(name, scheme);
+          recordMutableBinding(ctx, name, false);
+          ctx.allBindings.set(name, scheme);
+        }
       if (statement.pattern.kind === "variable") {
         bindIdentitiesFromExpr(
           ctx,
@@ -1378,6 +1512,7 @@ function inferArrowFunction(
           quantifiers: [],
           type: paramTypes[index],
         });
+        recordMutableBinding(ctx, paramName, false);
         // Parameters shadow outer variables, so clear any identity bindings
         ctx.identityBindings.delete(paramName);
       });
@@ -1418,7 +1553,7 @@ function inferArrowFunction(
       }
 
       if (parameters.length === 0) {
-        // Zero-parameter function: () => body has type Unit -> bodyType
+        // Zero-parameter function: () => body has type Void -> bodyType
         return {
           kind: "func",
           from: { kind: "unit" },
@@ -1596,7 +1731,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         litType = {
           kind: "constructor",
           name: "Ptr",
-          args: [{ kind: "constructor", name: "u8", args: [] }],
+          args: [
+            { kind: "constructor", name: "U8", args: [] },
+            freshTypeVar(),
+          ],
         };
       }
       // Check if it's an incomplete hole for unsupported literal
@@ -1821,14 +1959,13 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const resolvedTarget = collapseCarrier(
         applyCurrentSubst(ctx, targetType),
       );
-      const targetCarrierInfo = splitCarrier(resolvedTarget);
-      let recordSubject = targetCarrierInfo?.value ?? resolvedTarget;
-      
-      // Auto-deref pointer types: Ptr<T> -> T for field projection
-      if (recordSubject.kind === "constructor" && recordSubject.name === "Ptr" && recordSubject.args.length === 1) {
-        recordSubject = recordSubject.args[0];
-      }
+        const targetCarrierInfo = splitCarrier(resolvedTarget);
+        let recordSubject = targetCarrierInfo?.value ?? resolvedTarget;
 
+        if (targetCarrierInfo?.domain === "mem") {
+          emitRequireNotState(ctx, targetExpr.id, "mem", ["Null", "Closed"]);
+        }
+      
       const wrapWithCarrier = (value: Type): Type => {
         if (!targetCarrierInfo) {
           return value;
@@ -2125,7 +2262,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         fnType = calleeCarrierInfo.value;
       }
 
-      // Handle zero-argument calls: f() should unify with Unit -> T
+      // Handle zero-argument calls: f() should unify with Void -> T
       if (expr.arguments.length === 0) {
         const resultType = freshTypeVar();
         registerHoleForType(
@@ -2392,9 +2529,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // PHASE 2: Emit constraint stubs (generic for any carrier domain)
       const calleeName = getCalleeName(expr.callee);
-      const opRule = calleeName
+      let opRule = calleeName
         ? resolveOpRule(ctx.infectionRegistry, calleeName)
         : undefined;
+      if (!opRule) {
+        opRule = resolveDefaultOpRule(ctx, expr.arguments);
+      }
       const targetIndex = opRule?.target
         ? parseTargetIndex(opRule.target)
         : null;
@@ -2403,7 +2543,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const requireTargetIndex =
         targetIndex === null &&
         ((opRule?.requiresExact?.length ?? 0) > 0 ||
-          (opRule?.requiresAny?.length ?? 0) > 0)
+          (opRule?.requiresAny?.length ?? 0) > 0 ||
+          (opRule?.requiresNot?.length ?? 0) > 0)
           ? 0
           : targetIndex;
       const requireTargetExpr =
@@ -2419,7 +2560,8 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (currentScope && opRule?.domain) {
         if (
           requireTargetExpr?.kind === "identifier" &&
-          (opRule.requiresExact?.length || opRule.requiresAny?.length)
+          (opRule.requiresExact?.length || opRule.requiresAny?.length ||
+            opRule.requiresNot?.length)
         ) {
           const paramIndex = currentScope.params.get(requireTargetExpr.name);
           if (paramIndex !== undefined) {
@@ -2441,6 +2583,15 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
                 opRule.requiresAny,
               );
             }
+            if (opRule.requiresNot?.length) {
+              recordParamEffect(
+                ctx,
+                paramIndex,
+                opRule.domain,
+                "requiresNot",
+                opRule.requiresNot,
+              );
+            }
           }
         }
         if (targetExpr?.kind === "identifier" && opRule.adds?.length) {
@@ -2457,49 +2608,49 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         }
       }
 
-      if (opRule?.domain && opRule.adds?.length && !targetExpr) {
-        const carrierInfo = splitCarrier(callType);
-        if (carrierInfo && carrierInfo.domain === opRule.domain) {
-          let addedTags = opRule.adds;
-          if (isRowBag) {
-            const identity = freshResource();
-            // Record the scope where this identity was created
-            ctx.identityCreationScope.set(identity.id, getCurrentScopeId(ctx));
-            addedTags = addIdentityTags(
-              ctx,
-              opRule.domain,
-              identity.id,
-              opRule.adds,
+        if (opRule?.domain && opRule.adds?.length && !targetExpr) {
+          const carrierInfo = splitCarrier(callType);
+          if (carrierInfo && carrierInfo.domain === opRule.domain) {
+            let addedTags = opRule.adds;
+            if (isRowBag) {
+              const identity = freshResource();
+              // Record the scope where this identity was created
+              ctx.identityCreationScope.set(identity.id, getCurrentScopeId(ctx));
+              addedTags = addIdentityTags(
+                ctx,
+                opRule.domain,
+                identity.id,
+                opRule.adds,
+              );
+              callIdentityTags = addedTags;
+              setExprIdentities(
+                ctx,
+                expr,
+                new Map([[opRule.domain, new Set([identity.id])]]),
+              );
+              recordIdentityUsage(ctx, opRule.domain, identity.id, expr.id);
+            }
+            const addedRow = createEffectRow(addedTags.map((tag) => [tag, null]));
+            let baseState = carrierInfo.state;
+            if (carrierInfo.domain === "mem") {
+              const row = ensureRow(carrierInfo.state);
+              if (row.cases.size === 0 && row.tail?.kind === "var") {
+                baseState = createEffectRow();
+              }
+            }
+            const mergedState =
+              unionCarrierStates(carrierInfo.domain, baseState, addedRow) ??
+              effectRowUnion(baseState, addedRow);
+            const rejoined = joinCarrier(
+              carrierInfo.domain,
+              carrierInfo.value,
+              mergedState,
             );
-            callIdentityTags = addedTags;
-            setExprIdentities(
-              ctx,
-              expr,
-              new Map([[opRule.domain, new Set([identity.id])]]),
-            );
-            recordIdentityUsage(ctx, opRule.domain, identity.id, expr.id);
-          }
-          const addedRow = createEffectRow(addedTags.map((tag) => [tag, null]));
-          let baseState = carrierInfo.state;
-          if (carrierInfo.domain === "mem") {
-            const row = ensureRow(carrierInfo.state);
-            if (row.cases.size === 0 && row.tail?.kind === "var") {
-              baseState = createEffectRow();
+            if (rejoined) {
+              callType = rejoined;
             }
           }
-          const mergedState =
-            unionCarrierStates(carrierInfo.domain, baseState, addedRow) ??
-            effectRowUnion(baseState, addedRow);
-          const rejoined = joinCarrier(
-            carrierInfo.domain,
-            carrierInfo.value,
-            mergedState,
-          );
-          if (rejoined) {
-            callType = rejoined;
-          }
         }
-      }
 
       const finalCarrierInfo = splitCarrier(callType);
       if (finalCarrierInfo) {
@@ -2542,6 +2693,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               targetNode,
               opRule.domain,
               opRule.requiresAny,
+            );
+          }
+          if (opRule.requiresNot?.length) {
+            emitRequireNotState(
+              ctx,
+              targetNode,
+              opRule.domain,
+              opRule.requiresNot,
             );
           }
           if (opRule.adds?.length) {
@@ -2839,7 +2998,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // e.g., `!x` becomes `not(x)` where `not` is the implementation function
       const operandType = inferExpr(ctx, expr.operand);
 
-      // In raw mode, & is address-of - returns Ptr<T>
+      // In raw mode, & is address-of - returns Ptr<T, S>
       if (ctx.rawMode && expr.operator === "&") {
         const pointerTarget = operandType.kind === "array"
           ? operandType.element
@@ -2847,7 +3006,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         const ptrType: Type = {
           kind: "constructor",
           name: "Ptr",
-          args: [pointerTarget],
+          args: [pointerTarget, freshTypeVar()],
         };
         return recordExprType(ctx, expr, ptrType);
       }
@@ -3495,6 +3654,151 @@ export function inferPattern(
       };
     }
     case "constructor": {
+      const resolvedExpected = applyCurrentSubst(ctx, expected);
+ 
+      const nullabilityMode = pattern.name === "NonNull" ? "nonnull" : "null";
+      const refinedNullability = (pattern.name === "Null" ||
+          pattern.name === "NonNull")
+        ? refineNullabilityType(resolvedExpected, nullabilityMode)
+        : null;
+      if (
+        (pattern.name === "Null" || pattern.name === "NonNull") &&
+        refinedNullability
+      ) {
+        if (
+          (pattern.name === "Null" && pattern.args.length > 0) ||
+          (pattern.name === "NonNull" && pattern.args.length !== 1)
+        ) {
+          const markType = createUnknownAndRegister(
+            ctx,
+            holeOriginFromPattern(pattern),
+            { kind: "incomplete", reason: "pattern.constructor.arity_mismatch" },
+          );
+          const mark: MMarkPattern = {
+            kind: "mark_pattern",
+            span: pattern.span,
+            id: pattern.id,
+            reason: "wrong_constructor",
+            data: { constructor: pattern.name, issue: "arity_mismatch" },
+            type: markType,
+          } satisfies MMarkPattern;
+          return {
+            type: markType,
+            bindings: new Map(),
+            coverage: { kind: "none" },
+            marked: mark,
+          };
+        }
+        let bindings = new Map<string, Type>();
+        const markedArgs: MPattern[] = [];
+        if (pattern.name === "NonNull") {
+          const refined = refinedNullability ?? resolvedExpected;
+          const argPattern = pattern.args[0];
+          const bindingPattern =
+            argPattern.kind === "variable" && !argPattern.isExplicitPin
+              ? { ...argPattern, isExplicitBinding: true }
+              : argPattern;
+          let info = inferPattern(ctx, bindingPattern, refined, {
+            allowPinning: false,
+            requireExplicitBinding: false,
+            autoPinBlacklist,
+          });
+          bindings = info.bindings;
+          if (argPattern.kind === "variable" && !argPattern.isExplicitPin) {
+            if (!bindings) {
+              bindings = new Map();
+            }
+            bindings.set(argPattern.name, refined);
+          }
+          markedArgs.push(info.marked);
+        }
+        return {
+          type: resolvedExpected,
+          bindings,
+          coverage: {
+            kind: "constructor",
+            typeName: "__mem_nullability",
+            ctor: pattern.name,
+          },
+          marked: {
+            kind: "constructor",
+            span: pattern.span,
+            id: pattern.id,
+            type: resolvedExpected,
+            name: pattern.name,
+            args: markedArgs,
+          },
+        };
+      }
+      if (
+        (pattern.name === "Null" || pattern.name === "NonNull") &&
+        (isHoleType(resolvedExpected) || resolvedExpected.kind === "var")
+      ) {
+        if (
+          (pattern.name === "Null" && pattern.args.length > 0) ||
+          (pattern.name === "NonNull" && pattern.args.length !== 1)
+        ) {
+          const markType = createUnknownAndRegister(
+            ctx,
+            holeOriginFromPattern(pattern),
+            { kind: "incomplete", reason: "pattern.constructor.arity_mismatch" },
+          );
+          const mark: MMarkPattern = {
+            kind: "mark_pattern",
+            span: pattern.span,
+            id: pattern.id,
+            reason: "wrong_constructor",
+            data: { constructor: pattern.name, issue: "arity_mismatch" },
+            type: markType,
+          } satisfies MMarkPattern;
+          return {
+            type: markType,
+            bindings: new Map(),
+            coverage: { kind: "none" },
+            marked: mark,
+          };
+        }
+        let bindings = new Map<string, Type>();
+        const markedArgs: MPattern[] = [];
+        if (pattern.name === "NonNull") {
+          const holeInfo = isHoleType(resolvedExpected)
+            ? flattenHoleType(resolvedExpected)
+            : null;
+          const refined = holeInfo?.value ?? resolvedExpected;
+          const argPattern = pattern.args[0];
+          const bindingPattern =
+            argPattern.kind === "variable" && !argPattern.isExplicitPin
+              ? { ...argPattern, isExplicitBinding: true }
+              : argPattern;
+          const info = inferPattern(ctx, bindingPattern, refined, {
+            allowPinning: false,
+            requireExplicitBinding: false,
+            autoPinBlacklist,
+          });
+          bindings = info.bindings;
+          if (argPattern.kind === "variable" && !argPattern.isExplicitPin) {
+            bindings.set(argPattern.name, refined);
+          }
+          markedArgs.push(info.marked);
+        }
+        return {
+          type: resolvedExpected,
+          bindings,
+          coverage: {
+            kind: "constructor",
+            typeName: "__mem_nullability",
+            ctor: pattern.name,
+          },
+          marked: {
+            kind: "constructor",
+            span: pattern.span,
+            id: pattern.id,
+            type: resolvedExpected,
+            name: pattern.name,
+            args: markedArgs,
+          },
+        };
+      }
       const scheme = lookupEnv(ctx, pattern.name);
       if (!scheme) {
         const markType = createUnknownAndRegister(
@@ -3991,11 +4295,28 @@ export function inferMatchBranches(
     }
 
     const bodyType = withScopedEnv(ctx, () => {
+      if (
+        scrutineeExpr?.kind === "identifier" &&
+        arm.pattern.kind === "constructor" &&
+        (arm.pattern.name === "Null" || arm.pattern.name === "NonNull")
+      ) {
+        const refined = refineNullabilityType(
+          expected,
+          arm.pattern.name === "NonNull" ? "nonnull" : "null",
+        );
+        if (refined) {
+          ctx.env.set(scrutineeExpr.name, {
+            quantifiers: [],
+            type: applyCurrentSubst(ctx, refined),
+          });
+        }
+      }
       for (const [name, type] of patternInfo.bindings.entries()) {
         ctx.env.set(name, {
           quantifiers: [],
           type: applyCurrentSubst(ctx, type),
         });
+        recordMutableBinding(ctx, name, false);
       }
       if (
         ctx.source?.includes(

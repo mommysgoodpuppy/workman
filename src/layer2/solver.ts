@@ -17,7 +17,10 @@ import type {
 import type {
   ConstraintStub,
   EffectRowCoverageStub,
-  UnknownInfo,
+  UnknownInfo
+} from "../layer1/context.ts";
+import {
+  RAW_NUMERIC_COMPAT
 } from "../layer1/context.ts";
 import type { HoleId } from "../layer1/context_types.ts";
 import {
@@ -469,13 +472,6 @@ function solveHasFieldConstraint(
     ? applySubstitution(targetCarrierInfo.value, state.substitution)
     : resolvedTarget;
 
-  // Raw-mode implicit deref: allow Ptr<T> to be treated as T for field access.
-  if (
-    targetValue.kind === "constructor" && targetValue.name === "Ptr" &&
-    targetValue.args.length === 1
-  ) {
-    targetValue = targetValue.args[0];
-  }
   const projectedValue = stub.projectedValueType
     ? applySubstitution(stub.projectedValueType, state.substitution)
     : null;
@@ -1388,19 +1384,14 @@ function unifyEffectRows(
   right: EffectRowType,
   subst: Substitution,
 ): UnifyResult {
-  if (left.cases.size !== right.cases.size) {
-    return {
-      success: false,
-      reason: { kind: "type_mismatch", left, right },
-    };
-  }
   let current = subst;
+  const leftOnly: Array<[string, Type | null]> = [];
+  const rightOnly: Array<[string, Type | null]> = [];
+
   for (const [label, leftPayload] of left.cases.entries()) {
     if (!right.cases.has(label)) {
-      return {
-        success: false,
-        reason: { kind: "type_mismatch", left, right },
-      };
+      leftOnly.push([label, leftPayload ? cloneType(leftPayload) : null]);
+      continue;
     }
     const rightPayload = right.cases.get(label) ?? null;
     if (leftPayload && rightPayload) {
@@ -1416,15 +1407,50 @@ function unifyEffectRows(
       };
     }
   }
-  if (left.tail && right.tail) {
+  for (const [label, rightPayload] of right.cases.entries()) {
+    if (!left.cases.has(label)) {
+      rightOnly.push([label, rightPayload ? cloneType(rightPayload) : null]);
+    }
+  }
+
+  if (leftOnly.length > 0) {
+    if (!right.tail) {
+      return {
+        success: false,
+        reason: { kind: "type_mismatch", left, right },
+      };
+    }
+    const rightTail = right.tail?.kind === "var" ? undefined : right.tail;
+    const remainder = createEffectRow(
+      leftOnly,
+      rightTail ? cloneType(rightTail) : undefined,
+    );
+    const merged = unifyTypes(right.tail, remainder, current);
+    if (!merged.success) return merged;
+    current = merged.subst;
+  }
+
+  if (rightOnly.length > 0) {
+    if (!left.tail) {
+      return {
+        success: false,
+        reason: { kind: "type_mismatch", left, right },
+      };
+    }
+    const leftTail = left.tail?.kind === "var" ? undefined : left.tail;
+    const remainder = createEffectRow(
+      rightOnly,
+      leftTail ? cloneType(leftTail) : undefined,
+    );
+    const merged = unifyTypes(left.tail, remainder, current);
+    if (!merged.success) return merged;
+    current = merged.subst;
+  }
+
+  if (left.tail && right.tail && leftOnly.length === 0 && rightOnly.length === 0) {
     return unifyTypes(left.tail, right.tail, current);
   }
-  if (left.tail || right.tail) {
-    return {
-      success: false,
-      reason: { kind: "type_mismatch", left, right },
-    };
-  }
+
   return { success: true, subst: current };
 }
 
@@ -1622,12 +1648,6 @@ interface ConstraintFlow {
   // Alias equivalence classes (union-find) - future use for memory domain
   aliases: Map<number, number>; // Simple parent-pointer structure
 }
-
-const RAW_NUMERIC_COMPAT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ["usize", new Set(["c_ulonglong", "c_ulong"])],
-  ["c_ulonglong", new Set(["usize"])],
-  ["c_ulong", new Set(["usize"])],
-]);
 
 function areNumericConstructorsCompatible(left: string, right: string): boolean {
   const leftSet = RAW_NUMERIC_COMPAT.get(left);
@@ -2209,6 +2229,20 @@ function checkDomainStubs(
             domain: stub.domain,
             expected: stub.tags,
             actual: label ? formatLabel(label) : null,
+          },
+        });
+      }
+    } else if (stub.kind === "require_not_state") {
+      const labels = flow.labels.get(stub.node);
+      const label = labels?.get(stub.domain);
+      if (label && isRowLabel(label) && rowHasAnyTag(label.row, stub.tags)) {
+        diagnostics.push({
+          origin: stub.node,
+          reason: "require_not_state" as ConstraintDiagnosticReason,
+          details: {
+            domain: stub.domain,
+            forbidden: stub.tags,
+            actual: formatLabel(label),
           },
         });
       }

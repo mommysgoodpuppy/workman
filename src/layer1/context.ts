@@ -101,6 +101,7 @@ export interface Context {
   identityCreationScope: Map<number, number>; // identityId -> scopeId where it was created
   variableBindingIds: Map<string, number>; // varName -> current binding ID (increments on shadow)
   nextBindingId: number;
+  mutableBindings: Map<string, boolean>; // varName -> is mutable binding
   functionParamEffects: Map<
     string,
     Map<
@@ -110,6 +111,7 @@ export interface Context {
         {
           requiresExact: Set<string>;
           requiresAny: Set<string>;
+          requiresNot: Set<string>;
           adds: Set<string>;
         }
       >
@@ -183,6 +185,7 @@ export function createContext(options: InferOptions = {}): Context {
     identityCreationScope: new Map(),
     variableBindingIds: new Map(),
     nextBindingId: 1,
+    mutableBindings: new Map(),
     functionParamEffects: new Map(),
     functionParamStack: [],
     functionScopeCounter: 1,
@@ -284,6 +287,12 @@ export type ConstraintStub =
     }
   | {
       kind: "require_any_state";
+      node: NodeId;
+      domain: string;
+      tags: string[];
+    }
+  | {
+      kind: "require_not_state";
       node: NodeId;
       domain: string;
       tags: string[];
@@ -521,6 +530,20 @@ export function emitRequireAnyState(
   });
 }
 
+export function emitRequireNotState(
+  ctx: Context,
+  node: NodeId,
+  domain: string,
+  tags: string[],
+): void {
+  ctx.constraintStubs.push({
+    kind: "require_not_state",
+    node,
+    domain,
+    tags: [...tags],
+  });
+}
+
 export function emitAddStateTags(
   ctx: Context,
   node: NodeId,
@@ -701,13 +724,16 @@ function cloneIdentityBindings(
 export function withScopedEnv<T>(ctx: Context, fn: () => T): T {
   const previous = ctx.env;
   const previousIdentities = ctx.identityBindings;
+  const previousMutable = ctx.mutableBindings;
   ctx.env = new Map(ctx.env);
   ctx.identityBindings = cloneIdentityBindings(ctx.identityBindings);
+  ctx.mutableBindings = new Map(ctx.mutableBindings);
   try {
     return fn();
   } finally {
     ctx.env = previous;
     ctx.identityBindings = previousIdentities;
+    ctx.mutableBindings = previousMutable;
   }
 }
 
@@ -1392,10 +1418,10 @@ function unifyTypes(
   };
 }
 
-const RAW_NUMERIC_COMPAT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ["usize", new Set(["c_ulonglong", "c_ulong"])],
-  ["c_ulonglong", new Set(["usize"])],
-  ["c_ulong", new Set(["usize"])],
+export const RAW_NUMERIC_COMPAT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["Usize", new Set(["CULongLong", "CULong"])],
+  ["CULongLong", new Set(["Usize"])],
+  ["CULong", new Set(["Usize"])],
 ]);
 
 function areNumericConstructorsCompatible(left: string, right: string): boolean {

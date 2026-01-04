@@ -4,7 +4,7 @@ import { fromFileUrl } from "std/path/from_file_url.ts";
 import { dirname, isAbsolute, normalize, resolve } from "std/path/mod.ts";
 import { LSPMessage } from "./server.ts";
 import { splitCarrier, Type, type TypeInfo } from "../../../src/types.ts";
-import { formatType } from "../../../src/type_printer.ts";
+import { formatType, formatTypeWithCarriers } from "../../../src/type_printer.ts";
 import { createDefaultForeignTypeConfig } from "../../../src/foreign_types/c_header_provider.ts";
 
 import { findNodeAtOffset } from "../../../src/layer3/mod.ts";
@@ -2059,7 +2059,7 @@ function formatTypeForInlay(
     const substituted = ctx.substituteTypeWithLayer3(type, context.layer3);
     const printCtx = { names: new Map(), next: 0 };
     let typeStr = ctx.replaceIResultFormats(
-      formatType(substituted, printCtx, 0),
+      formatTopLevelType(substituted, printCtx),
     );
     const simplified = simplifyRecordConstructorDisplay(
       substituted,
@@ -2143,6 +2143,15 @@ function formatTypeForSignature(
     }
   }
   return typeStr;
+}
+
+function formatTopLevelType(
+  type: Type,
+  printCtx: { names: Map<number, string>; next: number },
+): string {
+  return splitCarrier(type)
+    ? formatTypeWithCarriers(type)
+    : formatType(type, printCtx, 0);
 }
 
 function formatTypeInfoHover(

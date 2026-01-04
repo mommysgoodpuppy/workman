@@ -318,3 +318,22 @@ let result = if (x > 0) {
     "Workman does not support 'else if'. Use 'match' for multiple conditions.",
   );
 });
+
+Deno.test("supports both -- and // single-line comments", () => {
+  const source = `
+// top-level comment
+let value = 1; -- trailing with legacy comment
+// another comment
+let doubled = value + value;
+`;
+  const tokens = lex(source);
+  const program = parseSurfaceProgram(tokens);
+
+  assertEquals(program.declarations.length, 2);
+  const [first, second] = program.declarations;
+  if (first.kind !== "let" || second.kind !== "let") {
+    throw new Error("expected let declarations");
+  }
+  assertEquals(first.name, "value");
+  assertEquals(second.name, "doubled");
+});

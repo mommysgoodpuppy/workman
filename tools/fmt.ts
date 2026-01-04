@@ -418,6 +418,7 @@ class Formatter {
 
   private formatLetDeclaration(decl: LetDeclaration): string {
     const exportPrefix = decl.export ? "export " : "";
+    const mutPrefix = decl.isMutable ? "mut " : "";
     const recPrefix = decl.isRecursive ? "rec " : "";
     const annotationSuffix = decl.annotation
       ? `: ${this.formatTypeExpr(decl.annotation)}`
@@ -445,14 +446,14 @@ class Formatter {
         matchExpr.bundle,
         forceMultiLine,
       );
-      result = `${exportPrefix}let ${recPrefix}${
+      result = `${exportPrefix}let ${mutPrefix}${recPrefix}${
         this.formatLetLeftSide(decl)
       }${annotationSuffix} = ${formattedMatch}${semicolon}`;
     } else if (decl.parameters.length > 0 || decl.isArrowSyntax) {
       // If there are parameters OR originally used arrow syntax, format as arrow function
       const paramsStr = this.formatParameterList(decl.parameters);
       const body = this.formatBlock(decl.body, true);
-      result = `${exportPrefix}let ${recPrefix}${
+      result = `${exportPrefix}let ${mutPrefix}${recPrefix}${
         this.formatLetLeftSide(decl)
       }${annotationSuffix} = ${paramsStr} => ${body}${semicolon}`;
     } else {
@@ -461,11 +462,11 @@ class Formatter {
 
       if (body.startsWith("\n")) {
         // Body is already formatted with leading newline
-        result = `${exportPrefix}let ${recPrefix}${
+        result = `${exportPrefix}let ${mutPrefix}${recPrefix}${
           this.formatLetLeftSide(decl)
         }${annotationSuffix} =${body}${semicolon}`;
       } else {
-        result = `${exportPrefix}let ${recPrefix}${
+        result = `${exportPrefix}let ${mutPrefix}${recPrefix}${
           this.formatLetLeftSide(decl)
         }${annotationSuffix} = ${body}${semicolon}`;
       }
@@ -487,32 +488,35 @@ class Formatter {
             matchExpr.bundle,
             forceMultiLine,
           );
+          const mutualMutPrefix = mutual.isMutable ? "mut " : "";
           const mutualAnnotation = mutual.annotation
             ? `: ${this.formatTypeExpr(mutual.annotation)}`
             : "";
-          result += `\nand ${
+          result += `\nand ${mutualMutPrefix}${
             this.formatLetLeftSide(mutual)
           }${mutualAnnotation} = ${formattedMatch};`;
         } else if (mutual.parameters.length > 0 || mutual.isArrowSyntax) {
           const mutualParamsStr = this.formatParameterList(mutual.parameters);
+          const mutualMutPrefix = mutual.isMutable ? "mut " : "";
           const mutualAnnotation = mutual.annotation
             ? `: ${this.formatTypeExpr(mutual.annotation)}`
             : "";
           const mutualBody = this.formatBlock(mutual.body, true);
-          result += `\nand ${
+          result += `\nand ${mutualMutPrefix}${
             this.formatLetLeftSide(mutual)
           }${mutualAnnotation} = ${mutualParamsStr} => ${mutualBody};`;
         } else {
           const mutualBody = this.formatBlockForLet(mutual.body);
+          const mutualMutPrefix = mutual.isMutable ? "mut " : "";
           const mutualAnnotation = mutual.annotation
             ? `: ${this.formatTypeExpr(mutual.annotation)}`
             : "";
           if (mutualBody.startsWith("\n")) {
-            result += `\nand ${
+            result += `\nand ${mutualMutPrefix}${
               this.formatLetLeftSide(mutual)
             }${mutualAnnotation} =${mutualBody};`;
           } else {
-            result += `\nand ${
+            result += `\nand ${mutualMutPrefix}${
               this.formatLetLeftSide(mutual)
             }${mutualAnnotation} = ${mutualBody};`;
           }
@@ -984,6 +988,7 @@ class Formatter {
     switch (stmt.kind) {
       case "let_statement": {
         const decl = stmt.declaration;
+        const mutPrefix = decl.isMutable ? "mut " : "";
         const recPrefix = decl.isRecursive ? "rec " : "";
         const annotationSuffix = decl.annotation
           ? `: ${this.formatTypeExpr(decl.annotation)}`
@@ -1002,7 +1007,7 @@ class Formatter {
             matchExpr.bundle,
             forceMultiLine,
           );
-          const line = `let ${recPrefix}${
+          const line = `let ${mutPrefix}${recPrefix}${
             this.formatLetLeftSide(decl)
           }${annotationSuffix} = ${formattedMatch};`;
           return decl.trailingComment
@@ -1014,7 +1019,7 @@ class Formatter {
         if (decl.parameters.length > 0 || decl.isArrowSyntax) {
           const paramsStr = this.formatParameterList(decl.parameters);
           const body = this.formatBlock(decl.body, true);
-          const line = `let ${recPrefix}${
+          const line = `let ${mutPrefix}${recPrefix}${
             this.formatLetLeftSide(decl)
           }${annotationSuffix} = ${paramsStr} => ${body};`;
           return decl.trailingComment
@@ -1025,14 +1030,14 @@ class Formatter {
         // Simple let binding
         const body = this.formatBlockForLet(decl.body);
         if (body.startsWith("\n")) {
-          const line = `let ${recPrefix}${
+          const line = `let ${mutPrefix}${recPrefix}${
             this.formatLetLeftSide(decl)
           }${annotationSuffix} =${body};`;
           return decl.trailingComment
             ? `${line}${this.formatInlineComment(decl.trailingComment)}`
             : line;
         } else {
-          const line = `let ${recPrefix}${
+          const line = `let ${mutPrefix}${recPrefix}${
             this.formatLetLeftSide(decl)
           }${annotationSuffix} = ${body};`;
           return decl.trailingComment
@@ -1448,7 +1453,7 @@ class Formatter {
       const inner = expr.fields.map((field, index) => {
         const value = this.formatExpr(field.value);
         const needsComma = index < expr.fields.length - 1;
-        return `${field.name}: ${value}${needsComma ? ", " : ""}`;
+        return `${field.name} = ${value}${needsComma ? ", " : ""}`;
       }).join("");
       return `.{ ${inner} }`;
     }
@@ -1458,7 +1463,7 @@ class Formatter {
       const value = this.formatExpr(field.value);
       const needsComma = field.hasTrailingComma ||
         index < expr.fields.length - 1;
-      return `${this.indentStr()}${field.name}: ${value}${
+      return `${this.indentStr()}${field.name} = ${value}${
         needsComma ? "," : ""
       }`;
     });

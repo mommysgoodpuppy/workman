@@ -722,7 +722,7 @@ fn dataEquals(a: DataValue, b: DataValue) bool {
 
 fn formatValue(value: Value) []const u8 {
     return switch (value) {
-        .Unit => "unit",
+        .Unit => "Void",
         .Int => |v| std.fmt.allocPrint(allocator(), "{d}", .{v}) catch "oom",
         .Bool => |v| if (v) "true" else "false",
         .String => |v| v,

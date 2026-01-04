@@ -418,6 +418,14 @@ function formatSolverDiagnostic(
         `Pattern '${name}' would introduce a new binding. Use Var(${name}) to bind it.`;
       break;
     }
+    case "mutable_shadowing": {
+      const name = typeof diag.details?.name === "string"
+        ? diag.details.name
+        : "value";
+      base =
+        `Mutable binding '${name}' shadows an existing mutable binding`;
+      break;
+    }
     case "non_exhaustive_match": {
       base = "Match expression is not exhaustive\n";
       const missing = Array.isArray(diag.details?.missingCases)

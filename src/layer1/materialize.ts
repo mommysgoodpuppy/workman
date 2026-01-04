@@ -396,6 +396,9 @@ export function materializeMarkedLet(
     type,
   };
 
+  if (decl.isMutable) {
+    marked.isMutable = true;
+  }
   if (decl.isFirstClassMatch) {
     marked.isFirstClassMatch = true;
   }

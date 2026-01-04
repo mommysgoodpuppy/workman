@@ -3,7 +3,7 @@ import type { RuntimeValue } from "./value.ts";
 export function formatRuntimeValue(value: RuntimeValue): string {
   switch (value.kind) {
     case "unit":
-      return "()";
+      return "Void";
     case "int":
       return value.value.toString(10);
     case "bool":
