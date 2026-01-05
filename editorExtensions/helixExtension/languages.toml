@@ -33,7 +33,7 @@ scope = "source.workman"
 injection-regex = "workman|wm"
 file-types = ["wm"]
 roots = [".git", "workman.toml"]
-comment-tokens = "--"
+comment-tokens = ["--", "//"]
 indent = { tab-width = 2, unit = "  " }
 grammar = "workman"
 language-servers = ["workman-lsp"]

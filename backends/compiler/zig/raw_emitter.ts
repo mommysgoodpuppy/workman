@@ -196,6 +196,11 @@ export function emitRawModule(
         if (isCHeader) {
           const cImportBinding = getOrCreateCImportBinding(ctx, imp.source);
           lines.push(`const ${ref} = ${cImportBinding}.${sanitizeIdentifier(spec.imported, ctx.state)};`);
+          // Also map the underlying C type names (union_X, struct_X, enum_X) to the binding
+          // so that type annotations resolve correctly
+          ctx.typeBindings.set(`union_${spec.imported}`, ref);
+          ctx.typeBindings.set(`struct_${spec.imported}`, ref);
+          ctx.typeBindings.set(`enum_${spec.imported}`, ref);
         } else {
           const relPath = computeRelativePath(module.path, imp.source, extension, options.baseDir);
           lines.push(`const ${ref} = @import("${relPath}").${sanitizeIdentifier(spec.imported, ctx.state)};`);
@@ -487,7 +492,7 @@ function emitNamedLambda(
       }
       return `${pname}: ${existing}`;
     }
-    const rendered = ptype ? emitType(ptype) : "anytype";
+    const rendered = ptype ? emitType(ptype, ctx) : "anytype";
     if (rendered === "anyopaque" || rendered === "*anyopaque" || rendered === "?*anyopaque") {
       return `${pname}: anytype`;
     }
@@ -500,7 +505,7 @@ function emitNamedLambda(
   // Get return type from the lambda's type annotation
   let returnType = rawMemTypeParams && typeParamNames.size > 0
     ? emitTypeWithTypeParams(getReturnType(expr.type), typeParamNames)
-    : emitType(expr.type);
+    : emitType(expr.type, ctx);
   
   // main function must return void for Zig's entry point
   if (name === "main" && (returnType === "anyopaque" || returnType === "anytype")) {
@@ -767,7 +772,7 @@ function emitLet(
   const body = emitExpr(expr.body, innerCtx);
   const bindingKeyword = useVar ? "var" : "const";
   const bindingType = useVar
-    ? emitType(expr.binding.value.type)
+    ? emitType(expr.binding.value.type, ctx)
     : null;
   const typeAnnotation = useVar && bindingType && bindingType !== "anytype" &&
       bindingType !== "anyopaque"
@@ -1289,7 +1294,7 @@ function emitNamedLambdaWithCaptures(
   const params: string[] = [];
   for (let i = 0; i < expr.params.length; i++) {
     const ref = bindLocal(scope, expr.params[i], ctx.state);
-    const ptype = paramTypes[i] ? emitType(paramTypes[i]) : "anytype";
+    const ptype = paramTypes[i] ? emitType(paramTypes[i], ctx) : "anytype";
     params.push(`${ref.value}: ${ptype}`);
   }
   
@@ -1306,7 +1311,7 @@ function emitNamedLambdaWithCaptures(
   capturesMap.set(name, capturedVars);
   const bodyCtx = { ...innerCtx, captureInfo: mergeCaptureInfo(ctx, capturesMap) };
   const body = emitExpr(expr.body, bodyCtx);
-  const returnType = emitType(expr.type);
+  const returnType = emitType(expr.type, ctx);
   
   return `fn ${name}(${params.join(", ")}) ${returnType} { return ${body}; }`;
 }
@@ -1325,7 +1330,7 @@ function mergeCaptureInfo(
   return merged;
 }
 
-function emitType(type: Type): string {
+function emitType(type: Type, ctx?: EmitContext): string {
   const zigPrimitive = mapZigPrimitive(type);
   if (zigPrimitive) {
     return zigPrimitive;
@@ -1343,17 +1348,17 @@ function emitType(type: Type): string {
       return "void";
     case "func":
       // For function types, we need the return type
-      return emitType(getReturnType(type));
+      return emitType(getReturnType(type), ctx);
     case "constructor":
       // Hole<T, Row> is an unresolved type hole - emit the inner type or anyopaque
       if (type.name === "Hole" && type.args.length >= 1) {
-        const inner = emitType(type.args[0]);
+        const inner = emitType(type.args[0], ctx);
         // If inner is also unresolved, fall back to anyopaque
         return inner === "anyopaque" || inner === "anytype" ? "anyopaque" : inner;
       }
       // Optional<T> maps to Zig ?T
       if ((type.name === "Optional" || type.name === "Opt") && type.args.length === 1) {
-        return `?${emitType(type.args[0])}`;
+        return `?${emitType(type.args[0], ctx)}`;
       }
       // Null is a raw-only placeholder that maps to Zig's null-capable type.
       if (type.name === "Null" && type.args.length === 0) {
@@ -1367,7 +1372,7 @@ function emitType(type: Type): string {
       }
       // Handle Ptr<T, S> -> *T
       if (type.name === "Ptr" && type.args.length >= 1) {
-        const base = emitType(type.args[0]);
+        const base = emitType(type.args[0], ctx);
         const state = type.args[1];
         if (state && state.kind === "effect_row" && state.cases.has("Null")) {
           return `?*${base}`;
@@ -1376,19 +1381,31 @@ function emitType(type: Type): string {
       }
       // Opaque types like i32, u64 etc. - emit directly
       if (type.args.length === 0) {
+        // Check if we have a binding for this type (e.g., C types imported from headers)
+        if (ctx) {
+          const aliased = ctx.typeBindings.get(type.name);
+          if (aliased) {
+            return aliased;
+          }
+          // Also check scope for imported type bindings
+          const scoped = ctx.scope.get(type.name);
+          if (scoped) {
+            return scoped.value;
+          }
+        }
         return type.name;
       }
       // Generic types like List<T> - emit as Type(args)
-      const typeArgs = type.args.map(emitType).join(", ");
+      const typeArgs = type.args.map(t => emitType(t, ctx)).join(", ");
       return `${type.name}(${typeArgs})`;
     case "tuple":
-      const elements = type.elements.map(emitType).join(", ");
+      const elements = type.elements.map(t => emitType(t, ctx)).join(", ");
       return `struct { ${elements} }`;
     case "array":
-      return `[${type.length}]${emitType(type.element)}`;
+      return `[${type.length}]${emitType(type.element, ctx)}`;
     case "record":
       const fields = Array.from(type.fields.entries())
-        .map(([name, t]) => `${name}: ${emitType(t)}`)
+        .map(([name, t]) => `${name}: ${emitType(t, ctx)}`)
         .join(", ");
       return `struct { ${fields} }`;
     case "var":

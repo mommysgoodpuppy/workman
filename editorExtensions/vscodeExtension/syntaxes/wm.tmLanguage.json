@@ -31,8 +31,8 @@
 		"comments": {
 			"patterns": [
 				{
-					"name": "comment.line.double-dash.wm",
-					"match": "--.*$"
+					"name": "comment.line.double.wm",
+					"match": "(?:--|//).*$"
 				}
 			]
 		},
@@ -40,7 +40,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.wm",
-					"match": "\\b(let|rec|and|type|record|carrier|if|else|match|from|import|export|as|infix|infixl|infixr|prefix|infectious|domain|op|policy|annotate)\\b"
+					"match": "\\b(let|mut|rec|and|type|record|carrier|if|else|match|from|import|export|as|infix|infixl|infixr|prefix|infectious|domain|op|policy|annotate)\\b"
 				}
 			]
 		},
