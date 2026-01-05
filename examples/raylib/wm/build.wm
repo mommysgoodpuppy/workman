@@ -1,6 +1,5 @@
 @raw;
 let std = zigImport("std");
-from "std/zig/option" import { isSome, unwrap };
 
 export let build = (b: *std.Build) => {
   let target = b.graph.host;
@@ -62,8 +61,8 @@ export let build = (b: *std.Build) => {
 
   let runCmd = b.addRunArtifact(exe);
   runCmd.step.dependOn(b.getInstallStep());
-  if (isSome(b.args)) {
-    runCmd.addArgs(unwrap(b.args))
+  if (b.args != null) {
+    runCmd.addArgs(b.args)
   } else {
     ()
   };

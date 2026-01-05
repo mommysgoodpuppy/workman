@@ -1449,6 +1449,31 @@ function bindVar(id: number, type: Type, subst: Substitution): UnifyResult {
   if (resolved.kind === "var" && resolved.id === id) {
     return { success: true, subst };
   }
+  // Special case for row polymorphism: binding a var to an effect_row with that
+  // var as its tail is valid row extension (e.g., T = {A | T} means T includes A).
+  // In this case, bind the var to the row without the tail to avoid infinite type.
+  if (resolved.kind === "effect_row" && resolved.tail?.kind === "var" && resolved.tail.id === id) {
+    // Check if there are any other occurrences of the var in the row's payloads
+    let occursElsewhere = false;
+    for (const payload of resolved.cases.values()) {
+      if (payload && occursInType(id, payload)) {
+        occursElsewhere = true;
+        break;
+      }
+    }
+    if (!occursElsewhere) {
+      // If the row has no cases, this is just T = {} | T which is a no-op
+      // Don't bind to empty row - leave the var unbound to allow further unification
+      if (resolved.cases.size === 0) {
+        return { success: true, subst };
+      }
+      // Safe to bind: remove the tail to create a closed row with the cases
+      const closedRow: Type = { kind: "effect_row", cases: resolved.cases, tail: undefined };
+      const next = new Map(subst);
+      next.set(id, closedRow);
+      return { success: true, subst: next };
+    }
+  }
   if (occursInType(id, resolved)) {
     return {
       success: false,

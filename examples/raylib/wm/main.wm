@@ -15,20 +15,20 @@ from "raylib.h" import {
   Vector2
 };
 
-from "std/zig/types" import {u8, f32};
+from "std/zig/types" import {U8, F32};
 
 
 let main = () => {
   let screenWidth = 800;
   let screenHeight = 450;
-  let ballRadius:f32 = 20;
+  let ballRadius:F32 = 20;
 
   initWindow(screenWidth, screenHeight, "Workman Raylib Test");
   setTargetFPS(60);
 
-  let darkBg = .{ r: 30, g: 30, b: 40, a: 255 };
-  let ballColor = .{ r: 255, g: 0, b: 0, a: 255 };
-  let textColor = .{ r: 200, g: 200, b: 200, a: 255 };
+  let darkBg = .{ r = 30, g = 30, b = 40, a = 255 };
+  let ballColor = .{ r = 255, g = 0, b = 0, a = 255 };
+  let textColor = .{ r = 200, g = 200, b = 200, a = 255 };
 
   let rec gameLoop = (posX, posY, velX, velY) => {
     if (windowShouldClose()) {
@@ -52,7 +52,7 @@ let main = () => {
 
       beginDrawing();
       clearBackground(darkBg);
-      drawCircleV(.{ x: newX, y: newY }, ballRadius, ballColor);
+      drawCircleV(.{ x = newX, y = newY }, ballRadius, ballColor);
       drawText("Bouncing Ball - Press ESC to exit", 10, 10, 20, textColor);
       drawFPS(screenWidth - 100, 10);
       endDrawing();

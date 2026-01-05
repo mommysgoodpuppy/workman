@@ -2413,7 +2413,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           from: argumentValueType,
           to: resultType,
         });
-        if (!unifySucceeded && argCarrierInfo && expectsCarrier) {
+        if (!unifySucceeded && argCarrierInfo && !expectsCarrier) {
           const fallbackSucceeded = unify(ctx, fnType, {
             kind: "func",
             from: argBareValueType,

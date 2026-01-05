@@ -11,6 +11,7 @@ import {
   type TypeScheme,
   createEffectRow,
   freshTypeVar,
+  freeTypeVars,
   unknownType,
 } from "../types.ts";
 import type {
@@ -350,9 +351,12 @@ function mapExtractedResult(extracted: ExtractedResult): ForeignTypeResult {
     const returnType = fn.return
       ? mapDesc(fn.return, "return")
       : { kind: "unit" };
+    const fnType = makeFunctionType(params, returnType);
+    // Quantify over all free type variables so each call gets fresh instantiation
+    const quantifiers = Array.from(freeTypeVars(fnType));
     values.set(fn.name, {
-      quantifiers: [],
-      type: makeFunctionType(params, returnType),
+      quantifiers,
+      type: fnType,
     });
   }
 

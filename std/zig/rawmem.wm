@@ -23,18 +23,8 @@ export let allocArrayUninit = (t, len) => { zig_alloc_array_uninit(t, len) };
 export let free = (ptr) => { zig_free(ptr); };
 export let freeSlice = (slice) => { zig_free_slice(slice); };
 
-record Allocator {
-  id: String,
-  allocStruct: (t) => { zig_alloc_struct(t) },
-  allocStructUninit: (t) => { zig_alloc_struct_uninit(t) },
-  allocStructInit: (t, value) => { zig_alloc_struct_init(t, value) },
-  allocSlice: (t, len) => { zig_alloc_slice(t, len) },
-  allocArrayUninit: (t, len) => { zig_alloc_array_uninit(t, len) },
-  free: (ptr) => { zig_free(ptr); },
-  freeSlice: (slice) => { zig_free_slice(slice); },
-};
-
-export let allocator = .{ id = "alloc" };
+-- Note: Allocator record removed - Zig doesn't support inline function definitions in struct literals
+-- Use the standalone allocStruct, free, etc. functions instead
 
 export op mem.allocStruct {
   domain mem;

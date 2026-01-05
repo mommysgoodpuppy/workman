@@ -1,18 +1,17 @@
 @raw;
 let std = zigImport("std");
-from "std/zig/option" import { isSome, unwrap };
 
 export let build = (b: *std.Build) => {
   let target = b.graph.host;
   let optimize = b.standardOptimizeOption(.{});
 
   let exe = b.addExecutable(.{
-    name: "winapi_test",
-    root_module: b.createModule(.{
-      root_source_file: b.path("main.wm"),
-      target: target,
-      optimize: optimize,
-      link_libc: true
+    name = "winapi_test",
+    root_module = b.createModule(.{
+      root_source_file = b.path("main.wm"),
+      target = target,
+      optimize = optimize,
+      link_libc = true
     })
   });
 
@@ -23,10 +22,10 @@ export let build = (b: *std.Build) => {
 
   let runCmd = b.addRunArtifact(exe);
   runCmd.step.dependOn(b.getInstallStep());
-  if (isSome(b.args)) {
-    runCmd.addArgs(unwrap(b.args))
-  } else {
-    ()
+
+  match(b.args) {
+    NonNull(args) => { runCmd.addArgs(args); },
+    Null => {Void}
   };
 
   let runStep = b.step("run", "Run winapi_test");
