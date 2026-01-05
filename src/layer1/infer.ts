@@ -1885,8 +1885,22 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         },
       );
 
-      if (candidateRecords.length === 1) {
-        const [recordName, recordInfo] = candidateRecords[0];
+      // In raw mode with multiple candidates, filter to those where all missing fields have defaults
+      const effectiveCandidates = ctx.rawMode && candidateRecords.length > 1
+        ? candidateRecords.filter(([name, info]) => {
+            const availableDefaults = ctx.recordDefaultFields.get(name);
+            if (!availableDefaults) return false;
+            for (const fieldName of info.recordFields!.keys()) {
+              if (!fields.has(fieldName) && !availableDefaults.has(fieldName)) {
+                return false;
+              }
+            }
+            return true;
+          })
+        : candidateRecords;
+
+      if (effectiveCandidates.length === 1) {
+        const [recordName, recordInfo] = effectiveCandidates[0];
         const missingFields = Array.from(
           recordInfo.recordFields!.keys(),
         ).filter((fieldName) => !fields.has(fieldName));
@@ -1918,19 +1932,20 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       }
 
       const matches = candidateRecords.length;
+      const structuralRecord: Type = {
+        kind: "record",
+        fields: new Map(fields),
+      };
+      // In raw mode, use structural record type - type annotation will disambiguate via unification
+      if (ctx.rawMode) {
+        return recordExprType(ctx, expr, structuralRecord);
+      }
       if (matches > 1) {
         const candidateNames = candidateRecords.map(([name]) => name);
         recordLayer1Diagnostic(ctx, expr.id, "ambiguous_record", {
           matches,
           candidates: candidateNames,
         });
-      }
-      const structuralRecord: Type = {
-        kind: "record",
-        fields: new Map(fields),
-      };
-      if (ctx.rawMode) {
-        return recordExprType(ctx, expr, structuralRecord);
       }
       const fallbackUnknown = unknownType({
         kind: "incomplete",

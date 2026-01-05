@@ -23,9 +23,6 @@ export let allocArrayUninit = (t, len) => { zig_alloc_array_uninit(t, len) };
 export let free = (ptr) => { zig_free(ptr); };
 export let freeSlice = (slice) => { zig_free_slice(slice); };
 
--- Note: Allocator record removed - Zig doesn't support inline function definitions in struct literals
--- Use the standalone allocStruct, free, etc. functions instead
-
 export op mem.allocStruct {
   domain mem;
   adds [Opened];

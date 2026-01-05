@@ -1,0 +1,30 @@
+@raw;
+let std = zigImport("std");
+
+export let build = (b: *std.Build) => {
+  let target = b.graph.host;
+  let optimize = b.standardOptimizeOption(.{});
+
+  let exe = b.addExecutable(.{
+    name = "gpa_example",
+    root_module = b.createModule(.{
+      root_source_file = b.path("gpa_example.wm"),
+      target = target,
+      optimize = optimize,
+      link_libc = true
+    })
+  });
+
+  b.installArtifact(exe);
+
+  let runCmd = b.addRunArtifact(exe);
+  runCmd.step.dependOn(b.getInstallStep());
+
+  match(b.args) {
+    NonNull(args) => { runCmd.addArgs(args); },
+    Null => { Void }
+  };
+
+  let runStep = b.step("run", "Run winapi_test");
+  runStep.dependOn(&runCmd.step);
+};

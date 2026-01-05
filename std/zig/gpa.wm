@@ -1,0 +1,88 @@
+@raw;
+
+-- General Purpose Allocator wrapper for Zig's DebugAllocator
+-- Provides a managed allocator with leak detection and memory safety checks.
+--
+-- Usage:
+--   let gpa = Gpa.init();
+--   let ptr = Gpa.create(&gpa, MyStruct);
+--   Gpa.destroy(&gpa, ptr);
+--   Gpa.deinit(&gpa);
+
+from "std/zig/types.wm" import { Usize };
+from "std/zig/rawmem.wm" import { Ptr, Slice };
+
+-- Raw-only intrinsics lowered by the Zig raw emitter.
+let zig_gpa_init: (Void) => GpaHandle = ?;
+let zig_gpa_deinit: (Ptr<GpaHandle, s>) => () = ?;
+let zig_gpa_create: (Ptr<GpaHandle, s>, t) => Ptr<t, s> = ?;
+let zig_gpa_create_uninit: (Ptr<GpaHandle, s>, t) => Ptr<t, s> = ?;
+let zig_gpa_create_init: (Ptr<GpaHandle, s>, t, t) => Ptr<t, s> = ?;
+let zig_gpa_destroy: (Ptr<GpaHandle, s>, Ptr<t, s>) => () = ?;
+let zig_gpa_alloc: (Ptr<GpaHandle, s>, t, Usize) => Slice<t, s> = ?;
+let zig_gpa_free: (Ptr<GpaHandle, s>, Slice<t, s>) => () = ?;
+
+-- The DebugAllocator type (stored as a var, passed by pointer)
+export type GpaHandle;
+
+-- GPA namespace with methods attached to a record
+record Gpa {
+  -- Initialize a new GPA instance (store result in a var binding)
+  init: () => { zig_gpa_init() },
+  
+  -- Deinitialize the GPA, checking for leaks
+  deinit: (handle) => { zig_gpa_deinit(handle) },
+  
+  -- Allocate and zero-initialize a single struct
+  create: (handle, t) => { zig_gpa_create(handle, t) },
+  
+  -- Allocate a single struct without initialization
+  createUninit: (handle, t) => { zig_gpa_create_uninit(handle, t) },
+  
+  -- Allocate and initialize a single struct with a value
+  createInit: (handle, t, value) => { zig_gpa_create_init(handle, t, value) },
+  
+  -- Free a single allocated struct
+  destroy: (handle, ptr) => { zig_gpa_destroy(handle, ptr) },
+  
+  -- Allocate a slice of elements
+  alloc: (handle, t, len) => { zig_gpa_alloc(handle, t, len) },
+  
+  -- Free a slice
+  free: (handle, slice) => { zig_gpa_free(handle, slice) }
+};
+
+export let gpa:Gpa = .{};
+
+-- Effect operations for tracking GPA allocations
+export op gpa.create {
+  domain gpa;
+  adds [Opened];
+};
+
+export op gpa.createUninit {
+  domain gpa;
+  adds [Opened];
+};
+
+export op gpa.createInit {
+  domain gpa;
+  adds [Opened];
+};
+
+export op gpa.alloc {
+  domain gpa;
+  adds [Opened];
+};
+
+export op gpa.destroy {
+  domain gpa;
+  target arg1;
+  adds [Closed];
+};
+
+export op gpa.free {
+  domain gpa;
+  target arg1;
+  adds [Closed];
+};

@@ -293,7 +293,18 @@ export function registerRecordDeclaration(
   };
 
   adtInfo.constructors = [ctorInfo];
-  ctx.env.set(decl.name, ctorScheme);
+  
+  // In raw mode, register record names as simple constructor types (like external types)
+  // so they can be used as type arguments (e.g., gpa.create(&allocator, Point))
+  if (ctx.rawMode) {
+    const typeRefScheme: TypeScheme = {
+      quantifiers: parameterIds,
+      type: makeDataConstructor(decl.name, parameterTypes),
+    };
+    ctx.env.set(decl.name, typeRefScheme);
+  } else {
+    ctx.env.set(decl.name, ctorScheme);
+  }
 
   return { success: true };
 }
@@ -405,8 +416,17 @@ function registerTypeRecord(
     };
 
     adtInfo.constructors.push(ctorInfo);
-    // Register the constructor in env
-    ctx.env.set(decl.name, ctorScheme);
+    // In raw mode, register record names as simple constructor types (like external types)
+    // so they can be used as type arguments (e.g., gpa.create(&allocator, Point))
+    if (ctx.rawMode) {
+      const typeRefScheme: TypeScheme = {
+        quantifiers: parameterIds,
+        type: makeDataConstructor(decl.name, parameterTypes),
+      };
+      ctx.env.set(decl.name, typeRefScheme);
+    } else {
+      ctx.env.set(decl.name, ctorScheme);
+    }
   }
 
   return { success: true };

@@ -106,6 +106,15 @@ const RAW_OMITTED_BINDINGS = new Set<string>([
   "zig_alloc_slice",
   "zig_free",
   "zig_free_slice",
+  // GPA intrinsics
+  "zig_gpa_init",
+  "zig_gpa_deinit",
+  "zig_gpa_create",
+  "zig_gpa_create_uninit",
+  "zig_gpa_create_init",
+  "zig_gpa_destroy",
+  "zig_gpa_alloc",
+  "zig_gpa_free",
 ]);
 
 const RAW_STD_ZIG_OPTION_HELPERS = new Set<string>([
@@ -350,8 +359,24 @@ function resolveName(scope: Map<string, VarRef>, name: string, state: NameState)
 
 function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): string[] {
   const lines: string[] = [];
+  
+  // Handle record types (emit as Zig struct)
+  if (decl.recordFields && decl.recordFields.length > 0) {
+    const fields = decl.recordFields
+      .map(f => `${f.name}: ${f.typeAnnotation ?? "anytype"}`)
+      .join(", ");
+    const pub = decl.exported ? "pub " : "";
+    lines.push(`${pub}const ${decl.name} = struct { ${fields} };`);
+    return lines;
+  }
+  
   // For opaque types, just emit a type alias placeholder
   if (decl.constructors.length === 0) {
+    // Special case: GpaHandle maps to DebugAllocator
+    if (decl.name === "GpaHandle") {
+      lines.push(`pub const GpaHandle = @import("std").heap.DebugAllocator(.{});`);
+      return lines;
+    }
     // Opaque type - these map directly to Zig types
     // Don't emit anything - they're built-in Zig types
     return lines;
@@ -427,6 +452,12 @@ function emitRecord(
   expr: CoreExpr & { kind: "record" },
   ctx: EmitContext,
 ): string {
+  // Check if any field is a lambda - if so, emit as a struct with methods
+  const hasLambdaFields = expr.fields.some((f) => f.value.kind === "lambda");
+  if (hasLambdaFields) {
+    return emitRecordWithMethods(expr, ctx);
+  }
+  
   const fields = expr.fields.map((field) => {
     const value = emitExpr(field.value, ctx);
     return `.${sanitizeIdentifier(field.name, ctx.state)} = ${value}`;
@@ -442,6 +473,41 @@ function emitRecord(
   return literal;
 }
 
+/**
+ * Emit a record with lambda fields as a Zig struct with pub fn methods.
+ * This handles patterns like:
+ *   record Gpa { init: () => ..., create: (handle, t) => ... }
+ * Which becomes:
+ *   struct { pub fn init() ... { } pub fn create(handle, t) ... { } }{}
+ */
+function emitRecordWithMethods(
+  expr: CoreExpr & { kind: "record" },
+  ctx: EmitContext,
+): string {
+  const methods: string[] = [];
+  const dataFields: string[] = [];
+  
+  for (const field of expr.fields) {
+    if (field.value.kind === "lambda") {
+      const lambda = field.value;
+      const methodName = sanitizeIdentifier(field.name, ctx.state);
+      const fnCode = emitNamedLambda(lambda, methodName, ctx);
+      methods.push(`pub ${fnCode}`);
+    } else {
+      const value = emitExpr(field.value, ctx);
+      dataFields.push(`${sanitizeIdentifier(field.name, ctx.state)}: @TypeOf(${value}) = ${value}`);
+    }
+  }
+  
+  const allMembers = [...dataFields, ...methods].join(" ");
+  // If there are only methods (no data fields), emit as a namespace struct without instantiation
+  // This allows calling methods like gpa.init() directly
+  if (dataFields.length === 0) {
+    return `struct { ${allMembers} }`;
+  }
+  return `struct { ${allMembers} }{}`;
+}
+
 function emitNamedLambda(
   expr: CoreExpr & { kind: "lambda" },
   name: string,
@@ -452,7 +518,10 @@ function emitNamedLambda(
   const typeParamNames = new Map<number, string>();
   const scope = new Map(ctx.scope);
   const rawMem = isRawMemModule(ctx.modulePath);
+  const gpa = isGpaModule(ctx.modulePath);
   const rawMemTypeParams = rawMem && RAW_MEM_TYPE_PARAM_FUNCS.has(name);
+  const gpaTypeParams = gpa && GPA_TYPE_PARAM_FUNCS.has(name);
+  const hasTypeParams = rawMemTypeParams || gpaTypeParams;
 
   const boundParams = expr.params.map((p) => ({
     name: p,
@@ -484,7 +553,7 @@ function emitNamedLambda(
     ) {
       return `${pname}: anytype`;
     }
-    if (rawMemTypeParams && ptype && ptype.kind === "var") {
+    if (hasTypeParams && ptype && ptype.kind === "var") {
       const existing = typeParamNames.get(ptype.id);
       if (!existing) {
         typeParamNames.set(ptype.id, pname);
@@ -503,7 +572,7 @@ function emitNamedLambda(
   const body = emitExpr(expr.body, innerCtx);
   
   // Get return type from the lambda's type annotation
-  let returnType = rawMemTypeParams && typeParamNames.size > 0
+  let returnType = hasTypeParams && typeParamNames.size > 0
     ? emitTypeWithTypeParams(getReturnType(expr.type), typeParamNames)
     : emitType(expr.type, ctx);
   
@@ -568,6 +637,47 @@ function emitCall(
     if (expr.callee.name === "zig_free_slice" && expr.args.length === 1) {
       const sliceExpr = emitExpr(expr.args[0], ctx);
       return `@import("std").heap.page_allocator.free(@as([*]@TypeOf(${sliceExpr}.ptr.*), @ptrCast(${sliceExpr}.ptr))[0..${sliceExpr}.len])`;
+    }
+    // GPA (DebugAllocator) intrinsics
+    if (expr.callee.name === "zig_gpa_init" && expr.args.length === 0) {
+      return emitGpaInit(ctx);
+    }
+    if (expr.callee.name === "zig_gpa_deinit" && expr.args.length === 1) {
+      const handleExpr = emitExpr(expr.args[0], ctx);
+      // Use a block to discard the result and return void
+      return `{ _ = ${handleExpr}.deinit(); }`;
+    }
+    if (expr.callee.name === "zig_gpa_create" && expr.args.length === 2) {
+      const handleExpr = emitExpr(expr.args[0], ctx);
+      const typeExpr = extractTypeNameFromExpr(expr.args[1], ctx) ?? emitExpr(expr.args[1], ctx);
+      return emitGpaCreate(handleExpr, typeExpr, ctx, "create");
+    }
+    if (expr.callee.name === "zig_gpa_create_uninit" && expr.args.length === 2) {
+      const handleExpr = emitExpr(expr.args[0], ctx);
+      const typeExpr = extractTypeNameFromExpr(expr.args[1], ctx) ?? emitExpr(expr.args[1], ctx);
+      return `${handleExpr}.allocator().create(${typeExpr}) catch @panic("gpa.createUninit failed")`;
+    }
+    if (expr.callee.name === "zig_gpa_create_init" && expr.args.length === 3) {
+      const handleExpr = emitExpr(expr.args[0], ctx);
+      const typeExpr = extractTypeNameFromExpr(expr.args[1], ctx) ?? emitExpr(expr.args[1], ctx);
+      const valueExpr = emitExpr(expr.args[2], ctx);
+      return emitGpaCreate(handleExpr, typeExpr, ctx, "createInit", valueExpr);
+    }
+    if (expr.callee.name === "zig_gpa_destroy" && expr.args.length === 2) {
+      const handleExpr = emitExpr(expr.args[0], ctx);
+      const ptrExpr = emitExpr(expr.args[1], ctx);
+      return `${handleExpr}.allocator().destroy(${ptrExpr})`;
+    }
+    if (expr.callee.name === "zig_gpa_alloc" && expr.args.length === 3) {
+      const handleExpr = emitExpr(expr.args[0], ctx);
+      const typeExpr = extractTypeNameFromExpr(expr.args[1], ctx) ?? emitExpr(expr.args[1], ctx);
+      const lenExpr = emitExpr(expr.args[2], ctx);
+      return emitGpaAlloc(handleExpr, typeExpr, lenExpr, ctx);
+    }
+    if (expr.callee.name === "zig_gpa_free" && expr.args.length === 2) {
+      const handleExpr = emitExpr(expr.args[0], ctx);
+      const sliceExpr = emitExpr(expr.args[1], ctx);
+      return `${handleExpr}.allocator().free(@as([*]@TypeOf(${sliceExpr}.ptr.*), @ptrCast(${sliceExpr}.ptr))[0..${sliceExpr}.len])`;
     }
     if (expr.callee.name === "zig_optional_is_non_null" && expr.args.length === 1) {
       const value = emitExpr(expr.args[0], ctx);
@@ -641,6 +751,13 @@ const RAW_MEM_TYPE_PARAM_FUNCS = new Set<string>([
   "allocStructInit",
   "allocSlice",
   "allocArrayUninit",
+]);
+
+const GPA_TYPE_PARAM_FUNCS = new Set<string>([
+  "create",
+  "createUninit",
+  "createInit",
+  "alloc",
 ]);
 
 function emitTypeWithTypeParams(
@@ -720,6 +837,11 @@ function isRawMemModule(modulePath: string): boolean {
   return normalized.endsWith("/std/zig/rawmem.wm");
 }
 
+function isGpaModule(modulePath: string): boolean {
+  const normalized = normalizeSlashes(modulePath).toLowerCase();
+  return normalized.endsWith("/std/zig/gpa.wm");
+}
+
 function emitRawAllocStruct(
   typeExpr: string,
   ctx: EmitContext,
@@ -745,6 +867,66 @@ function emitRawAllocSlice(
   const stdImport = `@import("std")`;
   const lenCast = `@as(usize, @intCast(${lenExpr}))`;
   return `${blockName}: { const ${sliceName} = ${stdImport}.heap.page_allocator.alloc(${typeExpr}, ${lenCast}) catch @panic("allocSlice failed"); break :${blockName} .{ .ptr = @as(*${typeExpr}, @ptrCast(${sliceName}.ptr)), .len = ${sliceName}.len }; }`;
+}
+
+function emitGpaInit(_ctx: EmitContext): string {
+  // Returns the init value for a DebugAllocator - caller must store in a var binding
+  // The type annotation is handled by emitLet which will use GpaHandle
+  return `@import("std").heap.DebugAllocator(.{}).init`;
+}
+
+/**
+ * Extract type name from a constructor function type.
+ * For a workman record constructor like Point (type: I32 -> I32 -> Point),
+ * this extracts "Point" by following the function chain to the final return type.
+ */
+function extractTypeNameFromExpr(expr: CoreExpr, ctx: EmitContext): string | null {
+  // If it's a var reference, check if its type is a constructor function
+  if (expr.kind === "var") {
+    const returnType = getFinalReturnType(expr.type);
+    if (returnType && returnType.kind === "constructor" && returnType.args.length === 0) {
+      return returnType.name;
+    }
+    // For opaque types imported from C headers, the var itself is the type
+    return resolveName(ctx.scope, expr.name, ctx.state);
+  }
+  return null;
+}
+
+function getFinalReturnType(type: Type): Type {
+  let current = type;
+  while (current.kind === "func") {
+    current = current.to;
+  }
+  return current;
+}
+
+function emitGpaCreate(
+  handleExpr: string,
+  typeExpr: string,
+  ctx: EmitContext,
+  label: string,
+  initExpr?: string,
+): string {
+  const ptrName = allocateTempName(ctx.state, "gpa_ptr");
+  const blockName = allocateTempName(ctx.state, "gpa_blk");
+  const stdImport = `@import("std")`;
+  const initLine = initExpr
+    ? `${ptrName}.* = ${initExpr};`
+    : `${ptrName}.* = ${stdImport}.mem.zeroes(${typeExpr});`;
+  return `${blockName}: { const ${ptrName} = ${handleExpr}.allocator().create(${typeExpr}) catch @panic("gpa.${label} failed"); ${initLine} break :${blockName} ${ptrName}; }`;
+}
+
+function emitGpaAlloc(
+  handleExpr: string,
+  typeExpr: string,
+  lenExpr: string,
+  ctx: EmitContext,
+): string {
+  const sliceName = allocateTempName(ctx.state, "gpa_slice");
+  const blockName = allocateTempName(ctx.state, "gpa_blk");
+  const lenCast = `@as(usize, @intCast(${lenExpr}))`;
+  return `${blockName}: { const ${sliceName} = ${handleExpr}.allocator().alloc(${typeExpr}, ${lenCast}) catch @panic("gpa.alloc failed"); break :${blockName} .{ .ptr = @as(*${typeExpr}, @ptrCast(${sliceName}.ptr)), .len = ${sliceName}.len }; }`;
 }
 
 function emitLet(

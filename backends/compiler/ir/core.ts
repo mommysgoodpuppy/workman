@@ -223,6 +223,11 @@ export interface CoreTypeConstructor {
   readonly exported: boolean;
 }
 
+export interface CoreRecordField {
+  readonly name: string;
+  readonly typeAnnotation?: string; // Zig type string for raw mode emission
+}
+
 export interface CoreTypeDeclaration {
   readonly name: string;
   readonly constructors: readonly CoreTypeConstructor[];
@@ -233,6 +238,8 @@ export interface CoreTypeDeclaration {
     readonly valueConstructor?: string;
     readonly effectConstructors?: readonly string[];
   };
+  /** For record types: field definitions */
+  readonly recordFields?: readonly CoreRecordField[];
 }
 
 export type CoreImportSpecifier = {

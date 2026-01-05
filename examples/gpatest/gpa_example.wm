@@ -1,0 +1,32 @@
+@raw;
+
+-- Example demonstrating the GPA (DebugAllocator) wrapper
+let std = zigImport("std");
+
+from "std/zig/gpa" import { gpa };
+
+-- In raw mode, use 'type' for types that will be passed as comptime parameters
+record Point { x: I32, y: I32 };
+
+let main = (): U8 => {
+  
+  -- Initialize the GPA
+  let allocator = gpa.init();
+  
+  -- Allocate a Point struct (zero-initialized)
+  let p1 = gpa.create(&allocator, Point);
+  std.debug.print("p1: ({}, {})\n", .{ zigField(p1, "x"), zigField(p1, "y") });
+  
+  -- Allocate and initialize a Point with values
+  let p2 = gpa.createInit(&allocator, Point, .{ x= 10, y= 20 });
+  std.debug.print("p2: ({}, {})\n", .{ zigField(p2, "x"), zigField(p2, "y") });
+  
+  -- Free the allocations
+  gpa.destroy(&allocator, p1);
+  gpa.destroy(&allocator, p2);
+  
+  -- Deinit the GPA (will report leaks if any)
+  gpa.deinit(&allocator);
+  
+  0
+};

@@ -4,6 +4,7 @@ import type {
   CoreExport,
   CoreImport,
   CoreModule,
+  CoreRecordField,
   CoreTypeConstructor,
   CoreTypeDeclaration,
 } from "../ir/core.ts";
@@ -167,44 +168,123 @@ function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[]
 function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
   const decls: CoreTypeDeclaration[] = [];
   for (const topLevel of node.program.declarations) {
-    if (topLevel.kind !== "type") continue;
-    const constructors: CoreTypeConstructor[] = [];
-    for (const member of topLevel.members) {
-      if (member.kind !== "constructor") continue;
-      constructors.push({
-        name: member.name,
-        arity: member.typeArgs.length,
+    // Handle ADT-style type declarations
+    if (topLevel.kind === "type") {
+      const constructors: CoreTypeConstructor[] = [];
+      for (const member of topLevel.members) {
+        if (member.kind !== "constructor") continue;
+        constructors.push({
+          name: member.name,
+          arity: member.typeArgs.length,
+          exported: Boolean(topLevel.export),
+        });
+      }
+      
+      // Extract infectious metadata if present
+      let infectious: CoreTypeDeclaration["infectious"] = undefined;
+      if (topLevel.infectious) {
+        const valueCtors = topLevel.members.filter(
+          (m): m is import("../../../src/ast.ts").ConstructorAlias =>
+            m.kind === "constructor" && m.annotation === "value"
+        );
+        const effectCtors = topLevel.members.filter(
+          (m): m is import("../../../src/ast.ts").ConstructorAlias =>
+            m.kind === "constructor" && m.annotation === "effect"
+        );
+        
+        infectious = {
+          domain: topLevel.infectious.domain,
+          valueConstructor: valueCtors.length > 0 ? valueCtors[0].name : undefined,
+          effectConstructors: effectCtors.length > 0 ? effectCtors.map(c => c.name) : undefined,
+        };
+      }
+      
+      decls.push({
+        name: topLevel.name,
+        constructors,
         exported: Boolean(topLevel.export),
+        infectious,
       });
     }
     
-    // Extract infectious metadata if present
-    let infectious: CoreTypeDeclaration["infectious"] = undefined;
-    if (topLevel.infectious) {
-      const valueCtors = topLevel.members.filter(
-        (m): m is import("../../../src/ast.ts").ConstructorAlias =>
-          m.kind === "constructor" && m.annotation === "value"
-      );
-      const effectCtors = topLevel.members.filter(
-        (m): m is import("../../../src/ast.ts").ConstructorAlias =>
-          m.kind === "constructor" && m.annotation === "effect"
-      );
+    // Handle record declarations (for raw mode struct emission)
+    if (topLevel.kind === "record_decl") {
+      const recordFields: CoreRecordField[] = [];
+      for (const member of topLevel.members) {
+        if (member.kind === "record_typed_field") {
+          recordFields.push({
+            name: member.name,
+            typeAnnotation: typeExprToZigType(member.annotation),
+          });
+        } else if (member.kind === "record_value_field" && member.annotation) {
+          recordFields.push({
+            name: member.name,
+            typeAnnotation: typeExprToZigType(member.annotation),
+          });
+        }
+      }
       
-      infectious = {
-        domain: topLevel.infectious.domain,
-        valueConstructor: valueCtors.length > 0 ? valueCtors[0].name : undefined,
-        effectConstructors: effectCtors.length > 0 ? effectCtors.map(c => c.name) : undefined,
-      };
+      decls.push({
+        name: topLevel.name,
+        constructors: [], // Records have no ADT constructors
+        exported: Boolean(topLevel.export),
+        recordFields,
+      });
     }
-    
-    decls.push({
-      name: topLevel.name,
-      constructors,
-      exported: Boolean(topLevel.export),
-      infectious,
-    });
   }
   return decls;
+}
+
+/** Convert a TypeExpr AST node to a Zig type string for raw mode emission */
+function typeExprToZigType(typeExpr: import("../../../src/ast.ts").TypeExpr): string {
+  switch (typeExpr.kind) {
+    case "type_var":
+      return typeExpr.name;
+    case "type_ref": {
+      // Map Workman primitive types to Zig types
+      const name = typeExpr.name;
+      const zigPrimitives: Record<string, string> = {
+        "I8": "i8", "I16": "i16", "I32": "i32", "I64": "i64", "I128": "i128",
+        "U8": "u8", "U16": "u16", "U32": "u32", "U64": "u64", "U128": "u128",
+        "Isize": "isize", "Usize": "usize",
+        "F16": "f16", "F32": "f32", "F64": "f64", "F128": "f128",
+        "Bool": "bool", "Void": "void",
+        "CShort": "c_short", "CUShort": "c_ushort",
+        "CInt": "c_int", "CUInt": "c_uint",
+        "CLong": "c_long", "CULong": "c_ulong",
+        "CLongLong": "c_longlong", "CULongLong": "c_ulonglong",
+        "CChar": "c_char",
+      };
+      if (zigPrimitives[name]) {
+        return zigPrimitives[name];
+      }
+      if (typeExpr.typeArgs.length === 0) {
+        return name;
+      }
+      const args = typeExpr.typeArgs.map(typeExprToZigType).join(", ");
+      return `${name}(${args})`;
+    }
+    case "type_fn": {
+      const params = typeExpr.parameters.map(typeExprToZigType).join(", ");
+      return `fn(${params}) ${typeExprToZigType(typeExpr.result)}`;
+    }
+    case "type_tuple": {
+      const elements = typeExpr.elements.map(typeExprToZigType).join(", ");
+      return `struct { ${elements} }`;
+    }
+    case "type_array":
+      return `[${typeExpr.length}]${typeExprToZigType(typeExpr.element)}`;
+    case "type_unit":
+      return "void";
+    case "type_pointer":
+      return `*${typeExprToZigType(typeExpr.pointee)}`;
+    case "type_record": {
+      const fields = typeExpr.fields.map(f => `${f.name}: ${typeExprToZigType(f.type)}`).join(", ");
+      return `struct { ${fields} }`;
+    }
+    default:
+      return "anytype";
+  }
 }
 
 function convertExports(node: ModuleNode, summary?: ModuleSummary): CoreExport[] {

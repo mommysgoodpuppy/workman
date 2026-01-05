@@ -4,98 +4,87 @@ let std = zigImport("std");
 from "SDL3/SDL.h" import {
   "SDL_GetVersion" as sdl_getVersion,
   "SDL_Init" as sdl_init,
-  SDL_INIT_VIDEO,
-  SDL_Event,
-  SDL_EVENT_QUIT,
   "SDL_GetError" as sdl_getError,
   "SDL_Log" as sdl_sdlLog,
   "SDL_CreateWindow" as sdl_createWindow,
   "SDL_Quit" as sdl_Quit,
   "SDL_DestroyWindow" as sdl_DestroyWindow,
   "SDL_PollEvent" as sdl_PollEvent,
-  "SDL_Delay" as sdl_Delay
+  "SDL_Delay" as sdl_Delay,
+  SDL_INIT_VIDEO,
+  SDL_Event,
+  SDL_EVENT_QUIT
 };
 from "std/zig/rawmem" import { allocStruct, allocArrayUninit, free };
 
 let main = ():U8 => {
--- std.debug.print("SDL3 version: {}\n", .{ sdl_getVersion() });
---
--- let screenWidth = 800;
--- let screenHeight = 600;
---
--- if (sdl_init(SDL_INIT_VIDEO) == false) {
---   std.debug.print("SDL_Init failed: {s}\n", .{ sdl_getError() });
---   1
--- } else {
---   0
--- };
---
--- let win = sdl_createWindow(
---   "SDL3 window",
---   screenWidth, screenHeight,
---   0
--- );
---
--- match (win) {
---   Null => {
---     std.debug.print("SDL_CreateWindow failed: {s}\n", .{ sdl_getError() });
---     sdl_Quit();
---     1
---   },
---   NonNull => {
---     0
---   }
--- };
---
--- 
--- 
--- -- Event loop using recursion
--- let rec eventLoop = (running, event) => {
---   if (running) {
---
---     let hasEvent = sdl_PollEvent(event);
---     
---     -- Process events recursively
---     let rec processEvents = (hasEvent, running) => {
---       if (hasEvent != false) {
---         let eventType = zigField(event, "type");
---         let newRunning = if (eventType == SDL_EVENT_QUIT) {
---           false
---         } else {
---           running
---         };
---         let nextEvent = sdl_PollEvent(event);
---         processEvents(nextEvent, newRunning)
---       } else {
---         running
---       }
---     };
---     
---     let stillRunning = processEvents(hasEvent, running);
---     
---
---     sdl_Delay(16);
---     eventLoop(stillRunning, event);
---   } else {
---     Void
---   };
---   event
--- };
---
---
---
--- let e = allocStruct(SDL_Event);
--- free(eventLoop(true, e));
+  std.debug.print("SDL3 version: {}\n", .{ sdl_getVersion() });
 
-  let e2 = allocStruct(SDL_Event);
-  let hasEvent = sdl_PollEvent(e2);
-  let e2 = e2;
-  free(e2);
+  let screenWidth = 800;
+  let screenHeight = 600;
+
+  if (sdl_init(SDL_INIT_VIDEO) == false) {
+    std.debug.print("SDL_Init failed: {s}\n", .{ sdl_getError() });
+    1
+  } else {
+    0
+  };
+
+  let win = sdl_createWindow(
+    "SDL3 window",
+    screenWidth, screenHeight,
+    0
+  );
+
+  let win = match (win) {
+    Null => {
+      std.debug.print("SDL_CreateWindow failed: {s}\n", .{ sdl_getError() });
+      sdl_Quit();
+      1
+    },
+    NonNull(win) => {
+      win
+    }
+  };
   
- -- sdl_DestroyWindow(win);
- -- sdl_Quit();
---
+  
+  -- Event loop using recursion
+  let rec eventLoop = (running, event) => {
+    if (running) {
 
+      let hasEvent = sdl_PollEvent(event);
+      
+      -- Process events recursively
+      let rec processEvents = (hasEvent, running) => {
+        if (hasEvent != false) {
+          let eventType = zigField(event, "type");
+          let newRunning = if (eventType == SDL_EVENT_QUIT) {
+            false
+          } else {
+            running
+          };
+          let nextEvent = sdl_PollEvent(event);
+          processEvents(nextEvent, newRunning)
+        } else {
+          running
+        }
+      };
+      
+      let stillRunning = processEvents(hasEvent, running);
+      
+
+      sdl_Delay(16);
+      eventLoop(stillRunning, event);
+    } else {
+      Void
+    };
+    event
+  };
+
+  let e = allocStruct(SDL_Event);
+  free(eventLoop(true, e));
+
+  sdl_DestroyWindow(win);
+  sdl_Quit();
   0
 };
-

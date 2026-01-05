@@ -641,7 +641,7 @@ function solveAnnotationConstraint(
   const annotation = stub.annotationType ??
     getTypeForNode(state, stub.annotation);
   const value = getTypeForNode(state, stub.value);
-  const unified = unifyTypes(annotation, value, state.substitution);
+  const unified = unifyTypes(annotation, value, state.substitution, state.adtEnv);
   if (unified.success) {
     state.substitution = unified.subst;
   } else {
@@ -1266,6 +1266,32 @@ function unifyTypes(
       current = result.subst;
     }
     return { success: true, subst: current };
+  }
+
+  if (resolvedLeft.kind === "record" && resolvedRight.kind === "constructor") {
+    if (adtEnv) {
+      const adtInfo = adtEnv.get(resolvedRight.name);
+      if (adtInfo && adtInfo.alias && adtInfo.alias.kind === "record") {
+        return unifyTypes(resolvedLeft, adtInfo.alias, subst, adtEnv);
+      }
+    }
+    return {
+      success: false,
+      reason: { kind: "type_mismatch", left: resolvedLeft, right: resolvedRight },
+    };
+  }
+
+  if (resolvedRight.kind === "record" && resolvedLeft.kind === "constructor") {
+    if (adtEnv) {
+      const adtInfo = adtEnv.get(resolvedLeft.name);
+      if (adtInfo && adtInfo.alias && adtInfo.alias.kind === "record") {
+        return unifyTypes(adtInfo.alias, resolvedRight, subst, adtEnv);
+      }
+    }
+    return {
+      success: false,
+      reason: { kind: "type_mismatch", left: resolvedLeft, right: resolvedRight },
+    };
   }
 
   if (
