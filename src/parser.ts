@@ -1588,7 +1588,8 @@ class SurfaceParser {
     if (
       token.kind === "identifier" ||
       token.kind === "constructor" ||
-      token.kind === "keyword"
+      token.kind === "keyword" ||
+      token.kind === "bool"
     ) {
       return token;
     }
@@ -2000,12 +2001,18 @@ class SurfaceParser {
       }
 
       if (this.matchSymbol(".")) {
+        // Check for ^identifier syntax (capitalize first letter for Zig interop)
+        const capitalize = this.peek().kind === "operator" && this.peek().value === "^";
+        if (capitalize) {
+          this.consume(); // consume the ^
+        }
         const fieldToken = this.expectIdentifier();
         const target = expr;
         expr = {
           kind: "record_projection",
           target,
           field: fieldToken.value,
+          capitalize,
           span: this.spanFrom(target.span.start, fieldToken.end),
           id: nextNodeId(),
         };

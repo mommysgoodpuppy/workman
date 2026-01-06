@@ -77,6 +77,7 @@ export interface CoreLetExpr extends CoreNodeMeta {
     readonly name: string;
     readonly value: CoreExpr;
     readonly isRecursive: boolean;
+    readonly isMutable?: boolean;
   };
   readonly body: CoreExpr;
 }

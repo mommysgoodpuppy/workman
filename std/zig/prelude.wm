@@ -8,7 +8,7 @@ from "std/zig/types.wm" import {
   I8, I16, I32, I64, I128, Isize,
   U8, U16, U32, U64, U128, Usize,
   F16, F32, F64, F128,
-  Void, Optional, Opt, Anyopaque, Opaque, Null
+  Void, Opt, Opaque, Null
 };
 
 -- Re-export types
@@ -29,9 +29,7 @@ export from "std/zig/types.wm" type F32;
 export from "std/zig/types.wm" type F64;
 export from "std/zig/types.wm" type F128;
 export from "std/zig/types.wm" type Void;
-export from "std/zig/types.wm" type Optional;
 export from "std/zig/types.wm" type Opt;
-export from "std/zig/types.wm" type Anyopaque;
 export from "std/zig/types.wm" type Opaque;
 export from "std/zig/types.wm" type Null;
 

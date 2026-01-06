@@ -220,6 +220,7 @@ export interface RecordProjectionExpr extends NodeBase {
   kind: "record_projection";
   target: Expr;
   field: string;
+  capitalize?: boolean; // If true, capitalize first letter when emitting (for ^identifier syntax)
 }
 
 export interface IndexExpr extends NodeBase {

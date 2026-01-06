@@ -249,6 +249,7 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
         id: expr.id,
         target,
         field: expr.field,
+        capitalize: expr.capitalize,
         type,
       };
     }

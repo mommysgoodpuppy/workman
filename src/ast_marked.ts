@@ -62,6 +62,7 @@ export interface MRecordProjectionExpr extends MTypedNode {
   kind: "record_projection";
   target: MExpr;
   field: string;
+  capitalize?: boolean; // If true, capitalize first letter when emitting (for ^identifier syntax)
 }
 
 export interface MTupleExpr extends MTypedNode {

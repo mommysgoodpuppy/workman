@@ -1,5 +1,5 @@
 import { WorkmanModuleArtifacts } from "../../../backends/compiler/frontends/workman.ts";
-import { TypeDeclaration, ConstructorAlias } from "../../../src/ast.ts";
+import { TypeDeclaration, ConstructorAlias, RecordDeclaration, RecordMember } from "../../../src/ast.ts";
 import { MProgram, MLetDeclaration, MExpr, MMatchBundle, MBlockExpr, MTopLevel } from "../../../src/ast_marked.ts";
 import { Layer3Result } from "../../../src/layer3/mod.ts";
 import { pathToUri } from "./fsio.ts";
@@ -534,4 +534,63 @@ export function findNearestLetBeforeOffset(
   visitTopLevels(program.declarations ?? []);
 
   return best?.decl;
+}
+
+export function findRecordDeclaration(
+  program: MProgram,
+  name: string,
+): RecordDeclaration | undefined {
+  for (const decl of program.declarations ?? []) {
+    if (decl.kind === "record_decl" && decl.node.name === name) {
+      return decl.node;
+    }
+  }
+  return undefined;
+}
+
+export function findRecordFieldDeclaration(
+  program: MProgram,
+  recordName: string,
+  fieldName: string,
+): { record: RecordDeclaration; member: RecordMember } | undefined {
+  const record = findRecordDeclaration(program, recordName);
+  if (!record) {
+    return undefined;
+  }
+  for (const member of record.members) {
+    if (member.name === fieldName) {
+      return { record, member };
+    }
+  }
+  return undefined;
+}
+
+export function findRecordFieldDefinitionLocations(
+  recordName: string,
+  fieldName: string,
+  modules: ReadonlyMap<string, WorkmanModuleArtifacts>,
+): Array<{
+  uri: string;
+  span: { start: number; end: number };
+  sourceText: string;
+}> {
+  const results: Array<{
+    uri: string;
+    span: { start: number; end: number };
+    sourceText: string;
+  }> = [];
+  for (const [modulePath, artifact] of modules.entries()) {
+    const program = artifact.analysis.layer1.markedProgram;
+    const sourceText = artifact.node.source;
+    const uri = pathToUri(modulePath);
+    const fieldDecl = findRecordFieldDeclaration(program, recordName, fieldName);
+    if (fieldDecl) {
+      results.push({
+        uri,
+        span: fieldDecl.member.span,
+        sourceText,
+      });
+    }
+  }
+  return results;
 }

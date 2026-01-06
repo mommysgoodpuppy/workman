@@ -229,6 +229,7 @@ function lowerBlockExpr(block: MBlockExpr, state: LoweringState): CoreExpr {
         current,
         statement.declaration.isRecursive,
         blockType,
+        statement.declaration.isMutable,
       );
     } else if (statement.kind === "expr_statement") {
       const expr = lowerExpr(statement.expression, state);
@@ -536,12 +537,14 @@ function lowerRecordProjection(
   state: LoweringState,
 ): CoreExpr {
   const target = lowerExpr(expr.target, state);
+  // Encode capitalize flag by prefixing field name with ^
+  const fieldName = expr.capitalize ? `^${expr.field}` : expr.field;
   return {
     kind: "prim",
     op: "record_get",
     args: [
       target,
-      createStringLiteralExpr(expr.field),
+      createStringLiteralExpr(fieldName),
     ],
     type: resolveNodeType(state, expr.id, expr.type),
   };
@@ -812,6 +815,7 @@ function createLetExpression(
   body: CoreExpr,
   isRecursive: boolean,
   resultType: Type,
+  isMutable?: boolean,
 ): CoreLetExpr {
   return {
     kind: "let",
@@ -819,6 +823,7 @@ function createLetExpression(
       name,
       value,
       isRecursive,
+      isMutable,
     },
     body,
     type: resultType,

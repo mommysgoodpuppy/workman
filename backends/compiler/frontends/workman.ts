@@ -191,6 +191,22 @@ function seedImports(
         if (!adtEnv.has(spec.imported)) {
           adtEnv.set(spec.imported, cloneTypeInfo(typeExport));
         }
+        // In raw mode, also register type names in the value environment so they can be
+        // used as type arguments (e.g., allocArrayUninit(U8, 1024))
+        const rawMode = node.program.mode === "raw";
+        if (rawMode && !env.has(spec.imported)) {
+          const parameterIds = typeExport.parameters;
+          const parameterTypes = parameterIds.map((id) => ({ kind: "var" as const, id }));
+          const typeRefScheme: TypeScheme = {
+            quantifiers: parameterIds,
+            type: {
+              kind: "constructor",
+              name: spec.imported,
+              args: parameterTypes,
+            },
+          };
+          env.set(spec.imported, typeRefScheme);
+        }
         continue;
       }
       throw new Error(
@@ -314,9 +330,27 @@ function seedPrelude(
     }
   }
 
+  // Detect raw mode from the program
+  const rawMode = node.program.mode === "raw";
+  
   for (const [name, info] of preludeSummary.exports.types.entries()) {
     if (!adtEnv.has(name)) {
       adtEnv.set(name, cloneTypeInfo(info));
+    }
+    // In raw mode, also register type names in the value environment so they can be
+    // used as type arguments (e.g., allocArrayUninit(U8, 1024))
+    if (rawMode && !env.has(name)) {
+      const parameterIds = info.parameters;
+      const parameterTypes = parameterIds.map((id) => ({ kind: "var" as const, id }));
+      const typeRefScheme: TypeScheme = {
+        quantifiers: parameterIds,
+        type: {
+          kind: "constructor",
+          name,
+          args: parameterTypes,
+        },
+      };
+      env.set(name, typeRefScheme);
     }
   }
 

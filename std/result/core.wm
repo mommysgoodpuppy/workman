@@ -1,3 +1,4 @@
+@raw;
 -- Define the IResult type with its constructors IOk and IErr
 -- @value marks the constructor that carries the value (extracts payload)
 -- @effect marks constructors that carry effects (short-circuit)

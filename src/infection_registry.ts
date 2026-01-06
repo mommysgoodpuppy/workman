@@ -16,6 +16,7 @@ export interface DomainRuleDefinition {
   conflict?: string;
   conflictPairs?: [string, string][];
   boundary?: string;
+  infectsReturn?: boolean;
   defaultRule?: OpRuleDefinition;
   entries: RuleEntry[];
 }
@@ -139,6 +140,7 @@ function parseDomainRule(decl: DomainDeclaration): DomainRuleDefinition {
     conflict: getNameByKey(decl.entries, "conflict"),
     conflictPairs: getPairListByKey(decl.entries, "conflict"),
     boundary: getNameByKey(decl.entries, "boundary"),
+    infectsReturn: getBoolByKey(decl.entries, "infectsReturn"),
     defaultRule,
     entries: decl.entries,
   };
@@ -211,6 +213,16 @@ function getPairListByKey(
 function hasFlag(entries: RuleEntry[], key: string): boolean {
   const entry = entries.find((rule) => rule.key === key);
   return Boolean(entry && !entry.value);
+}
+
+function getBoolByKey(entries: RuleEntry[], key: string): boolean | undefined {
+  const entry = entries.find((rule) => rule.key === key);
+  if (!entry) return undefined;
+  if (!entry.value) return true; // Flag without value means true
+  const name = getNameFromEntry(entry);
+  if (name === "true") return true;
+  if (name === "false") return false;
+  return undefined;
 }
 
 function getNameFromEntry(entry: RuleEntry): string | undefined {

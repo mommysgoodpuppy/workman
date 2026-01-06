@@ -108,6 +108,7 @@ const RAW_OMITTED_BINDINGS = new Set<string>([
   "zig_free_slice",
   // GPA intrinsics
   "zig_gpa_init",
+  "zig_gpa_get",
   "zig_gpa_deinit",
   "zig_gpa_create",
   "zig_gpa_create_uninit",
@@ -287,6 +288,14 @@ function emitRawZigOptionHelper(
 }
 
 function preallocateNames(module: CoreModule, ctx: EmitContext): void {
+  // Preallocate import names so hoisted lambdas don't shadow them
+  for (const imp of module.imports) {
+    for (const spec of imp.specifiers) {
+      if (spec.kind === "value") {
+        ctx.state.used.add(spec.local);
+      }
+    }
+  }
   for (const binding of module.values) {
     bindLocal(ctx.scope, binding.name, ctx.state);
   }
@@ -377,12 +386,26 @@ function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): strin
       lines.push(`pub const GpaHandle = @import("std").heap.DebugAllocator(.{});`);
       return lines;
     }
+    if (decl.name === "Allocator") {
+      lines.push(`pub const Allocator = @import("std").mem.Allocator;`);
+      return lines;
+    }
     // Opaque type - these map directly to Zig types
     // Don't emit anything - they're built-in Zig types
     return lines;
   }
-  // For ADTs, emit as tagged union
-  // TODO: implement proper ADT emission
+  // For ADTs in raw mode, we can't emit proper generic types
+  // Instead, export constructor names as simple marker types
+  // The actual values use anonymous structs like .{ .IOk = value }
+  const pub = decl.exported ? "pub " : "";
+  if (decl.constructors.length > 0) {
+    // Export the type name as a function that returns anytype (for type annotations)
+    lines.push(`${pub}fn ${decl.name}(comptime T: type, comptime E: type) type { return union(enum) { IOk: T, IErr: E }; }`);
+    // Export constructor names as marker constants
+    for (const ctor of decl.constructors) {
+      lines.push(`${pub}const ${ctor.name} = .${ctor.name};`);
+    }
+  }
   return lines;
 }
 
@@ -393,6 +416,14 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
     case "var":
       if (expr.name === "null" && !ctx.scope.has("null")) {
         return "null";
+      }
+      // Check if this var name is a primitive type (U8 -> u8, I32 -> i32, etc.)
+      {
+        const primitiveType: Type = { kind: "constructor", name: expr.name, args: [] };
+        const zigPrimitive = mapZigPrimitive(primitiveType);
+        if (zigPrimitive) {
+          return zigPrimitive;
+        }
       }
       return resolveName(ctx.scope, expr.name, ctx.state);
     case "lambda":
@@ -581,6 +612,13 @@ function emitNamedLambda(
     returnType = "void";
   }
   
+  // If return type contains anyopaque in a generic context, we can't use it directly
+  // Use a concrete tagged union type that works with any payload
+  if (returnType.includes("anyopaque") && returnType.includes("(")) {
+    // For IResult-like types, use a union that can hold any error or value
+    returnType = "union(enum) { IOk: []const u8, IErr: anyerror }";
+  }
+  
   return `fn ${name}(${params}) ${returnType} { return ${body}; }`;
 }
 
@@ -588,8 +626,12 @@ function emitLambda(
   expr: CoreExpr & { kind: "lambda" },
   ctx: EmitContext,
 ): string {
+  // In raw mode, lambdas must be hoisted to module level
+  // We emit the function definition to hoisted and return just the name
   const fnName = allocateTempName(ctx.state, "__fn");
-  return emitNamedLambda(expr, fnName, ctx);
+  const fnCode = emitNamedLambda(expr, fnName, ctx);
+  ctx.hoisted.push(fnCode);
+  return fnName;
 }
 
 function emitCall(
@@ -642,6 +684,10 @@ function emitCall(
     if (expr.callee.name === "zig_gpa_init" && expr.args.length === 0) {
       return emitGpaInit(ctx);
     }
+    if (expr.callee.name === "zig_gpa_get" && expr.args.length === 1) {
+      const handleExpr = emitExpr(expr.args[0], ctx);
+      return `${handleExpr}.allocator()`;
+    }
     if (expr.callee.name === "zig_gpa_deinit" && expr.args.length === 1) {
       const handleExpr = emitExpr(expr.args[0], ctx);
       // Use a block to discard the result and return void
@@ -649,17 +695,17 @@ function emitCall(
     }
     if (expr.callee.name === "zig_gpa_create" && expr.args.length === 2) {
       const handleExpr = emitExpr(expr.args[0], ctx);
-      const typeExpr = extractTypeNameFromExpr(expr.args[1], ctx) ?? emitExpr(expr.args[1], ctx);
+      const typeExpr = emitExpr(expr.args[1], ctx);
       return emitGpaCreate(handleExpr, typeExpr, ctx, "create");
     }
     if (expr.callee.name === "zig_gpa_create_uninit" && expr.args.length === 2) {
       const handleExpr = emitExpr(expr.args[0], ctx);
-      const typeExpr = extractTypeNameFromExpr(expr.args[1], ctx) ?? emitExpr(expr.args[1], ctx);
+      const typeExpr = emitExpr(expr.args[1], ctx);
       return `${handleExpr}.allocator().create(${typeExpr}) catch @panic("gpa.createUninit failed")`;
     }
     if (expr.callee.name === "zig_gpa_create_init" && expr.args.length === 3) {
       const handleExpr = emitExpr(expr.args[0], ctx);
-      const typeExpr = extractTypeNameFromExpr(expr.args[1], ctx) ?? emitExpr(expr.args[1], ctx);
+      const typeExpr = emitExpr(expr.args[1], ctx);
       const valueExpr = emitExpr(expr.args[2], ctx);
       return emitGpaCreate(handleExpr, typeExpr, ctx, "createInit", valueExpr);
     }
@@ -670,7 +716,7 @@ function emitCall(
     }
     if (expr.callee.name === "zig_gpa_alloc" && expr.args.length === 3) {
       const handleExpr = emitExpr(expr.args[0], ctx);
-      const typeExpr = extractTypeNameFromExpr(expr.args[1], ctx) ?? emitExpr(expr.args[1], ctx);
+      const typeExpr = emitExpr(expr.args[1], ctx);
       const lenExpr = emitExpr(expr.args[2], ctx);
       return emitGpaAlloc(handleExpr, typeExpr, lenExpr, ctx);
     }
@@ -875,23 +921,6 @@ function emitGpaInit(_ctx: EmitContext): string {
   return `@import("std").heap.DebugAllocator(.{}).init`;
 }
 
-/**
- * Extract type name from a constructor function type.
- * For a workman record constructor like Point (type: I32 -> I32 -> Point),
- * this extracts "Point" by following the function chain to the final return type.
- */
-function extractTypeNameFromExpr(expr: CoreExpr, ctx: EmitContext): string | null {
-  // If it's a var reference, check if its type is a constructor function
-  if (expr.kind === "var") {
-    const returnType = getFinalReturnType(expr.type);
-    if (returnType && returnType.kind === "constructor" && returnType.args.length === 0) {
-      return returnType.name;
-    }
-    // For opaque types imported from C headers, the var itself is the type
-    return resolveName(ctx.scope, expr.name, ctx.state);
-  }
-  return null;
-}
 
 function getFinalReturnType(type: Type): Type {
   let current = type;
@@ -936,13 +965,28 @@ function emitLet(
   const scope = new Map(ctx.scope);
   const value = emitExpr(expr.binding.value, ctx);
   const label = allocateTempName(ctx.state, "blk");
-  const useVar = needsVarBinding(expr.body, expr.binding.name);
+  const useVar = expr.binding.isMutable || needsVarBinding(expr.body, expr.binding.name);
   
   // For discarded statement results (__stmt_*), use _ to avoid unused variable warning
   if (expr.binding.name.startsWith("__stmt")) {
     const innerCtx = { ...ctx, scope };
     const body = emitExpr(expr.body, innerCtx);
     return `${label}: { _ = ${value}; break :${label} ${body}; }`;
+  }
+  
+  // Detect "zigres" prefix bindings - wrap Zig error unions into IResult
+  if (expr.binding.name.startsWith("zigres")) {
+    const ref = bindLocal(scope, expr.binding.name, ctx.state);
+    const innerCtx = { ...ctx, scope };
+    const body = emitExpr(expr.body, innerCtx);
+    // Emit code that wraps Zig's error!T into a tagged union
+    // First capture the value to avoid re-evaluating, then define a type alias and wrap
+    const tmpName = allocateTempName(ctx.state, "__zigres_tmp");
+    const typeName = allocateTempName(ctx.state, "__ZigRes");
+    const payloadType = `@typeInfo(@TypeOf(${tmpName})).error_union.payload`;
+    const errorType = `@typeInfo(@TypeOf(${tmpName})).error_union.error_set`;
+    const wrappedValue = `if (${tmpName}) |__ok| ${typeName}{ .IOk = __ok } else |__err| ${typeName}{ .IErr = __err }`;
+    return `${label}: { const ${tmpName} = ${value}; const ${typeName} = union(enum) { IOk: ${payloadType}, IErr: ${errorType} }; const ${ref.value} = ${wrappedValue}; break :${label} ${body}; }`;
   }
   
   // Bind the variable BEFORE emitting the body so it's in scope
@@ -1168,6 +1212,10 @@ function emitPattern(pattern: CorePattern, ctx: EmitContext): string {
     case "wildcard":
       return "_";
     case "binding":
+      // For intentionally unused bindings (starting with _), use _ to avoid Zig's error discard rules
+      if (pattern.name.startsWith("_")) {
+        return "_";
+      }
       return sanitizeIdentifier(pattern.name, ctx.state);
     case "literal":
       return emitLiteral(pattern.literal, ctx);
@@ -1230,7 +1278,12 @@ function emitPrimOp(op: CorePrimOp, args: readonly CoreExpr[], ctx: EmitContext)
     const fieldArg = args[1];
     // Field name is passed as a string literal
     if (fieldArg.kind === "literal" && fieldArg.literal.kind === "string") {
-      const fieldName = fieldArg.literal.value;
+      let fieldName = fieldArg.literal.value;
+      // Handle ^identifier syntax - capitalize first letter for Zig interop
+      if (fieldName.startsWith("^")) {
+        const rest = fieldName.slice(1);
+        fieldName = rest.charAt(0).toUpperCase() + rest.slice(1);
+      }
       return `${target}.${fieldName}`;
     }
     // Fallback - shouldn't happen
@@ -1285,6 +1338,14 @@ function emitData(
   expr: CoreExpr & { kind: "data" },
   ctx: EmitContext,
 ): string {
+  // Check if this is a primitive type used as a value (U8 -> u8, I32 -> i32, etc.)
+  if (expr.fields.length === 0) {
+    const primitiveType: Type = { kind: "constructor", name: expr.constructor, args: [] };
+    const zigPrimitive = mapZigPrimitive(primitiveType);
+    if (zigPrimitive) {
+      return zigPrimitive;
+    }
+  }
   if (expr.fields.length === 0 && expr.typeName === expr.constructor) {
     const typeRef = resolveRecordTypeReference(expr.type, ctx);
     if (typeRef) {
@@ -1298,6 +1359,10 @@ function emitData(
     return `.${expr.constructor}`;
   }
   const args = expr.fields.map((a) => emitExpr(a, ctx)).join(", ");
+  // For single-field constructors, don't wrap in extra braces
+  if (expr.fields.length === 1) {
+    return `.{ .${expr.constructor} = ${args} }`;
+  }
   return `.{ .${expr.constructor} = .{ ${args} } }`;
 }
 

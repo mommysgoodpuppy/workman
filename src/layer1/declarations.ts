@@ -102,6 +102,21 @@ export function registerTypeConstructors(
   }
   // Opaque types have no members - they're already registered in adtEnv by registerTypeName
   if (decl.opaque || decl.members.length === 0) {
+    // In raw mode, register opaque type names in the value environment so they can be
+    // used as type arguments (e.g., allocArrayUninit(U8, 1024))
+    if (ctx.rawMode) {
+      const parameterTypes = typeParamsCache.get(decl.name);
+      if (parameterTypes) {
+        const parameterIds = parameterTypes
+          .map((type) => (type.kind === "var" ? type.id : -1))
+          .filter((id) => id >= 0);
+        const typeRefScheme: TypeScheme = {
+          quantifiers: parameterIds,
+          type: makeDataConstructor(decl.name, parameterTypes),
+        };
+        ctx.env.set(decl.name, typeRefScheme);
+      }
+    }
     return { success: true };
   }
   const adtInfo = ctx.adtEnv.get(decl.name);

@@ -32,11 +32,9 @@ export type Anyerror;
 export type ComptimeInt;
 export type ComptimeFloat;
 
--- Optional and null interop (raw-only)
-export type Optional<T>;
-export type Opt<T> = Optional<T>;
-export type Anyopaque;
-export type Opaque = Anyopaque;
+-- optional and null interop (raw-only)
+export type Opt<T>;
+export type Opaque;
 export type Null;
 
 -- Pointer types would need special syntax, e.g.:

@@ -591,6 +591,7 @@ async function summarizeGraph(
         initialEnv,
         initialAdtEnv,
         initialBindings,
+        isRawMode,
       );
       initialRegistry.mergeSummary(provider.infection);
     }
@@ -604,6 +605,21 @@ async function summarizeGraph(
       for (const [name, info] of preludeSummary.exports.types.entries()) {
         if (!initialAdtEnv.has(name)) {
           initialAdtEnv.set(name, cloneTypeInfo(info));
+        }
+        // In raw mode, also register type names in the value environment so they can be
+        // used as type arguments (e.g., allocArrayUninit(U8, 1024))
+        if (isRawMode && !initialEnv.has(name)) {
+          const parameterIds = info.parameters;
+          const parameterTypes = parameterIds.map((id) => ({ kind: "var" as const, id }));
+          const typeRefScheme: TypeScheme = {
+            quantifiers: parameterIds,
+            type: {
+              kind: "constructor",
+              name,
+              args: parameterTypes,
+            },
+          };
+          initialEnv.set(name, typeRefScheme);
         }
       }
       initialRegistry.mergeSummary(preludeSummary.infection);
@@ -1413,6 +1429,7 @@ function applyImports(
   targetEnv: Map<string, TypeScheme>,
   targetAdtEnv: Map<string, TypeInfo>,
   targetRuntime?: Map<string, RuntimeValue>,
+  rawMode?: boolean,
 ): void {
   const autoImportedTypes = new Set<string>();
   for (const spec of record.specifiers) {
@@ -1468,6 +1485,21 @@ function applyImports(
         );
       }
       targetAdtEnv.set(spec.imported, cloneTypeInfo(typeExport));
+      // In raw mode, also register type names in the value environment so they can be
+      // used as type arguments (e.g., allocArrayUninit(U8, 1024))
+      if (rawMode && !targetEnv.has(spec.imported)) {
+        const parameterIds = typeExport.parameters;
+        const parameterTypes = parameterIds.map((id) => ({ kind: "var" as const, id }));
+        const typeRefScheme: TypeScheme = {
+          quantifiers: parameterIds,
+          type: {
+            kind: "constructor",
+            name: spec.imported,
+            args: parameterTypes,
+          },
+        };
+        targetEnv.set(spec.imported, typeRefScheme);
+      }
     }
   }
 }

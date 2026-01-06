@@ -160,6 +160,15 @@ function isRowBagDomain(
   return normalizeStateKind(rule?.stateKind) === "rowbag";
 }
 
+function shouldInfectReturn(
+  registry: Context["infectionRegistry"],
+  domain: string,
+): boolean {
+  const rule = registry.domains.get(domain);
+  // Default to true for backwards compatibility; only skip if explicitly false
+  return rule?.infectsReturn !== false;
+}
+
 function cloneIdentitySetByDomain(
   source: IdentitySetByDomain,
 ): IdentitySetByDomain {
@@ -1885,19 +1894,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         },
       );
 
-      // In raw mode with multiple candidates, filter to those where all missing fields have defaults
-      const effectiveCandidates = ctx.rawMode && candidateRecords.length > 1
-        ? candidateRecords.filter(([name, info]) => {
-            const availableDefaults = ctx.recordDefaultFields.get(name);
-            if (!availableDefaults) return false;
-            for (const fieldName of info.recordFields!.keys()) {
-              if (!fields.has(fieldName) && !availableDefaults.has(fieldName)) {
-                return false;
-              }
-            }
-            return true;
-          })
-        : candidateRecords;
+      // Filter candidates to those where all missing fields have defaults
+      // This prevents empty record literals from incorrectly matching records without defaults
+      const effectiveCandidates = candidateRecords.filter(([name, info]) => {
+        const availableDefaults = ctx.recordDefaultFields.get(name);
+        for (const fieldName of info.recordFields!.keys()) {
+          if (!fields.has(fieldName) && !availableDefaults?.has(fieldName)) {
+            return false;
+          }
+        }
+        return true;
+      });
 
       if (effectiveCandidates.length === 1) {
         const [recordName, recordInfo] = effectiveCandidates[0];
@@ -2404,20 +2411,22 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         let argumentValueType = resolvedArg;
         if (!expectsCarrier && argCarrierInfo) {
           argumentValueType = argBareValueType;
-          // Accumulate carrier state using generic union
+          // Accumulate carrier state using generic union (only if domain infects return)
           const domain = argCarrierInfo.domain;
-          const existingState = accumulatedStates.get(domain);
-          if (existingState) {
-            const merged = unionCarrierStates(
-              domain,
-              existingState,
-              argCarrierInfo.state,
-            );
-            if (merged) {
-              accumulatedStates.set(domain, merged);
+          if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+            const existingState = accumulatedStates.get(domain);
+            if (existingState) {
+              const merged = unionCarrierStates(
+                domain,
+                existingState,
+                argCarrierInfo.state,
+              );
+              if (merged) {
+                accumulatedStates.set(domain, merged);
+              }
+            } else {
+              accumulatedStates.set(domain, argCarrierInfo.state);
             }
-          } else {
-            accumulatedStates.set(domain, argCarrierInfo.state);
           }
         }
 
@@ -2436,20 +2445,22 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           });
           if (fallbackSucceeded) {
             argumentValueType = argBareValueType;
-            // Accumulate carrier state using generic union
+            // Accumulate carrier state using generic union (only if domain infects return)
             const domain = argCarrierInfo.domain;
-            const existingState = accumulatedStates.get(domain);
-            if (existingState) {
-              const merged = unionCarrierStates(
-                domain,
-                existingState,
-                argCarrierInfo.state,
-              );
-              if (merged) {
-                accumulatedStates.set(domain, merged);
+            if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+              const existingState = accumulatedStates.get(domain);
+              if (existingState) {
+                const merged = unionCarrierStates(
+                  domain,
+                  existingState,
+                  argCarrierInfo.state,
+                );
+                if (merged) {
+                  accumulatedStates.set(domain, merged);
+                }
+              } else {
+                accumulatedStates.set(domain, argCarrierInfo.state);
               }
-            } else {
-              accumulatedStates.set(domain, argCarrierInfo.state);
             }
             unifySucceeded = true;
           }
@@ -2896,18 +2907,20 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         : resolvedLeft;
       if (leftCarrierInfo) {
         const domain = leftCarrierInfo.domain;
-        const existingState = accumulatedStates.get(domain);
-        if (existingState) {
-          const merged = unionCarrierStates(
-            domain,
-            existingState,
-            leftCarrierInfo.state,
-          );
-          if (merged) {
-            accumulatedStates.set(domain, merged);
+        if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+          const existingState = accumulatedStates.get(domain);
+          if (existingState) {
+            const merged = unionCarrierStates(
+              domain,
+              existingState,
+              leftCarrierInfo.state,
+            );
+            if (merged) {
+              accumulatedStates.set(domain, merged);
+            }
+          } else {
+            accumulatedStates.set(domain, leftCarrierInfo.state);
           }
-        } else {
-          accumulatedStates.set(domain, leftCarrierInfo.state);
         }
       }
       const resolvedRight = collapseCarrier(applyCurrentSubst(ctx, rightType));
@@ -2917,18 +2930,20 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         : resolvedRight;
       if (rightCarrierInfo) {
         const domain = rightCarrierInfo.domain;
-        const existingState = accumulatedStates.get(domain);
-        if (existingState) {
-          const merged = unionCarrierStates(
-            domain,
-            existingState,
-            rightCarrierInfo.state,
-          );
-          if (merged) {
-            accumulatedStates.set(domain, merged);
+        if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+          const existingState = accumulatedStates.get(domain);
+          if (existingState) {
+            const merged = unionCarrierStates(
+              domain,
+              existingState,
+              rightCarrierInfo.state,
+            );
+            if (merged) {
+              accumulatedStates.set(domain, merged);
+            }
+          } else {
+            accumulatedStates.set(domain, rightCarrierInfo.state);
           }
-        } else {
-          accumulatedStates.set(domain, rightCarrierInfo.state);
         }
       }
       // Skip numeric constraints in raw mode - operators are polymorphic
@@ -3067,18 +3082,20 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         : resolvedOperand;
       if (operandCarrierInfo) {
         const domain = operandCarrierInfo.domain;
-        const existingState = accumulatedStates.get(domain);
-        if (existingState) {
-          const merged = unionCarrierStates(
-            domain,
-            existingState,
-            operandCarrierInfo.state,
-          );
-          if (merged) {
-            accumulatedStates.set(domain, merged);
+        if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+          const existingState = accumulatedStates.get(domain);
+          if (existingState) {
+            const merged = unionCarrierStates(
+              domain,
+              existingState,
+              operandCarrierInfo.state,
+            );
+            if (merged) {
+              accumulatedStates.set(domain, merged);
+            }
+          } else {
+            accumulatedStates.set(domain, operandCarrierInfo.state);
           }
-        } else {
-          accumulatedStates.set(domain, operandCarrierInfo.state);
         }
       }
       // Skip numeric constraints in raw mode - operators are polymorphic

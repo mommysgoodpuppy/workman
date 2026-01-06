@@ -12,8 +12,13 @@
 from "std/zig/types.wm" import { Usize };
 from "std/zig/rawmem.wm" import { Ptr, Slice };
 
+-- The DebugAllocator type (stored as a var, passed by pointer)
+export type GpaHandle;
+export type Allocator;
+
 -- Raw-only intrinsics lowered by the Zig raw emitter.
 let zig_gpa_init: (Void) => GpaHandle = ?;
+let zig_gpa_get: (Ptr<GpaHandle, s>) => Allocator = ?;
 let zig_gpa_deinit: (Ptr<GpaHandle, s>) => () = ?;
 let zig_gpa_create: (Ptr<GpaHandle, s>, t) => Ptr<t, s> = ?;
 let zig_gpa_create_uninit: (Ptr<GpaHandle, s>, t) => Ptr<t, s> = ?;
@@ -22,13 +27,13 @@ let zig_gpa_destroy: (Ptr<GpaHandle, s>, Ptr<t, s>) => () = ?;
 let zig_gpa_alloc: (Ptr<GpaHandle, s>, t, Usize) => Slice<t, s> = ?;
 let zig_gpa_free: (Ptr<GpaHandle, s>, Slice<t, s>) => () = ?;
 
--- The DebugAllocator type (stored as a var, passed by pointer)
-export type GpaHandle;
-
 -- GPA namespace with methods attached to a record
 record Gpa {
   -- Initialize a new GPA instance (store result in a var binding)
   init: () => { zig_gpa_init() },
+
+  -- get the actual alloctor
+  get: (handle) => { zig_gpa_get(handle) },
   
   -- Deinitialize the GPA, checking for leaks
   deinit: (handle) => { zig_gpa_deinit(handle) },

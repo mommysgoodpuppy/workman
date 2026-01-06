@@ -26,6 +26,8 @@ import {
   findLetDeclaration,
   findModuleDefinitionLocations,
   findNearestLetBeforeOffset,
+  findRecordFieldDeclaration,
+  findRecordFieldDefinitionLocations,
   findTopLevelLet,
   findTypeDeclaration,
 } from "./findcollect.ts";
@@ -744,6 +746,54 @@ async function handleDefinition(
       seen.add(key);
       locations.push({ uri: targetUri, span, sourceText });
     };
+
+    // Check if cursor is on a record projection field (e.g., `gpa.init` or `gpa.create(...)`)
+    const nodeId = findNodeAtOffset(context.layer3.spanIndex, offset);
+    if (nodeId) {
+      const nodeIndex = buildNodeIndex(context);
+      const node = nodeIndex.get(nodeId);
+      
+      // Find the record_projection node
+      const projectionNode = node?.kind === "record_projection" ? node
+        : node?.kind === "call" && node.callee?.kind === "record_projection" ? node.callee
+        : null;
+      
+      if (projectionNode && projectionNode.field === word) {
+        const targetType = getBestAvailableType(
+          context.layer3.nodeViews,
+          projectionNode.target?.id,
+        );
+        
+        let recordName: string | undefined;
+        if (targetType?.kind === "constructor") {
+          recordName = targetType.name;
+        } else if (targetType?.kind === "record") {
+          // Find record name by matching fields across all modules
+          const targetFields = targetType.fields;
+          for (const [, artifact] of context.modules.entries()) {
+            const adtEnv = artifact.analysis?.layer1?.adtEnv;
+            if (!adtEnv) continue;
+            for (const [name, info] of adtEnv.entries()) {
+              if (info.recordFields?.size === targetFields.size) {
+                let matches = true;
+                for (const [fieldName] of info.recordFields) {
+                  if (!targetFields.has(fieldName)) { matches = false; break; }
+                }
+                if (matches) { recordName = name; break; }
+              }
+            }
+            if (recordName) break;
+          }
+        }
+        
+        if (recordName) {
+          const fieldLocations = findRecordFieldDefinitionLocations(recordName, word, context.modules);
+          for (const loc of fieldLocations) {
+            pushLocation(loc.uri, loc.span, loc.sourceText);
+          }
+        }
+      }
+    }
 
     let localDecl = findLetDeclaration(
       context.program,
