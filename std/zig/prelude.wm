@@ -11,6 +11,14 @@ from "std/zig/types.wm" import {
   Void, Opt, Opaque, Null
 };
 
+
+-- FP helper: wraps any Zig error union into IResult
+export let try = (zigErrorUnion:T):IResult<T> => {
+  --IGNORE; zigres special keyword
+  let zigres:IResult<T> = zigErrorUnion; 
+  zigres
+};
+
 -- Re-export types
 export from "std/zig/types.wm" type I8;
 export from "std/zig/types.wm" type I16;

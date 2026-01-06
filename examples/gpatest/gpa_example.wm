@@ -3,15 +3,19 @@
 -- Example demonstrating the GPA (DebugAllocator) wrapper
 let std = zigImport("std");
 
-from "std/zig/gpa" import { gpa };
+from "std/zig/gpa" import { gpa, GpaHandle };
+from "std/zig/rawmem" import { allocArrayUninit };
+from "std/result/core" import { IResult, IOk, IErr};
 
 -- In raw mode, use 'type' for types that will be passed as comptime parameters
 record Point { x: I32, y: I32 };
+
 
 let main = (): U8 => {
   
   -- Initialize the GPA
   let allocator = gpa.init();
+  let rawGpa = gpa.get(&allocator);
   
   -- Allocate a Point struct (zero-initialized)
   let p1 = gpa.create(&allocator, Point);
@@ -21,11 +25,39 @@ let main = (): U8 => {
   let p2 = gpa.createInit(&allocator, Point, .{ x= 10, y= 20 });
   std.debug.print("p2: ({}, {})\n", .{ zigField(p2, "x"), zigField(p2, "y") });
   
+  let mut threaded = std.^io.^threaded.init(rawGpa, .{});
+  let io = threaded.io();
+
+  -- Use try() to wrap Zig error union into IResult
+  let res = std.fmt.allocPrint(rawGpa, "hi {s} #{d}\n", .{ "zig", 3 }) >> try;
+  
+  -- Extract the value from the IResult
+  let s = match(res) {
+    IOk(result) => {result},
+    IErr(_err) => {"error"}
+  };
+
+  let mut stdout_buf = allocArrayUninit(U8, 1024);
+  let mut stdout_writer = std.^io.^file.stdout().writer(io, &stdout_buf);
+  let stdout: *std.Io.Writer = &stdout_writer.interface;
+
+  -- Use try() for writeAll and flush too
+  let _X = match(stdout.writeAll(s)>>try) {
+    IOk(r1) => {r1},
+    IErr(_err) => {Void}
+  };
+
+  let _X = match(stdout.flush()>>try) {
+    IOk(r2) => {r2},
+    IErr(_err) => {Void}
+  };
+
   -- Free the allocations
   gpa.destroy(&allocator, p1);
   gpa.destroy(&allocator, p2);
+
+  rawGpa.free(s);
   
-  -- Deinit the GPA (will report leaks if any)
   gpa.deinit(&allocator);
   
   0

@@ -619,6 +619,17 @@ function emitNamedLambda(
     returnType = "union(enum) { IOk: []const u8, IErr: anyerror }";
   }
   
+  // anyopaque alone is not allowed as a return type in Zig
+  // For generic functions with zigres, use the module-level __ZigRes type
+  if (returnType === "anyopaque" || returnType === "*anyopaque" || returnType === "?*anyopaque") {
+    if (body.includes("__ZigRes(")) {
+      // Function returns a ZigRes type - use inline to propagate comptime types
+      // Extract the IOk and IErr field types from the union
+      return `inline fn ${name}(${params}) __ZigRes(@typeInfo(@TypeOf(${body})).@"union".fields[0].type, @typeInfo(@TypeOf(${body})).@"union".fields[1].type) { return ${body}; }`;
+    }
+    return `fn ${name}(${params}) void { _ = ${body}; }`;
+  }
+  
   return `fn ${name}(${params}) ${returnType} { return ${body}; }`;
 }
 
@@ -958,6 +969,15 @@ function emitGpaAlloc(
   return `${blockName}: { const ${sliceName} = ${handleExpr}.allocator().alloc(${typeExpr}, ${lenCast}) catch @panic("gpa.alloc failed"); break :${blockName} .{ .ptr = @as(*${typeExpr}, @ptrCast(${sliceName}.ptr)), .len = ${sliceName}.len }; }`;
 }
 
+// Ensure the module-level __ZigRes type generator is hoisted (only once per module)
+function ensureZigResType(ctx: EmitContext): void {
+  const marker = "__ZigRes_hoisted";
+  if (!ctx.state.used.has(marker)) {
+    ctx.state.used.add(marker);
+    ctx.hoisted.push(`fn __ZigRes(comptime T: type, comptime E: type) type { return union(enum) { IOk: T, IErr: E }; }`);
+  }
+}
+
 function emitLet(
   expr: CoreExpr & { kind: "let" },
   ctx: EmitContext,
@@ -980,13 +1000,13 @@ function emitLet(
     const innerCtx = { ...ctx, scope };
     const body = emitExpr(expr.body, innerCtx);
     // Emit code that wraps Zig's error!T into a tagged union
-    // First capture the value to avoid re-evaluating, then define a type alias and wrap
+    // Use a module-level generic type to avoid duplicate type issues with inline functions
+    ensureZigResType(ctx);
     const tmpName = allocateTempName(ctx.state, "__zigres_tmp");
-    const typeName = allocateTempName(ctx.state, "__ZigRes");
     const payloadType = `@typeInfo(@TypeOf(${tmpName})).error_union.payload`;
     const errorType = `@typeInfo(@TypeOf(${tmpName})).error_union.error_set`;
-    const wrappedValue = `if (${tmpName}) |__ok| ${typeName}{ .IOk = __ok } else |__err| ${typeName}{ .IErr = __err }`;
-    return `${label}: { const ${tmpName} = ${value}; const ${typeName} = union(enum) { IOk: ${payloadType}, IErr: ${errorType} }; const ${ref.value} = ${wrappedValue}; break :${label} ${body}; }`;
+    const wrappedValue = `if (${tmpName}) |__ok| __ZigRes(${payloadType}, ${errorType}){ .IOk = __ok } else |__err| __ZigRes(${payloadType}, ${errorType}){ .IErr = __err }`;
+    return `${label}: { const ${tmpName} = ${value}; const ${ref.value} = ${wrappedValue}; break :${label} ${body}; }`;
   }
   
   // Bind the variable BEFORE emitting the body so it's in scope
