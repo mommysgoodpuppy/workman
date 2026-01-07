@@ -1,7 +1,0 @@
---@raw;
--- Define the IResult type with its constructors IOk and IErr
--- @value marks the constructor that carries the value (extracts payload)
--- @effect marks constructors that carry effects (short-circuit)
---
--- Domain sketch lives in `std/infection/domains.wm` (commented until the compiler supports it).
-export infectious effect type IResult<T, E> = @value IOk<T> | @effect IErr<E>;

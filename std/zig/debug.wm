@@ -1,6 +1,6 @@
 from "std/zig/bytes" import { toList };
 from "std/nativeString" import { stringToList, listToString };
-from "std/list/core" import { Empty, Link };
+from "std/coretypes" import { Empty, Link };
 from "std/list" import { listAppend };
 
 let rec replaceFirst = (pattern, replacement) => {

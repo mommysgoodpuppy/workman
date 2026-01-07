@@ -1,6 +1,6 @@
 -- StringSet: Set of strings using association list
 -- O(n) operations, but simple and correct. Upgrade to balanced tree later.
-from "std/list/core" import { Empty, Link };
+from "std/coretypes" import { Empty, Link };
 from "std/nativeString" import { stringEq };
 
 -- StringSet is a list of unique strings

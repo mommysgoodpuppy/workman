@@ -1,8 +1,8 @@
 -- IntSet: Set of integers using association list
 -- O(n) operations, but simple and correct. Upgrade to balanced tree later.
 -- Useful for visited sets, free variables, etc.
---from "std/list/core" import { Empty, Link };
---from "std/option/core" import { Some, None };
+from "std/coretypes" import { Empty, Link };
+from "std/coretypes" import { Some, None };
 
 -- IntSet is a list of unique integers
 export type IntSet = IntSetEmpty | IntSetCons<Int, IntSet>;

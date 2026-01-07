@@ -1,6 +1,6 @@
 -- Testing harness for Workman
 -- Basic assertions and test running
-from "std/list/core" import { Empty, Link };
+from "std/coretypes" import { Empty, Link };
 from "std/nativeString" import { stringConcat };
 
 -- Test result type

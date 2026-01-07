@@ -1,7 +1,7 @@
-from "std/result/core" import { IOk, IErr };
+from "std/coretypes" import { IOk, IErr };
 --from "std/option/core" import { Some, None };
 --from "std/list/core" import { Empty, Link };
-export from "std/result/core" type IResult(..);
+export from "std/coretypes" type IResult(..);
 
 export let map = match(f, result) => {
   (f, IOk(value)) => { IOk(f(value)) },

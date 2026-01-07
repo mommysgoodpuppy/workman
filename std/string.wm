@@ -2,11 +2,11 @@
 -- Strings are represented as List<Int> where each Int is a character code
 -- ASCII character codes: 'A' = 65, 'a' = 97, '0' = 48, ' ' = 32, etc.
 from "std/core/string" import { strFromLiteral };
-from "std/option/core" import { Some, None };
-from "std/list/core" import { Empty, Link };
+from "std/coretypes" import { Some, None };
+from "std/coretypes" import { Empty, Link };
 from "std/core/int" import { intAdd as add, intSub as sub, intMul as mul, intDiv as div, intCompare as cmpInt, intEq as eq };
 from "std/core/ordering" import { LT, EQ, GT };
-from "std/result/core" import { IOk, IErr };
+from "std/coretypes" import { IOk, IErr };
 
 -- Type alias for clarity (just documentation, not enforced)
 -- type String = List<Int>;

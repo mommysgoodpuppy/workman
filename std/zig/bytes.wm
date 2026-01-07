@@ -1,5 +1,5 @@
 from "std/zig/mem" import { read, len, slice };
-from "std/list/core" import { Empty, Link };
+from "std/coretypes" import { Empty, Link };
 from "std/list" import { listReverse };
 from "std/core/int" import { intAdd, intEq };
 from "std/core/string" import { listToString };

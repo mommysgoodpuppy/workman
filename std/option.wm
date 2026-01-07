@@ -1,6 +1,6 @@
-from "std/option/core" import { Some, None };
-from "std/list/core" import { Empty, Link };
-export from "std/option/core" type Option(..);
+from "std/coretypes" import { Some, None };
+from "std/coretypes" import { Empty, Link };
+export from "std/coretypes" type Option(..);
 
 export let map = match(f, option) => {
   (f, Some(value)) => { Some(f(value)) },

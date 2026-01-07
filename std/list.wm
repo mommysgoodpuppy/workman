@@ -1,8 +1,8 @@
-from "std/list/core" import { Empty, Link };
+from "std/coretypes" import { Empty, Link };
 from "std/core/int" import { intAdd, intSub, intMul, intCompare, intEq as eq };
-from "std/result/core" import { IOk, IErr };
+from "std/coretypes" import { IOk, IErr };
 from "std/core/ordering" import { LT, EQ, GT };
-from "std/option/core" import { Some, None };
+from "std/coretypes" import { Some, None };
 
 type ListErr =
   | OutOfBounds

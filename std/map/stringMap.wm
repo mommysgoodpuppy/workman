@@ -1,7 +1,7 @@
 -- StringMap: Association list keyed by String
 -- O(n) lookup, but simple and correct. Upgrade to balanced tree later.
-from "std/option/core" import { Some, None };
-from "std/list/core" import { Empty, Link };
+from "std/coretypes" import { Some, None };
+from "std/coretypes" import { Empty, Link };
 from "std/nativeString" import { stringEq };
  --StringMap is an association list of (String, V) pairs
  --Using List<(String, V)> directly
