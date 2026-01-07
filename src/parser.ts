@@ -1053,6 +1053,7 @@ class SurfaceParser {
 
   private parseTypeDeclaration(exportToken?: Token): TypeDeclaration {
     const typeToken = this.expectKeyword("type");
+    const isRecursive = this.matchKeyword("rec");
     const nameToken = this.expectTypeName();
     const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
 
@@ -1081,17 +1082,80 @@ class SurfaceParser {
     if (isOpaque) {
       declaration.opaque = true;
     }
+    if (isRecursive) {
+      declaration.isRecursive = true;
+    }
+
+    // Parse mutual bindings with "and"
+    const mutualBindings: Array<TypeDeclaration | RecordDeclaration> = [];
+    while (this.matchKeyword("and")) {
+      const nextToken = this.peek();
+      if (nextToken.kind === "keyword" && nextToken.value === "type") {
+        const mutualType = this.parseTypeDeclaration();
+        mutualType.isRecursive = true;
+        mutualBindings.push(mutualType);
+      } else if (nextToken.kind === "keyword" && nextToken.value === "record") {
+        const mutualRecord = this.parseRecordDeclaration();
+        mutualRecord.isRecursive = true;
+        mutualBindings.push(mutualRecord);
+      } else {
+        // Default to type if no keyword (allows `and Foo = ...`)
+        const mutualType = this.parseTypeDeclarationBody(isRecursive);
+        mutualBindings.push(mutualType);
+      }
+    }
+    if (mutualBindings.length > 0) {
+      declaration.mutualBindings = mutualBindings;
+    }
+
     if (exportToken) {
       declaration.export = {
         kind: "export",
         span: this.createSpan(exportToken, exportToken),
       };
+      // Also mark mutual bindings as exported
+      if (declaration.mutualBindings) {
+        for (const binding of declaration.mutualBindings) {
+          binding.export = declaration.export;
+        }
+      }
     }
+    return declaration;
+  }
+
+  // Parse a type declaration body (name, params, members) without the 'type' keyword
+  private parseTypeDeclarationBody(isRecursive: boolean): TypeDeclaration {
+    const startToken = this.peek();
+    const nameToken = this.expectTypeName();
+    const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
+
+    let members: TypeAliasMember[];
+    let isOpaque = false;
+    if (this.checkSymbol(";") || this.isEOF()) {
+      members = [];
+      isOpaque = true;
+    } else {
+      this.expectSymbol("=");
+      members = this.parseTypeAliasMembers();
+    }
+
+    const endToken = this.previous();
+    const declaration: TypeDeclaration = {
+      kind: "type",
+      name: nameToken.value,
+      typeParams,
+      members,
+      span: this.spanFrom(startToken.start, endToken.end),
+      id: nextNodeId(),
+    };
+    if (isOpaque) declaration.opaque = true;
+    if (isRecursive) declaration.isRecursive = true;
     return declaration;
   }
 
   private parseRecordDeclaration(exportToken?: Token): RecordDeclaration {
     const recordToken = this.expectKeyword("record");
+    const isRecursive = this.matchKeyword("rec");
     const nameToken = this.expectTypeName();
     const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
     this.expectSymbol("=");
@@ -1104,12 +1168,63 @@ class SurfaceParser {
       span: this.spanFrom(recordToken.start, endToken.end),
       id: nextNodeId(),
     };
+    if (isRecursive) {
+      declaration.isRecursive = true;
+    }
+
+    // Parse mutual bindings with "and"
+    const mutualBindings: Array<TypeDeclaration | RecordDeclaration> = [];
+    while (this.matchKeyword("and")) {
+      const nextToken = this.peek();
+      if (nextToken.kind === "keyword" && nextToken.value === "type") {
+        const mutualType = this.parseTypeDeclaration();
+        mutualType.isRecursive = true;
+        mutualBindings.push(mutualType);
+      } else if (nextToken.kind === "keyword" && nextToken.value === "record") {
+        const mutualRecord = this.parseRecordDeclaration();
+        mutualRecord.isRecursive = true;
+        mutualBindings.push(mutualRecord);
+      } else {
+        // Default to record if no keyword (allows `and Foo = { ... }`)
+        const mutualRecord = this.parseRecordDeclarationBody(isRecursive);
+        mutualBindings.push(mutualRecord);
+      }
+    }
+    if (mutualBindings.length > 0) {
+      declaration.mutualBindings = mutualBindings;
+    }
+
     if (exportToken) {
       declaration.export = {
         kind: "export",
         span: this.createSpan(exportToken, exportToken),
       };
+      // Also mark mutual bindings as exported
+      if (declaration.mutualBindings) {
+        for (const binding of declaration.mutualBindings) {
+          binding.export = declaration.export;
+        }
+      }
     }
+    return declaration;
+  }
+
+  // Parse a record declaration body (name, params, members) without the 'record' keyword
+  private parseRecordDeclarationBody(isRecursive: boolean): RecordDeclaration {
+    const startToken = this.peek();
+    const nameToken = this.expectTypeName();
+    const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
+    this.expectSymbol("=");
+    const { members, endToken } = this.parseRecordMembers();
+    const declaration: RecordDeclaration = {
+      kind: "record_decl",
+      name: nameToken.value,
+      typeParams,
+      members,
+      span: this.spanFrom(startToken.start, endToken.end),
+      id: nextNodeId(),
+    };
+    if (isRecursive) declaration.isRecursive = true;
     return declaration;
   }
 

@@ -1,0 +1,121 @@
+-- StringSet: Set of strings using association list
+-- O(n) operations, but simple and correct. Upgrade to balanced tree later.
+from "std/list/core" import { Empty, Link };
+from "std/nativeString" import { stringEq };
+
+-- StringSet is a list of unique strings
+export type StringSet = StringSetEmpty | StringSetCons<String, StringSet>;
+
+-- Empty set
+export let stringSetEmpty = StringSetEmpty;
+
+-- Check if string exists in set
+export let rec stringSetContains = match(key, set) => {
+  (key, StringSetEmpty) => { false },
+  (key, StringSetCons(k, rest)) => {
+    match (stringEq(key, k)) {
+      true => { true },
+      false => { stringSetContains(key, rest) }
+    }
+  }
+};
+
+-- Insert a string (no duplicates)
+export let stringSetInsert = (key, set) => {
+  match (stringSetContains(key, set)) {
+    true => { set },
+    false => { StringSetCons(key, set) }
+  }
+};
+
+-- Remove a string
+export let rec stringSetRemove = match(key, set) => {
+  (key, StringSetEmpty) => { StringSetEmpty },
+  (key, StringSetCons(k, rest)) => {
+    match (stringEq(key, k)) {
+      true => { rest },
+      false => { StringSetCons(k, stringSetRemove(key, rest)) }
+    }
+  }
+};
+
+-- Convert to list
+export let rec stringSetToList = match(set) => {
+  StringSetEmpty => { Empty },
+  StringSetCons(k, rest) => { Link(k, stringSetToList(rest)) }
+};
+
+-- Create from list
+export let rec stringSetFromList = match(list) => {
+  Empty => { StringSetEmpty },
+  Link(k, rest) => { stringSetInsert(k, stringSetFromList(rest)) }
+};
+
+-- Union of two sets
+export let rec stringSetUnion = match(s1, s2) => {
+  (s1, StringSetEmpty) => { s1 },
+  (s1, StringSetCons(k, rest)) => { 
+    stringSetUnion(stringSetInsert(k, s1), rest) 
+  }
+};
+
+-- Difference: s1 - s2 (elements in s1 but not in s2)
+export let rec stringSetDifference = match(s1, s2) => {
+  (StringSetEmpty, _) => { StringSetEmpty },
+  (StringSetCons(k, rest), s2) => {
+    match (stringSetContains(k, s2)) {
+      true => { stringSetDifference(rest, s2) },
+      false => { StringSetCons(k, stringSetDifference(rest, s2)) }
+    }
+  }
+};
+
+-- Intersection: elements in both sets
+export let rec stringSetIntersection = match(s1, s2) => {
+  (StringSetEmpty, _) => { StringSetEmpty },
+  (StringSetCons(k, rest), s2) => {
+    match (stringSetContains(k, s2)) {
+      true => { StringSetCons(k, stringSetIntersection(rest, s2)) },
+      false => { stringSetIntersection(rest, s2) }
+    }
+  }
+};
+
+-- Size of set
+export let rec stringSetSize = match(set) => {
+  StringSetEmpty => { 0 },
+  StringSetCons(_, rest) => { 1 + stringSetSize(rest) }
+};
+
+-- Check if set is empty
+export let stringSetIsEmpty = match(set) => {
+  StringSetEmpty => { true },
+  _ => { false }
+};
+
+-- Fold over set
+export let rec stringSetFold = match(f, acc, set) => {
+  (f, acc, StringSetEmpty) => { acc },
+  (f, acc, StringSetCons(k, rest)) => { 
+    stringSetFold(f, f(acc, k), rest) 
+  }
+};
+
+-- Map over set (applying f to each element)
+export let rec stringSetMap = match(f, set) => {
+  (f, StringSetEmpty) => { StringSetEmpty },
+  (f, StringSetCons(k, rest)) => { 
+    stringSetInsert(f(k), stringSetMap(f, rest)) 
+  }
+};
+
+-- Filter set
+export let rec stringSetFilter = match(pred, set) => {
+  (pred, StringSetEmpty) => { StringSetEmpty },
+  (pred, StringSetCons(k, rest)) => {
+    match (pred(k)) {
+      true => { StringSetCons(k, stringSetFilter(pred, rest)) },
+      false => { stringSetFilter(pred, rest) }
+    }
+  }
+};

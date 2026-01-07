@@ -425,6 +425,8 @@ export interface TypeDeclaration extends NodeBase {
   declarationKind?: "record";
   opaque?: boolean; // True for extern/primitive types with no constructors
   infectious?: InfectiousModifier; // Optional infectious modifier
+  isRecursive?: boolean; // True for `type rec`
+  mutualBindings?: Array<TypeDeclaration | RecordDeclaration>; // For `type rec ... and record ...`
   export?: ExportModifier;
   leadingComments?: CommentBlock[];
   trailingComment?: string;
@@ -437,6 +439,8 @@ export interface RecordDeclaration extends NodeBase {
   name: string;
   typeParams: TypeParameter[];
   members: RecordMember[];
+  isRecursive?: boolean; // True for `record rec`
+  mutualBindings?: Array<TypeDeclaration | RecordDeclaration>; // For `record rec ... and type ...`
   export?: ExportModifier;
   leadingComments?: CommentBlock[];
   trailingComment?: string;

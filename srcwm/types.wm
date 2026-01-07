@@ -1,0 +1,195 @@
+-- Type system types for the Workman compiler
+-- This mirrors the TypeScript types.ts but in Workman
+
+from "std/list/core" import { Empty, Link };
+from "std/option/core" import { Some, None };
+from "std/map/stringMap" import { StringMap, stringMapEmpty };
+
+-- =============================================================================
+-- Source Spans
+-- =============================================================================
+
+-- A span in the source code (byte offsets)
+record Span = { start: Int, end: Int };
+
+-- Node ID for unique identification
+-- type NodeId = Int;  -- Just use Int directly
+
+-- =============================================================================
+-- Types - The core type representation
+-- =============================================================================
+
+-- Mutually recursive: Type and EffectRow reference each other
+type rec Type =
+  | TVar<Int>                             -- Type variable (id)
+  | TFunc<Type, Type>                     -- Function type (from -> to)
+  | TConstructor<String, List<Type>>      -- Named type with args
+  | TTuple<List<Type>>                    -- Tuple type
+  | TArray<Int, Type>                     -- Fixed-size array [n]T
+  | TRecord<StringMap<Type>>              -- Record type { field: Type }
+  | TEffectRow<EffectRow>                 -- Effect row type
+  | TUnit                                 -- Unit type ()
+  | TInt                                  -- Int type
+  | TBool                                 -- Bool type
+  | TChar                                 -- Char type
+  | TString                               -- String type
+and record EffectRow = {
+  cases: StringMap<Option<Type>>,         -- Effect label -> payload
+  tail: Option<Type>                      -- Open row variable or closed
+};
+
+-- =============================================================================
+-- Provenance - where a type came from (for error messages)
+-- =============================================================================
+
+type Provenance =
+  | ProvUserHole<Int>                     -- User wrote ?
+  | ProvExprHole<Int>                     -- Generated hole
+  | ProvErrorFreeVar<String>              -- Unknown variable
+  | ProvErrorNotFunction<Type>            -- Called non-function
+  | ProvErrorOccursCheck<Type, Type>      -- Infinite type
+  | ProvErrorUnifyConflict<Type, Type>    -- Type mismatch
+  | ProvErrorUnknownType<String>          -- Unknown type name
+  | ProvErrorArity<Int, Int>              -- Wrong number of type args
+  | ProvIncomplete<String>;               -- Incomplete inference
+
+-- Type scheme: quantified type (forall a b. ...)
+record TypeScheme = {
+  quantifiers: List<Int>,                 -- Bound type variable IDs
+  ty: Type                                -- The underlying type
+};
+
+-- =============================================================================
+-- Substitution - mapping type variables to types
+-- =============================================================================
+
+-- For now, just use IntMap<Type> from std
+-- type Substitution = IntMap<Type>;
+
+-- =============================================================================
+-- Constraint Labels - for effect/infection tracking
+-- =============================================================================
+
+type Identity =
+  | IdResource<Int>                       -- ψ - file handle, allocation
+  | IdBorrow<Int>                         -- κ - borrow token  
+  | IdHole<Int>;                          -- α - type hole
+
+type ConstraintLabel =
+  | CLRow<String, EffectRow>              -- Row-based domain (effect, mem, etc)
+  | CLMem<String, Identity>               -- Memory capability
+  | CLHole<Identity, Provenance>;         -- Type hole tracking
+
+-- =============================================================================
+-- Helper constructors
+-- =============================================================================
+
+-- Create an empty effect row
+export let effectRowEmpty = () => {
+  .{ cases = stringMapEmpty, tail = None }
+};
+
+-- Create a closed effect row with cases
+export let effectRowClosed = (cases) => {
+  .{ cases = cases, tail = None }
+};
+
+-- Create an open effect row with a tail variable
+export let effectRowOpen = (cases, tailVar) => {
+  .{ cases = cases, tail = Some(tailVar) }
+};
+
+-- Create a function type
+export let tFunc = (paramTy, resultTy) => {
+  TFunc(paramTy, resultTy)
+};
+
+-- Create a multi-arg function type: (A, B, C) -> D
+export let rec tFuncN = match(args, result) => {
+  (Empty, result) => { result },
+  (Link(arg, rest), result) => { TFunc(arg, tFuncN(rest, result)) }
+};
+
+-- Create a constructor type with no args
+export let tCon0 = (name) => {
+  TConstructor(name, Empty)
+};
+
+-- Create a constructor type with one arg
+export let tCon1 = (name, arg) => {
+  TConstructor(name, Link(arg, Empty))
+};
+
+-- Create a constructor type with two args
+export let tCon2 = (name, arg1, arg2) => {
+  TConstructor(name, Link(arg1, Link(arg2, Empty)))
+};
+
+-- Common type constructors
+export let tList = (elem) => { tCon1("List", elem) };
+export let tOption = (elem) => { tCon1("Option", elem) };
+export let tResult = (ok, err) => { tCon2("IResult", ok, err) };
+
+-- Create a fresh type variable (needs IdGen threaded)
+export let freshTVar = (idGen) => {
+  let (id, newGen) = idGen;
+  (TVar(id), newGen)
+};
+
+-- =============================================================================
+-- Type predicates
+-- =============================================================================
+
+export let isVar = match(ty) => {
+  TVar(_) => { true },
+  _ => { false }
+};
+
+export let isFunc = match(ty) => {
+  TFunc(_, _) => { true },
+  _ => { false }
+};
+
+export let isConstructor = match(ty) => {
+  TConstructor(_, _) => { true },
+  _ => { false }
+};
+
+export let isTuple = match(ty) => {
+  TTuple(_) => { true },
+  _ => { false }
+};
+
+export let isRecord = match(ty) => {
+  TRecord(_) => { true },
+  _ => { false }
+};
+
+export let isEffectRow = match(ty) => {
+  TEffectRow(_) => { true },
+  _ => { false }
+};
+
+-- =============================================================================
+-- Type Scheme helpers
+-- =============================================================================
+
+-- Create a monomorphic type scheme (no quantifiers)
+export let monoScheme = (ty) => {
+  .{ quantifiers = Empty, ty = ty }
+};
+
+-- Create a polymorphic type scheme
+export let polyScheme = (quantifiers, ty) => {
+  .{ quantifiers = quantifiers, ty = ty }
+};
+
+-- =============================================================================
+-- Identity helpers
+-- =============================================================================
+
+export let formatIdentity = match(id) => {
+  IdResource(n) => { "ψ" },  -- TODO: string concat with int
+  IdBorrow(n) => { "κ" },
+  IdHole(n) => { "α" }
+};

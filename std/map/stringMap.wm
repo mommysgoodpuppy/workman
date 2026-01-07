@@ -1,0 +1,117 @@
+-- StringMap: Association list keyed by String
+-- O(n) lookup, but simple and correct. Upgrade to balanced tree later.
+from "std/option/core" import { Some, None };
+from "std/list/core" import { Empty, Link };
+from "std/nativeString" import { stringEq };
+ --StringMap is an association list of (String, V) pairs
+ --Using List<(String, V)> directly
+export type StringMap<V> = StringMapEmpty | StringMapCons<String, V, StringMap<V>>;
+
+-- Empty map
+export let stringMapEmpty = StringMapEmpty;
+
+-- Insert a key-value pair (overwrites existing)
+export let rec stringMapInsert = match(key, value, map) => {
+  (key, value, StringMapEmpty) => { 
+    StringMapCons(key, value, StringMapEmpty) 
+  },
+  (key, value, StringMapCons(k, v, rest)) => {
+    match (stringEq(key, k)) {
+      true => { StringMapCons(key, value, rest) },
+      false => { StringMapCons(k, v, stringMapInsert(key, value, rest)) }
+    }
+  }
+};
+
+-- Lookup a value by key
+export let rec stringMapLookup = match(key, map) => {
+  (key, StringMapEmpty) => { None },
+  (key, StringMapCons(k, v, rest)) => {
+    match (stringEq(key, k)) {
+      true => { Some(v) },
+      false => { stringMapLookup(key, rest) }
+    }
+  }
+};
+
+-- Check if key exists
+export let rec stringMapContains = match(key, map) => {
+  (key, StringMapEmpty) => { false },
+  (key, StringMapCons(k, _, rest)) => {
+    match (stringEq(key, k)) {
+      true => { true },
+      false => { stringMapContains(key, rest) }
+    }
+  }
+};
+
+-- Remove a key
+export let rec stringMapRemove = match(key, map) => {
+  (key, StringMapEmpty) => { StringMapEmpty },
+  (key, StringMapCons(k, v, rest)) => {
+    match (stringEq(key, k)) {
+      true => { rest },
+      false => { StringMapCons(k, v, stringMapRemove(key, rest)) }
+    }
+  }
+};
+
+-- Convert to list of (key, value) pairs
+export let rec stringMapToList = match(map) => {
+  StringMapEmpty => { Empty },
+  StringMapCons(k, v, rest) => { Link((k, v), stringMapToList(rest)) }
+};
+
+-- Create from list of (key, value) pairs
+export let rec stringMapFromList = match(pairs) => {
+  Empty => { StringMapEmpty },
+  Link((k, v), rest) => { stringMapInsert(k, v, stringMapFromList(rest)) }
+};
+
+-- Get all keys
+export let rec stringMapKeys = match(map) => {
+  StringMapEmpty => { Empty },
+  StringMapCons(k, _, rest) => { Link(k, stringMapKeys(rest)) }
+};
+
+-- Get all values
+export let rec stringMapValues = match(map) => {
+  StringMapEmpty => { Empty },
+  StringMapCons(_, v, rest) => { Link(v, stringMapValues(rest)) }
+};
+
+-- Map over values
+export let rec stringMapMap = match(f, map) => {
+  (f, StringMapEmpty) => { StringMapEmpty },
+  (f, StringMapCons(k, v, rest)) => { 
+    StringMapCons(k, f(v), stringMapMap(f, rest)) 
+  }
+};
+
+-- Fold over entries
+export let rec stringMapFold = match(f, acc, map) => {
+  (f, acc, StringMapEmpty) => { acc },
+  (f, acc, StringMapCons(k, v, rest)) => { 
+    stringMapFold(f, f(acc, k, v), rest) 
+  }
+};
+
+-- Union of two maps (right map wins on conflicts)
+export let rec stringMapUnion = match(m1, m2) => {
+  (m1, StringMapEmpty) => { m1 },
+  (m1, StringMapCons(k, v, rest)) => { 
+    stringMapUnion(stringMapInsert(k, v, m1), rest) 
+  }
+};
+
+-- Size of map
+export let rec stringMapSize = match(map) => {
+  StringMapEmpty => { 0 },
+  StringMapCons(_, _, rest) => { 1 + stringMapSize(rest) }
+};
+
+-- Check if map is empty
+export let stringMapIsEmpty = match(map) => {
+  StringMapEmpty => { true },
+  _ => { false }
+};

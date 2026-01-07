@@ -50,8 +50,7 @@ export function lex(source: string, sourceName?: string): Token[] {
       // It's a negative number if:
       // - It's at the start, OR
       // - Previous non-whitespace token is not a number, identifier, or closing paren/bracket
-      const canBeNegative =
-        tokens.length === 0 ||
+      const canBeNegative = tokens.length === 0 ||
         (() => {
           const lastToken = tokens[tokens.length - 1];
           return (
@@ -162,7 +161,9 @@ export function lex(source: string, sourceName?: string): Token[] {
         });
         continue;
       }
-      if (keywords.has(lower)) {
+      // Keywords are only matched for lowercase identifiers
+      // Uppercase identifiers (like "Type") are constructors, not keywords
+      if (!isUppercase(value[0]) && keywords.has(lower)) {
         tokens.push({
           kind: "keyword",
           value: lower,

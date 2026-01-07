@@ -31,3 +31,82 @@ export let toList = match(option) => {
   Some(value) => { Link(value, Empty) },
   None => { Empty }
 };
+-- Check if option contains a value
+export let isSome = match(option) => {
+  Some(_) => { true },
+  None => { false }
+};
+
+-- Check if option is empty
+export let isNone = match(option) => {
+  Some(_) => { false },
+  None => { true }
+};
+
+-- Apply a function if Some, otherwise return None
+export let filter = match(pred, option) => {
+  (pred, Some(value)) => {
+    match (pred(value)) {
+      true => { Some(value) },
+      false => { None }
+    }
+  },
+  (_, None) => { None }
+};
+
+-- Combine two options (both must be Some)
+export let map2 = match(f, opt1, opt2) => {
+  (f, Some(a), Some(b)) => { Some(f(a, b)) },
+  (_, _, _) => { None }
+};
+
+-- Sequence a list of options: all must be Some, or result is None
+export let rec optionSequence = match(options) => {
+  Empty => { Some(Empty) },
+  Link(opt, rest) => {
+    match (opt) {
+      None => { None },
+      Some(value) => {
+        match (optionSequence(rest)) {
+          None => { None },
+          Some(values) => { Some(Link(value, values)) }
+        }
+      }
+    }
+  }
+};
+
+-- Traverse: map a function that returns Option, then sequence
+export let rec optionTraverse = match(f, list) => {
+  (f, Empty) => { Some(Empty) },
+  (f, Link(x, rest)) => {
+    match (f(x)) {
+      None => { None },
+      Some(y) => {
+        match (optionTraverse(f, rest)) {
+          None => { None },
+          Some(ys) => { Some(Link(y, ys)) }
+        }
+      }
+    }
+  }
+};
+
+-- Flatten nested Option
+export let flatten = match(opt) => {
+  Some(inner) => { inner },
+  None => { None }
+};
+
+-- Get value or panic (unsafe - use sparingly)
+-- Note: This will just return () if None since we don't have panic yet
+export let unwrap = match(option) => {
+  Some(value) => { value },
+  None => { Panic("unwrap called on None") }
+};
+
+-- Zip two options together
+export let zip = match(opt1, opt2) => {
+  (Some(a), Some(b)) => { Some((a, b)) },
+  (_, _) => { None }
+};

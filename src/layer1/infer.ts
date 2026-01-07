@@ -3291,17 +3291,21 @@ export function inferProgram(
   const seenTypeDeclsPass1 = new Set<number>();
   for (const decl of canonicalProgram.declarations) {
     if (decl.kind === "type" || decl.kind === "record_decl") {
-      if (seenTypeDeclsPass1.has(decl.id)) {
-        continue;
-      }
-      seenTypeDeclsPass1.add(decl.id);
-      const result = registerTypeName(ctx, decl);
-      if (!result.success) {
-        // Duplicate detected - mark it and skip further processing
-        markedDeclarations.push(result.mark);
-        skippedTypeDecls.add(decl.id);
-      } else {
-        successfulTypeDecls.add(decl.id);
+      // Get all declarations including mutual bindings
+      const allDecls = [decl, ...(decl.mutualBindings || [])];
+      for (const d of allDecls) {
+        if (seenTypeDeclsPass1.has(d.id)) {
+          continue;
+        }
+        seenTypeDeclsPass1.add(d.id);
+        const result = registerTypeName(ctx, d);
+        if (!result.success) {
+          // Duplicate detected - mark it and skip further processing
+          markedDeclarations.push(result.mark);
+          skippedTypeDecls.add(d.id);
+        } else {
+          successfulTypeDecls.add(d.id);
+        }
       }
     }
   }
@@ -3313,20 +3317,25 @@ export function inferProgram(
   // Pass 2: Register constructors (now all type names are known)
   const seenTypeDeclsPass2 = new Set<number>();
   for (const decl of canonicalProgram.declarations) {
-    if (
-      (decl.kind === "type" || decl.kind === "record_decl") &&
-      successfulTypeDecls.has(decl.id) &&
-      !skippedTypeDecls.has(decl.id)
-    ) {
-      if (seenTypeDeclsPass2.has(decl.id)) continue;
-      seenTypeDeclsPass2.add(decl.id);
-      const infectiousDecl = infectiousTypes.get(decl.name);
-      const result = decl.kind === "record_decl"
-        ? registerRecordDeclaration(ctx, decl)
-        : registerTypeConstructors(ctx, decl, infectiousDecl);
-      if (!result.success) {
-        markedDeclarations.push(result.mark);
-        successfulTypeDecls.delete(decl.id); // Remove from successful set
+    if (decl.kind === "type" || decl.kind === "record_decl") {
+      // Get all declarations including mutual bindings
+      const allDecls = [decl, ...(decl.mutualBindings || [])];
+      for (const d of allDecls) {
+        if (
+          successfulTypeDecls.has(d.id) &&
+          !skippedTypeDecls.has(d.id)
+        ) {
+          if (seenTypeDeclsPass2.has(d.id)) continue;
+          seenTypeDeclsPass2.add(d.id);
+          const infectiousDecl = infectiousTypes.get(d.name);
+          const result = d.kind === "record_decl"
+            ? registerRecordDeclaration(ctx, d)
+            : registerTypeConstructors(ctx, d, infectiousDecl);
+          if (!result.success) {
+            markedDeclarations.push(result.mark);
+            successfulTypeDecls.delete(d.id); // Remove from successful set
+          }
+        }
       }
     }
   }

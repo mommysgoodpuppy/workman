@@ -1,4 +1,6 @@
 from "std/result/core" import { IOk, IErr };
+--from "std/option/core" import { Some, None };
+--from "std/list/core" import { Empty, Link };
 export from "std/result/core" type IResult(..);
 
 export let map = match(f, result) => {
@@ -31,4 +33,124 @@ export let stripErr = match(in) => {
   IErr(_) => {
     --noop
   }
+};
+
+-- Check if result is Ok
+export let resultIsOk = match(result) => {
+  IOk(_) => { true },
+  IErr(_) => { false }
+};
+
+-- Check if result is Err
+export let resultIsErr = match(result) => {
+  IOk(_) => { false },
+  IErr(_) => { true }
+};
+
+-- Convert Result to Option (discards error)
+export let resultToOption = match(result) => {
+  IOk(value) => { Some(value) },
+  IErr(_) => { None }
+};
+
+-- Convert Option to Result
+export let optionToResult = match(err, option) => {
+  (err, Some(value)) => { IOk(value) },
+  (err, None) => { IErr(err) }
+};
+
+-- Get Ok value or panic
+export let resultUnwrap = match(result) => {
+  IOk(value) => { value },
+  IErr(_) => { Panic("resultUnwrap called on IErr") }
+};
+
+-- Get Err value or panic
+export let resultUnwrapErr = match(result) => {
+  IOk(_) => { Panic("resultUnwrapErr called on IOk") },
+  IErr(error) => { error }
+};
+
+-- Sequence: List<Result<A, E>> -> Result<List<A>, E>
+-- Returns first error if any, otherwise collects all Ok values
+export let rec resultSequence = match(results) => {
+  Empty => { IOk(Empty) },
+  Link(result, rest) => {
+    match (result) {
+      IErr(e) => { IErr(e) },
+      IOk(value) => {
+        match (resultSequence(rest)) {
+          IErr(e) => { IErr(e) },
+          IOk(values) => { IOk(Link(value, values)) }
+        }
+      }
+    }
+  }
+};
+
+-- Traverse: map function returning Result, then sequence
+export let rec resultTraverse = match(f, list) => {
+  (f, Empty) => { IOk(Empty) },
+  (f, Link(x, rest)) => {
+    match (f(x)) {
+      IErr(e) => { IErr(e) },
+      IOk(y) => {
+        match (resultTraverse(f, rest)) {
+          IErr(e) => { IErr(e) },
+          IOk(ys) => { IOk(Link(y, ys)) }
+        }
+      }
+    }
+  }
+};
+
+-- Flatten nested Result
+export let resultFlatten = match(result) => {
+  IOk(inner) => { inner },
+  IErr(e) => { IErr(e) }
+};
+
+-- Combine two results
+export let resultMap2 = match(f, r1, r2) => {
+  (f, IOk(a), IOk(b)) => { IOk(f(a, b)) },
+  (_, IErr(e), _) => { IErr(e) },
+  (_, _, IErr(e)) => { IErr(e) }
+};
+
+-- Try alternative if first is Err
+export let resultOrElse = match(fallback, result) => {
+  (fallback, IOk(value)) => { IOk(value) },
+  (fallback, IErr(_)) => { fallback() }
+};
+
+-- Get Ok value with default
+export let resultGetOrElse = match(default, result) => {
+  (default, IOk(value)) => { value },
+  (default, IErr(_)) => { default() }
+};
+
+-- Partition results into (successes, errors)
+let rec resultPartitionHelper = (results, oks, errs) => {
+  match (results) {
+    Empty => { (oks, errs) },
+    Link(result, rest) => {
+      match (result) {
+        IOk(v) => { resultPartitionHelper(rest, Link(v, oks), errs) },
+        IErr(e) => { resultPartitionHelper(rest, oks, Link(e, errs)) }
+      }
+    }
+  }
+};
+
+-- Helper to reverse a list
+let rec reverseList = (list, acc) => {
+  match (list) {
+    Empty => { acc },
+    Link(x, rest) => { reverseList(rest, Link(x, acc)) }
+  }
+};
+
+export let resultPartition = (results) => {
+  let (oks, errs) = resultPartitionHelper(results, Empty, Empty);
+  (reverseList(oks, Empty), reverseList(errs, Empty))
 };

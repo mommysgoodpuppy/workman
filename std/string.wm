@@ -393,7 +393,7 @@ export let rec strJoin = match(sep, strings) => {
   (sep, Link(s, Empty)) => { s },
   (sep, Link(s, rest)) => { strConcat(s, strConcat(sep, strJoin(sep, rest))) }
 };
-type Err = Fuck;
+
 -- Convert positive integer string to int
 export let posIntStringToInt = (s) => {
   let rec helper = match(chars, acc) => {
@@ -414,4 +414,106 @@ export let posIntStringToInt = (s) => {
 -- convert charactercode to a string
 export let charCToString = (c: Int) => {
   Link(c, Empty)
+};
+
+-- Find index of character in string
+-- Returns the 0-based index of the first occurrence, or None
+export let rec strIndexOfChar = match(char, str, idx) => {
+  (char, Empty, idx) => { None },
+  (char, Link(c, rest), idx) => {
+    match (eq(char, c)) {
+      true => { Some(idx) },
+      false => { strIndexOfChar(char, rest, add(idx, 1)) }
+    }
+  }
+};
+
+export let strIndexOf = (char, str) => {
+  strIndexOfChar(char, str, 0)
+};
+
+-- Find index of substring in string
+let rec strIndexOfStrAt = (needle, haystack, pos) => {
+  match (strStartsWith(strDrop(haystack, pos), needle)) {
+    true => { Some(pos) },
+    false => {
+      match (cmpInt(pos, strLength(haystack))) {
+        GT => { None },
+        EQ => { None },
+        LT => { strIndexOfStrAt(needle, haystack, add(pos, 1)) }
+      }
+    }
+  }
+};
+
+export let strIndexOfStr = (needle, haystack) => {
+  match (strIsEmpty(needle)) {
+    true => { Some(0) },
+    false => { strIndexOfStrAt(needle, haystack, 0) }
+  }
+};
+
+-- String is already List<Int>, so these are identity functions
+-- stringToList : String -> List<Int>
+export let stringToList = (s) => { s };
+
+-- stringFromList : List<Int> -> String
+export let stringFromList = (chars) => { chars };
+
+-- Replicate a string n times
+export let rec strReplicate = match(n, str) => {
+  (0, _) => { Empty },
+  (n, str) => { strConcat(str, strReplicate(sub(n, 1), str)) }
+};
+
+-- Pad string on left to reach target length
+export let strPadLeft = (targetLen, padChar, str) => {
+  let len = strLength(str);
+  match (cmpInt(len, targetLen)) {
+    LT => {
+      let padding = strReplicate(sub(targetLen, len), Link(padChar, Empty));
+      strConcat(padding, str)
+    },
+    _ => { str }
+  }
+};
+
+-- Pad string on right to reach target length
+export let strPadRight = (targetLen, padChar, str) => {
+  let len = strLength(str);
+  match (cmpInt(len, targetLen)) {
+    LT => {
+      let padding = strReplicate(sub(targetLen, len), Link(padChar, Empty));
+      strConcat(str, padding)
+    },
+    _ => { str }
+  }
+};
+
+-- Convert character to uppercase
+export let charToUpper = (c) => {
+  match (isLowercase(c)) {
+    true => { sub(c, 32) },
+    false => { c }
+  }
+};
+
+-- Convert character to lowercase
+export let charToLower = (c) => {
+  match (isUppercase(c)) {
+    true => { add(c, 32) },
+    false => { c }
+  }
+};
+
+-- Convert string to uppercase
+export let rec strToUpper = match(s) => {
+  Empty => { Empty },
+  Link(c, rest) => { Link(charToUpper(c), strToUpper(rest)) }
+};
+
+-- Convert string to lowercase
+export let rec strToLower = match(s) => {
+  Empty => { Empty },
+  Link(c, rest) => { Link(charToLower(c), strToLower(rest)) }
 };

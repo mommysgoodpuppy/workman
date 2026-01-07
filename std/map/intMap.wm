@@ -1,0 +1,117 @@
+-- IntMap: Association list keyed by Int
+-- O(n) lookup, but simple and correct. Upgrade to balanced tree later.
+-- Useful for node IDs in the compiler.
+--from "std/option/core" import { Some, None };
+--from "std/list/core" import { Empty, Link };
+
+-- IntMap is an association list of (Int, V) pairs
+export type IntMap<V> = IntMapEmpty | IntMapCons<Int, V, IntMap<V>>;
+
+-- Empty map
+export let intMapEmpty = IntMapEmpty;
+
+-- Insert a key-value pair (overwrites existing)
+export let rec intMapInsert = match(key, value, map) => {
+  (key, value, IntMapEmpty) => { 
+    IntMapCons(key, value, IntMapEmpty) 
+  },
+  (key, value, IntMapCons(k, v, rest)) => {
+    match (key == k) {
+      true => { IntMapCons(key, value, rest) },
+      false => { IntMapCons(k, v, intMapInsert(key, value, rest)) }
+    }
+  }
+};
+
+-- Lookup a value by key
+export let rec intMapLookup = match(key, map) => {
+  (key, IntMapEmpty) => { None },
+  (key, IntMapCons(k, v, rest)) => {
+    match (key == k) {
+      true => { Some(v) },
+      false => { intMapLookup(key, rest) }
+    }
+  }
+};
+
+-- Check if key exists
+export let rec intMapContains = match(key, map) => {
+  (key, IntMapEmpty) => { false },
+  (key, IntMapCons(k, _, rest)) => {
+    match (key == k) {
+      true => { true },
+      false => { intMapContains(key, rest) }
+    }
+  }
+};
+
+-- Remove a key
+export let rec intMapRemove = match(key, map) => {
+  (key, IntMapEmpty) => { IntMapEmpty },
+  (key, IntMapCons(k, v, rest)) => {
+    match (key == k) {
+      true => { rest },
+      false => { IntMapCons(k, v, intMapRemove(key, rest)) }
+    }
+  }
+};
+
+-- Convert to list of (key, value) pairs
+export let rec intMapToList = match(map) => {
+  IntMapEmpty => { Empty },
+  IntMapCons(k, v, rest) => { Link((k, v), intMapToList(rest)) }
+};
+
+-- Create from list of (key, value) pairs
+export let rec intMapFromList = match(pairs) => {
+  Empty => { IntMapEmpty },
+  Link((k, v), rest) => { intMapInsert(k, v, intMapFromList(rest)) }
+};
+
+-- Get all keys
+export let rec intMapKeys = match(map) => {
+  IntMapEmpty => { Empty },
+  IntMapCons(k, _, rest) => { Link(k, intMapKeys(rest)) }
+};
+
+-- Get all values
+export let rec intMapValues = match(map) => {
+  IntMapEmpty => { Empty },
+  IntMapCons(_, v, rest) => { Link(v, intMapValues(rest)) }
+};
+
+-- Map over values
+export let rec intMapMap = match(f, map) => {
+  (f, IntMapEmpty) => { IntMapEmpty },
+  (f, IntMapCons(k, v, rest)) => { 
+    IntMapCons(k, f(v), intMapMap(f, rest)) 
+  }
+};
+
+-- Fold over entries
+export let rec intMapFold = match(f, acc, map) => {
+  (f, acc, IntMapEmpty) => { acc },
+  (f, acc, IntMapCons(k, v, rest)) => { 
+    intMapFold(f, f(acc, k, v), rest) 
+  }
+};
+
+-- Union of two maps (right map wins on conflicts)
+export let rec intMapUnion = match(m1, m2) => {
+  (m1, IntMapEmpty) => { m1 },
+  (m1, IntMapCons(k, v, rest)) => { 
+    intMapUnion(intMapInsert(k, v, m1), rest) 
+  }
+};
+
+-- Size of map
+export let rec intMapSize = match(map) => {
+  IntMapEmpty => { 0 },
+  IntMapCons(_, _, rest) => { 1 + intMapSize(rest) }
+};
+
+-- Check if map is empty
+export let intMapIsEmpty = match(map) => {
+  IntMapEmpty => { true },
+  _ => { false }
+};

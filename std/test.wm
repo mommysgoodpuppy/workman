@@ -1,0 +1,136 @@
+-- Testing harness for Workman
+-- Basic assertions and test running
+from "std/list/core" import { Empty, Link };
+from "std/nativeString" import { stringConcat };
+
+-- Test result type
+type TestResult = TestPass | TestFail<String>;
+
+-- A test case
+record Test = { name: String, run: (Void) => TestResult };
+
+-- Assert that a condition is true
+export let assert = (condition, message) => {
+  match (condition) {
+    true => { TestPass },
+    false => { TestFail(message) }
+  }
+};
+
+-- Assert that a condition is true (simpler version)
+export let assertTrue = (condition) => {
+  assert(condition, "Expected true, got false")
+};
+
+-- Assert that a condition is false
+export let assertFalse = (condition) => {
+  assert(!condition, "Expected false, got true")
+};
+
+-- Assert two values are equal (uses native equality)
+export let assertEqual = (expected, actual, message) => {
+  match (expected == actual) {
+    true => { TestPass },
+    false => { TestFail(message) }
+  }
+};
+
+-- Assert two integers are equal
+export let assertEqInt = (expected, actual) => {
+  match (expected == actual) {
+    true => { TestPass },
+    false => { TestFail("Integer equality assertion failed") }
+  }
+};
+
+-- Create a test case
+export let test = (name, testFn) => {
+  .{ name = name, run = testFn }
+};
+
+-- Run a single test and print result
+let runSingleTest = (t: Test) => {
+  let result = t.run();
+  match (result) {
+    TestPass => {
+      print(stringConcat("✓ PASS: ", t.name));
+      true
+    },
+    TestFail(msg) => {
+      print(stringConcat("✗ FAIL: ", t.name));
+      print(stringConcat("  ", msg));
+      false
+    }
+  }
+};
+
+-- Count passes and failures
+record TestStats = { passed: Int, failed: Int, total: Int };
+
+let rec runTestsHelper = (tests, stats: TestStats) => {
+  match (tests) {
+    Empty => { stats },
+    Link(t, rest) => {
+      let passed = runSingleTest(t);
+      let newStats = match (passed) {
+        true => { .{ ..stats, passed = stats.passed + 1, total = stats.total + 1 } },
+        false => { .{ ..stats, failed = stats.failed + 1, total = stats.total + 1 } }
+      };
+      runTestsHelper(rest, newStats)
+    }
+  }
+};
+
+-- Helper to convert int to string (simple version)
+let rec intToStrHelper = (n, acc) => {
+  match (n == 0) {
+    true => { 
+      match (acc) {
+        "" => { "0" },
+        _ => { acc }
+      }
+    },
+    false => {
+      let digit = n - ((n / 10) * 10);
+      let char = match (digit) {
+        0 => { "0" }, 1 => { "1" }, 2 => { "2" }, 3 => { "3" }, 4 => { "4" },
+        5 => { "5" }, 6 => { "6" }, 7 => { "7" }, 8 => { "8" }, _ => { "9" }
+      };
+      intToStrHelper(n / 10, stringConcat(char, acc))
+    }
+  }
+};
+
+let intToStr = (n) => {
+  match (n < 0) {
+    true => { stringConcat("-", intToStrHelper(0 - n, "")) },
+    false => { intToStrHelper(n, "") }
+  }
+};
+
+-- Run all tests and print summary
+export let runTests = (tests) => {
+  print("Running tests...");
+  print("");
+  let stats = runTestsHelper(tests, .{ passed = 0, failed = 0, total = 0 });
+  print("");
+  print("=== Test Summary ===");
+  print(stringConcat("Total:  ", intToStr(stats.total)));
+  print(stringConcat("Passed: ", intToStr(stats.passed)));
+  print(stringConcat("Failed: ", intToStr(stats.failed)));
+  match (stats.failed == 0) {
+    true => { print("All tests passed! ✓") },
+    false => { print("Some tests failed! ✗") }
+  };
+  stats
+};
+
+-- Convenience: run tests with just assertions returning bool
+export let testBool = (name, testFn) => {
+  test(name, () => {
+    match (testFn()) {
+      true => { TestPass },
+      false => { TestFail("Test returned false") }
+    }
+  })
+};

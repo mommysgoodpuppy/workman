@@ -1,0 +1,44 @@
+-- IdGen: Fresh ID generation for pure FP
+-- Thread state explicitly: (result, newState) = freshId(state)
+
+-- The IdGen state record
+record IdGen = { next: Int };
+
+-- Create a new ID generator starting at 0
+export let idGenNew = () => {
+  .{ next = 0 }
+};
+
+-- Create a new ID generator starting at a specific value
+export let idGenFrom = (start) => {
+  .{ next = start }
+};
+
+-- Generate a fresh ID, returning (id, newIdGen)
+export let freshId = (gen: IdGen) => {
+  let id = gen.next;
+  let newGen = .{ next = gen.next + 1 };
+  (id, newGen)
+};
+
+-- Generate multiple fresh IDs
+export let rec freshIds = (count, gen: IdGen) => {
+  match (count <= 0) {
+    true => { ([], gen) },
+    false => {
+      let (id, gen1) = freshId(gen);
+      let (rest, gen2) = freshIds(count - 1, gen1);
+      ([id, ..rest], gen2)
+    }
+  }
+};
+
+-- Get current value without consuming
+export let idGenPeek = (gen: IdGen) => {
+  gen.next
+};
+
+-- Reset generator to a specific value
+export let idGenReset = (gen: IdGen, value) => {
+  .{ next = value }
+};

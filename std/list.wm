@@ -1,5 +1,5 @@
 from "std/list/core" import { Empty, Link };
-from "std/core/int" import { intAdd, intSub, intCompare };
+from "std/core/int" import { intAdd, intSub, intMul, intCompare, intEq as eq };
 from "std/result/core" import { IOk, IErr };
 from "std/core/ordering" import { LT, EQ, GT };
 from "std/option/core" import { Some, None };
@@ -272,10 +272,216 @@ export let listUncons = (list) => {
   }
 };
 
-export let listTakeHead = (list) => {
+-- Returns the first element of the list, or None if empty
+export let listHead = (list) => {
   match(list) {
     Empty => { None },
     Link(x, _) => { Some(x) }
   }
 };
 
+-- Alias for backward compatibility
+export let listTakeHead = listHead;
+
+-- Returns the tail of the list (everything but first element), or None if empty
+export let listTail = (list) => {
+  match(list) {
+    Empty => { None },
+    Link(_, rest) => { Some(rest) }
+  }
+};
+
+-- Returns the nth element (0-indexed), or None if out of bounds
+export let rec listNth = match(n, list) => {
+  (_, Empty) => { None },
+  (0, Link(x, _)) => { Some(x) },
+  (n, Link(_, rest)) => { listNth(intSub(n, 1), rest) }
+};
+
+-- Zip two lists with a combining function
+export let rec listZipWith = match(f, xs, ys) => {
+  (f, Empty, _) => { Empty },
+  (f, _, Empty) => { Empty },
+  (f, Link(x, restX), Link(y, restY)) => { 
+    Link(f(x, y), listZipWith(f, restX, restY)) 
+  }
+};
+
+-- Flatten a list of lists into a single list
+export let rec listFlatten = match(lists) => {
+  Empty => { Empty },
+  Link(list, rest) => { listAppend(list, listFlatten(rest)) }
+};
+
+-- Map and filter in one pass: f returns Some(b) to include, None to exclude
+export let rec listFilterMap = match(f, list) => {
+  (f, Empty) => { Empty },
+  (f, Link(x, rest)) => {
+    match (f(x)) {
+      Some(y) => { Link(y, listFilterMap(f, rest)) },
+      None => { listFilterMap(f, rest) }
+    }
+  }
+};
+
+-- Find index of first element satisfying predicate
+let rec listFindIndexHelper = (pred, list, idx) => {
+  match (list) {
+    Empty => { None },
+    Link(x, rest) => {
+      match (pred(x)) {
+        true => { Some(idx) },
+        false => { listFindIndexHelper(pred, rest, intAdd(idx, 1)) }
+      }
+    }
+  }
+};
+
+export let listFindIndex = (pred, list) => {
+  listFindIndexHelper(pred, list, 0)
+};
+
+-- Check if list is empty
+export let listIsEmpty = (list) => {
+  match (list) {
+    Empty => { true },
+    _ => { false }
+  }
+};
+
+-- Map with index: f receives (index, element)
+let rec listMapiHelper = (f, list, idx) => {
+  match (list) {
+    Empty => { Empty },
+    Link(x, rest) => { Link(f(idx, x), listMapiHelper(f, rest, intAdd(idx, 1))) }
+  }
+};
+
+export let listMapi = (f, list) => {
+  listMapiHelper(f, list, 0)
+};
+
+-- Check if list contains an element (using eq)
+export let rec listContains = match(elem, list) => {
+  (elem, Empty) => { false },
+  (elem, Link(x, rest)) => {
+    match (eq(elem, x)) {
+      true => { true },
+      false => { listContains(elem, rest) }
+    }
+  }
+};
+
+-- Get last element of list
+export let rec listLast = match(list) => {
+  Empty => { None },
+  Link(x, Empty) => { Some(x) },
+  Link(_, rest) => { listLast(rest) }
+};
+
+-- Get all but last element
+export let rec listInit = match(list) => {
+  Empty => { None },
+  Link(_, Empty) => { Some(Empty) },
+  Link(x, rest) => {
+    match (listInit(rest)) {
+      None => { None },
+      Some(init) => { Some(Link(x, init)) }
+    }
+  }
+};
+
+-- Replicate an element n times
+export let rec listReplicate = match(n, elem) => {
+  (0, _) => { Empty },
+  (n, elem) => { Link(elem, listReplicate(intSub(n, 1), elem)) }
+};
+
+-- Create a singleton list
+export let listSingleton = (x) => { Link(x, Empty) };
+
+-- Intersperse an element between all elements of a list
+export let rec listIntersperse = match(sep, list) => {
+  (sep, Empty) => { Empty },
+  (sep, Link(x, Empty)) => { Link(x, Empty) },
+  (sep, Link(x, rest)) => { Link(x, Link(sep, listIntersperse(sep, rest))) }
+};
+
+-- Sum of all integers in a list
+export let rec listSum = match(list) => {
+  Empty => { 0 },
+  Link(x, rest) => { intAdd(x, listSum(rest)) }
+};
+
+-- Product of all integers in a list
+export let rec listProduct = match(list) => {
+  Empty => { 1 },
+  Link(x, rest) => { intMul(x, listProduct(rest)) }
+};
+
+-- Unzip a list of pairs into a pair of lists
+export let rec listUnzip = match(pairs) => {
+  Empty => { (Empty, Empty) },
+  Link((a, b), rest) => {
+    let (xs, ys) = listUnzip(rest);
+    (Link(a, xs), Link(b, ys))
+  }
+};
+
+-- Take elements while predicate holds
+export let rec listTakeWhile = match(pred, list) => {
+  (pred, Empty) => { Empty },
+  (pred, Link(x, rest)) => {
+    match (pred(x)) {
+      true => { Link(x, listTakeWhile(pred, rest)) },
+      false => { Empty }
+    }
+  }
+};
+
+-- Drop elements while predicate holds
+export let rec listDropWhile = match(pred, list) => {
+  (pred, Empty) => { Empty },
+  (pred, Link(x, rest)) => {
+    match (pred(x)) {
+      true => { listDropWhile(pred, rest) },
+      false => { Link(x, rest) }
+    }
+  }
+};
+
+-- Reject elements that match predicate (opposite of filter)
+export let rec listReject = match(predicate, list) => {
+  (predicate, Empty) => { Empty },
+  (predicate, Link(x, rest)) => {
+    match (predicate(x)) {
+      true => { listReject(predicate, rest) },
+      false => { Link(x, listReject(predicate, rest)) }
+    }
+  }
+};
+
+-- Split list at first element not matching predicate
+-- Returns (matching prefix, rest)
+export let listSpan = (pred, list) => {
+  let taken = listTakeWhile(pred, list);
+  let dropped = listDropWhile(pred, list);
+  (taken, dropped)
+};
+
+-- Filter with index: predicate receives (index, element)
+let rec listFilteriHelper = (pred, list, idx) => {
+  match (list) {
+    Empty => { Empty },
+    Link(x, rest) => {
+      match (pred(idx, x)) {
+        true => { Link(x, listFilteriHelper(pred, rest, intAdd(idx, 1))) },
+        false => { listFilteriHelper(pred, rest, intAdd(idx, 1)) }
+      }
+    }
+  }
+};
+
+export let listFilteri = (pred, list) => {
+  listFilteriHelper(pred, list, 0)
+};
