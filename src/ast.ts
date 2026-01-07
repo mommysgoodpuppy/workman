@@ -28,7 +28,8 @@ export type Pattern =
   | ({ kind: "literal" } & NodeBase & { literal: Literal })
   | ({ kind: "constructor" } & NodeBase & { name: string; args: Pattern[] })
   | ({ kind: "tuple" } & NodeBase & { elements: Pattern[] })
-  | ({ kind: "all_errors" } & NodeBase);
+  | ({ kind: "all_errors" } & NodeBase)
+  | ({ kind: "list" } & NodeBase & { elements: Pattern[]; rest?: Pattern });
 
 export interface ModuleImport extends NodeBase {
   kind: "module_import";
@@ -127,6 +128,7 @@ export type MatchArm =
 export interface MatchPatternArm extends NodeBase {
   kind: "match_pattern";
   pattern: Pattern;
+  guard?: Expr;
   body: Expr;
   hasTrailingComma: boolean;
   trailingComment?: string;
@@ -165,7 +167,8 @@ export type Expr =
   | MatchFunctionExpr
   | MatchBundleLiteralExpr
   | HoleExpr
-  | EnumLiteralExpr;
+  | EnumLiteralExpr
+  | ListLiteralExpr;
 
 export interface IdentifierExpr extends NodeBase {
   kind: "identifier";
@@ -184,6 +187,12 @@ export interface HoleExpr extends NodeBase {
 export interface EnumLiteralExpr extends NodeBase {
   kind: "enum_literal";
   name: string;
+}
+
+export interface ListLiteralExpr extends NodeBase {
+  kind: "list_literal";
+  elements: Expr[];
+  spread?: Expr; // For [a, b, ...rest] syntax
 }
 
 export interface ConstructorExpr extends NodeBase {

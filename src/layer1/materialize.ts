@@ -76,6 +76,7 @@ export function materializeMatchBundle(
     const info = patternInfos[patternIndex++];
     const pattern = info?.marked ?? materializePattern(ctx, arm.pattern);
     const body = materializeExpr(ctx, arm.body);
+    const guard = arm.guard ? materializeExpr(ctx, arm.guard) : undefined;
     const armType = matchResult?.type ?? body.type;
 
     const marked: MMatchPatternArm = {
@@ -83,6 +84,7 @@ export function materializeMatchBundle(
       span: arm.span,
       id: arm.id,
       pattern,
+      guard,
       body,
       hasTrailingComma: arm.hasTrailingComma,
       type: armType,

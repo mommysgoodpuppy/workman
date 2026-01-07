@@ -6,6 +6,7 @@ import {
 } from "./error.ts";
 import { nextNodeId, resetNodeIds } from "./node_ids.ts";
 import type {
+  AnnotateDeclaration,
   Associativity,
   BlockExpr,
   BlockStatement,
@@ -15,9 +16,6 @@ import type {
   ImportSpecifier,
   InfixDeclaration,
   LetDeclaration,
-  PatternLetStatement,
-  RecordDeclaration,
-  RecordMember,
   MatchArm,
   MatchBundle,
   ModuleImport,
@@ -25,11 +23,13 @@ import type {
   NamedImport,
   NamespaceImport,
   OpRuleDeclaration,
-  PolicyDeclaration,
-  AnnotateDeclaration,
   Parameter,
+  PatternLetStatement,
+  PolicyDeclaration,
   Program,
+  RecordDeclaration,
   RecordField,
+  RecordMember,
   RuleEntry,
   RuleValue,
   RuleValuePart,
@@ -244,8 +244,9 @@ class SurfaceParser {
       imports,
       reexports,
       declarations,
-      trailingComments:
-        trailingComments.length > 0 ? trailingComments : undefined,
+      trailingComments: trailingComments.length > 0
+        ? trailingComments
+        : undefined,
       mode,
     };
   }
@@ -580,7 +581,7 @@ class SurfaceParser {
       }
       const parameterSpecs = this.extractMatchParameters(scrutineeExpr);
       const parameters = parameterSpecs.map((spec) =>
-        this.createMatchParameter(spec),
+        this.createMatchParameter(spec)
       );
 
       // Detect if the match expression is multi-line
@@ -913,10 +914,9 @@ class SurfaceParser {
       span,
       isMultiLine,
       resultTrailingComment,
-      resultCommentStatements:
-        resultCommentStatements.length > 0
-          ? resultCommentStatements
-          : undefined,
+      resultCommentStatements: resultCommentStatements.length > 0
+        ? resultCommentStatements
+        : undefined,
       id: nextNodeId(),
     };
   }
@@ -1020,7 +1020,7 @@ class SurfaceParser {
     const typeToken = this.expectKeyword("type");
     const nameToken = this.expectTypeName();
     const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
-    
+
     // Support opaque types: `type Foo;` or `type Foo<T>;` without `= members`
     // These are extern/primitive types with no Workman-side constructors
     let members: TypeAliasMember[];
@@ -1033,7 +1033,7 @@ class SurfaceParser {
       this.expectSymbol("=");
       members = this.parseTypeAliasMembers();
     }
-    
+
     const endToken = this.previous();
     const declaration: TypeDeclaration = {
       kind: "type",
@@ -1183,12 +1183,11 @@ class SurfaceParser {
 
   private parseInfixDeclaration(exportToken?: Token): InfixDeclaration {
     const infixToken = this.consume(); // infix, infixl, or infixr
-    const associativity: Associativity =
-      infixToken.value === "infixl"
-        ? "left"
-        : infixToken.value === "infixr"
-          ? "right"
-          : "none";
+    const associativity: Associativity = infixToken.value === "infixl"
+      ? "left"
+      : infixToken.value === "infixr"
+      ? "right"
+      : "none";
 
     // Parse precedence (number)
     const precedenceToken = this.consume();
@@ -1660,10 +1659,9 @@ class SurfaceParser {
           this.peek(),
         );
       }
-      const typeArgs =
-        !isQuestionConstructor && this.matchSymbol("<")
-          ? this.parseTypeArguments()
-          : [];
+      const typeArgs = !isQuestionConstructor && this.matchSymbol("<")
+        ? this.parseTypeArguments()
+        : [];
       return {
         kind: "constructor",
         name: ctorName,
@@ -1881,10 +1879,9 @@ class SurfaceParser {
       }
 
       const operator = this.consume().value;
-      const nextMinPrecedence =
-        opInfo.associativity === "left"
-          ? opInfo.precedence + 1
-          : opInfo.precedence;
+      const nextMinPrecedence = opInfo.associativity === "left"
+        ? opInfo.precedence + 1
+        : opInfo.precedence;
 
       let right: Expr;
       try {
@@ -2018,7 +2015,8 @@ class SurfaceParser {
 
       if (this.matchSymbol(".")) {
         // Check for ^identifier syntax (capitalize first letter for Zig interop)
-        const capitalize = this.peek().kind === "operator" && this.peek().value === "^";
+        const capitalize = this.peek().kind === "operator" &&
+          this.peek().value === "^";
         if (capitalize) {
           this.consume(); // consume the ^
         }
@@ -2172,6 +2170,9 @@ class SurfaceParser {
           }
           return this.parseBlockExpr();
         }
+        if (token.value === "[") {
+          return this.parseListLiteralExpr();
+        }
       }
       case "operator": {
         // Check for hole expression
@@ -2289,6 +2290,47 @@ class SurfaceParser {
     } as Expr;
   }
 
+  private parseListLiteralExpr(): Expr {
+    // Parse [a, b, c] or [a, b, ...rest] as list literal
+    const open = this.expectSymbol("[");
+    const elements: Expr[] = [];
+    let spread: Expr | undefined;
+
+    if (!this.checkSymbol("]")) {
+      while (true) {
+        // Check for spread syntax: ...expr
+        if (this.checkSymbol("..")) {
+          this.consume(); // consume ..
+          spread = this.parseExpression();
+          // Spread must be the last element
+          this.matchSymbol(","); // optional trailing comma
+          break;
+        }
+
+        elements.push(this.parseExpression());
+
+        if (!this.matchSymbol(",")) {
+          break;
+        }
+
+        // Check for trailing comma before closing bracket
+        if (this.checkSymbol("]")) {
+          break;
+        }
+      }
+    }
+
+    const close = this.expectSymbol("]");
+
+    return {
+      kind: "list_literal",
+      elements,
+      spread,
+      span: this.spanFrom(open.start, close.end),
+      id: nextNodeId(),
+    } as Expr;
+  }
+
   private parseTypeExpr(): TypeExpr {
     return this.parseTypeArrow();
   }
@@ -2346,7 +2388,7 @@ class SurfaceParser {
         id: nextNodeId(),
       };
     }
-    
+
     // Pointer type: *T
     if (token.kind === "operator" && token.value === "*") {
       const star = this.consume();
@@ -2371,12 +2413,17 @@ class SurfaceParser {
           parts.push(part.value);
           endToken = part;
         } else {
-          throw this.error("Expected identifier after '.' in qualified type name", next);
+          throw this.error(
+            "Expected identifier after '.' in qualified type name",
+            next,
+          );
         }
       }
       const qualifiedName = parts.join(".");
       const typeArgs = this.matchSymbol("<") ? this.parseTypeArguments() : [];
-      const end = typeArgs.length > 0 ? typeArgs[typeArgs.length - 1].span.end : endToken.end;
+      const end = typeArgs.length > 0
+        ? typeArgs[typeArgs.length - 1].span.end
+        : endToken.end;
       // If it's a qualified name or has type args, treat as type_ref
       if (parts.length > 1 || typeArgs.length > 0) {
         return {
@@ -2407,13 +2454,17 @@ class SurfaceParser {
           parts.push(part.value);
           endToken = part;
         } else {
-          throw this.error("Expected identifier after '.' in qualified type name", next);
+          throw this.error(
+            "Expected identifier after '.' in qualified type name",
+            next,
+          );
         }
       }
       const qualifiedName = parts.join(".");
       const typeArgs = this.matchSymbol("<") ? this.parseTypeArguments() : [];
-      const end =
-        typeArgs.length > 0 ? typeArgs[typeArgs.length - 1].span.end : endToken.end;
+      const end = typeArgs.length > 0
+        ? typeArgs[typeArgs.length - 1].span.end
+        : endToken.end;
       return {
         kind: "type_ref",
         name: qualifiedName,
@@ -2711,7 +2762,52 @@ class SurfaceParser {
       };
     }
 
+    if (token.kind === "symbol" && token.value === "[") {
+      return this.parseListPattern();
+    }
+
     throw this.error("Expected pattern", token);
+  }
+
+  private parseListPattern(): Pattern {
+    // Parse [a, b, c] or [a, b, ...rest] or [a, b, ..._] as list patterns
+    const open = this.expectSymbol("[");
+    const elements: Pattern[] = [];
+    let rest: Pattern | undefined;
+
+    if (!this.checkSymbol("]")) {
+      while (true) {
+        // Check for spread syntax: ...pattern
+        if (this.checkSymbol("..")) {
+          this.consume(); // consume ..
+          rest = this.parsePattern();
+          // Spread must be the last element
+          this.matchSymbol(","); // optional trailing comma
+          break;
+        }
+
+        elements.push(this.parsePattern());
+
+        if (!this.matchSymbol(",")) {
+          break;
+        }
+
+        // Check for trailing comma before closing bracket
+        if (this.checkSymbol("]")) {
+          break;
+        }
+      }
+    }
+
+    const close = this.expectSymbol("]");
+
+    return {
+      kind: "list",
+      elements,
+      rest,
+      span: this.spanFrom(open.start, close.end),
+      id: nextNodeId(),
+    };
   }
 
   private parseMatchBlock(): { bundle: MatchBundle; span: SourceSpan } {
@@ -2766,6 +2862,9 @@ class SurfaceParser {
 
         const patternStart = this.peek();
         const pattern = this.parsePattern();
+        const guard = this.matchKeyword("when")
+          ? this.parseExpression()
+          : undefined;
         this.expectSymbol("=>");
         const body = this.parseBlockExpr();
 
@@ -2775,6 +2874,7 @@ class SurfaceParser {
         arms.push({
           kind: "match_pattern",
           pattern,
+          guard,
           body,
           hasTrailingComma: hasComma,
           trailingComment,

@@ -29,6 +29,7 @@ export const keywords = new Set([
   "if",
   "else",
   "match",
+  "when",
   "import",
   "export",
   "from",

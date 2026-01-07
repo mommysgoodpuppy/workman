@@ -6,15 +6,6 @@ import {
   type Token,
 } from "./token.ts";
 import { unexpectedCharError, unterminatedStringError } from "./error.ts";
-/* Bootstrapped lexer helpers - commented out to avoid circular dependencies in bundled code
-import {
-  isAlpha as isAlphawm,
-  isAlphaNumeric as isAlphaNumericwm,
-  isDigit as isDigitwm,
-  isUppercase as isUppercasewm,
-  isWhitespace as isWhitespacewm,
-} from "../boot/src/lexer.mjs";
-*/
 
 export function lex(source: string, sourceName?: string): Token[] {
   const tokens: Token[] = [];

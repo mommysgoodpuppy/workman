@@ -114,6 +114,9 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
         if (arm.kind !== "match_pattern") {
           continue;
         }
+        if (arm.guard) {
+          lowerExpr(arm.guard, ctx);
+        }
         if (arm.body.kind === "block") {
           lowerBlockExpr(arm.body, ctx);
         } else {
@@ -129,6 +132,9 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
         if (arm.kind !== "match_pattern") {
           continue;
         }
+        if (arm.guard) {
+          lowerExpr(arm.guard, ctx);
+        }
         if (arm.body.kind === "block") {
           lowerBlockExpr(arm.body, ctx);
         } else {
@@ -140,6 +146,9 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
       for (const arm of expr.bundle.arms) {
         if (arm.kind !== "match_pattern") {
           continue;
+        }
+        if (arm.guard) {
+          lowerExpr(arm.guard, ctx);
         }
         if (arm.body.kind === "block") {
           lowerBlockExpr(arm.body, ctx);

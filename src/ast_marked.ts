@@ -1,4 +1,5 @@
 import type {
+  AnnotateDeclaration,
   CommentBlock,
   DomainDeclaration,
   ExportModifier,
@@ -11,7 +12,6 @@ import type {
   PolicyDeclaration,
   PrefixDeclaration,
   SourceSpan,
-  AnnotateDeclaration,
   TypeDeclaration,
   TypeExpr,
 } from "./ast.ts";
@@ -172,6 +172,7 @@ export type MMatchArm = MMatchPatternArm | MMatchBundleReferenceArm;
 export interface MMatchPatternArm extends MNodeBase {
   kind: "match_pattern";
   pattern: MPattern;
+  guard?: MExpr;
   body: MExpr;
   hasTrailingComma: boolean;
   type: Type;

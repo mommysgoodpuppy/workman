@@ -140,6 +140,9 @@ function lowerMatchBundle(bundle: MatchBundle): void {
 
 function lowerMatchArm(arm: MatchArm): void {
   if (arm.kind === "match_pattern") {
+    if (arm.guard) {
+      arm.guard = lowerExpr(arm.guard);
+    }
     if (arm.body.kind === "block") {
       lowerBlockExpr(arm.body);
     } else {

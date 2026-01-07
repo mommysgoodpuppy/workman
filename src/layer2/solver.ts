@@ -17,11 +17,9 @@ import type {
 import type {
   ConstraintStub,
   EffectRowCoverageStub,
-  UnknownInfo
+  UnknownInfo,
 } from "../layer1/context.ts";
-import {
-  RAW_NUMERIC_COMPAT
-} from "../layer1/context.ts";
+import { RAW_NUMERIC_COMPAT } from "../layer1/context.ts";
 import type { HoleId } from "../layer1/context_types.ts";
 import {
   addHoleEffectTag,
@@ -43,12 +41,12 @@ import {
   joinCarrier,
   makeResultType,
   occursInType,
+  rowLabel,
   type sameIdentity,
   splitCarrier,
   type Substitution,
   type Type,
   unknownType,
-  rowLabel,
 } from "../types.ts";
 import type {
   ConstraintDiagnostic,
@@ -641,7 +639,12 @@ function solveAnnotationConstraint(
   const annotation = stub.annotationType ??
     getTypeForNode(state, stub.annotation);
   const value = getTypeForNode(state, stub.value);
-  const unified = unifyTypes(annotation, value, state.substitution, state.adtEnv);
+  const unified = unifyTypes(
+    annotation,
+    value,
+    state.substitution,
+    state.adtEnv,
+  );
   if (unified.success) {
     state.substitution = unified.subst;
   } else {
@@ -1224,7 +1227,11 @@ function unifyTypes(
     if (resolvedLeft.length !== resolvedRight.length) {
       return {
         success: false,
-        reason: { kind: "type_mismatch", left: resolvedLeft, right: resolvedRight },
+        reason: {
+          kind: "type_mismatch",
+          left: resolvedLeft,
+          right: resolvedRight,
+        },
       };
     }
     return unifyTypes(
@@ -1277,7 +1284,11 @@ function unifyTypes(
     }
     return {
       success: false,
-      reason: { kind: "type_mismatch", left: resolvedLeft, right: resolvedRight },
+      reason: {
+        kind: "type_mismatch",
+        left: resolvedLeft,
+        right: resolvedRight,
+      },
     };
   }
 
@@ -1290,7 +1301,11 @@ function unifyTypes(
     }
     return {
       success: false,
-      reason: { kind: "type_mismatch", left: resolvedLeft, right: resolvedRight },
+      reason: {
+        kind: "type_mismatch",
+        left: resolvedLeft,
+        right: resolvedRight,
+      },
     };
   }
 
@@ -1318,7 +1333,10 @@ function bindVar(id: number, type: Type, subst: Substitution): UnifyResult {
   // Special case for row polymorphism: binding a var to an effect_row with that
   // var as its tail is valid row extension (e.g., T = {A | T} means T includes A).
   // In this case, bind the var to the row without the tail to avoid infinite type.
-  if (resolved.kind === "effect_row" && resolved.tail?.kind === "var" && resolved.tail.id === id) {
+  if (
+    resolved.kind === "effect_row" && resolved.tail?.kind === "var" &&
+    resolved.tail.id === id
+  ) {
     // Check if there are any other occurrences of the var in the row's payloads
     let occursElsewhere = false;
     for (const payload of resolved.cases.values()) {
@@ -1334,7 +1352,11 @@ function bindVar(id: number, type: Type, subst: Substitution): UnifyResult {
         return { success: true, subst };
       }
       // Safe to bind: remove the tail to create a closed row with the cases
-      const closedRow: Type = { kind: "effect_row", cases: resolved.cases, tail: undefined };
+      const closedRow: Type = {
+        kind: "effect_row",
+        cases: resolved.cases,
+        tail: undefined,
+      };
       const next = new Map(subst);
       next.set(id, closedRow);
       return { success: true, subst: next };
@@ -1498,7 +1520,9 @@ function unifyEffectRows(
     current = merged.subst;
   }
 
-  if (left.tail && right.tail && leftOnly.length === 0 && rightOnly.length === 0) {
+  if (
+    left.tail && right.tail && leftOnly.length === 0 && rightOnly.length === 0
+  ) {
     return unifyTypes(left.tail, right.tail, current);
   }
 
@@ -1664,6 +1688,9 @@ function remarkMatchArm(arm: MMatchArm, resolved: Map<NodeId, Type>): void {
   }
   remarkType(arm, resolved);
   remarkPattern(arm.pattern, resolved);
+  if (arm.guard) {
+    remarkExpr(arm.guard, resolved);
+  }
   remarkExpr(arm.body, resolved);
 }
 
@@ -1700,7 +1727,10 @@ interface ConstraintFlow {
   aliases: Map<number, number>; // Simple parent-pointer structure
 }
 
-function areNumericConstructorsCompatible(left: string, right: string): boolean {
+function areNumericConstructorsCompatible(
+  left: string,
+  right: string,
+): boolean {
   const leftSet = RAW_NUMERIC_COMPAT.get(left);
   return leftSet ? leftSet.has(right) : false;
 }
@@ -2332,7 +2362,9 @@ function checkDomainStubs(
     } else if (stub.kind === "require_at_return") {
       const labels = flow.labels.get(stub.node);
       const label = labels?.get(stub.domain);
-      if (!label || !isRowLabel(label) || !rowHasAllTags(label.row, stub.tags)) {
+      if (
+        !label || !isRowLabel(label) || !rowHasAllTags(label.row, stub.tags)
+      ) {
         diagnostics.push({
           origin: stub.node,
           reason: "require_at_return" as ConstraintDiagnosticReason,

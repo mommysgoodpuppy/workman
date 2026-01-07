@@ -493,6 +493,9 @@ function collectCoverageFromMatchBundle(
   bundle.arms.forEach((arm) => {
     if (arm.kind === "match_pattern") {
       collectCoverageFromPattern(arm.pattern, coverages, partials);
+      if (arm.guard) {
+        collectCoverageFromExpr(arm.guard, coverages, partials);
+      }
       collectCoverageFromExpr(arm.body, coverages, partials);
     }
   });
@@ -569,7 +572,10 @@ function traverse(
   const maybeId = (node as { id?: NodeId }).id;
   const maybeSpan = (node as { span?: SourceSpan }).span;
   const maybeNameSpan = (node as { nameSpan?: SourceSpan }).nameSpan;
-  if (maybeId !== undefined && (maybeSpan !== undefined || maybeNameSpan !== undefined)) {
+  if (
+    maybeId !== undefined &&
+    (maybeSpan !== undefined || maybeNameSpan !== undefined)
+  ) {
     const span = maybeNameSpan ?? maybeSpan;
     if (span) {
       spans.set(maybeId, span);

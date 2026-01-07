@@ -104,6 +104,7 @@ function canonicalizeExpr(expr: Expr): Expr {
     case "identifier":
     case "literal":
     case "hole":
+    case "enum_literal":
       return expr;
     case "constructor":
       for (let index = 0; index < expr.args.length; index += 1) {
@@ -113,6 +114,15 @@ function canonicalizeExpr(expr: Expr): Expr {
     case "tuple":
       for (let index = 0; index < expr.elements.length; index += 1) {
         expr.elements[index] = canonicalizeExpr(expr.elements[index]);
+      }
+      return expr;
+    case "list_literal":
+      // List literals should be desugared before this pass, but handle them anyway
+      for (let index = 0; index < expr.elements.length; index += 1) {
+        expr.elements[index] = canonicalizeExpr(expr.elements[index]);
+      }
+      if (expr.spread) {
+        expr.spread = canonicalizeExpr(expr.spread);
       }
       return expr;
     case "call":
@@ -180,6 +190,9 @@ function canonicalizeMatchBundle(bundle: MatchBundle): void {
 function canonicalizeMatchArm(arm: MatchArm): void {
   if (arm.kind === "match_pattern") {
     canonicalizePattern(arm.pattern);
+    if (arm.guard) {
+      arm.guard = canonicalizeExpr(arm.guard);
+    }
     arm.body = canonicalizeExpr(arm.body);
   }
 }
@@ -194,6 +207,15 @@ function canonicalizePattern(pattern: Pattern): void {
     case "constructor":
       for (const arg of pattern.args) {
         canonicalizePattern(arg);
+      }
+      break;
+    case "list":
+      // List patterns should be desugared before this pass, but handle them anyway
+      for (const element of pattern.elements) {
+        canonicalizePattern(element);
+      }
+      if (pattern.rest) {
+        canonicalizePattern(pattern.rest);
       }
       break;
     case "variable":

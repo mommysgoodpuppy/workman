@@ -389,7 +389,10 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
     default:
       const _exhaustive: never = expr;
       void _exhaustive;
-      throw new CoreLoweringError("Unsupported expression kind", (expr as any).id);
+      throw new CoreLoweringError(
+        "Unsupported expression kind",
+        (expr as any).id,
+      );
   }
 }
 
@@ -445,6 +448,7 @@ function lowerPatternArm(
   return {
     pattern: lowerPattern(arm.pattern, state),
     body: lowerExpr(arm.body, state),
+    guard: arm.guard ? lowerExpr(arm.guard, state) : undefined,
   };
 }
 
@@ -528,7 +532,10 @@ function lowerPattern(pattern: MPattern, state: LoweringState): CorePattern {
     default:
       const _exhaustive: never = pattern;
       void _exhaustive;
-      throw new CoreLoweringError("Unsupported pattern kind", (pattern as any).id);
+      throw new CoreLoweringError(
+        "Unsupported pattern kind",
+        (pattern as any).id,
+      );
   }
 }
 
@@ -797,7 +804,10 @@ function lowerLiteral(literal: Literal): CoreLiteral {
     default:
       const _exhaustive: never = literal;
       void _exhaustive;
-      throw new CoreLoweringError("Unsupported literal kind", (literal as any).id);
+      throw new CoreLoweringError(
+        "Unsupported literal kind",
+        (literal as any).id,
+      );
   }
 }
 
@@ -830,7 +840,10 @@ function createLetExpression(
   };
 }
 
-function lowerMatchBundleLiteralExpr(expr: any, state: LoweringState): CoreExpr {
+function lowerMatchBundleLiteralExpr(
+  expr: any,
+  state: LoweringState,
+): CoreExpr {
   // match_bundle_literal represents a function that takes one argument and matches it
   // Store the expanded arms for potential bundle references
   const expandedArms = expandBundleArms(expr.bundle.arms, state);
@@ -843,7 +856,10 @@ function lowerMatchBundleLiteralExpr(expr: any, state: LoweringState): CoreExpr 
     scrutinee: {
       kind: "var",
       name: paramName,
-      type: unknownType({ kind: "incomplete", reason: "match_bundle_scrutinee" }),
+      type: unknownType({
+        kind: "incomplete",
+        reason: "match_bundle_scrutinee",
+      }),
     },
     cases: expandedArms.map((arm) => lowerMatchArm(arm, state)),
     type: resolveNodeType(state, expr.id, expr.type),
@@ -857,7 +873,10 @@ function lowerMatchBundleLiteralExpr(expr: any, state: LoweringState): CoreExpr 
   };
 }
 
-function expandBundleArms(arms: readonly MMatchArm[], state: LoweringState): MMatchArm[] {
+function expandBundleArms(
+  arms: readonly MMatchArm[],
+  state: LoweringState,
+): MMatchArm[] {
   const expanded: MMatchArm[] = [];
   for (const arm of arms) {
     if (arm.kind === "match_bundle_reference") {
