@@ -13,9 +13,9 @@ from "std/zig/types.wm" import {
 
 
 -- FP helper: wraps any Zig error union into IResult
-export let try = (zigErrorUnion:T):IResult<T> => {
+export let tryXDD = (zigErrorUnion:T):IResult<T, <_>> => {
   --IGNORE; zigres special keyword
-  let zigres:IResult<T> = zigErrorUnion; 
+  let zigres:IResult<T, <_>> = zigErrorUnion as IResult<T, <_>>; 
   zigres
 };
 

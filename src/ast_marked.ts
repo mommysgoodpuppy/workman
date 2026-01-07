@@ -83,6 +83,12 @@ export interface MCallExpr extends MTypedNode {
   arguments: MExpr[];
 }
 
+export interface MTypeAsExpr extends MTypedNode {
+  kind: "type_as";
+  expression: MExpr;
+  typeAnnotation: MTypeExpr;
+}
+
 export interface MBinaryExpr extends MTypedNode {
   kind: "binary";
   operator: string;
@@ -332,6 +338,7 @@ export type MExpr =
   | MTupleExpr
   | MRecordLiteralExpr
   | MCallExpr
+  | MTypeAsExpr
   | MRecordProjectionExpr
   | MBinaryExpr
   | MUnaryExpr

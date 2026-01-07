@@ -1738,11 +1738,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (ctx.rawMode && expr.literal.kind === "int") {
         litType = freshTypeVar();
       }
-      // In raw mode, treat string literals as C-style pointers for interop.
+      // In raw mode, treat string literals as Zig slices (u8 + len).
       if (ctx.rawMode && expr.literal.kind === "string") {
         litType = {
           kind: "constructor",
-          name: "Ptr",
+          name: "Slice",
           args: [
             { kind: "constructor", name: "U8", args: [] },
             freshTypeVar(),

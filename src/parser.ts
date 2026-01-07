@@ -1694,7 +1694,8 @@ class SurfaceParser {
   }
 
   private parseExpression(): Expr {
-    return this.parseIfExpression();
+    const expr = this.parseIfExpression();
+    return this.parseAsExpression(expr);
   }
 
   private buildMatchScrutinee(args: Expr[]): Expr {
@@ -1918,6 +1919,21 @@ class SurfaceParser {
     return left;
   }
 
+  private parseAsExpression(expr: Expr): Expr {
+    let result = expr;
+    while (this.matchKeyword("as")) {
+      const typeAnnotation = this.parseTypeExpr();
+      result = {
+        kind: "type_as",
+        expression: result,
+        typeAnnotation,
+        span: this.spanFrom(result.span.start, typeAnnotation.span.end),
+        id: nextNodeId(),
+      };
+    }
+    return result;
+  }
+
   private createPipeCall(left: Expr, right: Expr): Expr {
     if (right.kind === "index") {
       const callee: Expr = {
@@ -2018,7 +2034,6 @@ class SurfaceParser {
         };
         continue;
       }
-
       break;
     }
     return expr;

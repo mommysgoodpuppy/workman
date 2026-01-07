@@ -308,7 +308,7 @@ export function registerRecordDeclaration(
   };
 
   adtInfo.constructors = [ctorInfo];
-  
+
   // In raw mode, register record names as simple constructor types (like external types)
   // so they can be used as type arguments (e.g., gpa.create(&allocator, Point))
   if (ctx.rawMode) {
@@ -823,7 +823,7 @@ export function registerRawPrelude(ctx: Context): void {
   registerPolymorphicBinaryPrimitive(ctx, "nativeSub");
   registerPolymorphicBinaryPrimitive(ctx, "nativeMul");
   registerPolymorphicBinaryPrimitive(ctx, "nativeDiv");
-  
+
   // Polymorphic comparison: a -> a -> Bool
   registerPolymorphicComparisonPrimitive(ctx, "nativeEq");
   registerPolymorphicComparisonPrimitive(ctx, "nativeNeq");
@@ -831,27 +831,27 @@ export function registerRawPrelude(ctx: Context): void {
   registerPolymorphicComparisonPrimitive(ctx, "nativeLte");
   registerPolymorphicComparisonPrimitive(ctx, "nativeGt");
   registerPolymorphicComparisonPrimitive(ctx, "nativeGte");
-  
+
   // Boolean operations: Bool -> Bool -> Bool
   registerBoolBinaryPrimitive(ctx, "nativeAnd");
   registerBoolBinaryPrimitive(ctx, "nativeOr");
   registerBoolUnaryPrimitive(ctx, "nativeNot");
-  
+
   registerPrintPrimitive(ctx, "nativePrint");
-  
+
   // zigImport: String -> a (returns opaque type, used for @import in Zig)
   registerZigImportPrimitive(ctx, "zigImport");
-  
+
   // zigField: (a, String) -> b (access field by string name, for reserved words like "type")
   registerZigFieldPrimitive(ctx, "zigField");
-  
+
   // Register polymorphic operator implementations for raw mode
   // These map operators like + to the polymorphic nativeAdd
   registerPolymorphicBinaryPrimitive(ctx, "__op_+");
   registerPolymorphicBinaryPrimitive(ctx, "__op_-");
   registerPolymorphicBinaryPrimitive(ctx, "__op_*");
   registerPolymorphicBinaryPrimitive(ctx, "__op_/");
-  
+
   // Comparison operators return Bool
   registerPolymorphicComparisonPrimitive(ctx, "__op_==");
   registerPolymorphicComparisonPrimitive(ctx, "__op_!=");
@@ -859,7 +859,7 @@ export function registerRawPrelude(ctx: Context): void {
   registerPolymorphicComparisonPrimitive(ctx, "__op_<=");
   registerPolymorphicComparisonPrimitive(ctx, "__op_>");
   registerPolymorphicComparisonPrimitive(ctx, "__op_>=");
-  
+
   // Boolean operators
   registerBoolBinaryPrimitive(ctx, "__op_&&");
   registerBoolBinaryPrimitive(ctx, "__op_||");
@@ -1078,7 +1078,9 @@ function registerMemPrimitive(
   args: ("int" | "unit" | "char")[],
   result: "int" | "unit",
 ): void {
-  const resultType: Type = result === "int" ? { kind: "int" } : { kind: "unit" };
+  const resultType: Type = result === "int"
+    ? { kind: "int" }
+    : { kind: "unit" };
   const type = args.reduceRight<Type>((acc, arg) => {
     const argType: Type = arg === "int"
       ? { kind: "int" }
@@ -1117,7 +1119,10 @@ function registerPolymorphicBinaryPrimitive(ctx: Context, name: string): void {
 }
 
 // Polymorphic comparison primitives for raw mode (a -> a -> Bool)
-function registerPolymorphicComparisonPrimitive(ctx: Context, name: string): void {
+function registerPolymorphicComparisonPrimitive(
+  ctx: Context,
+  name: string,
+): void {
   const typeVar = freshTypeVar();
   if (typeVar.kind !== "var") {
     markInternal(ctx, "fresh_type_var_not_var");
@@ -1183,7 +1188,7 @@ function registerZigImportPrimitive(ctx: Context, name: string): void {
   const argType: Type = ctx.rawMode
     ? {
       kind: "constructor",
-      name: "Ptr",
+      name: "Slice",
       args: [{ kind: "constructor", name: "U8", args: [] }, stateVar],
     }
     : { kind: "string" };
@@ -1218,7 +1223,7 @@ function registerZigFieldPrimitive(ctx: Context, name: string): void {
   const stringType: Type = ctx.rawMode
     ? {
       kind: "constructor",
-      name: "Ptr",
+      name: "Slice",
       args: [{ kind: "constructor", name: "U8", args: [] }, stateVar],
     }
     : { kind: "string" };

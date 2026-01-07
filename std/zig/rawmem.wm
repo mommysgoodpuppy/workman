@@ -4,16 +4,20 @@
 from "std/zig/types.wm" import { Usize };
 
 export infectious mem type Ptr<t, s> = @value PtrVal<t>;
-export type Slice<t, s> = { ptr: Ptr<t, s>, len: Usize };
+export infectious mem type ManyPtr<t, s> = @value ManyPtrVal<t>;
+export infectious mem type Array<t, n, s> = @value ArrayVal<t, n>;
+
+export type Slice<t, s> = { ptr: ManyPtr<t, s>, len: Usize };
 
 -- Raw-only intrinsics lowered by the Zig raw emitter.
 let zig_alloc_struct: (t) => Ptr<t, s> = ?;
 let zig_alloc_struct_uninit: (t) => Ptr<t, s> = ?;
 let zig_alloc_struct_init: (t, t) => Ptr<t, s> = ?;
 let zig_alloc_slice: (t, Usize) => Slice<t, s> = ?;
-let zig_alloc_array_uninit: (t, Usize) => t = ?;
+let zig_alloc_array_uninit: (t, Usize) => ArrayVal<t, s> = ?;
 let zig_free: (Ptr<t, s>) => () = ?;
 let zig_free_slice: (Slice<t, s>) => () = ?;
+let zig_stack_slice_uninit: (t, Usize) => Slice<t, s> = ?;
 
 export let allocStruct = (t) => { zig_alloc_struct(t) };
 export let allocStructUninit = (t) => { zig_alloc_struct_uninit(t) };
@@ -22,6 +26,7 @@ export let allocSlice = (t, len) => { zig_alloc_slice(t, len) };
 export let allocArrayUninit = (t, len) => { zig_alloc_array_uninit(t, len) };
 export let free = (ptr) => { zig_free(ptr); };
 export let freeSlice = (slice) => { zig_free_slice(slice); };
+export let stackSliceUninit = (t, len) => {zig_stack_slice_uninit(t, len)};
 
 export op mem.allocStruct {
   domain mem;

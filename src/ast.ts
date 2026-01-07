@@ -155,6 +155,7 @@ export type Expr =
   | CallExpr
   | RecordProjectionExpr
   | IndexExpr
+  | TypeAsExpr
   | BinaryExpr
   | UnaryExpr
   | ArrowFunctionExpr
@@ -227,6 +228,12 @@ export interface IndexExpr extends NodeBase {
   kind: "index";
   target: Expr;
   index: Expr;
+}
+
+export interface TypeAsExpr extends NodeBase {
+  kind: "type_as";
+  expression: Expr;
+  typeAnnotation: TypeExpr;
 }
 
 export interface BinaryExpr extends NodeBase {

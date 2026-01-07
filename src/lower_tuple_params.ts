@@ -148,6 +148,9 @@ function lowerExpr(expr: Expr, ctx: LoweringContext): void {
         }
       }
       return;
+    case "type_as":
+      lowerExpr(expr.expression, ctx);
+      return;
     default:
       return;
   }

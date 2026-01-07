@@ -10,11 +10,16 @@ from "std/result/core" import { IResult, IOk, IErr};
 -- In raw mode, use 'type' for types that will be passed as comptime parameters
 record Point { x: I32, y: I32 };
 
+export let try = (zigErrorUnion:T):IResult<t, e>  => {
+  --zigres special keyword
+  let zigres = zigErrorUnion; --need recast
+  zigres
+};
 
 let main = (): U8 => {
   
   -- Initialize the GPA
-  let allocator = gpa.init();
+let allocator = gpa.init();
   let rawGpa = gpa.get(&allocator);
   
   -- Allocate a Point struct (zero-initialized)
@@ -28,14 +33,23 @@ let main = (): U8 => {
   let mut threaded = std.^io.^threaded.init(rawGpa, .{});
   let io = threaded.io();
 
+  let str = "a";
+
   -- Use try() to wrap Zig error union into IResult
-  let res = std.fmt.allocPrint(rawGpa, "hi {s} #{d}\n", .{ "zig", 3 }) >> try;
-  
+  let res= (rawGpa, "hi {s} #{d}\n", .{ "zig", 3 }) >> std.fmt.allocPrint >> try ;
+  let res:IResult<Slice<U8, <_>>,<_>> = res;
+
   -- Extract the value from the IResult
   let s = match(res) {
-    IOk(result) => {result},
-    IErr(_err) => {"error"}
+    IOk(result) => {
+      result
+    },
+    IErr(_err) => {
+      "error"
+    }
   };
+
+  let str = "e";
 
   let mut stdout_buf = allocArrayUninit(U8, 1024);
   let mut stdout_writer = std.^io.^file.stdout().writer(io, &stdout_buf);

@@ -160,6 +160,9 @@ function canonicalizeExpr(expr: Expr): Expr {
       return expr;
     case "match_fn":
       return rewriteMatchFunction(expr);
+    case "type_as":
+      expr.expression = canonicalizeExpr(expr.expression);
+      return expr;
     default:
       // Exhaustiveness guard.
       const _exhaustive: never = expr;
