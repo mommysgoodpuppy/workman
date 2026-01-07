@@ -1,0 +1,283 @@
+-- Token types for the Workman lexer
+-- This defines all token kinds produced by the lexer
+
+from "std/coretypes" import { Empty, Link };
+
+-- =============================================================================
+-- Source Span
+-- =============================================================================
+
+-- A span in source code (byte offsets, 0-indexed)
+export record Span = { start: Int, end: Int };
+
+-- Create a span
+export let span = (start, end) => {
+  .{ start = start, end = end }
+};
+
+-- Merge two spans (from start of first to end of second)
+export let spanMerge = (s1, s2) => {
+  .{ start = s1.start, end = s2.end }
+};
+
+-- =============================================================================
+-- Token Kind
+-- =============================================================================
+
+-- All possible token types in Workman
+export type TokenKind =
+  -- Identifiers and constructors
+  | TkIdentifier                    -- lowercase identifier: foo, bar, x'
+  | TkConstructor                   -- uppercase identifier: Some, None, MyType
+  
+  -- Literals
+  | TkNumber                        -- numeric literal: 42, 123
+  | TkString                        -- string literal: "hello"
+  | TkChar                          -- char literal: 'a', '\n'
+  | TkBool                          -- true, false
+  
+  -- Keywords
+  | TkLet                           -- let
+  | TkMut                           -- mut
+  | TkRec                           -- rec
+  | TkAnd                           -- and (for mutual recursion)
+  | TkType                          -- type
+  | TkRecord                        -- record
+  | TkCarrier                       -- carrier
+  | TkIf                            -- if
+  | TkElse                          -- else
+  | TkMatch                         -- match
+  | TkWhen                          -- when (match guards)
+  | TkImport                        -- import
+  | TkExport                        -- export
+  | TkFrom                          -- from
+  | TkAs                            -- as
+  | TkInfix                         -- infix
+  | TkInfixl                        -- infixl
+  | TkInfixr                        -- infixr
+  | TkPrefix                        -- prefix
+  | TkInfectious                    -- infectious
+  | TkDomain                        -- domain
+  | TkOp                            -- op
+  | TkPolicy                        -- policy
+  | TkAnnotate                      -- annotate
+  
+  -- Symbols/Punctuation
+  | TkArrow                         -- =>
+  | TkThinArrow                     -- ->
+  | TkDotDot                        -- ..
+  | TkDot                           -- .
+  | TkEquals                        -- =
+  | TkPipe                          -- |
+  | TkColon                         -- :
+  | TkComma                         -- ,
+  | TkSemicolon                     -- ;
+  | TkLParen                        -- (
+  | TkRParen                        -- )
+  | TkLBrace                        -- {
+  | TkRBrace                        -- }
+  | TkLBracket                      -- [
+  | TkRBracket                      -- ]
+  | TkLAngle                        -- <
+  | TkRAngle                        -- >
+  | TkUnderscore                    -- _
+  | TkAt                            -- @
+  
+  -- Operators (stored with the actual operator string in Token)
+  | TkOperator                      -- +, -, *, /, ==, ++, :>, etc.
+  
+  -- Special
+  | TkComment                       -- -- comment or // comment
+  | TkEof;                          -- end of file
+
+-- =============================================================================
+-- Token
+-- =============================================================================
+
+-- A token with its kind, lexeme (source text), and span
+export record Token = {
+  kind: TokenKind,
+  lexeme: String,                   -- The actual source text
+  span: Span
+};
+
+-- Create a token
+export let token = (kind, lexeme, sp) => {
+  .{ kind = kind, lexeme = lexeme, span = sp }
+};
+
+-- Create a simple token (lexeme matches a fixed string)
+export let simpleToken = (kind, lexeme, start, end) => {
+  .{ kind = kind, lexeme = lexeme, span = span(start, end) }
+};
+
+-- =============================================================================
+-- Token predicates
+-- =============================================================================
+
+export let isKeyword = match(kind) => {
+  TkLet => { true },
+  TkMut => { true },
+  TkRec => { true },
+  TkAnd => { true },
+  TkType => { true },
+  TkRecord => { true },
+  TkCarrier => { true },
+  TkIf => { true },
+  TkElse => { true },
+  TkMatch => { true },
+  TkWhen => { true },
+  TkImport => { true },
+  TkExport => { true },
+  TkFrom => { true },
+  TkAs => { true },
+  TkInfix => { true },
+  TkInfixl => { true },
+  TkInfixr => { true },
+  TkPrefix => { true },
+  TkInfectious => { true },
+  TkDomain => { true },
+  TkOp => { true },
+  TkPolicy => { true },
+  TkAnnotate => { true },
+  _ => { false }
+};
+
+export let isLiteral = match(kind) => {
+  TkNumber => { true },
+  TkString => { true },
+  TkChar => { true },
+  TkBool => { true },
+  _ => { false }
+};
+
+export let isSymbol = match(kind) => {
+  TkArrow => { true },
+  TkThinArrow => { true },
+  TkDotDot => { true },
+  TkDot => { true },
+  TkEquals => { true },
+  TkPipe => { true },
+  TkColon => { true },
+  TkComma => { true },
+  TkSemicolon => { true },
+  TkLParen => { true },
+  TkRParen => { true },
+  TkLBrace => { true },
+  TkRBrace => { true },
+  TkLBracket => { true },
+  TkRBracket => { true },
+  TkLAngle => { true },
+  TkRAngle => { true },
+  TkUnderscore => { true },
+  TkAt => { true },
+  _ => { false }
+};
+
+-- Check if token could be the end of an expression (for negative number detection)
+export let isValueEnd = match(kind) => {
+  TkIdentifier => { true },
+  TkConstructor => { true },
+  TkNumber => { true },
+  TkString => { true },
+  TkChar => { true },
+  TkBool => { true },
+  TkRParen => { true },
+  TkRBrace => { true },
+  TkRBracket => { true },
+  _ => { false }
+};
+
+-- =============================================================================
+-- Keyword lookup
+-- =============================================================================
+
+-- Convert identifier string to keyword token kind (or None)
+export let lookupKeyword = match(s) => {
+  "let" => { TkLet },
+  "mut" => { TkMut },
+  "rec" => { TkRec },
+  "and" => { TkAnd },
+  "type" => { TkType },
+  "record" => { TkRecord },
+  "carrier" => { TkCarrier },
+  "if" => { TkIf },
+  "else" => { TkElse },
+  "match" => { TkMatch },
+  "when" => { TkWhen },
+  "import" => { TkImport },
+  "export" => { TkExport },
+  "from" => { TkFrom },
+  "as" => { TkAs },
+  "infix" => { TkInfix },
+  "infixl" => { TkInfixl },
+  "infixr" => { TkInfixr },
+  "prefix" => { TkPrefix },
+  "infectious" => { TkInfectious },
+  "domain" => { TkDomain },
+  "op" => { TkOp },
+  "policy" => { TkPolicy },
+  "annotate" => { TkAnnotate },
+  "true" => { TkBool },
+  "false" => { TkBool },
+  _ => { TkIdentifier }
+};
+
+-- =============================================================================
+-- Debug/Display helpers
+-- =============================================================================
+
+export let tokenKindToString = match(kind) => {
+  TkIdentifier => { "identifier" },
+  TkConstructor => { "constructor" },
+  TkNumber => { "number" },
+  TkString => { "string" },
+  TkChar => { "char" },
+  TkBool => { "bool" },
+  TkLet => { "let" },
+  TkMut => { "mut" },
+  TkRec => { "rec" },
+  TkAnd => { "and" },
+  TkType => { "type" },
+  TkRecord => { "record" },
+  TkCarrier => { "carrier" },
+  TkIf => { "if" },
+  TkElse => { "else" },
+  TkMatch => { "match" },
+  TkWhen => { "when" },
+  TkImport => { "import" },
+  TkExport => { "export" },
+  TkFrom => { "from" },
+  TkAs => { "as" },
+  TkInfix => { "infix" },
+  TkInfixl => { "infixl" },
+  TkInfixr => { "infixr" },
+  TkPrefix => { "prefix" },
+  TkInfectious => { "infectious" },
+  TkDomain => { "domain" },
+  TkOp => { "op" },
+  TkPolicy => { "policy" },
+  TkAnnotate => { "annotate" },
+  TkArrow => { "=>" },
+  TkThinArrow => { "->" },
+  TkDotDot => { ".." },
+  TkDot => { "." },
+  TkEquals => { "=" },
+  TkPipe => { "|" },
+  TkColon => { ":" },
+  TkComma => { "," },
+  TkSemicolon => { ";" },
+  TkLParen => { "(" },
+  TkRParen => { ")" },
+  TkLBrace => { "{" },
+  TkRBrace => { "}" },
+  TkLBracket => { "[" },
+  TkRBracket => { "]" },
+  TkLAngle => { "<" },
+  TkRAngle => { ">" },
+  TkUnderscore => { "_" },
+  TkAt => { "@" },
+  TkOperator => { "operator" },
+  TkComment => { "comment" },
+  TkEof => { "eof" }
+};

@@ -16,8 +16,8 @@ type Orientation = N | E | S | W;
 let start = .{ x: 0, y: 0 };
 
 let produceOp = (in) => {
-  let intL = 'L' >> charToInt;
-  let intR = 'R' >> charToInt;
+  let intL = 'L' :> charToInt;
+  let intR = 'R' :> charToInt;
   let val = stripErr(listAt(in, 0));
   let dir = stripErr(
     match(val) {

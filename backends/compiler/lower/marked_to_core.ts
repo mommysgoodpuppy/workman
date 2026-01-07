@@ -313,6 +313,10 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
         origin: expr.id,
         span: expr.span,
       };
+    case "type_as":
+      // Type assertion: `expr as Type` - just lower the inner expression
+      // The type system has already validated/applied the assertion
+      return lowerExpr(expr.expression, state);
     case "arrow":
       return {
         kind: "lambda",

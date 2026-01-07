@@ -1,4 +1,5 @@
-@raw;
+
+--@raw;
 
 -- Zig primitive types for raw mode
 -- These types map directly to Zig types in the raw emitter

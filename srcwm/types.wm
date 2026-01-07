@@ -1,8 +1,8 @@
 -- Type system types for the Workman compiler
 -- This mirrors the TypeScript types.ts but in Workman
 
-from "std/list/core" import { Empty, Link };
-from "std/option/core" import { Some, None };
+from "std/coretypes" import { Empty, Link };
+from "std/coretypes" import { Some, None };
 from "std/map/stringMap" import { StringMap, stringMapEmpty };
 
 -- =============================================================================
@@ -13,7 +13,7 @@ from "std/map/stringMap" import { StringMap, stringMapEmpty };
 record Span = { start: Int, end: Int };
 
 -- Node ID for unique identification
--- type NodeId = Int;  -- Just use Int directly
+type NodeId = Int;  -- Just use Int directly
 
 -- =============================================================================
 -- Types - The core type representation
@@ -64,7 +64,7 @@ record TypeScheme = {
 -- =============================================================================
 
 -- For now, just use IntMap<Type> from std
--- type Substitution = IntMap<Type>;
+type Substitution = IntMap<Type>;
 
 -- =============================================================================
 -- Constraint Labels - for effect/infection tracking

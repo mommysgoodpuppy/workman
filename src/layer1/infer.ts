@@ -3224,6 +3224,29 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       }
       return recordExprType(ctx, expr, callType);
     }
+    case "type_as": {
+      // TypeScript-style type assertion: `expr as Type`
+      // Infer the expression's type (we need it for the marked AST),
+      // then return the asserted type from the annotation
+      const exprType = inferExpr(ctx, expr.expression);
+      void exprType; // Expression type is recorded for diagnostics, but assertion overrides it
+
+      // Convert the type annotation to an internal Type
+      const annotationScope = new Map<string, Type>();
+      const assertedType = convertTypeExpr(
+        ctx,
+        expr.typeAnnotation,
+        annotationScope,
+        {
+          allowNewVariables: true,
+        },
+      );
+
+      // Store the annotation type for later use
+      storeAnnotationType(ctx, expr.typeAnnotation, assertedType);
+
+      return recordExprType(ctx, expr, assertedType);
+    }
     default:
       const mark = markUnsupportedExpr(ctx, expr, (expr as Expr).kind);
       return recordExprType(ctx, expr, mark.type);

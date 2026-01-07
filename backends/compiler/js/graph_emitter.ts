@@ -7,7 +7,6 @@ import {
   relative,
   resolve,
 } from "../../../src/io.ts";
-import { isStdCoreModule } from "../../../src/module_loader.ts";
 
 import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
 import { emitModule } from "./emitter.ts";
@@ -77,7 +76,7 @@ export async function emitModuleGraph(
       preludeModule &&
         preludeOutputPath &&
         preludeValueExports.length > 0 &&
-        shouldModuleImportPrelude(module.path, preludePath),
+        shouldModuleImportPrelude(module, preludePath),
     );
     const preludeImport = shouldInjectPrelude
       ? {
@@ -147,17 +146,18 @@ function normalizeSlashes(path: string): string {
 }
 
 function shouldModuleImportPrelude(
-  modulePath: string,
+  module: CoreModule,
   preludePath?: string,
 ): boolean {
   if (!preludePath) return false;
+  if (module.core) return false;
   if (
-    normalizeSlashes(modulePath).toLowerCase() ===
+    normalizeSlashes(module.path).toLowerCase() ===
       normalizeSlashes(preludePath).toLowerCase()
   ) {
     return false;
   }
-  return !isStdCoreModule(modulePath);
+  return true;
 }
 
 function filePathFromModule(meta: ImportMeta, specifier: string): string {

@@ -160,11 +160,8 @@ function sameModulePath(a?: string, b?: string): boolean {
   return normalizeModulePath(a) === normalizeModulePath(b);
 }
 
-export function isStdCoreModule(path: string): boolean {
-  const normalized = path.replaceAll("\\", "/");
-  return normalized.includes("/std/core/") ||
-    normalized.includes("std/core/") || // For relative paths
-    normalized.endsWith("/core.wm");
+export function isStdCoreModule(program: Program): boolean {
+  return program.core === true;
 }
 
 export async function loadModuleGraph(
@@ -411,7 +408,7 @@ export async function buildInfectionRegistryForModule(
 
   const preludePath = graph.prelude;
   if (
-    preludePath && modulePath !== preludePath && !isStdCoreModule(modulePath)
+    preludePath && modulePath !== preludePath && !isStdCoreModule(node.program)
   ) {
     const preludeSummary = summaries.get(preludePath);
     if (preludeSummary) {
@@ -559,7 +556,7 @@ async function summarizeGraph(
     // Skip prelude for std/core modules only
     // Raw mode modules now use the zig prelude (set via restart in loadModuleGraph)
     const isRawMode = node.program.mode === "raw";
-    const skipPrelude = isStdCoreModule(path);
+    const skipPrelude = isStdCoreModule(node.program);
     const initialRegistry = infectionPreludeRegistry.clone();
 
     for (const record of node.imports) {
@@ -610,7 +607,10 @@ async function summarizeGraph(
         // used as type arguments (e.g., allocArrayUninit(U8, 1024))
         if (isRawMode && !initialEnv.has(name)) {
           const parameterIds = info.parameters;
-          const parameterTypes = parameterIds.map((id) => ({ kind: "var" as const, id }));
+          const parameterTypes = parameterIds.map((id) => ({
+            kind: "var" as const,
+            id,
+          }));
           const typeRefScheme: TypeScheme = {
             quantifiers: parameterIds,
             type: {
@@ -993,10 +993,8 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     // If we couldn't parse, we need to visit prelude/dependencies first
     // For now, assume standard dependencies
     if (!program) {
-      // Visit prelude if available
-      if (
-        ctx.preludePath && path !== ctx.preludePath && !isStdCoreModule(path)
-      ) {
+      // Visit prelude if available (if parse failed, we assume we need prelude)
+      if (ctx.preludePath && path !== ctx.preludePath) {
         if (!ctx.nodes.has(ctx.preludePath)) {
           await visitModule(ctx.preludePath, ctx);
         }
@@ -1019,7 +1017,7 @@ async function visitModule(path: string, ctx: LoaderContext): Promise<void> {
     const availablePrefixOperators = new Set<string>();
 
     // Include prelude operators if this isn't the prelude or a std core module
-    const skipPrelude = isStdCoreModule(path);
+    const skipPrelude = program ? isStdCoreModule(program) : false;
     if (ctx.preludePath && path !== ctx.preludePath && !skipPrelude) {
       const preludeNode = ctx.nodes.get(ctx.preludePath);
       if (preludeNode) {
@@ -1200,7 +1198,10 @@ function resolveImports(
         path,
       );
     }
-    if ((kind === "js" || kind === "zig" || kind === "c_header") && !existsSync(resolvedPath)) {
+    if (
+      (kind === "js" || kind === "zig" || kind === "c_header") &&
+      !existsSync(resolvedPath)
+    ) {
       throw moduleError(
         `Foreign module '${entry.source}' imported by '${path}' was not found at '${resolvedPath}'`,
         path,
@@ -1489,7 +1490,10 @@ function applyImports(
       // used as type arguments (e.g., allocArrayUninit(U8, 1024))
       if (rawMode && !targetEnv.has(spec.imported)) {
         const parameterIds = typeExport.parameters;
-        const parameterTypes = parameterIds.map((id) => ({ kind: "var" as const, id }));
+        const parameterTypes = parameterIds.map((id) => ({
+          kind: "var" as const,
+          id,
+        }));
         const typeRefScheme: TypeScheme = {
           quantifiers: parameterIds,
           type: {

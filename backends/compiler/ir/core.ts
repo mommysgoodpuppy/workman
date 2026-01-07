@@ -289,6 +289,8 @@ export interface CoreModule {
   readonly values: readonly CoreValueBinding[];
   readonly exports: readonly CoreExport[];
   readonly mode?: CoreModuleMode;
+  /** Module is a core type/value provider that doesn't receive prelude imports */
+  readonly core?: boolean;
 }
 
 export interface CoreModuleGraph {

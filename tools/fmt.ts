@@ -4,7 +4,7 @@ import { lex } from "../src/lexer.ts";
 import { type OperatorInfo, parseSurfaceProgram } from "../src/parser.ts";
 import { WorkmanError } from "../src/error.ts";
 import { FormatContext } from "../tests/fixtures/format/format_context.ts";
-import { isStdCoreModule, loadModuleGraph } from "../src/module_loader.ts";
+import { loadModuleGraph } from "../src/module_loader.ts";
 import { isAbsolute, resolve } from "../src/io.ts";
 import type {
   BlockExpr,
@@ -59,7 +59,7 @@ async function computeOperatorEnvironment(
   const availableOperators = new Map<string, OperatorInfo>();
   const availablePrefixOperators = new Set<string>();
 
-  if (graph.prelude && entry !== graph.prelude && !isStdCoreModule(entry)) {
+  if (graph.prelude && entry !== graph.prelude && !node.program.core) {
     const preludeNode = graph.nodes.get(graph.prelude);
     if (preludeNode) {
       for (const [op, info] of preludeNode.exportedOperators) {
@@ -150,7 +150,8 @@ class Formatter {
     );
     this.exprFormatters.set(
       "index",
-      (expr) => `${this.formatExpr(expr.target)}[${this.formatExpr(expr.index)}]`,
+      (expr) =>
+        `${this.formatExpr(expr.target)}[${this.formatExpr(expr.index)}]`,
     );
     this.exprFormatters.set("binary", (expr) => this.formatBinary(expr));
     this.exprFormatters.set(

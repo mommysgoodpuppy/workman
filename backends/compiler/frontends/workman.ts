@@ -1,8 +1,7 @@
 import {
   buildInfectionRegistryForModule,
-  isStdCoreModule,
-  loadModuleSummaries,
   type ForeignTypeResult,
+  loadModuleSummaries,
   type ModuleGraph,
   type ModuleLoaderOptions,
   type ModuleNode,
@@ -131,7 +130,13 @@ async function buildAnalysisOptions(
 
   // Detect raw mode from the program
   const rawMode = node.program.mode === "raw";
-  await seedForeignTypeImports(node, loaderOptions, seedEnv, seedAdtEnv, rawMode);
+  await seedForeignTypeImports(
+    node,
+    loaderOptions,
+    seedEnv,
+    seedAdtEnv,
+    rawMode,
+  );
 
   return {
     ...base,
@@ -196,7 +201,10 @@ function seedImports(
         const rawMode = node.program.mode === "raw";
         if (rawMode && !env.has(spec.imported)) {
           const parameterIds = typeExport.parameters;
-          const parameterTypes = parameterIds.map((id) => ({ kind: "var" as const, id }));
+          const parameterTypes = parameterIds.map((id) => ({
+            kind: "var" as const,
+            id,
+          }));
           const typeRefScheme: TypeScheme = {
             quantifiers: parameterIds,
             type: {
@@ -311,8 +319,8 @@ function seedPrelude(
 ): void {
   if (!preludePath) return;
   if (node.path === preludePath) return;
-  if (isStdCoreModule(node.path)) return;
-  
+  if (node.program.core) return;
+
   // Skip prelude seeding for modules that are dependencies of the prelude
   // (they appear before the prelude in topological order)
   const preludeIndex = graph.order.indexOf(preludePath);
@@ -332,7 +340,7 @@ function seedPrelude(
 
   // Detect raw mode from the program
   const rawMode = node.program.mode === "raw";
-  
+
   for (const [name, info] of preludeSummary.exports.types.entries()) {
     if (!adtEnv.has(name)) {
       adtEnv.set(name, cloneTypeInfo(info));
@@ -341,7 +349,10 @@ function seedPrelude(
     // used as type arguments (e.g., allocArrayUninit(U8, 1024))
     if (rawMode && !env.has(name)) {
       const parameterIds = info.parameters;
-      const parameterTypes = parameterIds.map((id) => ({ kind: "var" as const, id }));
+      const parameterTypes = parameterIds.map((id) => ({
+        kind: "var" as const,
+        id,
+      }));
       const typeRefScheme: TypeScheme = {
         quantifiers: parameterIds,
         type: {

@@ -1,0 +1,723 @@
+-- Lexer for the Workman compiler
+-- Converts source text into a stream of tokens
+
+from "std/coretypes" import { Empty, Link };
+from "std/coretypes" import { Some, None };
+from "std/coretypes" import { IOk, IErr };
+from "std/char" import { isDigit, isUppercase, isLowercase, isAlpha, isAlphaNum, isWhitespace };
+from "std/nativeString" import { stringEq, stringConcat, stringLength, stringSlice };
+from "std/list" import { listReverse, listLength };
+-- Note: Record/type names (Span, Token, TokenKind) are not runtime values - only import functions and constructors
+from "./token.wm" import {
+  span, token, simpleToken,
+  TkIdentifier, TkConstructor, TkNumber, TkString, TkChar, TkBool,
+  TkLet, TkMut, TkRec, TkAnd, TkType, TkRecord, TkCarrier,
+  TkIf, TkElse, TkMatch, TkWhen,
+  TkImport, TkExport, TkFrom, TkAs,
+  TkInfix, TkInfixl, TkInfixr, TkPrefix,
+  TkInfectious, TkDomain, TkOp, TkPolicy, TkAnnotate,
+  TkArrow, TkThinArrow, TkDotDot, TkDot, TkEquals, TkPipe,
+  TkColon, TkComma, TkSemicolon,
+  TkLParen, TkRParen, TkLBrace, TkRBrace, TkLBracket, TkRBracket,
+  TkLAngle, TkRAngle, TkUnderscore, TkAt,
+  TkOperator, TkComment, TkEof,
+  lookupKeyword, isValueEnd
+};
+
+-- =============================================================================
+-- Lexer State
+-- =============================================================================
+
+-- The lexer state: source string, current position, and last token kind
+record LexerState = {
+  source: String,                   -- The full source code
+  pos: Int,                         -- Current byte position
+  lastKind: Option<TokenKind>       -- Last emitted token kind (for negative number detection)
+};
+
+-- Create initial lexer state
+export let lexerInit = (source) => {
+  .{ source = source, pos = 0, lastKind = None }
+};
+
+-- =============================================================================
+-- Character Access
+-- =============================================================================
+
+-- Get character at position (returns None if past end)
+let charAt = (state, offset) => {
+  let idx = state.pos + offset;
+  let len = stringLength(state.source);
+  match (idx < len) {
+    true => { Some(stringSlice(state.source, idx, idx + 1)) },
+    false => { None }
+  }
+};
+
+-- Peek current character
+let peek = (state) => {
+  charAt(state, 0)
+};
+
+-- Peek next character
+let peekNext = (state) => {
+  charAt(state, 1)
+};
+
+-- Check if at end of input
+let isAtEnd = (state) => {
+  state.pos >= stringLength(state.source)
+};
+
+-- Advance position by n characters
+let advance = (state, n) => {
+  .{ ..state, pos = state.pos + n }
+};
+
+-- Advance by 1 character
+let advance1 = (state) => {
+  advance(state, 1)
+};
+
+-- =============================================================================
+-- Character Classification (String-based since we use stringSlice)
+-- =============================================================================
+
+let isDigitStr = match(s) => {
+  "0" => { true },
+  "1" => { true },
+  "2" => { true },
+  "3" => { true },
+  "4" => { true },
+  "5" => { true },
+  "6" => { true },
+  "7" => { true },
+  "8" => { true },
+  "9" => { true },
+  _ => { false }
+};
+
+let isWhitespaceStr = match(s) => {
+  " " => { true },
+  "\t" => { true },
+  "\n" => { true },
+  "\r" => { true },
+  _ => { false }
+};
+
+let isUppercaseStr = match(s) => {
+  "A" => { true }, "B" => { true }, "C" => { true }, "D" => { true },
+  "E" => { true }, "F" => { true }, "G" => { true }, "H" => { true },
+  "I" => { true }, "J" => { true }, "K" => { true }, "L" => { true },
+  "M" => { true }, "N" => { true }, "O" => { true }, "P" => { true },
+  "Q" => { true }, "R" => { true }, "S" => { true }, "T" => { true },
+  "U" => { true }, "V" => { true }, "W" => { true }, "X" => { true },
+  "Y" => { true }, "Z" => { true },
+  _ => { false }
+};
+
+let isLowercaseStr = match(s) => {
+  "a" => { true }, "b" => { true }, "c" => { true }, "d" => { true },
+  "e" => { true }, "f" => { true }, "g" => { true }, "h" => { true },
+  "i" => { true }, "j" => { true }, "k" => { true }, "l" => { true },
+  "m" => { true }, "n" => { true }, "o" => { true }, "p" => { true },
+  "q" => { true }, "r" => { true }, "s" => { true }, "t" => { true },
+  "u" => { true }, "v" => { true }, "w" => { true }, "x" => { true },
+  "y" => { true }, "z" => { true },
+  _ => { false }
+};
+
+let isAlphaStr = (s) => {
+  match (isUppercaseStr(s)) {
+    true => { true },
+    false => { isLowercaseStr(s) }
+  }
+};
+
+let isAlphaNumStr = (s) => {
+  match (isAlphaStr(s)) {
+    true => { true },
+    false => { isDigitStr(s) }
+  }
+};
+
+-- Identifier continuation: alphanumeric, underscore, or prime (')
+let isIdentContinue = (s) => {
+  match (isAlphaNumStr(s)) {
+    true => { true },
+    false => {
+      match (stringEq(s, "_")) {
+        true => { true },
+        false => { stringEq(s, "'") }
+      }
+    }
+  }
+};
+
+-- Operator characters
+let isOperatorChar = match(s) => {
+  "+" => { true },
+  "-" => { true },
+  "*" => { true },
+  "/" => { true },
+  "%" => { true },
+  "=" => { true },
+  "!" => { true },
+  "<" => { true },
+  ">" => { true },
+  "&" => { true },
+  "|" => { true },
+  "^" => { true },
+  "~" => { true },
+  "@" => { true },
+  "#" => { true },
+  "$" => { true },
+  "?" => { true },
+  ":" => { true },
+  _ => { false }
+};
+
+-- =============================================================================
+-- Skip Whitespace
+-- =============================================================================
+
+let rec skipWhitespace = (state) => {
+  match (peek(state)) {
+    None => { state },
+    Some(c) => {
+      match (isWhitespaceStr(c)) {
+        true => { skipWhitespace(advance1(state)) },
+        false => { state }
+      }
+    }
+  }
+};
+
+-- =============================================================================
+-- Scan Functions
+-- =============================================================================
+
+-- Scan a comment (-- or // to end of line)
+let rec scanToEndOfLine = (state) => {
+  match (peek(state)) {
+    None => { state },
+    Some(c) => {
+      match (stringEq(c, "\n")) {
+        true => { state },  -- Don't consume the newline
+        false => { scanToEndOfLine(advance1(state)) }
+      }
+    }
+  }
+};
+
+let scanComment = (state, start) => {
+  let endState = scanToEndOfLine(advance(state, 2));  -- Skip -- or //
+  let lexeme = stringSlice(state.source, start, endState.pos);
+  let tok = simpleToken(TkComment, lexeme, start, endState.pos);
+  (tok, endState)
+};
+
+-- Scan a number (sequence of digits)
+let rec scanDigits = (state) => {
+  match (peek(state)) {
+    None => { state },
+    Some(c) => {
+      match (isDigitStr(c)) {
+        true => { scanDigits(advance1(state)) },
+        false => { state }
+      }
+    }
+  }
+};
+
+let scanNumber = (state, start) => {
+  let endState = scanDigits(state);
+  let lexeme = stringSlice(state.source, start, endState.pos);
+  let tok = simpleToken(TkNumber, lexeme, start, endState.pos);
+  (tok, endState)
+};
+
+-- Scan a negative number
+let scanNegativeNumber = (state, start) => {
+  let afterMinus = advance1(state);  -- Skip -
+  let endState = scanDigits(afterMinus);
+  let lexeme = stringSlice(state.source, start, endState.pos);
+  let tok = simpleToken(TkNumber, lexeme, start, endState.pos);
+  (tok, endState)
+};
+
+-- Scan identifier or keyword
+let rec scanIdentBody = (state) => {
+  match (peek(state)) {
+    None => { state },
+    Some(c) => {
+      match (isIdentContinue(c)) {
+        true => { scanIdentBody(advance1(state)) },
+        false => { state }
+      }
+    }
+  }
+};
+
+let scanIdentifier = (state, start, firstCharIsUpper) => {
+  let endState = scanIdentBody(state);
+  let lexeme = stringSlice(state.source, start, endState.pos);
+  -- Determine token kind: keyword, constructor, or identifier
+  let kind = match (firstCharIsUpper) {
+    true => { TkConstructor },
+    false => { lookupKeyword(lexeme) }
+  };
+  let tok = simpleToken(kind, lexeme, start, endState.pos);
+  (tok, endState)
+};
+
+-- Scan escape sequence in string/char
+let scanEscape = (state) => {
+  -- state.pos is at the backslash
+  match (peekNext(state)) {
+    None => { (None, advance1(state)) },  -- Error: trailing backslash
+    Some(c) => {
+      let escaped = match (c) {
+        "n" => { Some("\n") },
+        "r" => { Some("\r") },
+        "t" => { Some("\t") },
+        "\\" => { Some("\\") },
+        "'" => { Some("'") },
+        "\"" => { Some("\"") },
+        "0" => { Some("\0") },
+        _ => { None }  -- Unknown escape
+      };
+      (escaped, advance(state, 2))
+    }
+  }
+};
+
+-- Scan a string literal
+let rec scanStringBody = (state, acc) => {
+  match (peek(state)) {
+    None => { (None, state) },  -- Error: unterminated string
+    Some(c) => {
+      match (stringEq(c, "\"")) {
+        true => { (Some(acc), advance1(state)) },  -- End of string
+        false => {
+          match (stringEq(c, "\\")) {
+            true => {
+              let (escaped, newState) = scanEscape(state);
+              match (escaped) {
+                None => { (None, newState) },  -- Bad escape
+                Some(ch) => { scanStringBody(newState, stringConcat(acc, ch)) }
+              }
+            },
+            false => {
+              scanStringBody(advance1(state), stringConcat(acc, c))
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+let scanString = (state, start) => {
+  let afterQuote = advance1(state);  -- Skip opening "
+  let (content, endState) = scanStringBody(afterQuote, "");
+  match (content) {
+    None => {
+      -- Error: return error token
+      let lexeme = stringSlice(state.source, start, endState.pos);
+      (simpleToken(TkString, lexeme, start, endState.pos), endState)
+    },
+    Some(str) => {
+      let lexeme = stringSlice(state.source, start, endState.pos);
+      (simpleToken(TkString, lexeme, start, endState.pos), endState)
+    }
+  }
+};
+
+-- Scan a character literal
+let scanCharLiteral = (state, start) => {
+  let afterQuote = advance1(state);  -- Skip opening '
+  match (peek(afterQuote)) {
+    None => {
+      -- Error: unterminated char
+      (simpleToken(TkChar, "'", start, afterQuote.pos), afterQuote)
+    },
+    Some(c) => {
+      match (stringEq(c, "\\")) {
+        true => {
+          -- Escape sequence
+          let (escaped, afterEscape) = scanEscape(afterQuote);
+          match (peek(afterEscape)) {
+            Some(q) when stringEq(q, "'") => {
+              let endState = advance1(afterEscape);
+              let lexeme = stringSlice(state.source, start, endState.pos);
+              (simpleToken(TkChar, lexeme, start, endState.pos), endState)
+            },
+            _ => {
+              -- Error: expected closing '
+              let lexeme = stringSlice(state.source, start, afterEscape.pos);
+              (simpleToken(TkChar, lexeme, start, afterEscape.pos), afterEscape)
+            }
+          }
+        },
+        false => {
+          -- Regular character
+          let afterChar = advance1(afterQuote);
+          match (peek(afterChar)) {
+            Some(q) when stringEq(q, "'") => {
+              let endState = advance1(afterChar);
+              let lexeme = stringSlice(state.source, start, endState.pos);
+              (simpleToken(TkChar, lexeme, start, endState.pos), endState)
+            },
+            _ => {
+              -- Error: expected closing ' or multi-char
+              let lexeme = stringSlice(state.source, start, afterChar.pos);
+              (simpleToken(TkChar, lexeme, start, afterChar.pos), afterChar)
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+-- Scan operator (sequence of operator characters)
+let rec scanOperatorBody = (state) => {
+  match (peek(state)) {
+    None => { state },
+    Some(c) => {
+      match (isOperatorChar(c)) {
+        true => { scanOperatorBody(advance1(state)) },
+        false => { state }
+      }
+    }
+  }
+};
+
+let scanOperator = (state, start) => {
+  let endState = scanOperatorBody(state);
+  let lexeme = stringSlice(state.source, start, endState.pos);
+  let tok = simpleToken(TkOperator, lexeme, start, endState.pos);
+  (tok, endState)
+};
+
+-- =============================================================================
+-- Symbol Matching
+-- =============================================================================
+
+-- Try to match a 2-character symbol
+let tryMatch2 = (state, s, kind) => {
+  let len = stringLength(state.source);
+  match (state.pos + 2 <= len) {
+    false => { None },
+    true => {
+      let slice = stringSlice(state.source, state.pos, state.pos + 2);
+      match (stringEq(slice, s)) {
+        true => { Some((kind, 2)) },
+        false => { None }
+      }
+    }
+  }
+};
+
+-- Try to match a 1-character symbol
+let tryMatch1 = (state, s, kind) => {
+  match (peek(state)) {
+    None => { None },
+    Some(c) => {
+      match (stringEq(c, s)) {
+        true => { Some((kind, 1)) },
+        false => { None }
+      }
+    }
+  }
+};
+
+-- Try multi-char symbols first, then single-char
+let matchSymbol = (state) => {
+  -- 2-char symbols
+  match (tryMatch2(state, "=>", TkArrow)) {
+    Some(result) => { Some(result) },
+    None => {
+      match (tryMatch2(state, "->", TkThinArrow)) {
+        Some(result) => { Some(result) },
+        None => {
+          match (tryMatch2(state, "..", TkDotDot)) {
+            Some(result) => { Some(result) },
+            None => {
+              -- 1-char symbols
+              match (tryMatch1(state, ".", TkDot)) {
+                Some(result) => { Some(result) },
+                None => {
+                  match (tryMatch1(state, "=", TkEquals)) {
+                    Some(result) => { Some(result) },
+                    None => {
+                      match (tryMatch1(state, "|", TkPipe)) {
+                        Some(result) => { Some(result) },
+                        None => {
+                          match (tryMatch1(state, ":", TkColon)) {
+                            Some(result) => { Some(result) },
+                            None => {
+                              match (tryMatch1(state, ",", TkComma)) {
+                                Some(result) => { Some(result) },
+                                None => {
+                                  match (tryMatch1(state, ";", TkSemicolon)) {
+                                    Some(result) => { Some(result) },
+                                    None => {
+                                      match (tryMatch1(state, "(", TkLParen)) {
+                                        Some(result) => { Some(result) },
+                                        None => {
+                                          match (tryMatch1(state, ")", TkRParen)) {
+                                            Some(result) => { Some(result) },
+                                            None => {
+                                              match (tryMatch1(state, "{", TkLBrace)) {
+                                                Some(result) => { Some(result) },
+                                                None => {
+                                                  match (tryMatch1(state, "}", TkRBrace)) {
+                                                    Some(result) => { Some(result) },
+                                                    None => {
+                                                      match (tryMatch1(state, "[", TkLBracket)) {
+                                                        Some(result) => { Some(result) },
+                                                        None => {
+                                                          match (tryMatch1(state, "]", TkRBracket)) {
+                                                            Some(result) => { Some(result) },
+                                                            None => {
+                                                              match (tryMatch1(state, "<", TkLAngle)) {
+                                                                Some(result) => { Some(result) },
+                                                                None => {
+                                                                  match (tryMatch1(state, ">", TkRAngle)) {
+                                                                    Some(result) => { Some(result) },
+                                                                    None => {
+                                                                      match (tryMatch1(state, "_", TkUnderscore)) {
+                                                                        Some(result) => { Some(result) },
+                                                                        None => {
+                                                                          tryMatch1(state, "@", TkAt)
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+-- =============================================================================
+-- Main Scanning Function
+-- =============================================================================
+
+-- Scan the next token
+export let scanToken = (state) => {
+  let state1 = skipWhitespace(state);
+  
+  match (isAtEnd(state1)) {
+    true => {
+      let tok = simpleToken(TkEof, "", state1.pos, state1.pos);
+      (tok, state1)
+    },
+    false => {
+      let start = state1.pos;
+      let c = peek(state1);
+      
+      match (c) {
+        None => {
+          -- Shouldn't happen after isAtEnd check
+          let tok = simpleToken(TkEof, "", start, start);
+          (tok, state1)
+        },
+        Some(ch) => {
+          -- Check for comments first (-- or //)
+          match (stringEq(ch, "-")) {
+            true => {
+              match (peekNext(state1)) {
+                Some(ch2) when stringEq(ch2, "-") => {
+                  -- Comment: --
+                  scanComment(state1, start)
+                },
+                Some(ch2) when isDigitStr(ch2) => {
+                  -- Check if this should be a negative number
+                  -- Only if previous token wasn't a value
+                  match (state1.lastKind) {
+                    Some(prevKind) when isValueEnd(prevKind) => {
+                      -- Previous was value, this is minus operator
+                      scanOperator(state1, start)
+                    },
+                    _ => {
+                      -- This is a negative number
+                      scanNegativeNumber(state1, start)
+                    }
+                  }
+                },
+                _ => {
+                  -- Minus operator or operator starting with -
+                  scanOperator(state1, start)
+                }
+              }
+            },
+            false => {
+              match (stringEq(ch, "/")) {
+                true => {
+                  match (peekNext(state1)) {
+                    Some(ch2) when stringEq(ch2, "/") => {
+                      -- Comment: //
+                      scanComment(state1, start)
+                    },
+                    _ => {
+                      -- Division or other operator
+                      scanOperator(state1, start)
+                    }
+                  }
+                },
+                false => {
+                  -- Check for string literal
+                  match (stringEq(ch, "\"")) {
+                    true => { scanString(state1, start) },
+                    false => {
+                      -- Check for char literal
+                      match (stringEq(ch, "'")) {
+                        true => { scanCharLiteral(state1, start) },
+                        false => {
+                          -- Check for number
+                          match (isDigitStr(ch)) {
+                            true => { scanNumber(state1, start) },
+                            false => {
+                              -- Check for identifier/keyword/constructor
+                              match (isAlphaStr(ch)) {
+                                true => {
+                                  let isUpper = isUppercaseStr(ch);
+                                  scanIdentifier(advance1(state1), start, isUpper)
+                                },
+                                false => {
+                                  -- Check for underscore (could be _ or identifier starting with _)
+                                  match (stringEq(ch, "_")) {
+                                    true => {
+                                      match (peekNext(state1)) {
+                                        Some(ch2) when isAlphaNumStr(ch2) => {
+                                          -- Identifier starting with _
+                                          scanIdentifier(advance1(state1), start, false)
+                                        },
+                                        _ => {
+                                          -- Just underscore symbol
+                                          let tok = simpleToken(TkUnderscore, "_", start, start + 1);
+                                          (tok, advance1(state1))
+                                        }
+                                      }
+                                    },
+                                    false => {
+                                      -- Try to match a symbol
+                                      match (matchSymbol(state1)) {
+                                        Some((kind, len)) => {
+                                          let lexeme = stringSlice(state1.source, start, start + len);
+                                          let tok = simpleToken(kind, lexeme, start, start + len);
+                                          (tok, advance(state1, len))
+                                        },
+                                        None => {
+                                          -- Try operator
+                                          match (isOperatorChar(ch)) {
+                                            true => { scanOperator(state1, start) },
+                                            false => {
+                                              -- Unknown character, skip it
+                                              let tok = simpleToken(TkIdentifier, ch, start, start + 1);
+                                              (tok, advance1(state1))
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+-- Update state with token kind for next scan
+let withLastKind = (state, kind) => {
+  .{ ..state, lastKind = Some(kind) }
+};
+
+-- =============================================================================
+-- Tokenize Full Source
+-- =============================================================================
+
+-- Tokenize entire source, returning list of tokens (excluding comments)
+export let rec tokenize = (state) => {
+  let (tok, newState) = scanToken(state);
+  let stateWithLast = withLastKind(newState, tok.kind);
+  
+  match (tok.kind) {
+    TkEof => { [tok] },
+    TkComment => {
+      -- Skip comments, continue tokenizing
+      tokenize(stateWithLast)
+    },
+    _ => {
+      [tok, ..tokenize(stateWithLast)]
+    }
+  }
+};
+
+-- Tokenize source string, returning list of tokens
+export let lex = (source) => {
+  let state = lexerInit(source);
+  tokenize(state)
+};
+
+-- =============================================================================
+-- Utility: Tokenize with comments
+-- =============================================================================
+
+export let rec tokenizeWithComments = (state) => {
+  let (tok, newState) = scanToken(state);
+  let stateWithLast = withLastKind(newState, tok.kind);
+  
+  match (tok.kind) {
+    TkEof => { [tok] },
+    _ => { [tok, ..tokenizeWithComments(stateWithLast)] }
+  }
+};
+
+export let lexWithComments = (source) => {
+  let state = lexerInit(source);
+  tokenizeWithComments(state)
+};

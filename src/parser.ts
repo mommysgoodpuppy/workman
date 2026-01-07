@@ -120,9 +120,10 @@ class SurfaceParser {
     let hasPreviousItem = false;
     let lastTopLevel: ModuleImport | ModuleReexport | TopLevel | null = null;
 
-    // Check for @raw pragma at the start of the file
+    // Check for @raw or @core pragma at the start of the file
     let mode: import("./ast.ts").ModuleMode | undefined;
-    if (this.checkSymbol("@")) {
+    let core = false;
+    while (this.checkSymbol("@")) {
       this.consume(); // consume @
       const pragmaToken = this.peek();
       if (pragmaToken.kind === "identifier" && pragmaToken.value === "raw") {
@@ -130,6 +131,13 @@ class SurfaceParser {
         mode = "raw";
         // Register raw mode prefix operators
         this.prefixOperators.add("&"); // address-of operator for Zig
+        // Consume optional semicolon after pragma
+        this.matchSymbol(";");
+      } else if (
+        pragmaToken.kind === "identifier" && pragmaToken.value === "core"
+      ) {
+        this.consume();
+        core = true;
         // Consume optional semicolon after pragma
         this.matchSymbol(";");
       } else {
@@ -248,6 +256,7 @@ class SurfaceParser {
         ? trailingComments
         : undefined,
       mode,
+      core: core || undefined,
     };
   }
 

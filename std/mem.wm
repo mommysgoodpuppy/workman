@@ -1,6 +1,4 @@
 from "std/zig/mem" import {
-  Ptr as ZigPtr,
-  Slice as ZigSlice,
   alloc as zigAlloc,
   free as zigFree,
   len as zigLen,
@@ -12,8 +10,8 @@ from "std/zig/mem" import {
 };
 
 -- Low-level pointer + slice types (Zig-like surface).
-export type Ptr<T, S> = ZigPtr<T, S>;
-export type Slice<T, S> = ZigSlice<T, S>;
+export from "std/zig/mem" type Ptr(..);
+export from "std/zig/mem" type Slice(..);
 
 -- Minimal mem API stubs (to be backed by runtime / codegen).
 export let alloc = zigAlloc;

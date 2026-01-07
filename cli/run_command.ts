@@ -12,7 +12,14 @@ import {
 import { formatScheme } from "../src/type_printer.ts";
 import { cloneType } from "../src/types.ts";
 import type { Type } from "../src/types.ts";
-import { dirname, fromFileUrl, IO, relative, resolve, toFileUrl } from "../src/io.ts";
+import {
+  dirname,
+  fromFileUrl,
+  IO,
+  relative,
+  resolve,
+  toFileUrl,
+} from "../src/io.ts";
 
 const WORKMAN_ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 import {
@@ -94,10 +101,12 @@ export async function runProgramCommand(
     showErrorsOnly = true;
     skipEvaluation = true;
   } else {
-    for (let index = 0; index < args.length; index += 1) {
-      const arg = args[index];
+    // Handle "wm run <file>" by skipping the "run" command
+    const fileArgs = args[0] === "run" ? args.slice(1) : args;
+    for (let index = 0; index < fileArgs.length; index += 1) {
+      const arg = fileArgs[index];
       if (arg === "--backend" || arg === "-b") {
-        const value = args[index + 1];
+        const value = fileArgs[index + 1];
         if (!value) {
           console.error("Missing value for --backend");
           IO.exit(1);

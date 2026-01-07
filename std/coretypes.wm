@@ -1,4 +1,4 @@
-
+@core;
 export type Option<T> = None | Some<T>;
 
 export type List<T> = Empty | Link<T, List<T>>;

@@ -600,4 +600,6 @@ export interface Program {
   declarations: TopLevel[];
   trailingComments?: CommentBlock[];
   mode?: ModuleMode;
+  /** Module is a core type/value provider that doesn't receive prelude imports */
+  core?: boolean;
 }

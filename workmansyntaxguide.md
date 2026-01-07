@@ -22,6 +22,8 @@ inference and pattern matching.
 
 ---
 
+protip, always use agent tools to typecheck, workmans lsp is very optimized and comprehensive
+
 ## Comments
 
 Both styles are valid:
@@ -119,6 +121,11 @@ let processPoint = ((x, y)) => {
 -- With type annotations (optional but helpful)
 let greet = (name: String) => {
   print(name)
+};
+
+-- For zero arg coffeescript style can be used
+let main = => {
+  print("hello world");
 };
 ```
 
@@ -613,6 +620,12 @@ let firstTwo = match(xs) => {
 ### Importing
 
 ```workman
+-- Import from a file js style
+from "./file.wm" import { func };
+
+-- Import std stuff directly with std/
+from "std/list" import { listMap };
+
 -- Import specific items
 from "std/list" import { listMap, listFilter };
 

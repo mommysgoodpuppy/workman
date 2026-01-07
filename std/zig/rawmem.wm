@@ -1,4 +1,4 @@
-@raw;
+--@raw;
 
 -- Raw-only memory helpers for FFI allocation.
 from "std/zig/types.wm" import { Usize };
@@ -14,7 +14,7 @@ let zig_alloc_struct: (t) => Ptr<t, s> = ?;
 let zig_alloc_struct_uninit: (t) => Ptr<t, s> = ?;
 let zig_alloc_struct_init: (t, t) => Ptr<t, s> = ?;
 let zig_alloc_slice: (t, Usize) => Slice<t, s> = ?;
-let zig_alloc_array_uninit: (t, Usize) => ArrayVal<t, s> = ?;
+let zig_alloc_array_uninit: (t, Usize) => Array<t, n, s> = ?;
 let zig_free: (Ptr<t, s>) => () = ?;
 let zig_free_slice: (Slice<t, s>) => () = ?;
 let zig_stack_slice_uninit: (t, Usize) => Slice<t, s> = ?;

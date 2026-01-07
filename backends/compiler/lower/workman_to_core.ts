@@ -45,7 +45,12 @@ export function lowerAnalyzedModule(
     console.error(`\n⚠️  Type errors in ${node.path}:\n`);
     for (const diagnostic of diagnostics) {
       const span = spanIndex.get(diagnostic.origin);
-      const error = createDiagnosticError(diagnostic, span, node.source, spanIndex);
+      const error = createDiagnosticError(
+        diagnostic,
+        span,
+        node.source,
+        spanIndex,
+      );
       console.error(error.format(node.source));
       console.error(); // blank line between errors
     }
@@ -65,6 +70,7 @@ export function lowerAnalyzedModule(
     ),
     exports: convertExports(node, input.summary),
     mode: node.program?.mode,
+    core: node.program?.core,
   };
 }
 
@@ -72,9 +78,12 @@ function isStdModule(path: string): boolean {
   return path.includes("\\std\\") || path.includes("/std/");
 }
 
-function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[] {
+function convertImports(
+  node: ModuleNode,
+  summary?: ModuleSummary,
+): CoreImport[] {
   const imports: CoreImport[] = [];
-  
+
   // Add explicit imports from source
   for (const record of node.imports) {
     imports.push({
@@ -86,7 +95,7 @@ function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[]
       })),
     });
   }
-  
+
   // Add imports for type re-exports with constructors
   // When a module re-exports types (e.g., prelude re-exporting IResult),
   // we need to import the constructors if they're being re-exported
@@ -94,7 +103,7 @@ function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[]
     for (const reexport of node.reexports) {
       // Check if this re-export has constructors that need to be imported
       const constructorsToImport: string[] = [];
-      
+
       for (const typeExport of reexport.typeExports) {
         if (typeExport.exportConstructors) {
           const typeInfo = summary.exports.types.get(typeExport.name);
@@ -102,22 +111,28 @@ function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[]
             for (const ctor of typeInfo.constructors) {
               if (summary.exports.values.has(ctor.name)) {
                 const sanitized = ctor.name.replace(/[^A-Za-z0-9_$]/g, "_");
-                const importedName = /^[A-Za-z_$]/.test(sanitized) ? sanitized : `_${sanitized}`;
+                const importedName = /^[A-Za-z_$]/.test(sanitized)
+                  ? sanitized
+                  : `_${sanitized}`;
                 constructorsToImport.push(importedName);
               }
             }
           }
         }
       }
-      
+
       // Find existing import for this source or create new one
-      let existingImport = imports.find(imp => imp.source === reexport.sourcePath);
+      let existingImport = imports.find((imp) =>
+        imp.source === reexport.sourcePath
+      );
       if (existingImport) {
         // Add constructor specifiers to existing import (but avoid duplicates)
-        const existingNames = new Set(existingImport.specifiers.map(s => s.imported));
+        const existingNames = new Set(
+          existingImport.specifiers.map((s) => s.imported),
+        );
         const newSpecifiers = constructorsToImport
-          .filter(name => !existingNames.has(name))
-          .map(name => ({
+          .filter((name) => !existingNames.has(name))
+          .map((name) => ({
             kind: "value" as const,
             imported: name,
             local: name,
@@ -128,14 +143,16 @@ function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[]
             specifiers: [...existingImport.specifiers, ...newSpecifiers],
           };
           // Replace in array
-          const index = imports.findIndex(imp => imp.source === reexport.sourcePath);
+          const index = imports.findIndex((imp) =>
+            imp.source === reexport.sourcePath
+          );
           imports[index] = existingImport;
         }
       } else if (constructorsToImport.length > 0) {
         // Create new import with constructor specifiers
         imports.push({
           source: reexport.sourcePath,
-          specifiers: constructorsToImport.map(name => ({
+          specifiers: constructorsToImport.map((name) => ({
             kind: "value" as const,
             imported: name,
             local: name,
@@ -152,7 +169,9 @@ function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[]
   } else {
     // Fallback: side-effect imports for re-exports without summary
     for (const reexport of node.reexports) {
-      const alreadyImported = imports.some(imp => imp.source === reexport.sourcePath);
+      const alreadyImported = imports.some((imp) =>
+        imp.source === reexport.sourcePath
+      );
       if (!alreadyImported) {
         imports.push({
           source: reexport.sourcePath,
@@ -161,7 +180,7 @@ function convertImports(node: ModuleNode, summary?: ModuleSummary): CoreImport[]
       }
     }
   }
-  
+
   return imports;
 }
 
@@ -179,26 +198,30 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
           exported: Boolean(topLevel.export),
         });
       }
-      
+
       // Extract infectious metadata if present
       let infectious: CoreTypeDeclaration["infectious"] = undefined;
       if (topLevel.infectious) {
         const valueCtors = topLevel.members.filter(
           (m): m is import("../../../src/ast.ts").ConstructorAlias =>
-            m.kind === "constructor" && m.annotation === "value"
+            m.kind === "constructor" && m.annotation === "value",
         );
         const effectCtors = topLevel.members.filter(
           (m): m is import("../../../src/ast.ts").ConstructorAlias =>
-            m.kind === "constructor" && m.annotation === "effect"
+            m.kind === "constructor" && m.annotation === "effect",
         );
-        
+
         infectious = {
           domain: topLevel.infectious.domain,
-          valueConstructor: valueCtors.length > 0 ? valueCtors[0].name : undefined,
-          effectConstructors: effectCtors.length > 0 ? effectCtors.map(c => c.name) : undefined,
+          valueConstructor: valueCtors.length > 0
+            ? valueCtors[0].name
+            : undefined,
+          effectConstructors: effectCtors.length > 0
+            ? effectCtors.map((c) => c.name)
+            : undefined,
         };
       }
-      
+
       decls.push({
         name: topLevel.name,
         constructors,
@@ -206,7 +229,7 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
         infectious,
       });
     }
-    
+
     // Handle record declarations (for raw mode struct emission)
     if (topLevel.kind === "record_decl") {
       const recordFields: CoreRecordField[] = [];
@@ -223,7 +246,7 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
           });
         }
       }
-      
+
       decls.push({
         name: topLevel.name,
         constructors: [], // Records have no ADT constructors
@@ -236,7 +259,9 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
 }
 
 /** Convert a TypeExpr AST node to a Zig type string for raw mode emission */
-function typeExprToZigType(typeExpr: import("../../../src/ast.ts").TypeExpr): string {
+function typeExprToZigType(
+  typeExpr: import("../../../src/ast.ts").TypeExpr,
+): string {
   switch (typeExpr.kind) {
     case "type_var":
       return typeExpr.name;
@@ -244,15 +269,32 @@ function typeExprToZigType(typeExpr: import("../../../src/ast.ts").TypeExpr): st
       // Map Workman primitive types to Zig types
       const name = typeExpr.name;
       const zigPrimitives: Record<string, string> = {
-        "I8": "i8", "I16": "i16", "I32": "i32", "I64": "i64", "I128": "i128",
-        "U8": "u8", "U16": "u16", "U32": "u32", "U64": "u64", "U128": "u128",
-        "Isize": "isize", "Usize": "usize",
-        "F16": "f16", "F32": "f32", "F64": "f64", "F128": "f128",
-        "Bool": "bool", "Void": "void",
-        "CShort": "c_short", "CUShort": "c_ushort",
-        "CInt": "c_int", "CUInt": "c_uint",
-        "CLong": "c_long", "CULong": "c_ulong",
-        "CLongLong": "c_longlong", "CULongLong": "c_ulonglong",
+        "I8": "i8",
+        "I16": "i16",
+        "I32": "i32",
+        "I64": "i64",
+        "I128": "i128",
+        "U8": "u8",
+        "U16": "u16",
+        "U32": "u32",
+        "U64": "u64",
+        "U128": "u128",
+        "Isize": "isize",
+        "Usize": "usize",
+        "F16": "f16",
+        "F32": "f32",
+        "F64": "f64",
+        "F128": "f128",
+        "Bool": "bool",
+        "Void": "void",
+        "CShort": "c_short",
+        "CUShort": "c_ushort",
+        "CInt": "c_int",
+        "CUInt": "c_uint",
+        "CLong": "c_long",
+        "CULong": "c_ulong",
+        "CLongLong": "c_longlong",
+        "CULongLong": "c_ulonglong",
         "CChar": "c_char",
       };
       if (zigPrimitives[name]) {
@@ -279,7 +321,9 @@ function typeExprToZigType(typeExpr: import("../../../src/ast.ts").TypeExpr): st
     case "type_pointer":
       return `*${typeExprToZigType(typeExpr.pointee)}`;
     case "type_record": {
-      const fields = typeExpr.fields.map(f => `${f.name}: ${typeExprToZigType(f.type)}`).join(", ");
+      const fields = typeExpr.fields.map((f) =>
+        `${f.name}: ${typeExprToZigType(f.type)}`
+      ).join(", ");
       return `struct { ${fields} }`;
     }
     default:
@@ -287,9 +331,12 @@ function typeExprToZigType(typeExpr: import("../../../src/ast.ts").TypeExpr): st
   }
 }
 
-function convertExports(node: ModuleNode, summary?: ModuleSummary): CoreExport[] {
+function convertExports(
+  node: ModuleNode,
+  summary?: ModuleSummary,
+): CoreExport[] {
   const exports: CoreExport[] = [];
-  
+
   // Export regular values
   for (const valueName of node.exportedValueNames) {
     exports.push({
@@ -298,7 +345,7 @@ function convertExports(node: ModuleNode, summary?: ModuleSummary): CoreExport[]
       exported: valueName,
     });
   }
-  
+
   // Export types
   for (const typeName of node.exportedTypeNames) {
     exports.push({
@@ -307,8 +354,8 @@ function convertExports(node: ModuleNode, summary?: ModuleSummary): CoreExport[]
       exported: typeName,
     });
   }
-  
-      // Export constructors from re-exported types
+
+  // Export constructors from re-exported types
   // When a module re-exports a type with constructors (e.g., std/option re-exporting Option with Some/None),
   // we need to also export the constructors themselves
   // Export constructors from re-exported types
@@ -324,7 +371,9 @@ function convertExports(node: ModuleNode, summary?: ModuleSummary): CoreExport[]
           const alreadyExported = node.exportedValueNames.includes(ctor.name);
           if (!alreadyExported) {
             const sanitized = ctor.name.replace(/[^A-Za-z0-9_$]/g, "_");
-            const exportedName = /^[A-Za-z_$]/.test(sanitized) ? sanitized : `_${sanitized}`;
+            const exportedName = /^[A-Za-z_$]/.test(sanitized)
+              ? sanitized
+              : `_${sanitized}`;
             exports.push({
               kind: "constructor",
               typeName,
@@ -336,7 +385,7 @@ function convertExports(node: ModuleNode, summary?: ModuleSummary): CoreExport[]
       }
     }
   }
-  
+
   return exports;
 }
 
@@ -397,9 +446,7 @@ function simpleFormatType(type: Type): string {
     case "record":
       const fields = Array.from(type.fields.entries());
       return `{ ${
-        fields.map(([k, v]) =>
-          `${k}: ${simpleFormatType(v)}`
-        ).join(", ")
+        fields.map(([k, v]) => `${k}: ${simpleFormatType(v)}`).join(", ")
       } }`;
     default:
       return "?";
@@ -472,9 +519,7 @@ function formatDiagnosticMessage(
           const missing = expectedFields.filter((f) =>
             !actualFields.includes(f)
           );
-          const extra = actualFields.filter((f) =>
-            !expectedFields.includes(f)
-          );
+          const extra = actualFields.filter((f) => !expectedFields.includes(f));
           if (missing.length > 0) {
             extraNotes.push(`Missing fields: ${missing.join(", ")}`);
           }
@@ -494,7 +539,9 @@ function formatDiagnosticMessage(
             );
           } else if (actualCarrier && !expectedCarrier) {
             extraNotes.push(
-              `Note: '${actualCarrier.name}' is infectious; its value type is ${simpleFormatType(actualCarrier.value)}.`,
+              `Note: '${actualCarrier.name}' is infectious; its value type is ${
+                simpleFormatType(actualCarrier.value)
+              }.`,
             );
           } else if (actualType.kind === "constructor") {
             extraNotes.push(
@@ -515,7 +562,9 @@ function formatDiagnosticMessage(
           }
         } else if (actualCarrier && !expectedCarrier) {
           extraNotes.push(
-            `Note: '${actualCarrier.name}' is infectious; its value type is ${simpleFormatType(actualCarrier.value)}.`,
+            `Note: '${actualCarrier.name}' is infectious; its value type is ${
+              simpleFormatType(actualCarrier.value)
+            }.`,
           );
         }
 
@@ -543,7 +592,9 @@ function formatDiagnosticMessage(
       if (candidates && candidates.length > 0) {
         return `Record literal is ambiguous among ${candidates.join(", ")}`;
       }
-      return `Record literal must match exactly one nominal record type (found ${matches ?? 0} matches)`;
+      return `Record literal must match exactly one nominal record type (found ${
+        matches ?? 0
+      } matches)`;
     }
     case "not_record":
       return "Cannot project field from non-record type";
@@ -645,15 +696,21 @@ function formatDiagnosticMessage(
       const domain = diagnostic.details?.domain as string | undefined;
       const forbidden = diagnostic.details?.forbidden as string[] | undefined;
       const actual = diagnostic.details?.actual as string | undefined;
-      const sourceNodes = diagnostic.details?.sourceNodes as number[] | undefined;
-      const forbiddenOrigins = diagnostic.details?.forbiddenOrigins as number[] | undefined;
+      const sourceNodes = diagnostic.details?.sourceNodes as
+        | number[]
+        | undefined;
+      const forbiddenOrigins = diagnostic.details?.forbiddenOrigins as
+        | number[]
+        | undefined;
       const domainLabel = domain ? `'${domain}'` : "memory";
       const forbiddenLabel = forbidden && forbidden.length > 0
         ? forbidden.join(", ")
         : "certain states";
       const actualLabel = actual ? ` (current state: ${actual})` : "";
       let originLabel = "";
-      if (forbiddenOrigins && forbiddenOrigins.length > 0 && spanIndex && source) {
+      if (
+        forbiddenOrigins && forbiddenOrigins.length > 0 && spanIndex && source
+      ) {
         const originLocations = forbiddenOrigins
           .map((nodeId) => {
             const span = spanIndex.get(nodeId);
@@ -665,7 +722,9 @@ function formatDiagnosticMessage(
           })
           .filter((loc): loc is string => loc !== null);
         if (originLocations.length > 0) {
-          originLabel = `\n  [${forbiddenLabel}] state introduced at: ${originLocations.join(", ")}`;
+          originLabel = `\n  [${forbiddenLabel}] state introduced at: ${
+            originLocations.join(", ")
+          }`;
         }
       }
       let sourceLabel = "";

@@ -274,6 +274,19 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
         type,
       };
     }
+    case "type_as": {
+      const expression = materializeExpr(ctx, expr.expression);
+      const typeAnnotation = materializeTypeExpr(ctx, expr.typeAnnotation);
+      const type = getExprTypeOrUnknown(ctx, expr, "expr.type_as");
+      return {
+        kind: "type_as",
+        span: expr.span,
+        id: expr.id,
+        expression,
+        typeAnnotation,
+        type,
+      };
+    }
     case "binary": {
       const left = materializeExpr(ctx, expr.left);
       const right = materializeExpr(ctx, expr.right);

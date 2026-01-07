@@ -1,0 +1,140 @@
+-- Test file for the Workman lexer
+-- Run with: wm run srcwm/test_lexer.wm
+from "std/coretypes" import { Empty, Link };
+from "std/list" import { listForEach, listLength };
+from "std/nativeString" import { stringConcat, intToString };
+from "./token.wm" import { tokenKindToString };
+from "./lexer.wm" import { lex, lexWithComments };
+
+-- Print a token (uses duck typing - Token has kind, span, lexeme fields)
+let printToken = (tok) => {
+  let kindStr = tokenKindToString(tok.kind);
+  let posStr = intToString(tok.span.start);
+  let msg = stringConcat(kindStr, stringConcat(": '", stringConcat(tok.lexeme, stringConcat("' at ", posStr))));
+  print(msg)
+};
+
+-- Test basic tokenization
+let testBasic = () => {
+  print("=== Test: Basic tokens ===");
+  let source = "let x = 42;";
+  let tokens = lex(source);
+  listForEach(printToken, tokens);
+  print("")
+};
+
+-- Test keywords
+let testKeywords = () => {
+  print("=== Test: Keywords ===");
+  let source = "let rec type record match if else from import export";
+  let tokens = lex(source);
+  listForEach(printToken, tokens);
+  print("")
+};
+
+-- Test operators
+let testOperators = () => {
+  print("=== Test: Operators ===");
+  let source = "+ - * / == != <= >= && || ++ :>";
+  let tokens = lex(source);
+  listForEach(printToken, tokens);
+  print("")
+};
+
+-- Test symbols
+let testSymbols = () => {
+  print("=== Test: Symbols ===");
+  let source = "=> -> .. . = | : , ; ( ) { } [ ] < > _ @";
+  let tokens = lex(source);
+  listForEach(printToken, tokens);
+  print("")
+};
+
+-- Test strings and chars
+let testStringChar = () => {
+  print("=== Test: Strings and Chars ===");
+  let source = "\"hello world\" 'a' '\\n' \"with\\tescape\"";
+  let tokens = lex(source);
+  listForEach(printToken, tokens);
+  print("")
+};
+
+-- Test numbers
+let testNumbers = () => {
+  print("=== Test: Numbers ===");
+  let source = "0 42 123 -5 -100";
+  let tokens = lex(source);
+  listForEach(printToken, tokens);
+  print("")
+};
+
+-- Test identifiers and constructors
+let testIdentifiers = () => {
+  print("=== Test: Identifiers and Constructors ===");
+  let source = "foo bar Some None MyType x' _hidden";
+  let tokens = lex(source);
+  listForEach(printToken, tokens);
+  print("")
+};
+
+-- Test comments
+let testComments = () => {
+  print("=== Test: Comments (skipped by default) ===");
+  let source = "let x = 1; -- this is a comment\nlet y = 2; // another comment";
+  let tokens = lex(source);
+  listForEach(printToken, tokens);
+  print("");
+
+  print("=== Test: Comments (included) ===");
+  let tokensWithComments = lexWithComments(source);
+  listForEach(printToken, tokensWithComments);
+  print("")
+};
+
+-- Test negative number vs subtraction
+let testNegativeVsSubtract = () => {
+  print("=== Test: Negative number vs subtraction ===");
+  -- "5 - 3" should be: number, operator, number
+  -- "-5" at start should be: number (negative)
+  let source1 = "5 - 3";
+  let source2 = "-5";
+  let source3 = "let x = -5"; -- -5 is negative number
+  let source4 = "x-5"; -- x - 5 (subtraction)
+
+  print("Source: 5 - 3");
+  listForEach(printToken, lex(source1));
+
+  print("Source: -5");
+  listForEach(printToken, lex(source2));
+
+  print("Source: let x = -5");
+  listForEach(printToken, lex(source3));
+
+  print("Source: x-5");
+  listForEach(printToken, lex(source4));
+  print("")
+};
+
+-- Test a realistic code snippet
+let testRealistic = () => {
+  print("=== Test: Realistic code ===");
+  let source = "let rec factorial = match(n) => {\n  0 => { 1 },\n  _ => { n * factorial(n - 1) }\n};";
+  let tokens = lex(source);
+  print("Token count:");
+  print(intToString(listLength(tokens)));
+  listForEach(printToken, tokens);
+  print("")
+};
+
+let main = () => {
+  testBasic();
+  testKeywords();
+  testOperators();
+  testSymbols();
+  testStringChar();
+  testNumbers();
+  testIdentifiers();
+  testComments();
+  testNegativeVsSubtract();
+  testRealistic()
+};
