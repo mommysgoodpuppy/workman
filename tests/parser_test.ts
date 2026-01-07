@@ -2,14 +2,17 @@ import { lex } from "../src/lexer.ts";
 import type { NodeId, Program } from "../src/ast.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { ParseError } from "../src/error.ts";
-import { assertEquals, assertThrows } from "https://deno.land/std/assert/mod.ts";
+import {
+  assertEquals,
+  assertThrows,
+} from "https://deno.land/std/assert/mod.ts";
 
 function collectNodeIds(program: Program): NodeId[] {
   const ids: NodeId[] = [];
   const seen = new Set<NodeId>();
 
   function visit(node: any): void {
-    if (node && typeof node === 'object' && 'id' in node) {
+    if (node && typeof node === "object" && "id" in node) {
       if (!seen.has(node.id)) {
         seen.add(node.id);
         ids.push(node.id);
@@ -22,7 +25,7 @@ function collectNodeIds(program: Program): NodeId[] {
         const value = node[key];
         if (Array.isArray(value)) {
           value.forEach(visit);
-        } else if (value && typeof value === 'object') {
+        } else if (value && typeof value === "object") {
           visit(value);
         }
       }
@@ -275,7 +278,7 @@ let result = if (debug) {
 });
 
 Deno.test("parses dot record literal", () => {
-  const source = `let result = .{ value: 1, next: 2 };`;
+  const source = `let result = .{ value = 1, next = 2 };`;
   const tokens = lex(source);
   const program = parseSurfaceProgram(tokens);
 

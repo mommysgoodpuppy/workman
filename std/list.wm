@@ -210,14 +210,14 @@ export let rec listZip = match(xs, ys) => {
 -- Splits the list into two lists: one with elements that satisfy the predicate, one with those that don't
 -- Partition list into two based on predicate (true, false)
 -- Returns a record with 'trues' and 'falses' fields
-record Helper<T> { trues: List<T>, falses: List<T> };
+record Helper<T> = { trues: List<T>, falses: List<T> };
 export let rec listPartition = match(predicate, list) => {
-  (predicate, Empty) => { ({ trues: Empty, falses: Empty }) },
+  (predicate, Empty) => { (.{ trues= Empty, falses= Empty }) },
   (predicate, Link(x, rest)) => {
     let partitioned = listPartition(predicate, rest);
     match(predicate(x)) {
-      true => { ({ trues: Link(x, partitioned.trues), falses: partitioned.falses }) },
-      false => { ({ trues: partitioned.trues, falses: Link(x, partitioned.falses) }) }
+      true => { (.{ trues= Link(x, partitioned.trues), falses= partitioned.falses }) },
+      false => { (.{ trues= partitioned.trues, falses= Link(x, partitioned.falses) }) }
     }
   }
 };

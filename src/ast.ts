@@ -22,7 +22,6 @@ export type Pattern =
   | ({
     kind: "variable";
     name: string;
-    isExplicitPin?: boolean;
     isExplicitBinding?: boolean;
   } & NodeBase)
   | ({ kind: "literal" } & NodeBase & { literal: Literal })

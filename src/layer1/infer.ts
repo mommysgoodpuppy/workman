@@ -3506,32 +3506,9 @@ export function inferPattern(
         };
       }
 
-      if (pattern.isExplicitPin && !existingScheme) {
-        const markType = createUnknownAndRegister(
-          ctx,
-          holeOriginFromPattern(pattern),
-          { kind: "incomplete", reason: "pattern.pinned.not_found" },
-        );
-        const mark: MMarkPattern = {
-          kind: "mark_pattern",
-          span: pattern.span,
-          id: pattern.id,
-          reason: "other",
-          data: { issue: "pinned_not_found", name: pattern.name },
-          type: markType,
-        } satisfies MMarkPattern;
-        return {
-          type: markType,
-          bindings: new Map(),
-          coverage: { kind: "none" },
-          marked: mark,
-        };
-      }
-
       const shouldAutoPin = allowAutoPin && !!existingScheme &&
         !autoPinBlacklist.has(pattern.name);
-      const shouldPin = pattern.isExplicitPin || shouldAutoPin;
-      if (shouldPin && existingScheme) {
+      if (shouldAutoPin && existingScheme) {
         const existingType = instantiateAndApply(ctx, existingScheme);
         if (!unify(ctx, target, existingType)) {
           const markType = createUnknownAndRegister(
@@ -3803,17 +3780,16 @@ export function inferPattern(
         if (pattern.name === "NonNull") {
           const refined = refinedNullability ?? resolvedExpected;
           const argPattern = pattern.args[0];
-          const bindingPattern =
-            argPattern.kind === "variable" && !argPattern.isExplicitPin
-              ? { ...argPattern, isExplicitBinding: true }
-              : argPattern;
+          const bindingPattern = argPattern.kind === "variable"
+            ? { ...argPattern, isExplicitBinding: true }
+            : argPattern;
           let info = inferPattern(ctx, bindingPattern, refined, {
             allowPinning: false,
             requireExplicitBinding: false,
             autoPinBlacklist,
           });
           bindings = info.bindings;
-          if (argPattern.kind === "variable" && !argPattern.isExplicitPin) {
+          if (argPattern.kind === "variable") {
             if (!bindings) {
               bindings = new Map();
             }
@@ -3878,17 +3854,16 @@ export function inferPattern(
             : null;
           const refined = holeInfo?.value ?? resolvedExpected;
           const argPattern = pattern.args[0];
-          const bindingPattern =
-            argPattern.kind === "variable" && !argPattern.isExplicitPin
-              ? { ...argPattern, isExplicitBinding: true }
-              : argPattern;
+          const bindingPattern = argPattern.kind === "variable"
+            ? { ...argPattern, isExplicitBinding: true }
+            : argPattern;
           const info = inferPattern(ctx, bindingPattern, refined, {
             allowPinning: false,
             requireExplicitBinding: false,
             autoPinBlacklist,
           });
           bindings = info.bindings;
-          if (argPattern.kind === "variable" && !argPattern.isExplicitPin) {
+          if (argPattern.kind === "variable") {
             bindings.set(argPattern.name, refined);
           }
           markedArgs.push(info.marked);

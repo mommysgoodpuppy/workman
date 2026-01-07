@@ -1,25 +1,25 @@
-export let not = match(value) {
+export let not = match(value) => {
   true => { false },
   false => { true }
 };
 
-export let boolAnd = match(lhs, rhs) {
+export let boolAnd = match(lhs, rhs) => {
   (true, true) => { true },
   _ => { false }
 };
 
-export let boolOr = match(lhs, rhs) {
+export let boolOr = match(lhs, rhs) => {
   (false, false) => { false },
   _ => { true }
 };
 
-export let boolXor = match(lhs, rhs) {
+export let boolXor = match(lhs, rhs) => {
   (true, true) => { false },
   (false, false) => { false },
   _ => { true }
 };
 
-export let ifThenElse = match(condition, thenBranch, elseBranch) {
+export let ifThenElse = match(condition, thenBranch, elseBranch) => {
   (true, thenBranch, _) => { thenBranch() },
   (false, _, elseBranch) => { elseBranch() }
 };

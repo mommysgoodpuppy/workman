@@ -1,16 +1,16 @@
 from "std/core/ordering" import { Ordering, LT, EQ, GT };
 
-export let orderingIsLT = match(ordering) {
+export let orderingIsLT = match(ordering) => {
   LT => { true },
   _ => { false }
 };
 
-export let orderingIsEQ = match(ordering) {
+export let orderingIsEQ = match(ordering) => {
   EQ => { true },
   _ => { false }
 };
 
-export let orderingIsGT = match(ordering) {
+export let orderingIsGT = match(ordering) => {
   GT => { true },
   _ => { false }
 };

@@ -141,12 +141,12 @@ Deno.test("constructor pattern rebinds nested name even when outer exists", () =
   assertEquals(binding.type, "Option<Int> -> Int");
 });
 
-Deno.test("explicit pin matches nested constructor payloads", () => {
+Deno.test("nested constructor payloads auto-pin existing bindings", () => {
   const source = `
     let target = 5;
     let check = (value: Option<Int>) => {
       match(value) {
-        Some(^target) => { true },
+        Some(target) => { true },
         _ => { false }
       }
     };
@@ -300,7 +300,7 @@ Deno.test("return annotation keeps infectious carrier when errors ignored", () =
   }));
   const binding = summaries.find((entry) => entry.name === "produce");
   assertExists(binding);
-  console.log(binding.type)
+  console.log(binding.type);
   assert(
     binding.type.includes("IResult"),
     `expected produce to remain infectious, got ${binding.type}`,
@@ -323,9 +323,9 @@ Deno.test("arrow return annotation mismatch reports error", () => {
 
 Deno.test("partial record literal surfaces missing field diagnostics", () => {
   const source = `
-    record Point { x: Int, y: Int };
-    let buildPoint = () => {
-      { x: 5 }
+    record Point = { x: Int, y: Int };
+    let buildPoint = (): Point => {
+      .{ x = 5 }
     };
   `;
   const analysis = analyzeSource(source);
@@ -338,10 +338,10 @@ Deno.test("partial record literal surfaces missing field diagnostics", () => {
 
 Deno.test("ambiguous record literal surfaces ambiguous_record diagnostic", () => {
   const source = `
-    record Point { x: Int, y: Int };
-    record Pos { x: Int, y: Int };
+    record Point = { x: Int, y: Int };
+    record Pos = { x: Int, y: Int };
     let choose = () => {
-      { x: 1, y: 2 }
+      .{ x = 1, y = 2 }
     };
   `;
   const analysis = analyzeSource(source);
@@ -804,4 +804,3 @@ Deno.test("inference completes successfully with ID-annotated AST", () => {
   // Verify that the marked program was created
   assertEquals(result.markedProgram.declarations.length, 1);
 });
-

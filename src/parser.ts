@@ -946,7 +946,7 @@ class SurfaceParser {
 
   private looksLikeTupleLiteral(): boolean {
     // Called after consuming the opening '{' in .{
-    // Check if it's NOT a record literal (i.e., no field names with colons)
+    // Check if it's NOT a record literal (i.e., no field names with equals signs)
     let offset = 0;
     while (true) {
       const token = this.peek(offset);
@@ -986,11 +986,6 @@ class SurfaceParser {
       // If it starts with something other than identifier or }, assume tuple
       return true;
     }
-  }
-
-  private parseRecordLiteralExpr(): Expr {
-    const open = this.expectSymbol("{");
-    return this.parseRecordLiteralExprFromOpen(open, open.start);
   }
 
   private parseRecordLiteralExprFromOpen(open: Token, start: number): Expr {
@@ -2667,18 +2662,6 @@ class SurfaceParser {
       return {
         kind: "all_errors",
         span: this.createSpan(all, all),
-        id: nextNodeId(),
-      };
-    }
-
-    if (token.kind === "operator" && token.value === "^") {
-      const caret = this.consume();
-      const ident = this.expectIdentifier();
-      return {
-        kind: "variable",
-        name: ident.value,
-        isExplicitPin: true,
-        span: this.createSpan(caret, ident),
         id: nextNodeId(),
       };
     }
