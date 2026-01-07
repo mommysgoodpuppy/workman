@@ -49,8 +49,8 @@ let getUserSummary = (username) => {
   let reposRequest = fetch(stringConcat(baseUrl, "/repos?sort=pushed&per_page=5"));
 
 
-  let userx = profileRequest >> json;
-  let reposx = reposRequest >> json;
+  let userx = profileRequest :> json;
+  let reposx = reposRequest :> json;
   
   let user = match (userx) {
     Resolved(body) => { body },

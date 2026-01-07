@@ -216,7 +216,7 @@ Deno.test("parses index expression", () => {
 });
 
 Deno.test("parses pipe into index as write call", () => {
-  const source = `let x = 'H' >> buffer[0];`;
+  const source = `let x = 'H' :> buffer[0];`;
   const tokens = lex(source);
   const program = parseSurfaceProgram(tokens);
 

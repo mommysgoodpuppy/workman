@@ -100,7 +100,7 @@ class SurfaceParser {
       [">", { precedence: 4, associativity: "none" }],
       ["<=", { precedence: 4, associativity: "none" }],
       [">=", { precedence: 4, associativity: "none" }],
-      [">>", { precedence: 1, associativity: "left" }],
+      [":>", { precedence: 1, associativity: "left" }],
     ]);
 
     this.operators = initialOperators
@@ -1838,6 +1838,19 @@ class SurfaceParser {
 
   private parseArrowOrLower(): Expr {
     const token = this.peek();
+    // Handle zero-arg arrow: => { ... } (CoffeeScript style)
+    if (token.kind === "symbol" && token.value === "=>") {
+      this.consume(); // consume =>
+      const body = this.parseBlockExpr();
+      return {
+        kind: "arrow",
+        parameters: [],
+        returnAnnotation: undefined,
+        body,
+        span: this.spanFrom(token.start, body.span.end),
+        id: nextNodeId(),
+      };
+    }
     if (token.kind === "symbol" && token.value === "(") {
       const snapshot = this.index;
       let arrowInfo: {
@@ -1934,7 +1947,7 @@ class SurfaceParser {
         }
       }
 
-      if (operator === ">>" && !this.preservePipeOperator) {
+      if (operator === ":>" && !this.preservePipeOperator) {
         left = this.createPipeCall(left, right);
         continue;
       }
@@ -3002,9 +3015,6 @@ class SurfaceParser {
     ) {
       return true;
     }
-    if (value === ">" && token.kind === "operator" && token.value === ">>") {
-      return true;
-    }
     return false;
   }
 
@@ -3012,23 +3022,6 @@ class SurfaceParser {
     const token = this.consume();
     if (!this.isSymbolToken(token, value)) {
       throw expectedTokenError(`symbol '${value}'`, token, this.source);
-    }
-
-    if (value === ">" && token.kind === "operator" && token.value === ">>") {
-      const first: Token = {
-        kind: "symbol",
-        value: ">",
-        start: token.start,
-        end: token.start + 1,
-      };
-      const second: Token = {
-        kind: "symbol",
-        value: ">",
-        start: token.start + 1,
-        end: token.end,
-      };
-      this.tokens.splice(this.index, 0, second);
-      return first;
     }
 
     if (token.kind === "operator" && token.value === value) {

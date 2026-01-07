@@ -32,7 +32,7 @@ let infectOption = (in) => {
 -- Read exactly one digit or raise ExpectedDigit to the caller.
 let readRequiredDigit = (chars, i) => {
   makeStep(
-    chars >> listAt(i) >> charToDigit >> infectOption,
+    chars :> listAt(i) :> charToDigit :> infectOption,
     i + 1
   )
 };
@@ -45,7 +45,7 @@ let rec extendDigits = (chars, step, count) => {
     match(listAt(chars, step.next)) {
       IErr(_) => { step },
       IOk(code) => {
-        match(code >> charToDigit >> infectOption) {
+        match(code :> charToDigit :> infectOption) {
           IErr(_) => { step },
           IOk(digit) => {
             let combined = makeStep(
@@ -76,7 +76,7 @@ let expectCharAt = (chars, i, expected, error) => {
 
 -- Check for the mul( literal at a position, otherwise resume scanning.
 let expectMulLiteral = (chars, i) => {
-  if (chars >> listSlice(i, i + mulLiteralLength) >> strEq(mulLiteral)) {
+  if (chars :> listSlice(i, i + mulLiteralLength) :> strEq(mulLiteral)) {
     IOk(i + mulLiteralLength)
   } else {
     IErr(NotMul)
@@ -85,7 +85,7 @@ let expectMulLiteral = (chars, i) => {
 
 -- Parse mul(X,Y) at an index and return the product plus next cursor.
 let parseMulAt = (chars, i) => {
-  let afterMul = chars >> expectMulLiteral(i);
+  let afterMul = chars :> expectMulLiteral(i);
   let leftStep = extendDigits(chars, readRequiredDigit(chars, afterMul), 1);
   let afterComma = expectCharAt(chars, leftStep.next, charComma, ExpectedComma);
   let rightStep = extendDigits(chars, readRequiredDigit(chars, afterComma), 1);

@@ -220,7 +220,7 @@ Deno.test("parser: parses complex expression with multiple operators", () => {
 Deno.test("parser: spreads tuple arguments into pipeline calls", () => {
   const source = `
     let add = (a, b) => { a };
-    let result = (1, 2) >> add;
+    let result = (1, 2) :> add;
   `;
   const tokens = lex(source);
   const program = parseSurfaceProgram(tokens);

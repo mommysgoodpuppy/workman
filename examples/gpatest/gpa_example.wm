@@ -36,7 +36,7 @@ let allocator = gpa.init();
   let str = "a";
 
   -- Use try() to wrap Zig error union into IResult
-  let res= (rawGpa, "hi {s} #{d}\n", .{ "zig", 3 }) >> std.fmt.allocPrint >> try ;
+  let res= (rawGpa, "hi {s} #{d}\n", .{ "zig", 3 }) :> std.fmt.allocPrint :> try ;
   let res:IResult<Slice<U8, <_>>,<_>> = res;
 
   -- Extract the value from the IResult
@@ -56,12 +56,12 @@ let allocator = gpa.init();
   let stdout: *std.Io.Writer = &stdout_writer.interface;
 
   -- Use try() for writeAll and flush too
-  let _X = match(stdout.writeAll(s)>>try) {
+  let _X = match(stdout.writeAll(s):>try) {
     IOk(r1) => {r1},
     IErr(_err) => {Void}
   };
 
-  let _X = match(stdout.flush()>>try) {
+  let _X = match(stdout.flush():>try) {
     IOk(r2) => {r2},
     IErr(_err) => {Void}
   };
