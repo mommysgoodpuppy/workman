@@ -1,5 +1,6 @@
 from "std/core/int" import { intAdd, intSub, intMul, intDiv, intCompare, intEq, intNeq, intLt, intGt, intLte, intGte };
 from "std/core/bool" import { boolNot, boolAnd as boolAndImpl, boolOr as boolOrImpl };
+from "std/nativeString" import { stringConcat as stringConcatImpl };
 export from "std/core/ordering" type Ordering(..);
 export from "std/option/core" type Option(..);
 export from "std/result/core" type IResult(..);
@@ -56,11 +57,18 @@ export let gte = (left, right) => {
   intGte(left, right)
 };
 
+export let stringConcat = (left, right) => {
+  stringConcatImpl(left, right)
+};
+
 -- Arithmetic operators
 export infixl 6 + = add;
 export infixl 6 - = sub;
 export infixl 7 * = mul;
 export infixl 7 / = div;
+
+-- String concat operator
+export infixl 5 ++ = stringConcat;
 
 -- Comparison operators
 export infix 4 == = eq;

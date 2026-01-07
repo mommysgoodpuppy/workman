@@ -8,7 +8,7 @@ from "std/zig/mem" import {
   write as zigWrite,
   copy as zigCopy,
   slice as zigSlice,
-  close as zigClose,
+  close as zigClose
 };
 
 -- Low-level pointer + slice types (Zig-like surface).

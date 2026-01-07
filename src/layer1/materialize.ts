@@ -226,13 +226,18 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
         name: field.name,
         value: materializeExpr(ctx, field.value),
         hasTrailingComma: field.hasTrailingComma,
+        isPunned: field.isPunned,
       }));
+      const spread = expr.spread
+        ? materializeExpr(ctx, expr.spread)
+        : undefined;
       const type = getExprTypeOrUnknown(ctx, expr, "expr.record_literal");
       return {
         kind: "record_literal",
         span: expr.span,
         id: expr.id,
         fields,
+        spread,
         isMultiLine: expr.isMultiLine,
         type,
       };
@@ -358,6 +363,14 @@ export function materializeExpr(ctx: Context, expr: Expr): MExpr {
         id: expr.id,
         name: expr.name,
         type: getExprTypeOrUnknown(ctx, expr, `expr.enum_literal:${expr.name}`),
+      };
+    case "panic":
+      return {
+        kind: "panic",
+        span: expr.span,
+        id: expr.id,
+        message: materializeExpr(ctx, expr.message),
+        type: getExprTypeOrUnknown(ctx, expr, "expr.panic"),
       };
     default:
       return {

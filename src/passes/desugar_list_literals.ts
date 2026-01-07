@@ -99,6 +99,9 @@ function desugarExpr(expr: Expr): Expr {
     case "hole":
     case "enum_literal":
       return expr;
+    case "panic":
+      expr.message = desugarExpr(expr.message);
+      return expr;
     case "constructor":
       for (let i = 0; i < expr.args.length; i++) {
         expr.args[i] = desugarExpr(expr.args[i]);
@@ -120,6 +123,9 @@ function desugarExpr(expr: Expr): Expr {
     case "record_literal":
       for (const field of expr.fields) {
         field.value = desugarExpr(field.value);
+      }
+      if (expr.spread) {
+        expr.spread = desugarExpr(expr.spread);
       }
       return expr;
     case "record_projection":

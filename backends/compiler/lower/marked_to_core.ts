@@ -369,6 +369,14 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
         name: expr.name,
         type: resolveNodeType(state, expr.id, expr.type),
       };
+    case "panic":
+      // Panic("message") - lower to a prim call
+      return {
+        kind: "prim",
+        op: "panic",
+        args: [lowerExpr(expr.message, state)],
+        type: resolveNodeType(state, expr.id, expr.type),
+      };
     case "mark_unfillable_hole":
       // Conflicted hole - lower the subject if available
       return lowerExpr(expr.subject, state);
@@ -574,7 +582,29 @@ function lowerRecordLiteral(
     provided.set(field.name, lowerExpr(field.value, state));
   }
 
+  // Handle spread: get all fields from spread that aren't explicitly provided
+  let spreadExpr: CoreExpr | undefined;
+  let spreadFields: string[] = [];
+  if (expr.spread) {
+    spreadExpr = lowerExpr(expr.spread, state);
+    const spreadType = spreadExpr.type;
+    if (spreadType.kind === "constructor" && recordName) {
+      const recordInfo = state.adtEnv.get(recordName);
+      if (recordInfo?.recordFields) {
+        spreadFields = Array.from(recordInfo.recordFields.keys()).filter(
+          (name) => !provided.has(name),
+        );
+      }
+    } else if (spreadType.kind === "record") {
+      spreadFields = Array.from(spreadType.fields.keys()).filter(
+        (name) => !provided.has(name),
+      );
+    }
+  }
+
   const fields: { name: string; value: CoreExpr }[] = [];
+
+  // Add explicitly provided fields
   for (const field of expr.fields) {
     const value = provided.get(field.name);
     if (value) {
@@ -582,9 +612,31 @@ function lowerRecordLiteral(
     }
   }
 
+  // Add fields from spread that aren't overridden
+  if (spreadExpr && spreadFields.length > 0) {
+    for (const fieldName of spreadFields) {
+      // Create a record projection to get the field from spread
+      const fieldType = resolvedType.kind === "constructor"
+        ? getFieldTypeFromRecord(state, recordName!, fieldName) ?? resolvedType
+        : (resolvedType.kind === "record"
+          ? (resolvedType.fields.get(fieldName) ?? resolvedType)
+          : resolvedType);
+      fields.push({
+        name: fieldName,
+        value: {
+          kind: "prim",
+          op: "record_get",
+          args: [spreadExpr, createStringLiteralExpr(fieldName)],
+          type: fieldType,
+        },
+      });
+    }
+  }
+
+  // Add default values for remaining missing fields
   if (defaults) {
     for (const [name, defaultExpr] of defaults.entries()) {
-      if (provided.has(name)) continue;
+      if (provided.has(name) || spreadFields.includes(name)) continue;
       const value = lowerDefaultFieldValue(defaultExpr, provided, state);
       fields.push({ name, value });
     }
@@ -595,6 +647,18 @@ function lowerRecordLiteral(
     fields,
     type: resolvedType,
   };
+}
+
+function getFieldTypeFromRecord(
+  state: LoweringState,
+  recordName: string,
+  fieldName: string,
+): Type | null {
+  const recordInfo = state.adtEnv.get(recordName);
+  if (!recordInfo?.alias || recordInfo.alias.kind !== "record") {
+    return null;
+  }
+  return recordInfo.alias.fields.get(fieldName) ?? null;
 }
 
 function lowerDefaultFieldValue(

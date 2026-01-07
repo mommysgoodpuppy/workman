@@ -168,7 +168,8 @@ export type Expr =
   | MatchBundleLiteralExpr
   | HoleExpr
   | EnumLiteralExpr
-  | ListLiteralExpr;
+  | ListLiteralExpr
+  | PanicExpr;
 
 export interface IdentifierExpr extends NodeBase {
   kind: "identifier";
@@ -195,6 +196,11 @@ export interface ListLiteralExpr extends NodeBase {
   spread?: Expr; // For [a, b, ...rest] syntax
 }
 
+export interface PanicExpr extends NodeBase {
+  kind: "panic";
+  message: Expr;
+}
+
 export interface ConstructorExpr extends NodeBase {
   kind: "constructor";
   name: string;
@@ -212,11 +218,13 @@ export interface RecordField extends NodeBase {
   name: string;
   value: Expr;
   hasTrailingComma: boolean;
+  isPunned?: boolean; // True if field was written as `{ name }` instead of `{ name = value }`
 }
 
 export interface RecordLiteralExpr extends NodeBase {
   kind: "record_literal";
   fields: RecordField[];
+  spread?: Expr; // For { ...source, field = value } syntax
   isMultiLine?: boolean;
 }
 

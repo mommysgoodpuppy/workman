@@ -106,6 +106,9 @@ function canonicalizeExpr(expr: Expr): Expr {
     case "hole":
     case "enum_literal":
       return expr;
+    case "panic":
+      expr.message = canonicalizeExpr(expr.message);
+      return expr;
     case "constructor":
       for (let index = 0; index < expr.args.length; index += 1) {
         expr.args[index] = canonicalizeExpr(expr.args[index]);
@@ -134,6 +137,9 @@ function canonicalizeExpr(expr: Expr): Expr {
     case "record_literal":
       for (const field of expr.fields) {
         field.value = canonicalizeExpr(field.value);
+      }
+      if (expr.spread) {
+        expr.spread = canonicalizeExpr(expr.spread);
       }
       return expr;
     case "record_projection":

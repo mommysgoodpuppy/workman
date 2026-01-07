@@ -958,6 +958,10 @@ class SurfaceParser {
         // Empty braces - treat as empty tuple
         return true;
       }
+      // Spread syntax `..` means it's a record literal
+      if (token.kind === "symbol" && token.value === "..") {
+        return false;
+      }
       if (token.kind === "identifier") {
         let nextOffset = offset + 1;
         while (this.peek(nextOffset).kind === "comment") {
@@ -968,7 +972,15 @@ class SurfaceParser {
         if (nextToken.kind === "symbol" && nextToken.value === "=") {
           return false;
         }
-        // Otherwise it's a tuple (identifier followed by something else like comma or })
+        // If there's a comma or }, it could be punning - check if it's a valid record field
+        if (
+          nextToken.kind === "symbol" &&
+          (nextToken.value === "," || nextToken.value === "}")
+        ) {
+          // This could be punning { x, y } - treat as record literal
+          return false;
+        }
+        // Otherwise it's a tuple (identifier followed by something else)
         return true;
       }
       // If it starts with something other than identifier or }, assume tuple
@@ -983,10 +995,36 @@ class SurfaceParser {
 
   private parseRecordLiteralExprFromOpen(open: Token, start: number): Expr {
     const fields: RecordField[] = [];
+    let spread: Expr | undefined;
+
     while (!this.checkSymbol("}")) {
+      // Check for spread syntax: ...expr
+      if (this.checkSymbol("..")) {
+        this.consume(); // consume ..
+        spread = this.parseExpression();
+        this.matchSymbol(","); // optional trailing comma after spread
+        continue;
+      }
+
       const nameToken = this.expectIdentifier();
-      this.expectSymbol("=");
-      const valueExpr = this.parseExpression();
+
+      // Check for punning: { name } instead of { name = expr }
+      let valueExpr: Expr;
+      let isPunned = false;
+      if (this.checkSymbol("=")) {
+        this.consume(); // consume =
+        valueExpr = this.parseExpression();
+      } else {
+        // Punning: { name } expands to { name = name }
+        isPunned = true;
+        valueExpr = {
+          kind: "identifier",
+          name: nameToken.value,
+          span: this.createSpan(nameToken, nameToken),
+          id: nextNodeId(),
+        };
+      }
+
       let hasTrailingComma = false;
       if (this.matchSymbol(",")) {
         hasTrailingComma = true;
@@ -996,6 +1034,7 @@ class SurfaceParser {
         name: nameToken.value,
         value: valueExpr,
         hasTrailingComma,
+        isPunned,
         span: this.spanFrom(nameToken.start, valueExpr.span.end),
         id: nextNodeId(),
       });
@@ -1010,6 +1049,7 @@ class SurfaceParser {
     return {
       kind: "record_literal",
       fields,
+      spread,
       span,
       isMultiLine,
       id: nextNodeId(),
@@ -1059,6 +1099,7 @@ class SurfaceParser {
     const recordToken = this.expectKeyword("record");
     const nameToken = this.expectTypeName();
     const typeParams = this.matchSymbol("<") ? this.parseTypeParameters() : [];
+    this.expectSymbol("=");
     const { members, endToken } = this.parseRecordMembers();
     const declaration: RecordDeclaration = {
       kind: "record_decl",
@@ -2063,6 +2104,18 @@ class SurfaceParser {
             id: nextNodeId(),
           } as Expr;
         }
+        if (token.value === "Panic") {
+          const panicToken = this.consume();
+          this.expectSymbol("(");
+          const message = this.parseExpression();
+          const close = this.expectSymbol(")");
+          return {
+            kind: "panic",
+            message,
+            span: this.spanFrom(panicToken.start, close.end),
+            id: nextNodeId(),
+          } as Expr;
+        }
         const ctor = this.consume();
         return {
           kind: "constructor",
@@ -2165,9 +2218,8 @@ class SurfaceParser {
           return this.parseParenExpression();
         }
         if (token.value === "{") {
-          if (this.looksLikeRecordLiteral()) {
-            return this.parseRecordLiteralExpr();
-          }
+          // Plain {} is always a block expression
+          // Use .{} for record literals
           return this.parseBlockExpr();
         }
         if (token.value === "[") {

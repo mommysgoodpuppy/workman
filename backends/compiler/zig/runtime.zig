@@ -429,6 +429,14 @@ pub fn nativePrintValue(value: Value) Value {
     return makeUnit();
 }
 
+pub fn panic(message: Value) Value {
+    const msg = switch (message) {
+        .String => |s| s,
+        else => "Panic called with non-string message",
+    };
+    @panic(msg);
+}
+
 pub fn valueEquals(a: Value, b: Value) bool {
     return switch (a) {
         .Unit => switch (b) {

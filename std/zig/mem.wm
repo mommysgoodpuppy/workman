@@ -7,8 +7,8 @@ export type Slice<T, S> = { ptr: Ptr<T, S>, len: Int };
 
 -- Minimal mem API (backed by runtime primitives).
 export let alloc = (len) => {
-  let ptr = { addr: nativeAlloc(len) };
-  let slice = { ptr: ptr, len: len };
+  let ptr = .{ addr= nativeAlloc(len) };
+  let slice = .{ ptr= ptr, len= len };
   MemVal(slice)
 };
 
@@ -49,7 +49,7 @@ export let slice = (buf, start, finish) => {
     MemVal(slice) => {
       let addr = intAdd(slice.ptr.addr, start);
       let len = intSub(finish, start);
-      MemVal({ ptr: { addr: addr }, len: len })
+      MemVal(.{ ptr= .{ addr= addr }, len= len })
     }
   }
 };

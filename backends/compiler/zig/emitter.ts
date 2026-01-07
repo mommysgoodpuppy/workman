@@ -112,6 +112,7 @@ const PRELUDE_OPERATOR_ALIASES = new Map<string, string>([
   ["__op_>=", "gte"],
   ["__op_&&", "boolAnd"],
   ["__op_||", "boolOr"],
+  ["__op_++", "stringConcat"],
 ]);
 
 const PRELUDE_PREFIX_ALIASES = new Map<string, string>([
@@ -1309,6 +1310,11 @@ function emitPrim(
       }
       return `runtime.recordGet(${target}, ${fieldName})`;
     }
+    case "panic":
+      return `runtime.panic(${emitArg(0)})`;
+    case "address_of":
+      // address_of is handled specially in raw mode
+      throw new Error("address_of should be handled in raw mode emitter");
     default:
       throw new Error(`Unsupported primitive op '${op}'`);
   }

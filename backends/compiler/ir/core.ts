@@ -161,7 +161,8 @@ export type CorePrimOp =
   | "string_slice"
   | "record_get"
   | "native_print"
-  | "address_of";
+  | "address_of"
+  | "panic";
 
 interface CorePatternBase extends CoreNodeMeta {
   readonly kind: string;

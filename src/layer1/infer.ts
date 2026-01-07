@@ -1782,6 +1782,19 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       const enumType = freshTypeVar();
       return recordExprType(ctx, expr, enumType);
     }
+    case "panic": {
+      // Panic("message") has type `forall a. a` (bottom type)
+      // First, check that the message is a String
+      const messageType = inferExpr(ctx, expr.message);
+      unify(ctx, messageType, {
+        kind: "constructor",
+        name: "String",
+        args: [],
+      });
+      // Return a fresh type variable - Panic can have any type
+      const resultType = freshTypeVar();
+      return recordExprType(ctx, expr, resultType);
+    }
     case "constructor": {
       const scheme = lookupEnv(ctx, expr.name);
       if (!scheme) {
@@ -1863,6 +1876,13 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       return recordExprType(ctx, expr, tupleType);
     }
     case "record_literal": {
+      // If there's a spread, infer its type first to determine the record type
+      let spreadType: Type | undefined;
+      if (expr.spread) {
+        spreadType = inferExpr(ctx, expr.spread);
+        spreadType = applyCurrentSubst(ctx, spreadType);
+      }
+
       const fields = new Map<string, Type>();
       const fieldNames = new Set<string>();
       for (const field of expr.fields) {
@@ -1879,6 +1899,33 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         fieldNames.add(field.name);
         const fieldType = inferExpr(ctx, field.value);
         fields.set(field.name, applyCurrentSubst(ctx, fieldType));
+      }
+
+      // If we have a spread, the result type should match the spread's record type
+      if (spreadType) {
+        // Unify field types with the spread's field types
+        if (spreadType.kind === "constructor") {
+          const spreadInfo = ctx.adtEnv.get(spreadType.name);
+          if (spreadInfo?.recordFields) {
+            const aliasInstance = instantiateRecordAlias(spreadInfo);
+            if (aliasInstance) {
+              for (const [fieldName, fieldType] of fields.entries()) {
+                const spreadFieldType = aliasInstance.fields.get(fieldName);
+                if (spreadFieldType) {
+                  unify(ctx, spreadFieldType, fieldType);
+                }
+              }
+            }
+          }
+        } else if (spreadType.kind === "record") {
+          for (const [fieldName, fieldType] of fields.entries()) {
+            const spreadFieldType = spreadType.fields.get(fieldName);
+            if (spreadFieldType) {
+              unify(ctx, spreadFieldType, fieldType);
+            }
+          }
+        }
+        return recordExprType(ctx, expr, spreadType);
       }
 
       const candidateRecords = Array.from(ctx.adtEnv.entries()).filter(

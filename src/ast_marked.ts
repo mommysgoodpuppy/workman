@@ -45,6 +45,11 @@ export interface MEnumLiteralExpr extends MTypedNode {
   name: string;
 }
 
+export interface MPanicExpr extends MTypedNode {
+  kind: "panic";
+  message: MExpr;
+}
+
 export interface MRecordField extends MNodeBase {
   kind: "record_field";
   name: string;
@@ -74,6 +79,7 @@ export interface MTupleExpr extends MTypedNode {
 export interface MRecordLiteralExpr extends MTypedNode {
   kind: "record_literal";
   fields: MRecordField[];
+  spread?: MExpr;
   isMultiLine?: boolean;
 }
 
@@ -350,6 +356,7 @@ export type MExpr =
   | MMatchBundleLiteralExpr
   | MHoleExpr
   | MEnumLiteralExpr
+  | MPanicExpr
   | MMarkExpr
   | MTypeExprMark;
 
