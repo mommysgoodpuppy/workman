@@ -598,6 +598,7 @@ function projectFieldFromRecord(
           targetCarrierInfo.domain,
           finalValue,
           targetCarrierInfo.state,
+          targetCarrierInfo.carrier,
         );
         finalType = joined ?? finalValue;
       }
@@ -607,6 +608,7 @@ function projectFieldFromRecord(
         targetCarrierInfo.domain,
         finalValue,
         targetCarrierInfo.state,
+        targetCarrierInfo.carrier,
       );
       finalType = joined ?? finalValue;
     }
@@ -616,6 +618,7 @@ function projectFieldFromRecord(
       targetCarrierInfo.domain,
       finalValue,
       targetCarrierInfo.state,
+      targetCarrierInfo.carrier,
     );
     finalType = joined ?? finalValue;
   } else if (fieldCarrierInfo) {
@@ -624,6 +627,7 @@ function projectFieldFromRecord(
       fieldCarrierInfo.domain,
       finalValue,
       fieldCarrierInfo.state,
+      fieldCarrierInfo.carrier,
     );
     finalType = joined ?? finalValue;
   } else {
@@ -669,7 +673,7 @@ function solveNumericConstraint(
   // Track accumulated carriers per domain
   const accumulatedCarriers = new Map<
     string,
-    { domain: string; state: Type }
+    { domain: string; state: Type; carrier: string }
   >();
 
   for (const operand of stub.operands) {
@@ -713,6 +717,7 @@ function solveNumericConstraint(
           accumulatedCarriers.set(operandCarrierInfo.domain, {
             domain: operandCarrierInfo.domain,
             state: combinedError,
+            carrier: existing.carrier,
           });
         }
         // For other domains, keep the first one (or implement domain-specific logic)
@@ -720,6 +725,7 @@ function solveNumericConstraint(
         accumulatedCarriers.set(operandCarrierInfo.domain, {
           domain: operandCarrierInfo.domain,
           state: operandCarrierInfo.state,
+          carrier: operandCarrierInfo.carrier,
         });
       }
     }
@@ -747,12 +753,14 @@ function solveNumericConstraint(
           accumulatedCarriers.set(resultCarrierInfo.domain, {
             domain: resultCarrierInfo.domain,
             state: combinedError,
+            carrier: existing.carrier,
           });
         }
       } else {
         accumulatedCarriers.set(resultCarrierInfo.domain, {
           domain: resultCarrierInfo.domain,
           state: resultCarrierInfo.state,
+          carrier: resultCarrierInfo.carrier,
         });
       }
     }
@@ -764,6 +772,7 @@ function solveNumericConstraint(
         carrier.domain,
         expectedResultType,
         carrier.state,
+        carrier.carrier,
       );
       if (joined) {
         expectedResultType = joined;
@@ -799,7 +808,7 @@ function solveBooleanConstraint(
   // Track accumulated carriers per domain
   const accumulatedCarriers = new Map<
     string,
-    { domain: string; state: Type }
+    { domain: string; state: Type; carrier: string }
   >();
 
   for (const operand of stub.operands) {
@@ -838,6 +847,7 @@ function solveBooleanConstraint(
           accumulatedCarriers.set(operandCarrierInfo.domain, {
             domain: operandCarrierInfo.domain,
             state: combinedError,
+            carrier: existing.carrier,
           });
         }
         // For other domains, keep the first one (or implement domain-specific logic)
@@ -845,6 +855,7 @@ function solveBooleanConstraint(
         accumulatedCarriers.set(operandCarrierInfo.domain, {
           domain: operandCarrierInfo.domain,
           state: operandCarrierInfo.state,
+          carrier: operandCarrierInfo.carrier,
         });
       }
     }
@@ -866,12 +877,14 @@ function solveBooleanConstraint(
         accumulatedCarriers.set(resultCarrierInfo.domain, {
           domain: resultCarrierInfo.domain,
           state: combinedError,
+          carrier: existing.carrier,
         });
       }
     } else {
       accumulatedCarriers.set(resultCarrierInfo.domain, {
         domain: resultCarrierInfo.domain,
         state: resultCarrierInfo.state,
+        carrier: resultCarrierInfo.carrier,
       });
     }
   }
@@ -883,6 +896,7 @@ function solveBooleanConstraint(
       carrier.domain,
       expectedResultType,
       carrier.state,
+      carrier.carrier,
     );
     if (joined) {
       expectedResultType = joined;
@@ -959,7 +973,12 @@ function solveBranchJoinConstraint(
           rightCarrier.state,
         );
         mergedType =
-          joinCarrier(leftCarrier.domain, leftCarrier.value, unionState) ??
+          joinCarrier(
+            leftCarrier.domain,
+            leftCarrier.value,
+            unionState,
+            leftCarrier.carrier,
+          ) ??
             mergedType;
       }
     } else {
@@ -2198,6 +2217,7 @@ function reifyConstraintLabelsIntoTypes(
         carrierInfo.domain,
         carrierInfo.value,
         mergedState,
+        carrierInfo.carrier,
       );
       if (rejoined) {
         current = rejoined;

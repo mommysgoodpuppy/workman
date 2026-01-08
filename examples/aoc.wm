@@ -10,11 +10,11 @@ type ParseResult =
   | ExpectedComma
   | ExpectedCloseParen;
 
-record ParseStep { value: Int, next: Int };
+record ParseStep = { value: Int, next: Int };
 
 -- Build a cursor/value pair for downstream helpers.
 let makeStep = (v, n) => {
-  .{ value: v, next: n }
+  .{ value= v, next= n }
 };
 
 let charComma = char(",");

@@ -353,7 +353,7 @@ export function joinCarrier(
   domain: string,
   value: Type,
   state: Type,
-  preferredCarrier?: string,
+  carrier: string,
 ): Type | null {
   // Get the first carrier for this domain
   // TODO: This assumes all carriers in a domain have the same join logic
@@ -361,9 +361,10 @@ export function joinCarrier(
   if (!carriers || carriers.length === 0) return null;
 
   // If we have a preferred carrier, try to find it
-  if (preferredCarrier) {
+  // TODO: otherwise this is just undefined behavior lmao
+  if (carrier) {
     const preferredOps = carriers.find((ops) =>
-      ops.typeName === preferredCarrier
+      ops.typeName === carrier
     );
     if (preferredOps) {
       return preferredOps.join(value, state);
@@ -377,7 +378,7 @@ export function joinCarrier(
     */
     const dummyType: Type = {
       kind: "constructor",
-      name: preferredCarrier,
+      name: carrier,
       args: [], // Ops usually check name only or shape
     };
     const preferredOpsLegacy = carriers.find((ops) => ops.is(dummyType));
