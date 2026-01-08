@@ -70,7 +70,7 @@ let isAtEnd = (state) => {
 };
 
 -- Advance position by n characters
-let advance = (state, n) => {
+let advance = (state:LexerState, n) => {
   .{ ..state, pos = state.pos + n }
 };
 

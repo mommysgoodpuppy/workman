@@ -2469,6 +2469,10 @@ function normalizeCarrierType(type: Type): Type {
     if (!carrier) {
       break;
     }
+    // Only unwrap holes for display normalization
+    if (carrier.domain !== "hole") {
+      break;
+    }
     current = carrier.value;
   }
   return current;

@@ -3,6 +3,7 @@ from "std/string" import { strEq };
 from "std/list" import { listSlice, listAt, listLength };
 from "std/string" import { charToDigit, char };
 from "std/char" import { charToInt };
+from "std/coretypes" import { Some, None, IOk, IErr };
 
 type ParseResult =
   | NotMul
@@ -25,16 +26,22 @@ let mulLiteralLength = listLength(mulLiteral);
 let infectOption = (in) => {
   match(in) {
     Some(thing) => { IOk(thing) },
-    None => { IErr("none") }
+    None => { IErr("none") },
+    _ => {Panic("WTF")}
   }
 };
 
 -- Read exactly one digit or raise ExpectedDigit to the caller.
 let readRequiredDigit = (chars, i) => {
-  makeStep(
-    chars :> listAt(i) :> charToDigit :> infectOption,
-    i + 1
-  )
+  match(listAt(chars, i)) {
+    IOk(c) => {
+      match(charToDigit(c)) {
+        Some(d) => { makeStep(IOk(d), i + 1) },
+        None => { makeStep(IErr("none"), i + 1) }
+      }
+    },
+    IErr(err) => { makeStep(IErr(err), i + 1) }
+  }
 };
 
 -- Extend up to three total digits, stopping cleanly if parsing fails.

@@ -363,9 +363,7 @@ export function joinCarrier(
   // If we have a preferred carrier, try to find it
   // TODO: otherwise this is just undefined behavior lmao
   if (carrier) {
-    const preferredOps = carriers.find((ops) =>
-      ops.typeName === carrier
-    );
+    const preferredOps = carriers.find((ops) => ops.typeName === carrier);
     if (preferredOps) {
       return preferredOps.join(value, state);
     }
@@ -1237,4 +1235,46 @@ function unionMany(sets: Set<number>[]): Set<number> {
     }
   }
   return result;
+}
+
+export function registerAdtCarrier(
+  domain: string,
+  typeName: string,
+  valueConstructor: string,
+  effectConstructors: string[],
+  arity: number,
+): void {
+  const ops: CarrierOperations = {
+    is: (type: Type): boolean => {
+      return type.kind === "constructor" && type.name === typeName;
+    },
+    split: (type: Type): CarrierInfo | null => {
+      if (type.kind !== "constructor" || type.name !== typeName) return null;
+      const value = type.args[0] || { kind: "unit" };
+      const state = arity > 1
+        ? (type.args[1] || { kind: "unit" })
+        : { kind: "unit" };
+      return { value, state };
+    },
+    join: (value: Type, state: Type): Type => {
+      const args = [value];
+      if (arity > 1) args.push(state);
+      return { kind: "constructor", name: typeName, args };
+    },
+    collapse: (type) => {
+      // Only collapse holes, everything else preserves its carrier for explicit matching
+      if (domain !== "hole") return type;
+
+      if (type.kind !== "constructor" || type.name !== typeName) return type;
+      return type.args[0] || { kind: "unit" };
+    },
+    unionStates: (l, r) => {
+      if (isEffectRow(l) && isEffectRow(r)) return effectRowUnion(l, r);
+      return l;
+    },
+    valueConstructor,
+    effectConstructors,
+    typeName,
+  };
+  registerCarrier(domain, ops);
 }

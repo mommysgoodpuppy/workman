@@ -588,16 +588,13 @@ function expectParameterName(param: Parameter): string {
 
 function normalizeMatchScrutineeType(ctx: Context, type: Type): Type {
   const resolved = applyCurrentSubst(ctx, type);
+  // Do NOT unwrap non-hole carriers here. Patterns must match against the carrier type itself.
+  // The only exception is Holes, which are transparent transport wrappers.
   const holeInfo = flattenHoleType(resolved);
-  if (!holeInfo) {
-    return resolved;
+  if (holeInfo) {
+    return applyCurrentSubst(ctx, holeInfo.value);
   }
-  const inner = applyCurrentSubst(ctx, holeInfo.value);
-  const carrierInfo = splitCarrier(inner);
-  if (!carrierInfo) {
-    return resolved;
-  }
-  return inner;
+  return resolved;
 }
 
 function recordExprType(ctx: Context, expr: Expr, type: Type): Type {

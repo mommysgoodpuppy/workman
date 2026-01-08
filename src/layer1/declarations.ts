@@ -26,6 +26,7 @@ import {
   cloneType,
   type ConstructorInfo,
   freshTypeVar,
+  registerAdtCarrier,
   type Type,
   type TypeScheme,
   unknownType,
@@ -238,6 +239,36 @@ export function registerTypeConstructors(
     ctx.env.set(info.name, info.scheme);
   }
   adtInfo.constructors.push(...stagedConstructors);
+
+  const effectiveInfectious = infectiousDecl ||
+    (decl.infectious ? { domain: decl.infectious.domain } : undefined);
+
+  if (effectiveInfectious) {
+    const domain = effectiveInfectious.domain;
+    let valueConstructor: string | undefined;
+    const effectConstructors: string[] = [];
+
+    for (const member of decl.members) {
+      if (member.kind === "constructor" && member.annotation) {
+        if (member.annotation === "value") {
+          valueConstructor = member.name;
+        } else if (member.annotation === "effect") {
+          effectConstructors.push(member.name);
+        }
+      }
+    }
+
+    if (valueConstructor) {
+      //console.error(`[DEBUG] Registering carrier: ${decl.name}`);
+      registerAdtCarrier(
+        domain,
+        decl.name,
+        valueConstructor,
+        effectConstructors,
+        decl.typeParams.length,
+      );
+    }
+  }
 
   return { success: true };
 }
