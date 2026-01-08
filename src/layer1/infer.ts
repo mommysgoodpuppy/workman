@@ -2494,9 +2494,16 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         const expectsCarrier = expectedParamType
           ? splitCarrier(expectedParamType) !== null
           : false;
+        // When fnType is a type variable (not yet resolved to a function),
+        // we don't know if the callee expects a carrier. In this case, try
+        // unification with the full carrier type first to let the callee's
+        // type constrain whether it accepts carriers. This is critical for
+        // mutual recursion where the callee may discharge infection internally.
+        const fnTypeIsUnknown = fnType.kind === "var" ||
+          (fnType.kind !== "func" && expectedParamType === undefined);
 
         let argumentValueType = resolvedArg;
-        if (!expectsCarrier && argCarrierInfo) {
+        if (!expectsCarrier && argCarrierInfo && !fnTypeIsUnknown) {
           argumentValueType = argBareValueType;
           // Accumulate carrier state using generic union (only if domain infects return)
           const domain = argCarrierInfo.domain;
@@ -2527,7 +2534,10 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           from: argumentValueType,
           to: resultType,
         });
-        if (!unifySucceeded && argCarrierInfo && !expectsCarrier) {
+        if (
+          !unifySucceeded && argCarrierInfo &&
+          (!expectsCarrier || fnTypeIsUnknown)
+        ) {
           const fallbackSucceeded = unify(ctx, fnType, {
             kind: "func",
             from: argBareValueType,
@@ -2617,8 +2627,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             expr.arguments[index], // Mark the argument expression instead of the call
             subject,
             expectedArg,
-            actualArg,
-            `argument ${index + 1} of call to '${calleeName}'`,
+            actualArg
           );
           // Return the call expression with an error type (propagated from bad argument)
           return recordExprType(ctx, expr, mark.type);
