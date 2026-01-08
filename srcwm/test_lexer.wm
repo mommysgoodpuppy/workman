@@ -1,13 +1,14 @@
 -- Test file for the Workman lexer
 -- Run with: wm run srcwm/test_lexer.wm
+
 from "std/coretypes" import { Empty, Link };
 from "std/list" import { listForEach, listLength };
 from "std/nativeString" import { stringConcat, intToString };
-from "./token.wm" import { tokenKindToString };
+from "./token.wm" import { Token, TokenKind, tokenKindToString };
 from "./lexer.wm" import { lex, lexWithComments };
 
--- Print a token (uses duck typing - Token has kind, span, lexeme fields)
-let printToken = (tok) => {
+-- Print a token
+let printToken = (tok: Token) => {
   let kindStr = tokenKindToString(tok.kind);
   let posStr = intToString(tok.span.start);
   let msg = stringConcat(kindStr, stringConcat(": '", stringConcat(tok.lexeme, stringConcat("' at ", posStr))));
@@ -84,7 +85,7 @@ let testComments = () => {
   let tokens = lex(source);
   listForEach(printToken, tokens);
   print("");
-
+  
   print("=== Test: Comments (included) ===");
   let tokensWithComments = lexWithComments(source);
   listForEach(printToken, tokensWithComments);
@@ -98,18 +99,18 @@ let testNegativeVsSubtract = () => {
   -- "-5" at start should be: number (negative)
   let source1 = "5 - 3";
   let source2 = "-5";
-  let source3 = "let x = -5"; -- -5 is negative number
-  let source4 = "x-5"; -- x - 5 (subtraction)
-
+  let source3 = "let x = -5";  -- -5 is negative number
+  let source4 = "x-5";  -- x - 5 (subtraction)
+  
   print("Source: 5 - 3");
   listForEach(printToken, lex(source1));
-
+  
   print("Source: -5");
   listForEach(printToken, lex(source2));
-
+  
   print("Source: let x = -5");
   listForEach(printToken, lex(source3));
-
+  
   print("Source: x-5");
   listForEach(printToken, lex(source4));
   print("")

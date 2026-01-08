@@ -530,7 +530,14 @@ function solveHasFieldConstraint(
   state.diagnostics.push({
     origin: stub.origin,
     reason: "not_record",
-    details: { actual: targetValue.kind },
+    details: {
+      actual: targetValue.kind,
+      constructorName: targetValue.kind === "constructor"
+        ? targetValue.name
+        : undefined,
+      missingDefinition: targetValue.kind === "constructor" &&
+        !state.adtEnv.has(targetValue.name),
+    },
   });
 }
 

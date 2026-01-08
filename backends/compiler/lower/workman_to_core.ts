@@ -596,8 +596,14 @@ function formatDiagnosticMessage(
         matches ?? 0
       } matches)`;
     }
-    case "not_record":
+    case "not_record": {
+      const ctorName = diagnostic.details?.constructorName;
+      const missingDef = diagnostic.details?.missingDefinition;
+      if (missingDef && ctorName) {
+        return `Cannot access field on type '${ctorName}' because its definition is not visible (try importing it)`;
+      }
       return "Cannot project field from non-record type";
+    }
     case "occurs_cycle":
       return "Infinite type detected (occurs check failed)";
     case "arity_mismatch": {

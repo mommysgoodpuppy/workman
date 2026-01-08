@@ -1,7 +1,4 @@
 -- Stdlib-declared infection domains (MVP metadata parsing)
---
--- NOTE: These declarations are parsed by the compiler but not enforced yet.
--- They are the starting point for the "stdlib owns infection semantics" refactor.
 
 -- ---------------------------------------------------------------------------
 -- effect domain (Result-like short-circuit, row_set)

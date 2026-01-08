@@ -1,7 +1,7 @@
 import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
 import { emitModuleGraph as emitJsModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import { emitModuleGraph as emitZigModuleGraph } from "../backends/compiler/zig/graph_emitter.ts";
-import { IO, relative, resolve, dirname, fromFileUrl } from "../src/io.ts";
+import { dirname, fromFileUrl, IO, relative, resolve } from "../src/io.ts";
 import { createDefaultForeignTypeConfig } from "../src/foreign_types/c_header_provider.ts";
 
 const WORKMAN_ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
@@ -26,12 +26,17 @@ export interface CompileArgs {
   entryPath: string;
   outDir?: string;
   backend: CompileBackend;
+  force: boolean;
 }
 
-export function parseCompileArgs(args: string[], allowEmpty = false): CompileArgs {
+export function parseCompileArgs(
+  args: string[],
+  allowEmpty = false,
+): CompileArgs {
   let entryPath: string | undefined;
   let outDir: string | undefined;
   let backend: CompileBackend | undefined;
+  let force = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -56,6 +61,10 @@ export function parseCompileArgs(args: string[], allowEmpty = false): CompileArg
       index += 1;
       continue;
     }
+    if (arg === "--force" || arg === "-f") {
+      force = true;
+      continue;
+    }
     if (arg.startsWith("-")) {
       throw new Error(`Unknown compile option '${arg}'`);
     }
@@ -67,17 +76,23 @@ export function parseCompileArgs(args: string[], allowEmpty = false): CompileArg
 
   if (!entryPath && !allowEmpty) {
     throw new Error(
-      "Usage: wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>]",
+      "Usage: wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>] [--force]",
     );
   }
 
-  return { entryPath: entryPath ?? "", outDir, backend: backend ?? "zig" };
+  return {
+    entryPath: entryPath ?? "",
+    outDir,
+    backend: backend ?? "zig",
+    force,
+  };
 }
 
 export async function compileToDirectory(
   entryPath: string,
   outDir?: string,
   backend: CompileBackend = "zig",
+  force = false,
 ): Promise<void> {
   if (!entryPath.endsWith(".wm")) {
     throw new Error("Expected a .wm entry file");
@@ -92,7 +107,31 @@ export async function compileToDirectory(
       preludeModule: "std/prelude",
       foreignTypes: createDefaultForeignTypeConfig(resolvedEntry),
     },
+    lowering: {
+      showAllErrors: true,
+    },
   });
+
+  let hasErrors = false;
+  for (const artifact of compileResult.modules.values()) {
+    const layer3 = artifact.analysis.layer3;
+    if (
+      layer3.diagnostics.solver.length > 0 ||
+      layer3.diagnostics.conflicts.length > 0
+    ) {
+      hasErrors = true;
+    }
+  }
+
+  if (hasErrors && !force) {
+    // Errors are already printed by lowerAnalyzedModule/showAllErrors
+    throw new Error(
+      "Compilation failed due to type errors. Use --force to compile anyway.",
+    );
+  }
+  if (hasErrors) {
+    console.warn("Compilation continued despite type errors (--force used).");
+  }
 
   const emitResult = backend === "zig"
     ? await emitZigModuleGraph(compileResult.coreGraph, {
@@ -137,7 +176,7 @@ export async function compileToDirectory(
  */
 export async function runBuildCommand(args: string[]): Promise<void> {
   const buildWmPath = resolve("build.wm");
-  
+
   // Check if build.wm exists
   try {
     await Deno.stat(buildWmPath);
@@ -172,9 +211,9 @@ export async function runBuildCommand(args: string[]): Promise<void> {
   for (const wmPath of emitResult.wmSourcePaths) {
     const absoluteWmPath = resolve(buildDir, wmPath);
     const zigOutputPath = resolve(buildDir, wmPath.slice(0, -3) + ".zig");
-    
+
     console.log(`Compiling ${wmPath} to ${wmPath.slice(0, -3)}.zig...`);
-    
+
     const sourceCompileResult = await compileWorkmanGraph(absoluteWmPath, {
       loader: {
         stdRoots: [resolve(WORKMAN_ROOT, "std")],
@@ -182,14 +221,14 @@ export async function runBuildCommand(args: string[]): Promise<void> {
         foreignTypes: createDefaultForeignTypeConfig(absoluteWmPath),
       },
     });
-    
+
     await emitZigModuleGraph(sourceCompileResult.coreGraph, {
       outDir: buildDir,
       commonRoot: buildDir,
       emitRuntime: false,
       emitRootMain: false,
     });
-    
+
     zigFilesToFormat.push(zigOutputPath);
   }
 
@@ -197,7 +236,7 @@ export async function runBuildCommand(args: string[]): Promise<void> {
   await runZigFmt(zigFilesToFormat);
 
   console.log("Running zig build...");
-  
+
   // Pass through any additional args to zig build
   const zigArgs = ["build", ...args];
   const command = new Deno.Command("zig", {
@@ -206,7 +245,7 @@ export async function runBuildCommand(args: string[]): Promise<void> {
     stdout: "inherit",
     stderr: "inherit",
   });
-  
+
   const result = await command.output();
   if (!result.success) {
     throw new Error(`zig build failed with exit code ${result.code}`);

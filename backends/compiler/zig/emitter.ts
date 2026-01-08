@@ -1,4 +1,4 @@
-import { dirname, extname, relative } from "../../../src/io.ts";
+import { dirname, extname, join, relative } from "../../../src/io.ts";
 import { isCarrierType } from "../../../src/types.ts";
 import type {
   CoreExpr,
@@ -148,7 +148,7 @@ export function emitModule(
   const exportSet = buildExportSet(module);
   const forcedValueExports = new Set(options.forcedValueExports ?? []);
   const initLines: string[] = [];
-  const importLines = emitImports(module, ctx, exportSet, initLines);
+  const importLines = emitImports(module, ctx, exportSet, initLines, graph);
   if (importLines.length > 0) {
     lines.push(...importLines);
   }
@@ -229,19 +229,34 @@ export function emitModule(
 
 function buildExportSet(module: CoreModule): Set<string> {
   const exported = new Set<string>();
+  const validValues = new Set<string>();
+
   for (const value of module.values) {
+    validValues.add(value.name);
     if (value.exported) exported.add(value.name);
   }
   for (const decl of module.typeDeclarations) {
     for (const ctor of decl.constructors) {
+      validValues.add(ctor.name);
       if (ctor.exported) exported.add(ctor.name);
     }
   }
+  // Also add imports to validValues so re-exports work
+  for (const entry of module.imports) {
+    for (const spec of entry.specifiers) {
+      validValues.add(spec.local);
+    }
+  }
+
   for (const exp of module.exports) {
     if (exp.kind === "value") {
-      exported.add(exp.local);
+      if (validValues.has(exp.local)) {
+        exported.add(exp.local);
+      }
     } else if (exp.kind === "constructor") {
-      exported.add(exp.ctor);
+      if (validValues.has(exp.ctor)) {
+        exported.add(exp.ctor);
+      }
     }
   }
   return exported;
@@ -280,6 +295,7 @@ function emitImports(
   ctx: EmitContext,
   exportSet: Set<string>,
   initLines: string[],
+  graph: CoreModuleGraph,
 ): string[] {
   if (module.imports.length === 0) return [];
 
@@ -287,6 +303,13 @@ function emitImports(
   const lines: string[] = [];
   let importCounter = 0;
   for (const entry of module.imports) {
+    const importedModule = findModuleInGraph(graph, entry.source);
+    let importedValues: Set<string> | undefined;
+
+    if (importedModule) {
+      importedValues = buildExportSet(importedModule);
+    }
+
     const alias = allocateTempName(ctx.state, `__mod_${importCounter++}`);
     const importPath = makeImportPath(
       currentDir,
@@ -302,6 +325,9 @@ function emitImports(
       initLines.push(`${alias}.${INIT_FN}();`);
     }
     for (const spec of entry.specifiers) {
+      if (importedValues && !importedValues.has(spec.imported)) {
+        continue;
+      }
       const local = resolveName(ctx.scope, spec.local, ctx.state);
       const exported = exportSet.has(spec.local) ? "pub " : "";
       lines.push(`${exported}var ${local}: Value = undefined;`);
@@ -422,11 +448,36 @@ function emitExports(
   const exportedNames = new Set<string>();
   for (const exp of module.exports) {
     if (exp.kind === "type") continue;
-    const localOriginal = exp.kind === "value"
-      ? exp.local
-      : (ctx.scope.has(exp.ctor) ? exp.ctor : exp.exported);
+
+    // Determine the local name we are trying to export
+    let localOriginal: string;
+    if (exp.kind === "value") {
+      localOriginal = exp.local;
+    } else {
+      // For constructors, try to find the constructor name in scope.
+      // If not in scope, fall back to the exported name (which might be the constructor name).
+      if (ctx.scope.has(exp.ctor)) {
+        localOriginal = exp.ctor;
+      } else {
+        localOriginal = exp.exported;
+      }
+    }
+
+    // Verify if localOriginal is actually in scope.
+    // If not, resolveName will create a NEW binding (e.g. __0), but since we didn't emit a var for it,
+    // using it will cause a Zig error "use of undeclared identifier".
+    if (!ctx.scope.has(localOriginal)) {
+      continue;
+    }
+
     const localName = resolveName(ctx.scope, localOriginal, ctx.state);
     const exported = sanitizeExportName(exp.exported, localName, ctx.state);
+
+    // Identify attempts to export as "_" which causes valid Zig "_ = val" assignment but invalid "pub var _"
+    if (exported === "_") {
+      continue;
+    }
+
     if (exported === localName) {
       continue;
     }
@@ -1430,4 +1481,51 @@ function makeIdentifierBase(name: string): string {
 function indent(text: string): string {
   return text.split("\n").map((line) => (line.length > 0 ? `  ${line}` : line))
     .join("\n");
+}
+
+function findModuleInGraph(
+  graph: CoreModuleGraph,
+  importSource: string,
+): CoreModule | undefined {
+  let target = importSource.replace(/\\/g, "/");
+  // Try converting .zig to .wm
+  if (target.endsWith(".zig")) {
+    target = target.slice(0, -4) + ".wm";
+  }
+
+  // Direct match check
+  if (graph.modules.has(target)) return graph.modules.get(target);
+
+  // Scan keys
+  let bestKey: string | undefined;
+  let maxMatch = 0;
+
+  const targetParts = target.split("/");
+
+  for (const key of graph.modules.keys()) {
+    const keyParts = key.replace(/\\/g, "/").split("/");
+
+    let matchLen = 0;
+    let i = 1;
+    while (i <= targetParts.length && i <= keyParts.length) {
+      const t = targetParts[targetParts.length - i].toLowerCase();
+      const k = keyParts[keyParts.length - i].toLowerCase();
+      if (t !== k) break;
+      matchLen++;
+      i++;
+    }
+
+    // Prefer exact filename match at least
+    if (matchLen > maxMatch) {
+      maxMatch = matchLen;
+      bestKey = key;
+    }
+  }
+
+  // Require at least filename match.
+  if (bestKey && maxMatch >= 1) {
+    return graph.modules.get(bestKey);
+  }
+
+  return undefined;
 }

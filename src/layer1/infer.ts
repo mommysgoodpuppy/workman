@@ -1924,6 +1924,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               unify(ctx, spreadFieldType, fieldType);
             }
           }
+        } else {
+          recordLayer1Diagnostic(ctx, expr.id, "ambiguous_record", {
+            message:
+              "Cannot spread a value whose type is not known to be a record. Add a type annotation to the spread source.",
+          });
         }
         return recordExprType(ctx, expr, spreadType);
       }
@@ -2293,6 +2298,11 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       }
       recordLayer1Diagnostic(ctx, expr.id, "not_record", {
         actual: resolvedTarget.kind,
+        constructorName: resolvedTarget.kind === "constructor"
+          ? resolvedTarget.name
+          : undefined,
+        missingDefinition: resolvedTarget.kind === "constructor" &&
+          !ctx.adtEnv.has(resolvedTarget.name),
       });
       return recordExprType(
         ctx,

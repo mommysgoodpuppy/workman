@@ -67,6 +67,42 @@ export async function emitModuleGraph(
     ? computeOutputPath(preludeModule, commonRoot, outDir, extension)
     : undefined;
 
+  // Calculate transitive dependencies of prelude to avoid cycles
+  const preludeDependencies = new Set<string>();
+  if (preludeModule) {
+    const queue = [preludeModule];
+    const visited = new Set<string>();
+    visited.add(preludeModule.path);
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const imp of current.imports) {
+        // Resolve import path
+        let targetPath = imp.source;
+        if (targetPath.startsWith(".")) {
+          targetPath = join(dirname(current.path), targetPath);
+        }
+        targetPath = resolve(targetPath);
+
+        // Handle .zig imports being mapped to .wm modules case if needed,
+        // essentially we just need to find the Key in graph.modules
+        // The graph keys are usually absolute paths.
+
+        let targetModule = graph.modules.get(targetPath);
+        // Try with .wm extension if not found (common pattern)
+        if (!targetModule && !targetPath.endsWith(".wm")) {
+          targetModule = graph.modules.get(targetPath + ".wm");
+        }
+
+        if (targetModule && !visited.has(targetModule.path)) {
+          visited.add(targetModule.path);
+          preludeDependencies.add(targetModule.path);
+          queue.push(targetModule);
+        }
+      }
+    }
+  }
+
   const entryModule = graph.modules.get(graph.entry);
   if (!entryModule) {
     throw new Error(`Entry module '${graph.entry}' not found in graph`);
@@ -131,7 +167,7 @@ export async function emitModuleGraph(
       preludeModule &&
         preludeOutputPath &&
         preludeValueExports.length > 0 &&
-        shouldModuleImportPrelude(module, preludePath),
+        shouldModuleImportPrelude(module, preludePath, preludeDependencies),
     );
     const preludeImport = shouldInjectPrelude
       ? {
@@ -261,15 +297,23 @@ function normalizeSlashes(path: string): string {
 function shouldModuleImportPrelude(
   module: CoreModule,
   preludePath?: string,
+  preludeDependencies?: Set<string>,
 ): boolean {
   if (!preludePath) return false;
   if (module.core) return false;
-  if (
-    normalizeSlashes(module.path).toLowerCase() ===
-      normalizeSlashes(preludePath).toLowerCase()
-  ) {
+
+  const normalizedPath = normalizeSlashes(module.path).toLowerCase();
+  const normalizedPrelude = normalizeSlashes(preludePath).toLowerCase();
+
+  if (normalizedPath === normalizedPrelude) {
     return false;
   }
+
+  // If this module is a dependency of the prelude, it cannot import the prelude.
+  if (preludeDependencies && preludeDependencies.has(module.path)) {
+    return false;
+  }
+
   return true;
 }
 

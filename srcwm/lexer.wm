@@ -9,7 +9,7 @@ from "std/nativeString" import { stringEq, stringConcat, stringLength, stringSli
 from "std/list" import { listReverse, listLength };
 -- Note: Record/type names (Span, Token, TokenKind) are not runtime values - only import functions and constructors
 from "./token.wm" import {
-  span, token, simpleToken,
+  span, token, simpleToken, Token,
   TkIdentifier, TkConstructor, TkNumber, TkString, TkChar, TkBool,
   TkLet, TkMut, TkRec, TkAnd, TkType, TkRecord, TkCarrier,
   TkIf, TkElse, TkMatch, TkWhen,
@@ -672,7 +672,7 @@ export let scanToken = (state) => {
 };
 
 -- Update state with token kind for next scan
-let withLastKind = (state, kind) => {
+let withLastKind = (state:LexerState, kind) => {
   .{ ..state, lastKind = Some(kind) }
 };
 
@@ -683,6 +683,7 @@ let withLastKind = (state, kind) => {
 -- Tokenize entire source, returning list of tokens (excluding comments)
 export let rec tokenize = (state) => {
   let (tok, newState) = scanToken(state);
+  let x = newState;
   let stateWithLast = withLastKind(newState, tok.kind);
   
   match (tok.kind) {

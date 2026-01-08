@@ -5,8 +5,8 @@ let main = () => {
   let buf = () => {
     let buffer = alloc(100);
 
-    'H' >> buffer[0];
-    'i' >> buffer[1];
+    'H' :> buffer[0];
+    'i' :> buffer[1];
 
     print("Buffer says: {s}\n", slice(buffer, 0, 2));
     buffer

@@ -3,7 +3,11 @@ import { startRepl } from "./tools/repl.ts";
 import { runFormatter } from "./tools/fmt.ts";
 import { WorkmanError } from "./src/error.ts";
 import { HELP_TEXT } from "./cli/help.ts";
-import { compileToDirectory, parseCompileArgs, runBuildCommand } from "./cli/compile.ts";
+import {
+  compileToDirectory,
+  parseCompileArgs,
+  runBuildCommand,
+} from "./cli/compile.ts";
 import { runProgramCommand } from "./cli/run_command.ts";
 import { startWorkmanLanguageServer } from "./lsp/server/src/server.ts";
 
@@ -50,8 +54,10 @@ async function runCli(): Promise<void> {
 
   if (command === "compile") {
     try {
-      const { entryPath, outDir, backend } = parseCompileArgs(args.slice(1));
-      await compileToDirectory(entryPath, outDir, backend);
+      const { entryPath, outDir, backend, force } = parseCompileArgs(
+        args.slice(1),
+      );
+      await compileToDirectory(entryPath, outDir, backend, force);
     } catch (error) {
       handleCliError(error);
       IO.exit(1);

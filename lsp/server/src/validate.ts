@@ -371,7 +371,15 @@ function formatSolverDiagnostic(
       base = "Record is missing a required field";
       break;
     case "not_record":
-      base = "Expected a record value here";
+      if (
+        diag.details?.missingDefinition &&
+        typeof diag.details.constructorName === "string"
+      ) {
+        base =
+          `Cannot access field on type '${diag.details.constructorName}' because its definition is not visible (try importing it)`;
+      } else {
+        base = "Expected a record value here";
+      }
       break;
     case "occurs_cycle":
       base = "Occurs check failed while solving types";
@@ -422,8 +430,7 @@ function formatSolverDiagnostic(
       const name = typeof diag.details?.name === "string"
         ? diag.details.name
         : "value";
-      base =
-        `Mutable binding '${name}' shadows an existing mutable binding`;
+      base = `Mutable binding '${name}' shadows an existing mutable binding`;
       break;
     }
     case "non_exhaustive_match": {
@@ -633,7 +640,10 @@ function formatTypeForDiagnostics(
 
 function hasExistingDiagnostic(
   diagnostics: Array<{ range?: any; code?: string; source?: string }>,
-  range: { start: { line: number; character: number }; end: { line: number; character: number } },
+  range: {
+    start: { line: number; character: number };
+    end: { line: number; character: number };
+  },
   code: string,
 ): boolean {
   return diagnostics.some((diag) => {
