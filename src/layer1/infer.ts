@@ -938,6 +938,7 @@ function refineInfectiousConstructor(
     carrierInfo.domain,
     carrierInfo.value,
     effectRow,
+    carrierInfo.carrier,
   );
 
   return refinedType ?? type;
@@ -1093,6 +1094,7 @@ function createAndRegisterCarrier(
     // Store constructor metadata for runtime
     valueConstructor,
     effectConstructors,
+    typeName,
   };
 
   // Register the carrier for this domain
@@ -2052,6 +2054,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             targetCarrierInfo.domain,
             value,
             targetCarrierInfo.state,
+            targetCarrierInfo.carrier,
           ) ?? value
         );
       };
@@ -2199,6 +2202,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
                 targetCarrierInfo.domain,
                 projectedValueType,
                 targetCarrierInfo.state,
+                targetCarrierInfo.carrier,
               ) ?? projectedValueType)
               : projectedValueType;
             recordHasFieldConstraint(
@@ -2235,6 +2239,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               targetCarrierInfo.domain,
               projectedValueType,
               targetCarrierInfo.state,
+              targetCarrierInfo.carrier,
             ) ?? projectedValueType)
             : projectedValueType;
           recordHasFieldConstraint(
@@ -2352,6 +2357,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // Track accumulated states per domain (generic for any carrier)
       const accumulatedStates = new Map<string, Type>();
+      const accumulatedCarriers = new Map<string, string>();
 
       const calleeCarrierInfo = splitCarrier(fnType);
       if (calleeCarrierInfo) {
@@ -2359,6 +2365,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           calleeCarrierInfo.domain,
           calleeCarrierInfo.state,
         );
+        if (calleeCarrierInfo.carrier) {
+          accumulatedCarriers.set(
+            calleeCarrierInfo.domain,
+            calleeCarrierInfo.carrier,
+          );
+        }
         fnType = calleeCarrierInfo.value;
       }
 
@@ -2403,6 +2415,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         // Reconstruct carrier types with accumulated states (generic for all domains)
         for (const [domain, state] of accumulatedStates.entries()) {
           const flattened = splitCarrier(finalType);
+          const preferred = accumulatedCarriers.get(domain);
           if (flattened && flattened.domain === domain) {
             // Merge states if finalType already has this domain's state
             const mergedState = unionCarrierStates(
@@ -2411,12 +2424,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               state,
             );
             if (mergedState) {
-              finalType = joinCarrier(domain, flattened.value, mergedState) ??
-                finalType;
+              finalType =
+                joinCarrier(domain, flattened.value, mergedState, preferred) ??
+                  finalType;
             }
           } else {
             // Wrap with carrier if finalType doesn't have this domain
-            finalType = joinCarrier(domain, finalType, state) ?? finalType;
+            finalType = joinCarrier(domain, finalType, state, preferred) ??
+              finalType;
           }
           finalType = collapseCarrier(finalType);
         }
@@ -2489,6 +2504,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           // Accumulate carrier state using generic union (only if domain infects return)
           const domain = argCarrierInfo.domain;
           if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+            if (argCarrierInfo.carrier) {
+              accumulatedCarriers.set(domain, argCarrierInfo.carrier);
+            }
             const existingState = accumulatedStates.get(domain);
             if (existingState) {
               const merged = unionCarrierStates(
@@ -2523,6 +2541,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             // Accumulate carrier state using generic union (only if domain infects return)
             const domain = argCarrierInfo.domain;
             if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+              if (argCarrierInfo.carrier) {
+                accumulatedCarriers.set(domain, argCarrierInfo.carrier);
+              }
               const existingState = accumulatedStates.get(domain);
               if (existingState) {
                 const merged = unionCarrierStates(
@@ -2596,11 +2617,13 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           const actualArg = failure?.right ?? applyCurrentSubst(ctx, argType);
           const mark = markInconsistent(
             ctx,
-            expr,
+            expr.arguments[index], // Mark the argument expression instead of the call
             subject,
             expectedArg,
             actualArg,
+            `argument ${index + 1} of call to '${calleeName}'`,
           );
+          // Return the call expression with an error type (propagated from bad argument)
           return recordExprType(ctx, expr, mark.type);
         }
         if (shouldLogFormatter) {
@@ -2612,11 +2635,21 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
         fnType = applyCurrentSubst(ctx, resultType);
       }
-      let callType = collapseCarrier(applyCurrentSubst(ctx, fnType));
+      const resolvedResultType = applyCurrentSubst(ctx, fnType);
+      const resultCarrierInfo = splitCarrier(resolvedResultType);
+      if (resultCarrierInfo && resultCarrierInfo.carrier) {
+        accumulatedCarriers.set(
+          resultCarrierInfo.domain,
+          resultCarrierInfo.carrier,
+        );
+      }
+
+      let callType = collapseCarrier(resolvedResultType);
 
       // Reconstruct carrier types with accumulated states (generic for all domains)
       for (const [domain, state] of accumulatedStates.entries()) {
         const flattened = splitCarrier(callType);
+        const preferred = accumulatedCarriers.get(domain);
         if (flattened && flattened.domain === domain) {
           // Merge states if callType already has this domain's state
           const mergedState = unionCarrierStates(
@@ -2625,12 +2658,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             state,
           );
           if (mergedState) {
-            callType = joinCarrier(domain, flattened.value, mergedState) ??
-              callType;
+            callType =
+              joinCarrier(domain, flattened.value, mergedState, preferred) ??
+                callType;
           }
         } else {
           // Wrap with carrier if callType doesn't have this domain
-          callType = joinCarrier(domain, callType, state) ?? callType;
+          callType = joinCarrier(domain, callType, state, preferred) ??
+            callType;
         }
         callType = collapseCarrier(callType);
       }
@@ -2753,6 +2788,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             carrierInfo.domain,
             carrierInfo.value,
             mergedState,
+            carrierInfo.carrier,
           );
           if (rejoined) {
             callType = rejoined;
@@ -2964,6 +3000,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // Track accumulated states per domain (generic for any carrier)
       const accumulatedStates = new Map<string, Type>();
+      const accumulatedCarriers = new Map<string, string>();
 
       const calleeCarrierInfo = splitCarrier(fnType);
       if (calleeCarrierInfo) {
@@ -2971,6 +3008,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           calleeCarrierInfo.domain,
           calleeCarrierInfo.state,
         );
+        if (calleeCarrierInfo.carrier) {
+          accumulatedCarriers.set(
+            calleeCarrierInfo.domain,
+            calleeCarrierInfo.carrier,
+          );
+        }
         fnType = calleeCarrierInfo.value;
       }
 
@@ -2984,6 +3027,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (leftCarrierInfo) {
         const domain = leftCarrierInfo.domain;
         if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+          if (leftCarrierInfo.carrier) {
+            accumulatedCarriers.set(domain, leftCarrierInfo.carrier);
+          }
           const existingState = accumulatedStates.get(domain);
           if (existingState) {
             const merged = unionCarrierStates(
@@ -3007,6 +3053,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (rightCarrierInfo) {
         const domain = rightCarrierInfo.domain;
         if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+          if (rightCarrierInfo.carrier) {
+            accumulatedCarriers.set(domain, rightCarrierInfo.carrier);
+          }
           const existingState = accumulatedStates.get(domain);
           if (existingState) {
             const merged = unionCarrierStates(
@@ -3087,6 +3136,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         // Reconstruct carrier types with accumulated states (generic for all domains)
         for (const [domain, state] of accumulatedStates.entries()) {
           const flattened = splitCarrier(callType);
+          const preferred = accumulatedCarriers.get(domain);
           if (flattened && flattened.domain === domain) {
             // Merge states if callType already has this domain's state
             const mergedState = unionCarrierStates(
@@ -3095,12 +3145,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
               state,
             );
             if (mergedState) {
-              callType = joinCarrier(domain, flattened.value, mergedState) ??
-                callType;
+              callType =
+                joinCarrier(domain, flattened.value, mergedState, preferred) ??
+                  callType;
             }
           } else {
             // Wrap with carrier if callType doesn't have this domain
-            callType = joinCarrier(domain, callType, state) ?? callType;
+            callType = joinCarrier(domain, callType, state, preferred) ??
+              callType;
           }
           callType = collapseCarrier(callType);
         }
@@ -3137,6 +3189,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
 
       // Track accumulated states per domain (generic for any carrier)
       const accumulatedStates = new Map<string, Type>();
+      const accumulatedCarriers = new Map<string, string>();
 
       const calleeCarrierInfo = splitCarrier(fnType);
       if (calleeCarrierInfo) {
@@ -3144,6 +3197,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           calleeCarrierInfo.domain,
           calleeCarrierInfo.state,
         );
+        if (calleeCarrierInfo.carrier) {
+          accumulatedCarriers.set(
+            calleeCarrierInfo.domain,
+            calleeCarrierInfo.carrier,
+          );
+        }
         fnType = calleeCarrierInfo.value;
       }
 
@@ -3159,6 +3218,9 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (operandCarrierInfo) {
         const domain = operandCarrierInfo.domain;
         if (shouldInfectReturn(ctx.infectionRegistry, domain)) {
+          if (operandCarrierInfo.carrier) {
+            accumulatedCarriers.set(domain, operandCarrierInfo.carrier);
+          }
           const existingState = accumulatedStates.get(domain);
           if (existingState) {
             const merged = unionCarrierStates(
@@ -3215,6 +3277,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // Reconstruct carrier types with accumulated states (generic for all domains)
       for (const [domain, state] of accumulatedStates.entries()) {
         const flattened = splitCarrier(callType);
+        const preferred = accumulatedCarriers.get(domain);
         if (flattened && flattened.domain === domain) {
           // Merge states if callType already has this domain's state
           const mergedState = unionCarrierStates(
@@ -3223,12 +3286,14 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             state,
           );
           if (mergedState) {
-            callType = joinCarrier(domain, flattened.value, mergedState) ??
-              callType;
+            callType =
+              joinCarrier(domain, flattened.value, mergedState, preferred) ??
+                callType;
           }
         } else {
           // Wrap with carrier if callType doesn't have this domain
-          callType = joinCarrier(domain, callType, state) ?? callType;
+          callType = joinCarrier(domain, callType, state, preferred) ??
+            callType;
         }
         callType = collapseCarrier(callType);
       }
@@ -4684,6 +4749,7 @@ export function inferMatchBranches(
       scrutineeCarrier.domain,
       baseValue,
       combinedState,
+      scrutineeCarrier.carrier,
     );
     if (rejoined) {
       resolvedResult = applyCurrentSubst(ctx, rejoined);

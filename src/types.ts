@@ -257,6 +257,7 @@ export interface CarrierOperations {
   valueConstructor?: string; // e.g., "IOk"
   // Runtime metadata: which constructors carry effects
   effectConstructors?: string[]; // e.g., ["IErr"]
+  typeName?: string; // Carrier type name
 }
 
 // Registry of carrier types by domain - supports multiple carriers per domain
@@ -325,6 +326,7 @@ export interface GenericCarrierInfo {
   domain: string;
   value: Type;
   state: Type;
+  carrier: string;
 }
 
 // Split any carrier type into domain + value + state
@@ -342,6 +344,7 @@ export function splitCarrier(type: Type): GenericCarrierInfo | null {
     domain,
     value: info.value,
     state: info.state,
+    carrier: type.kind === "constructor" ? type.name : "",
   };
 }
 
@@ -350,11 +353,39 @@ export function joinCarrier(
   domain: string,
   value: Type,
   state: Type,
+  preferredCarrier?: string,
 ): Type | null {
   // Get the first carrier for this domain
   // TODO: This assumes all carriers in a domain have the same join logic
   const carriers = CARRIER_REGISTRY.get(domain);
   if (!carriers || carriers.length === 0) return null;
+
+  // If we have a preferred carrier, try to find it
+  if (preferredCarrier) {
+    const preferredOps = carriers.find((ops) =>
+      ops.typeName === preferredCarrier
+    );
+    if (preferredOps) {
+      return preferredOps.join(value, state);
+    }
+    /*
+    console.log("[debug] joinCarrier preferred not found:", {
+        preferredCarrier,
+        domain,
+        available: carriers.map(c => c.typeName)
+    });
+    */
+    const dummyType: Type = {
+      kind: "constructor",
+      name: preferredCarrier,
+      args: [], // Ops usually check name only or shape
+    };
+    const preferredOpsLegacy = carriers.find((ops) => ops.is(dummyType));
+    if (preferredOpsLegacy) {
+      return preferredOpsLegacy.join(value, state);
+    }
+  }
+
   return carriers[0].join(value, state);
 }
 
@@ -381,7 +412,10 @@ export function getCarrierRegistrySize(): number {
 }
 
 // Debug: get all registered carrier type names
-export function getRegisteredCarrierInfo(): { domain: string; sampleTypeName: string }[] {
+export function getRegisteredCarrierInfo(): {
+  domain: string;
+  sampleTypeName: string;
+}[] {
   const result: { domain: string; sampleTypeName: string }[] = [];
   for (const [domain, carriers] of CARRIER_REGISTRY.entries()) {
     for (const ops of carriers) {
@@ -476,6 +510,7 @@ const HoleCarrier: CarrierOperations = {
   unionStates: (left: Type, right: Type): Type => {
     return effectRowUnion(left, right);
   },
+  typeName: "Hole",
 };
 
 // Register Hole carrier for hole domain
@@ -1178,9 +1213,7 @@ export function cloneTypeInfo(info: TypeInfo): TypeInfo {
     constructors: info.constructors.map(cloneConstructorInfo),
     alias: info.alias ? cloneType(info.alias) : undefined,
     isAlias: info.isAlias,
-    recordFields: info.recordFields
-      ? new Map(info.recordFields)
-      : undefined,
+    recordFields: info.recordFields ? new Map(info.recordFields) : undefined,
     recordDefaults: info.recordDefaults
       ? new Set(info.recordDefaults)
       : undefined,
