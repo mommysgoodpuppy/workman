@@ -557,16 +557,12 @@ function projectFieldFromRecord(
   }
   const resolvedFieldType = applySubstitution(fieldType, state.substitution);
 
-  // Use generic carrier splitting for the field type
-  const fieldCarrierInfo = splitCarrier(resolvedFieldType);
-  const projectedValueType = fieldCarrierInfo
-    ? applySubstitution(fieldCarrierInfo.value, state.substitution)
-    : resolvedFieldType;
-  const valueTarget = projectedValue ?? projectedValueType;
+  // When we have a projectedValue from inference, just unify it with the full field type
+  // The projectedValue already includes any carrier (e.g., Option<T>), so no re-wrapping needed
   if (projectedValue) {
     const unifyValue = unifyTypes(
-      projectedValueType,
-      valueTarget,
+      resolvedFieldType, // Use full field type
+      projectedValue,
       state.substitution,
     );
     if (!unifyValue.success) {
@@ -574,16 +570,80 @@ function projectFieldFromRecord(
       return;
     }
     state.substitution = unifyValue.subst;
+
+    // The field access result is the resolved field type (after unification)
+    // We only need to propagate carrier from target record if applicable
+    const finalFieldType = applySubstitution(
+      resolvedFieldType,
+      state.substitution,
+    );
+    let finalType: Type;
+
+    if (targetCarrierInfo) {
+      // Target record has a carrier - need to propagate it to the result
+      const fieldCarrierInfo = splitCarrier(finalFieldType);
+      const innerValue = fieldCarrierInfo
+        ? fieldCarrierInfo.value
+        : finalFieldType;
+
+      if (
+        fieldCarrierInfo && targetCarrierInfo.domain === fieldCarrierInfo.domain
+      ) {
+        // Same carrier domain - combine states
+        if (targetCarrierInfo.domain === "effect") {
+          const targetError = targetCarrierInfo.state as EffectRowType;
+          const fieldError = fieldCarrierInfo.state as EffectRowType;
+          const combinedError = effectRowUnion(targetError, fieldError);
+          finalType = makeResultType(cloneType(innerValue), combinedError);
+        } else {
+          // Unknown domain - just use target's carrier wrapping the inner value
+          const joined = joinCarrier(
+            targetCarrierInfo.domain,
+            innerValue,
+            targetCarrierInfo.state,
+            targetCarrierInfo.carrier,
+          );
+          finalType = joined ?? finalFieldType;
+        }
+      } else if (fieldCarrierInfo) {
+        // Different carrier domains - field keeps its carrier, target's is ignored for now
+        finalType = finalFieldType;
+      } else {
+        // Only target has carrier - wrap the field type with it
+        const joined = joinCarrier(
+          targetCarrierInfo.domain,
+          finalFieldType,
+          targetCarrierInfo.state,
+          targetCarrierInfo.carrier,
+        );
+        finalType = joined ?? finalFieldType;
+      }
+    } else {
+      // No target carrier - just use the field type as-is
+      finalType = finalFieldType;
+    }
+
+    const unified = unifyTypes(finalType, result, state.substitution);
+    if (unified.success) {
+      state.substitution = unified.subst;
+    } else {
+      registerUnifyFailure(state, stub.origin, unified.reason);
+    }
+    return;
   }
+
+  // No projectedValue - use the original logic to derive type from field
+  const fieldCarrierInfo = splitCarrier(resolvedFieldType);
+  const projectedValueType = fieldCarrierInfo
+    ? applySubstitution(fieldCarrierInfo.value, state.substitution)
+    : resolvedFieldType;
 
   // Combine carrier states if both target and field have carriers
   let finalType: Type;
-  const finalValue = applySubstitution(valueTarget, state.substitution);
+  const finalValue = applySubstitution(projectedValueType, state.substitution);
 
   if (targetCarrierInfo && fieldCarrierInfo) {
     // Both have carriers - need to combine states
-    // For now, use the target's carrier domain and combine states
-    // TODO: Handle cross-domain carrier combinations properly
     if (targetCarrierInfo.domain === fieldCarrierInfo.domain) {
       // Same domain - combine states based on domain type
       if (targetCarrierInfo.domain === "effect") {
@@ -956,6 +1016,10 @@ function solveBranchJoinConstraint(
             dischargesResult: stub.dischargesResult ?? false,
             effectRow: stub.effectRowCoverage?.row,
             missingConstructors: stub.effectRowCoverage?.missingConstructors,
+            expectedType: mergedType,
+            actualType: branchType,
+            firstBranchNodeId: stub.branches[0],
+            mismatchBranchNodeId: stub.branches[index],
           },
         });
         return;
@@ -972,14 +1036,13 @@ function solveBranchJoinConstraint(
           leftCarrier.state,
           rightCarrier.state,
         );
-        mergedType =
-          joinCarrier(
-            leftCarrier.domain,
-            leftCarrier.value,
-            unionState,
-            leftCarrier.carrier,
-          ) ??
-            mergedType;
+        mergedType = joinCarrier(
+          leftCarrier.domain,
+          leftCarrier.value,
+          unionState,
+          leftCarrier.carrier,
+        ) ??
+          mergedType;
       }
     } else {
       // Normal unification
@@ -993,6 +1056,10 @@ function solveBranchJoinConstraint(
             dischargesResult: stub.dischargesResult ?? false,
             effectRow: stub.effectRowCoverage?.row,
             missingConstructors: stub.effectRowCoverage?.missingConstructors,
+            expectedType: mergedType,
+            actualType: branchType,
+            firstBranchNodeId: stub.branches[0],
+            mismatchBranchNodeId: stub.branches[index],
           },
         });
         return;

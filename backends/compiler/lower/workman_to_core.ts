@@ -466,6 +466,35 @@ function unwrapCarrier(type: Type): { name: string; value: Type } | null {
   return { name: type.name, value: info.value };
 }
 
+// Get a short description of the outermost type structure
+function getOutermostType(type: Type): string {
+  switch (type.kind) {
+    case "var":
+      return `type variable T${type.id}`;
+    case "func":
+      return "a function";
+    case "constructor":
+      if (type.args.length === 0) return type.name;
+      return `${type.name}<...>`;
+    case "tuple":
+      return `a ${type.elements.length}-tuple`;
+    case "unit":
+      return "Void";
+    case "int":
+      return "Int";
+    case "bool":
+      return "Bool";
+    case "char":
+      return "Char";
+    case "string":
+      return "String";
+    case "record":
+      return "a record";
+    default:
+      return "unknown";
+  }
+}
+
 function formatDiagnosticMessage(
   diagnostic: ConstraintDiagnostic,
   source?: string,
@@ -575,8 +604,140 @@ function formatDiagnosticMessage(
       }
       return "Type mismatch between incompatible types";
     }
-    case "branch_mismatch":
+    case "branch_mismatch": {
+      const expectedType = diagnostic.details?.expectedType as Type | undefined;
+      const actualType = diagnostic.details?.actualType as Type | undefined;
+      const branchIndex = diagnostic.details?.branchIndex;
+      const branchNum = typeof branchIndex === "number" ? branchIndex + 1 : "N";
+      const firstBranchNodeId = diagnostic.details?.firstBranchNodeId as
+        | number
+        | undefined;
+      const mismatchBranchNodeId = diagnostic.details?.mismatchBranchNodeId as
+        | number
+        | undefined;
+
+      // Helper to get line number for a node
+      const getLineNumber = (nodeId: number | undefined): number | null => {
+        if (!nodeId || !source || !spanIndex) return null;
+        const span = spanIndex.get(nodeId);
+        if (!span) return null;
+        let line = 1;
+        for (let i = 0; i < span.start && i < source.length; i++) {
+          if (source[i] === "\n") line++;
+        }
+        return line;
+      };
+
+      // Helper to get a multi-line snippet of source for a branch body
+      // Shows the END of the block since that's what determines return type
+      const getBranchSnippet = (
+        nodeId: number | undefined,
+        indent: string,
+      ): string | null => {
+        if (!nodeId || !source || !spanIndex) return null;
+        const span = spanIndex.get(nodeId);
+        if (!span) return null;
+
+        const content = source.slice(span.start, span.end);
+        const lines = content.split("\n");
+
+        // Helper to check if line is just braces/whitespace
+        const isJustBraces = (line: string) => /^[\s\}\)\]]*$/.test(line);
+
+        // Find the last meaningful line (not just closing braces)
+        let lastMeaningfulIdx = lines.length - 1;
+        while (
+          lastMeaningfulIdx > 0 && isJustBraces(lines[lastMeaningfulIdx])
+        ) {
+          lastMeaningfulIdx--;
+        }
+
+        // Count trailing brace-only lines
+        const trailingBraceCount = lines.length - 1 - lastMeaningfulIdx;
+
+        // Format with proper indentation
+        const maxLines = 6;
+        const result: string[] = [];
+
+        if (lines.length <= maxLines) {
+          // Show full block
+          for (const line of lines) {
+            result.push(indent + line.trimEnd());
+          }
+        } else {
+          // Show first line (opening brace)
+          result.push(indent + lines[0].trimEnd());
+          result.push(indent + "  ...");
+
+          // Show the last meaningful line
+          if (lastMeaningfulIdx > 0) {
+            result.push(indent + lines[lastMeaningfulIdx].trimEnd());
+          }
+
+          // Show closing braces - if more than 1 brace line, just show "...}"
+          if (trailingBraceCount > 1) {
+            result.push(indent + "  ...}");
+          } else if (trailingBraceCount === 1) {
+            result.push(indent + lines[lines.length - 1].trimEnd());
+          }
+        }
+
+        return result.join("\n");
+      };
+
+      const line1 = getLineNumber(firstBranchNodeId);
+      const lineN = getLineNumber(mismatchBranchNodeId);
+
+      let message = "";
+
+      if (expectedType && actualType) {
+        const expectedCarrier = unwrapCarrier(expectedType);
+        const actualCarrier = unwrapCarrier(actualType);
+
+        // Case 1: One branch returns Option<T>, another returns T directly
+        if (actualCarrier && !expectedCarrier) {
+          message =
+            `Branch ${branchNum} returns '${actualCarrier.name}' but branch 1 returns unwrapped value`;
+        } else if (expectedCarrier && !actualCarrier) {
+          message =
+            `Branch 1 returns '${expectedCarrier.name}' but branch ${branchNum} returns unwrapped value`;
+        } else if (
+          expectedCarrier && actualCarrier &&
+          expectedCarrier.name !== actualCarrier.name
+        ) {
+          message =
+            `Branch 1 returns '${expectedCarrier.name}' but branch ${branchNum} returns '${actualCarrier.name}'`;
+        } else {
+          // General type mismatch
+          const expectedOuter = getOutermostType(expectedType);
+          const actualOuter = getOutermostType(actualType);
+          if (expectedOuter !== actualOuter) {
+            message =
+              `Match arms have incompatible types: branch 1 is ${expectedOuter}, branch ${branchNum} is ${actualOuter}`;
+          } else {
+            message = `Match arms have incompatible types`;
+          }
+        }
+
+        // Add branch locations and snippets to help identify the issue
+        const firstSnippet = getBranchSnippet(firstBranchNodeId, "    ");
+        const mismatchSnippet = getBranchSnippet(mismatchBranchNodeId, "    ");
+
+        const line1Str = line1 ? ` (line ${line1})` : "";
+        const lineNStr = lineN ? ` (line ${lineN})` : "";
+
+        if (firstSnippet) {
+          message += `\n  Branch 1${line1Str}:\n${firstSnippet}`;
+        }
+
+        if (mismatchSnippet) {
+          message += `\n  Branch ${branchNum}${lineNStr}:\n${mismatchSnippet}`;
+        }
+
+        return message;
+      }
       return "Match arms have incompatible types";
+    }
     case "missing_field": {
       const field = diagnostic.details?.field;
       return field

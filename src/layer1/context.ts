@@ -210,117 +210,117 @@ export interface EffectRowCoverageStub {
 
 export type ConstraintStub =
   | {
-      kind: "call";
-      origin: NodeId;
-      callee: NodeId;
-      argument: NodeId;
-      result: NodeId;
-      resultType: Type;
-      index: number;
-      argumentValueType?: Type;
-    }
+    kind: "call";
+    origin: NodeId;
+    callee: NodeId;
+    argument: NodeId;
+    result: NodeId;
+    resultType: Type;
+    index: number;
+    argumentValueType?: Type;
+  }
   | {
-      kind: "branch_join";
-      origin: NodeId;
-      scrutinee: NodeId | null;
-      branches: NodeId[];
-      dischargesResult?: boolean;
-      effectRowCoverage?: EffectRowCoverageStub;
-    }
+    kind: "branch_join";
+    origin: NodeId;
+    scrutinee: NodeId | null;
+    branches: NodeId[];
+    dischargesResult?: boolean;
+    effectRowCoverage?: EffectRowCoverageStub;
+  }
   | {
-      kind: "annotation";
-      origin: NodeId;
-      annotation: NodeId;
-      annotationType?: Type;
-      value: NodeId;
-      subject: NodeId | null;
-    }
+    kind: "annotation";
+    origin: NodeId;
+    annotation: NodeId;
+    annotationType?: Type;
+    value: NodeId;
+    subject: NodeId | null;
+  }
   | {
-      kind: "has_field";
-      origin: NodeId;
-      target: NodeId;
-      field: string;
-      result: NodeId;
-      projectedValueType?: Type;
-    }
+    kind: "has_field";
+    origin: NodeId;
+    target: NodeId;
+    field: string;
+    result: NodeId;
+    projectedValueType?: Type;
+  }
   | {
-      kind: "numeric";
-      origin: NodeId;
-      operator: string;
-      operands: NodeId[];
-      result: NodeId;
-    }
+    kind: "numeric";
+    origin: NodeId;
+    operator: string;
+    operands: NodeId[];
+    result: NodeId;
+  }
   | {
-      kind: "boolean";
-      origin: NodeId;
-      operator: string;
-      operands: NodeId[];
-      result: NodeId;
-    }
+    kind: "boolean";
+    origin: NodeId;
+    operator: string;
+    operands: NodeId[];
+    result: NodeId;
+  }
   // NEW: Constraint flow primitives (Phase 1: Unified Constraint Model)
   | {
-      kind: "constraint_source";
-      node: NodeId;
-      label: ConstraintLabel;
-    }
+    kind: "constraint_source";
+    node: NodeId;
+    label: ConstraintLabel;
+  }
   | {
-      kind: "constraint_flow";
-      from: NodeId;
-      to: NodeId;
-    }
+    kind: "constraint_flow";
+    from: NodeId;
+    to: NodeId;
+  }
   | {
-      kind: "constraint_rewrite";
-      node: NodeId;
-      remove: ConstraintLabel[];
-      add: ConstraintLabel[];
-    }
+    kind: "constraint_rewrite";
+    node: NodeId;
+    remove: ConstraintLabel[];
+    add: ConstraintLabel[];
+  }
   | {
-      kind: "constraint_alias";
-      id1: Identity;
-      id2: Identity;
-    }
+    kind: "constraint_alias";
+    id1: Identity;
+    id2: Identity;
+  }
   | {
-      kind: "require_exact_state";
-      node: NodeId;
-      domain: string;
-      tags: string[];
-    }
+    kind: "require_exact_state";
+    node: NodeId;
+    domain: string;
+    tags: string[];
+  }
   | {
-      kind: "require_any_state";
-      node: NodeId;
-      domain: string;
-      tags: string[];
-    }
+    kind: "require_any_state";
+    node: NodeId;
+    domain: string;
+    tags: string[];
+  }
   | {
-      kind: "require_not_state";
-      node: NodeId;
-      domain: string;
-      tags: string[];
-    }
+    kind: "require_not_state";
+    node: NodeId;
+    domain: string;
+    tags: string[];
+  }
   | {
-      kind: "add_state_tags";
-      node: NodeId;
-      domain: string;
-      tags: string[];
-    }
+    kind: "add_state_tags";
+    node: NodeId;
+    domain: string;
+    tags: string[];
+  }
   | {
-      kind: "require_at_return";
-      node: NodeId;
-      domain: string;
-      tags: string[];
-      policy?: string;
-    }
+    kind: "require_at_return";
+    node: NodeId;
+    domain: string;
+    tags: string[];
+    policy?: string;
+  }
   | {
-      kind: "call_rejects_infection";
-      node: NodeId;
-      policy?: string;
-    }
+    kind: "call_rejects_infection";
+    node: NodeId;
+    policy?: string;
+  }
   | {
-      kind: "call_rejects_domains";
-      node: NodeId;
-      domains: string[];
-      policy?: string;
-    };
+    kind: "call_rejects_domains";
+    node: NodeId;
+    domains: string[];
+    policy?: string;
+  };
 // NOTE: constraint_merge is NOT needed - branch_join already handles merge semantics
 
 export function recordCallConstraint(
@@ -357,13 +357,13 @@ export function recordBranchJoinConstraint(
 ): void {
   const coverage = metadata?.effectRowCoverage!
     ? {
-        row: metadata.effectRowCoverage.effectRow,
-        coveredConstructors: Array.from(
-          metadata.effectRowCoverage.coveredConstructors,
-        ),
-        coversTail: metadata.effectRowCoverage.coversTail,
-        missingConstructors: metadata.effectRowCoverage.missingConstructors,
-      }
+      row: metadata.effectRowCoverage.effectRow,
+      coveredConstructors: Array.from(
+        metadata.effectRowCoverage.coveredConstructors,
+      ),
+      coversTail: metadata.effectRowCoverage.coversTail,
+      missingConstructors: metadata.effectRowCoverage.missingConstructors,
+    }
     : undefined;
   ctx.constraintStubs.push({
     kind: "branch_join",
@@ -755,9 +755,9 @@ export interface UnifyFailure {
 export type UnifyResult =
   | { success: true; subst: Substitution }
   | {
-      success: false;
-      reason: UnifyFailure;
-    };
+    success: false;
+    reason: UnifyFailure;
+  };
 
 export function lookupEnv(ctx: Context, name: string): TypeScheme | null {
   const scheme = ctx.env.get(name);
@@ -793,9 +793,9 @@ export function generalizeInContext(ctx: Context, type: Type): TypeScheme {
 export type ExpectFunctionResult =
   | { success: true; from: Type; to: Type }
   | {
-      success: false;
-      type: Type;
-    };
+    success: false;
+    type: Type;
+  };
 
 export function expectFunctionType(
   ctx: Context,
@@ -1000,17 +1000,25 @@ export function markInconsistent(
   // Holes (holes, JS imports) are allowed to mismatch - Layer 2 will handle conflicts
   const expectedProvenance = getProvenance(expected);
   const actualProvenance = getProvenance(actual);
-  const isGradualTyping =
-    (isHoleType(expected) &&
-      (expectedProvenance?.kind === "incomplete" ||
-        expectedProvenance?.kind === "expr_hole" ||
-        expectedProvenance?.kind === "user_hole")) ||
+  const isGradualTyping = (isHoleType(expected) &&
+    (expectedProvenance?.kind === "incomplete" ||
+      expectedProvenance?.kind === "expr_hole" ||
+      expectedProvenance?.kind === "user_hole")) ||
     (isHoleType(actual) &&
       (actualProvenance?.kind === "incomplete" ||
         actualProvenance?.kind === "expr_hole" ||
         actualProvenance?.kind === "user_hole"));
 
   if (!isGradualTyping) {
+    // DEBUG: Check for Option/TokenKind mismatch
+    const expectedStr = typeToString(expected);
+    const actualStr = typeToString(actual);
+    if (expectedStr.includes("TokenKind") || actualStr.includes("TokenKind")) {
+      console.log("[DEBUG] markInconsistentExpr type_mismatch:");
+      console.log("  expected:", expectedStr);
+      console.log("  actual:", actualStr);
+      console.log("  expr.id:", expr.id);
+    }
     recordLayer1Diagnostic(ctx, expr.id, "type_mismatch", { expected, actual });
   }
 
@@ -1418,28 +1426,32 @@ function unifyTypes(
   };
 }
 
-export const RAW_NUMERIC_COMPAT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  // Pointer-sized types
-  ["Usize", new Set(["CULongLong", "CULong"])],
-  ["CULongLong", new Set(["Usize"])],
-  ["CULong", new Set(["Usize"])],
-  // 32-bit unsigned types (CUInt is typically 32-bit)
-  ["U32", new Set(["CUInt"])],
-  ["CUInt", new Set(["U32"])],
-  // 32-bit signed types (CInt is typically 32-bit)
-  ["I32", new Set(["CInt"])],
-  ["CInt", new Set(["I32"])],
-  // 16-bit types
-  ["U16", new Set(["CUShort"])],
-  ["CUShort", new Set(["U16"])],
-  ["I16", new Set(["CShort"])],
-  ["CShort", new Set(["I16"])],
-  // 8-bit types (CChar is typically 8-bit signed)
-  ["I8", new Set(["CChar"])],
-  ["CChar", new Set(["I8"])],
-]);
+export const RAW_NUMERIC_COMPAT: ReadonlyMap<string, ReadonlySet<string>> =
+  new Map([
+    // Pointer-sized types
+    ["Usize", new Set(["CULongLong", "CULong"])],
+    ["CULongLong", new Set(["Usize"])],
+    ["CULong", new Set(["Usize"])],
+    // 32-bit unsigned types (CUInt is typically 32-bit)
+    ["U32", new Set(["CUInt"])],
+    ["CUInt", new Set(["U32"])],
+    // 32-bit signed types (CInt is typically 32-bit)
+    ["I32", new Set(["CInt"])],
+    ["CInt", new Set(["I32"])],
+    // 16-bit types
+    ["U16", new Set(["CUShort"])],
+    ["CUShort", new Set(["U16"])],
+    ["I16", new Set(["CShort"])],
+    ["CShort", new Set(["I16"])],
+    // 8-bit types (CChar is typically 8-bit signed)
+    ["I8", new Set(["CChar"])],
+    ["CChar", new Set(["I8"])],
+  ]);
 
-function areNumericConstructorsCompatible(left: string, right: string): boolean {
+function areNumericConstructorsCompatible(
+  left: string,
+  right: string,
+): boolean {
   const leftSet = RAW_NUMERIC_COMPAT.get(left);
   return leftSet ? leftSet.has(right) : false;
 }
@@ -1452,7 +1464,10 @@ function bindVar(id: number, type: Type, subst: Substitution): UnifyResult {
   // Special case for row polymorphism: binding a var to an effect_row with that
   // var as its tail is valid row extension (e.g., T = {A | T} means T includes A).
   // In this case, bind the var to the row without the tail to avoid infinite type.
-  if (resolved.kind === "effect_row" && resolved.tail?.kind === "var" && resolved.tail.id === id) {
+  if (
+    resolved.kind === "effect_row" && resolved.tail?.kind === "var" &&
+    resolved.tail.id === id
+  ) {
     // Check if there are any other occurrences of the var in the row's payloads
     let occursElsewhere = false;
     for (const payload of resolved.cases.values()) {
@@ -1468,7 +1483,11 @@ function bindVar(id: number, type: Type, subst: Substitution): UnifyResult {
         return { success: true, subst };
       }
       // Safe to bind: remove the tail to create a closed row with the cases
-      const closedRow: Type = { kind: "effect_row", cases: resolved.cases, tail: undefined };
+      const closedRow: Type = {
+        kind: "effect_row",
+        cases: resolved.cases,
+        tail: undefined,
+      };
       const next = new Map(subst);
       next.set(id, closedRow);
       return { success: true, subst: next };

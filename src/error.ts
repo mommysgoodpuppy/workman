@@ -32,6 +32,7 @@ export class LexError extends WorkmanError {
     message: string,
     readonly position: number,
     readonly source?: string,
+    readonly filename?: string,
   ) {
     super(message);
   }
@@ -50,6 +51,7 @@ export class LexError extends WorkmanError {
       message: this.message,
       location,
       context,
+      filename: this.filename,
     });
   }
 }
@@ -64,6 +66,7 @@ export class ParseError extends WorkmanError {
     message: string,
     readonly token: Token,
     readonly source?: string,
+    readonly filename?: string,
   ) {
     super(message);
   }
@@ -87,6 +90,7 @@ export class ParseError extends WorkmanError {
       location,
       context,
       hint: getParseErrorHint(this.message, this.token),
+      filename: this.filename,
     });
   }
 }
@@ -101,6 +105,7 @@ export class InferError extends WorkmanError {
     message: string,
     readonly span?: SourceSpan,
     readonly source?: string,
+    readonly filename?: string,
   ) {
     super(message);
   }
@@ -124,6 +129,7 @@ export class InferError extends WorkmanError {
       location,
       context,
       hint: getTypeErrorHint(this.message),
+      filename: this.filename,
     });
   }
 }
@@ -159,6 +165,7 @@ export class RuntimeError extends WorkmanError {
     message: string,
     readonly span?: SourceSpan,
     readonly source?: string,
+    readonly filename?: string,
   ) {
     super(message);
   }
@@ -181,6 +188,7 @@ export class RuntimeError extends WorkmanError {
       message: this.message,
       location,
       context,
+      filename: this.filename,
     });
   }
 }
@@ -208,13 +216,17 @@ interface ErrorFormatOptions {
   location: Location;
   context?: SourceContext;
   hint?: string;
+  filename?: string;
 }
 
 function formatError(options: ErrorFormatOptions): string {
-  const { errorType, message, location, context, hint } = options;
+  const { errorType, message, location, context, hint, filename } = options;
 
-  let output =
-    `${errorType} at line ${location.line}, column ${location.column}:\n`;
+  const locationStr = filename
+    ? `${filename}:${location.line}:${location.column}`
+    : `line ${location.line}, column ${location.column}`;
+
+  let output = `${errorType} at ${locationStr}:\n`;
   output += `  ${message}\n`;
 
   if (context) {
@@ -448,6 +460,7 @@ export function unexpectedCharError(
   char: string,
   position: number,
   source?: string,
+  filename?: string,
 ): LexError {
   const displayChar = char === "\n"
     ? "\\n"
@@ -460,6 +473,7 @@ export function unexpectedCharError(
     `Unexpected character '${displayChar}'`,
     position,
     source,
+    filename,
   );
 }
 
@@ -469,11 +483,13 @@ export function unexpectedCharError(
 export function unterminatedStringError(
   position: number,
   source?: string,
+  filename?: string,
 ): LexError {
   return new LexError(
     "Unterminated string literal - missing closing quote",
     position,
     source,
+    filename,
   );
 }
 
@@ -484,6 +500,7 @@ export function expectedTokenError(
   expected: string,
   token: Token,
   source?: string,
+  filename?: string,
 ): ParseError {
   const got = token.kind === "eof"
     ? "end of file"
@@ -493,6 +510,7 @@ export function expectedTokenError(
     `Expected ${expected}, but got ${got}`,
     token,
     source,
+    filename,
   );
 }
 
@@ -503,8 +521,9 @@ export function unexpectedTokenError(
   message: string,
   token: Token,
   source?: string,
+  filename?: string,
 ): ParseError {
-  return new ParseError(message, token, source);
+  return new ParseError(message, token, source, filename);
 }
 
 /**
@@ -514,8 +533,9 @@ export function typeError(
   message: string,
   span?: SourceSpan,
   source?: string,
+  filename?: string,
 ): InferError {
-  return new InferError(message, span, source);
+  return new InferError(message, span, source, filename);
 }
 
 /**

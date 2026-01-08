@@ -2627,7 +2627,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             expr.arguments[index], // Mark the argument expression instead of the call
             subject,
             expectedArg,
-            actualArg
+            actualArg,
           );
           // Return the call expression with an error type (propagated from bad argument)
           return recordExprType(ctx, expr, mark.type);
@@ -4734,9 +4734,12 @@ export function inferMatchBranches(
     });
   }
 
+  // If there's a wildcard, it covers all constructors including effect ones
+  // so we should treat it as fully covered for rewrapping purposes
+  const effectFullyCovered = handledErrorConstructors.size > 0 || hasWildcard;
+
   const shouldRewrapCarrier = scrutineeCarrier &&
-    ((scrutineeCarrier.domain === "effect" &&
-      handledErrorConstructors.size === 0) ||
+    ((scrutineeCarrier.domain === "effect" && !effectFullyCovered) ||
       (scrutineeCarrier.domain !== "effect" && !scrutineeFullyCovered));
 
   if (shouldRewrapCarrier && scrutineeCarrier) {

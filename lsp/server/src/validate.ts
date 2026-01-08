@@ -1,4 +1,4 @@
-import { Type } from "../../../src/types.ts";
+import { splitCarrier, Type } from "../../../src/types.ts";
 import { formatTypeWithCarriers } from "../../../src/type_printer.ts";
 
 import {
@@ -364,9 +364,73 @@ function formatSolverDiagnostic(
     case "not_function":
       base = "Expected a function but found a non-function value";
       break;
-    case "branch_mismatch":
-      base = "Branches in this expression do not agree on a type";
+    case "branch_mismatch": {
+      const details = diag.details as Record<string, unknown> | undefined;
+      const branchIndex = details?.branchIndex;
+      const branchNum = typeof branchIndex === "number" ? branchIndex + 1 : "N";
+      const expectedType = details?.expectedType as Type | undefined;
+      const actualType = details?.actualType as Type | undefined;
+
+      if (expectedType && actualType) {
+        const expectedCarrier = unwrapCarrierForDiag(expectedType);
+        const actualCarrier = unwrapCarrierForDiag(actualType);
+
+        // Case 1: One branch returns Option<T>, another returns T directly
+        if (actualCarrier && !expectedCarrier) {
+          base =
+            `Branch ${branchNum} returns '${actualCarrier.name}' but branch 1 returns its inner value directly\n` +
+            `Hint: Branch ${branchNum} may be missing a match/unwrap, or branch 1 needs to wrap in '${actualCarrier.name}'`;
+          break;
+        }
+        if (expectedCarrier && !actualCarrier) {
+          base =
+            `Branch 1 returns '${expectedCarrier.name}' but branch ${branchNum} returns its inner value directly\n` +
+            `Hint: Branch 1 may be missing a match/unwrap, or branch ${branchNum} needs to wrap in '${expectedCarrier.name}'`;
+          break;
+        }
+
+        // Case 2: Both are carriers but different kinds
+        if (
+          expectedCarrier && actualCarrier &&
+          expectedCarrier.name !== actualCarrier.name
+        ) {
+          const expectedFmt =
+            tryFormatDiagnosticValue(expectedType, ctx, layer3) ?? "?";
+          const actualFmt = tryFormatDiagnosticValue(actualType, ctx, layer3) ??
+            "?";
+          base =
+            `Branch 1 returns '${expectedCarrier.name}' but branch ${branchNum} returns '${actualCarrier.name}'\n` +
+            `Branch 1 type: ${expectedFmt}\n` +
+            `Branch ${branchNum} type: ${actualFmt}`;
+          break;
+        }
+
+        // Case 3: General type mismatch
+        const expectedFmt =
+          tryFormatDiagnosticValue(expectedType, ctx, layer3) ?? "?";
+        const actualFmt = tryFormatDiagnosticValue(actualType, ctx, layer3) ??
+          "?";
+
+        // If types are long, show a simplified summary
+        if (expectedFmt.length > 60 || actualFmt.length > 60) {
+          const expectedOuter = getOutermostTypeName(expectedType);
+          const actualOuter = getOutermostTypeName(actualType);
+          if (expectedOuter !== actualOuter) {
+            base = `Match arms have incompatible types\n` +
+              `Branch 1 is: ${expectedOuter}\n` +
+              `Branch ${branchNum} is: ${actualOuter}`;
+            break;
+          }
+        }
+
+        base = `Match arms have incompatible types\n` +
+          `Branch 1 type: ${expectedFmt}\n` +
+          `Branch ${branchNum} type: ${actualFmt}`;
+      } else {
+        base = "Match arms have incompatible types";
+      }
       break;
+    }
     case "missing_field":
       base = "Record is missing a required field";
       break;
@@ -656,4 +720,40 @@ function hasExistingDiagnostic(
       diag.range.end.line === range.end.line &&
       diag.range.end.character === range.end.character;
   });
+}
+
+function unwrapCarrierForDiag(
+  type: Type,
+): { name: string; value: Type } | null {
+  const info = splitCarrier(type);
+  if (!info || type.kind !== "constructor") return null;
+  return { name: type.name, value: info.value };
+}
+
+function getOutermostTypeName(type: Type): string {
+  switch (type.kind) {
+    case "var":
+      return `type variable`;
+    case "func":
+      return "a function";
+    case "constructor":
+      if (type.args.length === 0) return type.name;
+      return `${type.name}<...>`;
+    case "tuple":
+      return `a ${type.elements.length}-tuple`;
+    case "unit":
+      return "Void";
+    case "int":
+      return "Int";
+    case "bool":
+      return "Bool";
+    case "char":
+      return "Char";
+    case "string":
+      return "String";
+    case "record":
+      return "a record";
+    default:
+      return "unknown";
+  }
 }
