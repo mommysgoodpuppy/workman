@@ -35,7 +35,7 @@ import {
 } from "./trace_options.ts";
 
 const RUN_USAGE =
-  "Usage: wm [fmt|type [--line <line>] [--var-ids] |err|compile] <file.wm> | wm <file.wm> [--backend <js|zig>] [--trace|--perf] | wm (REPL mode)";
+  "Usage: wm [fmt|type [--line <line>] [--var-ids] |err|compile] <file.wm> | wm <file.wm> [--backend <js|zig>] [--force] [--trace|--perf] | wm (REPL mode)";
 
 type RunBackend = "js" | "zig";
 
@@ -64,6 +64,7 @@ export async function runProgramCommand(
   let showTypeVarIds = false;
   let skipEvaluation = false;
   let showErrorsOnly = false;
+  let force = false;
   let backend: RunBackend = "zig";
   const effectiveTrace: TraceOptions = { ...traceOptions };
 
@@ -129,6 +130,10 @@ export async function runProgramCommand(
       if (applyTraceFlag(arg, effectiveTrace)) {
         continue;
       }
+      if (arg === "--force" || arg === "-f") {
+        force = true;
+        continue;
+      }
       if (arg.startsWith("-")) {
         console.error(RUN_USAGE);
         IO.exit(1);
@@ -159,7 +164,7 @@ export async function runProgramCommand(
         foreignTypes: createDefaultForeignTypeConfig(filePath),
       },
       lowering: {
-        showAllErrors: skipEvaluation,
+        showAllErrors: true,
       },
     });
     const entryKey = compileResult.coreGraph.entry;
@@ -185,6 +190,17 @@ export async function runProgramCommand(
       IO.exit(0);
     }
 
+    const hasTypeErrors = hasTypeDiagnostics(compileResult.modules);
+    if (!skipEvaluation && hasTypeErrors) {
+      if (!force) {
+        console.error(
+          "Type checking failed. Use --force to run despite type errors.",
+        );
+        IO.exit(1);
+      }
+      console.warn("Executing despite type errors (--force specified).");
+    }
+
     if (!skipEvaluation) {
       const nodeLocations = buildNodeLocationIndex(compileResult.modules);
       if (backend === "js") {
@@ -206,6 +222,22 @@ export async function runProgramCommand(
     }
     IO.exit(1);
   }
+}
+
+function hasTypeDiagnostics(
+  modules: ReadonlyMap<string, WorkmanModuleArtifacts>,
+): boolean {
+  for (const artifact of modules.values()) {
+    const diagnostics = artifact.analysis?.layer3?.diagnostics;
+    if (!diagnostics) continue;
+    if (
+      diagnostics.solver.length > 0 ||
+      diagnostics.conflicts.length > 0
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function displayExpressionSummaries(
