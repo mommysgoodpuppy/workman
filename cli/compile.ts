@@ -32,6 +32,7 @@ export interface CompileArgs {
   outDir?: string;
   backend: CompileBackend;
   force: boolean;
+  debug: boolean;
   traceOptions: TraceOptions;
 }
 
@@ -44,6 +45,7 @@ export function parseCompileArgs(
   let outDir: string | undefined;
   let backend: CompileBackend | undefined;
   let force = false;
+  let debug = false;
   const traceOptions: TraceOptions = { ...baseTraceOptions };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -73,6 +75,10 @@ export function parseCompileArgs(
       force = true;
       continue;
     }
+    if (arg === "--debug") {
+      debug = true;
+      continue;
+    }
     if (applyTraceFlag(arg, traceOptions)) {
       continue;
     }
@@ -87,7 +93,7 @@ export function parseCompileArgs(
 
   if (!entryPath && !allowEmpty) {
     throw new Error(
-      "Usage: wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>] [--force]",
+      "Usage: wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>] [--force] [--debug]",
     );
   }
 
@@ -96,6 +102,7 @@ export function parseCompileArgs(
     outDir,
     backend: backend ?? "zig",
     force,
+    debug,
     traceOptions,
   };
 }
@@ -105,6 +112,7 @@ export async function compileToDirectory(
   outDir?: string,
   backend: CompileBackend = "zig",
   force = false,
+  debug = false,
   traceOptions: TraceOptions = DEFAULT_TRACE_OPTIONS,
 ): Promise<void> {
   if (!entryPath.endsWith(".wm")) {
@@ -144,6 +152,23 @@ export async function compileToDirectory(
   }
   if (hasErrors) {
     console.warn("Compilation continued despite type errors (--force used).");
+  }
+
+  // Save IR to file if --debug flag is set
+  if (debug) {
+    await IO.ensureDir(resolvedOutDir);
+    const irPath = resolve(resolvedOutDir, "debug_ir.json");
+    // Convert ReadonlyMap to plain object for JSON serialization
+    const serializableGraph = {
+      entry: compileResult.coreGraph.entry,
+      order: compileResult.coreGraph.order,
+      modules: Object.fromEntries(compileResult.coreGraph.modules),
+      prelude: compileResult.coreGraph.prelude,
+    };
+    const irJson = JSON.stringify(serializableGraph, null, 2);
+    await Deno.writeTextFile(irPath, irJson);
+    const irRelative = relative(IO.cwd(), irPath);
+    console.log(`IR saved to: ${irRelative}`);
   }
 
   const emitResult = backend === "zig"

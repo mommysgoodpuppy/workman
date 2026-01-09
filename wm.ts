@@ -28,8 +28,16 @@ async function runCli(): Promise<void> {
   let debugMode = false;
   const args: string[] = [];
   const globalTrace: TraceOptions = { ...DEFAULT_TRACE_OPTIONS };
+  
+  // Find the command (first non-flag argument, or --help/-h)
+  const command = IO.args.find((arg) => 
+    arg === "--help" || arg === "-h" || (!arg.startsWith("-") && arg !== "")
+  );
+  const isCompileOrBuild = command === "compile" || command === "build";
+  
   for (const arg of IO.args) {
-    if (arg === "--debug") {
+    // Only consume --debug globally for run commands, not for compile/build
+    if (arg === "--debug" && !isCompileOrBuild) {
       debugMode = true;
       continue;
     }
@@ -44,33 +52,34 @@ async function runCli(): Promise<void> {
     IO.exit(0);
   }
 
-  const command = args[0];
+  const actualCommand = args[0];
 
-  if (command === "--help" || command === "-h") {
+  if (actualCommand === "--help" || actualCommand === "-h") {
     console.log(HELP_TEXT);
     IO.exit(0);
   }
 
-  if (command === "fmt") {
+  if (actualCommand === "fmt") {
     await runFormatter(args.slice(1));
     IO.exit(0);
   }
 
-  if (command === "lsp") {
+  if (actualCommand === "lsp") {
     await startWorkmanLanguageServer();
     IO.exit(0);
   }
 
-  if (command === "compile") {
+  if (actualCommand === "compile") {
     try {
       const {
         entryPath,
         outDir,
         backend,
         force,
+        debug,
         traceOptions,
       } = parseCompileArgs(args.slice(1), false, globalTrace);
-      await compileToDirectory(entryPath, outDir, backend, force, traceOptions);
+      await compileToDirectory(entryPath, outDir, backend, force, debug, traceOptions);
     } catch (error) {
       handleCliError(error);
       IO.exit(1);
@@ -78,7 +87,7 @@ async function runCli(): Promise<void> {
     IO.exit(0);
   }
 
-  if (command === "build") {
+  if (actualCommand === "build") {
     try {
       // 'wm build' works like 'zig build' - auto-detects build.wm
       await runBuildCommand(args.slice(1), globalTrace);

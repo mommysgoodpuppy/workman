@@ -42,6 +42,7 @@ interface LoweringState {
   readonly resolvedTypes: Map<number, Type>;
   readonly bundleArms: Map<string, MMatchArm[]>;
   readonly recordDefaultExprs: Map<string, Map<string, MExpr>>;
+  readonly adtEnv: import("../../../src/types.ts").TypeEnvADT;
 }
 
 const UNKNOWN_PROVENANCE = "core.lowering.unresolved_type";
@@ -50,12 +51,14 @@ export function lowerProgramToValues(
   program: MProgram,
   resolvedTypes: Map<number, Type>,
   recordDefaultExprs: Map<string, Map<string, MExpr>> = new Map(),
+  adtEnv: import("../../../src/types.ts").TypeEnvADT = new Map(),
 ): CoreValueBinding[] {
   const state: LoweringState = {
     tempIndex: 0,
     resolvedTypes,
     bundleArms: new Map(),
     recordDefaultExprs,
+    adtEnv,
   };
   const values: CoreValueBinding[] = [];
   for (const declaration of program.declarations) {

@@ -11,7 +11,7 @@ Usage:
   wm type --var-ids <file.wm>
                         Type-check and show type variable IDs
   wm err <file.wm>      Check for type errors only
-  wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>]
+  wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>] [--debug]
                         Emit backend modules for the given entry
   wm fmt <files...>     Format Workman files
   wm --help             Show this help message
@@ -28,6 +28,8 @@ Examples:
   wm compile main.wm    # Emit Zig modules into ./dist
   wm compile main.wm --backend js
                         # Emit JS modules into ./dist
+  wm compile main.wm --debug
+                        # Emit modules and save IR to debug_ir.json
   wm main.wm --backend js
                         # Build + run using the JS backend
 

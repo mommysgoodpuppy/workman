@@ -578,10 +578,11 @@ async function executeJsModule(
   debugMode: boolean,
   nodeLocations: Map<string, Map<number, NodeLocationEntry>>,
 ): Promise<void> {
-  const tempDir = await IO.makeTempDir({ prefix: "workman-cli-" });
+  const outDir = "distjs";
   try {
+    await IO.ensureDir(outDir);
     const emitResult = await emitJsModuleGraph(coreGraph, {
-      outDir: tempDir,
+      outDir: outDir,
     });
     const moduleUrl = toFileUrl(emitResult.entryPath).href;
     try {
@@ -602,12 +603,8 @@ async function executeJsModule(
     } catch (runtimeError) {
       throw enhanceRuntimeError(runtimeError, nodeLocations);
     }
-  } finally {
-    try {
-      await IO.remove(tempDir, { recursive: true });
-    } catch {
-      // ignore cleanup errors
-    }
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -618,10 +615,11 @@ async function executeZigModule(
   if (typeof Deno === "undefined") {
     throw new Error("Zig backend execution requires the Deno runtime");
   }
-  const tempDir = await IO.makeTempDir({ prefix: "workman-zig-" });
+  const outDir = "dist";
   try {
+    await IO.ensureDir(outDir);
     const emitResult = await emitZigModuleGraph(coreGraph, {
-      outDir: tempDir,
+      outDir: outDir,
       traceOptions,
     });
     const rootPath = emitResult.rootPath;
@@ -638,12 +636,8 @@ async function executeZigModule(
     if (result.code !== 0) {
       throw new Error(`zig run failed with exit code ${result.code}`);
     }
-  } finally {
-    try {
-      await IO.remove(tempDir, { recursive: true });
-    } catch {
-      // ignore cleanup errors
-    }
+  } catch (error) {
+    throw error;
   }
 }
 
