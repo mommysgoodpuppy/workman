@@ -7,6 +7,7 @@ import {
   relative,
   resolve,
 } from "../../../src/io.ts";
+import type { TraceOptions } from "../../../src/trace_options.ts";
 
 import type { SourceSpan } from "../../../src/ast.ts";
 import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
@@ -25,6 +26,8 @@ export interface EmitGraphOptions {
   readonly emitRootMain?: boolean;
   /** If set, use this as the common root instead of computing from module paths */
   readonly commonRoot?: string;
+  /** Trace configuration propagated to entry module runtime */
+  readonly traceOptions?: TraceOptions;
 }
 
 export interface EmitGraphResult {
@@ -213,6 +216,9 @@ export async function emitModuleGraph(
         invokeEntrypoint: options.invokeEntrypoint ?? false,
         forcedValueExports: module.path === entryModule.path
           ? forcedEntryExports
+          : undefined,
+        traceOptions: module.path === entryModule.path
+          ? options.traceOptions
           : undefined,
         getSourceLocation: (span: SourceSpan) => {
           const offsets = sourceOffsets.get(module.path);
