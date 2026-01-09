@@ -52,7 +52,7 @@ import {
   type TypeEnv,
   type TypeEnvADT,
   type TypeScheme,
-  type typeToString,
+  typeToString,
   unknownType,
 } from "../types.ts";
 import { InferError } from "../error.ts";

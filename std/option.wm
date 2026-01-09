@@ -22,6 +22,14 @@ export let orElse = match(fallback, option) => {
   (fallback, None) => { fallback() }
 };
 
+-- Pipeable alternative: option :> alt(fallback)
+-- Like orElse but with option first for use with :> pipe operator
+-- Name from Haskell's Alternative typeclass (<|>)
+export let alt = match(option, fallback) => {
+  (Some(value), fallback) => { Some(value) },
+  (None, fallback) => { fallback() }
+};
+
 export let fromBool = match(condition, value) => {
   (true, value) => { Some(value) },
   (false, _) => { None }

@@ -7,6 +7,7 @@ from "std/coretypes" import { IOk, IErr };
 from "std/char" import { isDigit, isUppercase, isLowercase, isAlpha, isAlphaNum, isWhitespace };
 from "std/nativeString" import { stringEq, stringConcat, stringLength, stringSlice };
 from "std/list" import { listReverse, listLength };
+from "std/option" import { alt };
 -- Note: Record/type names (Span, Token, TokenKind) are not runtime values - only import functions and constructors
 from "./token.wm" import {
   span, token, simpleToken, Token,
@@ -434,100 +435,30 @@ let tryMatch1 = (state, s, kind) => {
 };
 
 -- Try multi-char symbols first, then single-char
+-- Using alt from std/option to chain fallback attempts via pipe operator
+-- Each attempt returns Option<(TokenKind, Int)>, and alt chains them cleanly
 let matchSymbol = (state) => {
-  -- 2-char symbols
-  match (tryMatch2(state, "=>", TkArrow)) {
-    Some(result) => { Some(result) },
-    None => {
-      match (tryMatch2(state, "->", TkThinArrow)) {
-        Some(result) => { Some(result) },
-        None => {
-          match (tryMatch2(state, "..", TkDotDot)) {
-            Some(result) => { Some(result) },
-            None => {
-              -- 1-char symbols
-              match (tryMatch1(state, ".", TkDot)) {
-                Some(result) => { Some(result) },
-                None => {
-                  match (tryMatch1(state, "=", TkEquals)) {
-                    Some(result) => { Some(result) },
-                    None => {
-                      match (tryMatch1(state, "|", TkPipe)) {
-                        Some(result) => { Some(result) },
-                        None => {
-                          match (tryMatch1(state, ":", TkColon)) {
-                            Some(result) => { Some(result) },
-                            None => {
-                              match (tryMatch1(state, ",", TkComma)) {
-                                Some(result) => { Some(result) },
-                                None => {
-                                  match (tryMatch1(state, ";", TkSemicolon)) {
-                                    Some(result) => { Some(result) },
-                                    None => {
-                                      match (tryMatch1(state, "(", TkLParen)) {
-                                        Some(result) => { Some(result) },
-                                        None => {
-                                          match (tryMatch1(state, ")", TkRParen)) {
-                                            Some(result) => { Some(result) },
-                                            None => {
-                                              match (tryMatch1(state, "{", TkLBrace)) {
-                                                Some(result) => { Some(result) },
-                                                None => {
-                                                  match (tryMatch1(state, "}", TkRBrace)) {
-                                                    Some(result) => { Some(result) },
-                                                    None => {
-                                                      match (tryMatch1(state, "[", TkLBracket)) {
-                                                        Some(result) => { Some(result) },
-                                                        None => {
-                                                          match (tryMatch1(state, "]", TkRBracket)) {
-                                                            Some(result) => { Some(result) },
-                                                            None => {
-                                                              match (tryMatch1(state, "<", TkLAngle)) {
-                                                                Some(result) => { Some(result) },
-                                                                None => {
-                                                                  match (tryMatch1(state, ">", TkRAngle)) {
-                                                                    Some(result) => { Some(result) },
-                                                                    None => {
-                                                                      match (tryMatch1(state, "_", TkUnderscore)) {
-                                                                        Some(result) => { Some(result) },
-                                                                        None => {
-                                                                          tryMatch1(state, "@", TkAt)
-                                                                        }
-                                                                      }
-                                                                    }
-                                                                  }
-                                                                }
-                                                              }
-                                                            }
-                                                          }
-                                                        }
-                                                      }
-                                                    }
-                                                  }
-                                                }
-                                              }
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+  -- 2-char symbols (higher priority - check first)
+  tryMatch2(state, "=>", TkArrow)
+    :> alt( => { tryMatch2(state, "->", TkThinArrow) })
+    :> alt( => { tryMatch2(state, "..", TkDotDot) })
+  -- 1-char symbols
+    :> alt( => { tryMatch1(state, ".", TkDot) })
+    :> alt( => { tryMatch1(state, "=", TkEquals) })
+    :> alt( => { tryMatch1(state, "|", TkPipe) })
+    :> alt( => { tryMatch1(state, ":", TkColon) })
+    :> alt( => { tryMatch1(state, ",", TkComma) })
+    :> alt( => { tryMatch1(state, ";", TkSemicolon) })
+    :> alt( => { tryMatch1(state, "(", TkLParen) })
+    :> alt( => { tryMatch1(state, ")", TkRParen) })
+    :> alt( => { tryMatch1(state, "{", TkLBrace) })
+    :> alt( => { tryMatch1(state, "}", TkRBrace) })
+    :> alt( => { tryMatch1(state, "[", TkLBracket) })
+    :> alt( => { tryMatch1(state, "]", TkRBracket) })
+    :> alt( => { tryMatch1(state, "<", TkLAngle) })
+    :> alt( => { tryMatch1(state, ">", TkRAngle) })
+    :> alt( => { tryMatch1(state, "_", TkUnderscore) })
+    :> alt( => { tryMatch1(state, "@", TkAt) })
 };
 
 -- =============================================================================
@@ -683,7 +614,6 @@ let withLastKind = (state:LexerState, kind) => {
 -- Tokenize entire source, returning list of tokens (excluding comments)
 export let rec tokenize = (state) => {
   let (tok, newState) = scanToken(state);
-  let x = newState;
   let stateWithLast = withLastKind(newState, tok.kind);
   
   match (tok.kind) {
