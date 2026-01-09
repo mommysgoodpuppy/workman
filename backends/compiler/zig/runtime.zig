@@ -444,17 +444,19 @@ pub fn callInfectious(func_value: Value, args: []const Value, call_site: []const
             return shorted;
         }
 
-        if (arg_info.infected) {
-            if (trace_enabled) {
-                std.debug.print("trace: [id={d}] force arg[{d}] {?s} -> val\n", .{ trace_counter, index, arg_info.type_name });
-            }
+        const arg_value = if (arg_info.infected) args[index] else arg_info.value;
+        if (trace_enabled and arg_info.infected) {
+            std.debug.print(
+                "trace: [id={d}] infected arg[{d}] {?s} passed through\n",
+                .{ trace_counter, index, arg_info.type_name },
+            );
         }
 
         if (arg_info.infected and infectious_type_name == null) {
             infectious_type_name = arg_info.type_name;
         }
         infected = infected or arg_info.infected;
-        processed[index] = arg_info.value;
+        processed[index] = arg_value;
     }
 
     if (trace_enabled) {
