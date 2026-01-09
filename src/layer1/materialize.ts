@@ -659,5 +659,9 @@ export function materializeTypeExpr(
             : undefined,
         })),
       };
+    case "type_pointer":
+      // TypePointer is not supported in materialized AST
+      // This should not occur in normal compilation, but handle it gracefully
+      throw new Error("TypePointer not supported in materialized AST");
   }
 }

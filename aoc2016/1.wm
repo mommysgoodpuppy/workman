@@ -9,11 +9,11 @@ let input = "L1, R3, R1, L5, L2, L5, R4, L2, R2, R2, L2, R1, L5, R3, L4, L1, L2,
 export type GenericError =
   | Error;
 
-record Location { x: Int, y: Int };
-record Operation { direction: Direction, distance: Int };
+record Location = { x: Int, y: Int };
+record Operation = { direction: Direction, distance: Int };
 type Direction = L | R;
 type Orientation = N | E | S | W;
-let start = .{ x: 0, y: 0 };
+let start = .{ x = 0, y = 0 };
 
 let produceOp = (in) => {
   let intL = 'L' :> charToInt;
@@ -28,7 +28,7 @@ let produceOp = (in) => {
   );
   let distance = posIntStringToInt(listFilter(isDigit, in));
   let yoink = match(dir, distance) {
-    (dir, Some(distance)) => { IOk(.{ direction: dir, distance: distance }) },
+    (dir, Some(distance)) => { IOk(.{ direction= dir, distance= distance }) },
     (dir, None) => { IErr((dir, distance)) }
   };
   yoink
@@ -37,10 +37,10 @@ let produceOp = (in) => {
 let move = (orient, distance) => {
   (pos) => {
     match(orient) {
-      N => { .{ x: pos.x, y: pos.y + distance } },
-      E => { .{ x: pos.x + distance, y: pos.y } },
-      S => { .{ x: pos.x, y: pos.y - distance } },
-      W => { .{ x: pos.x - distance, y: pos.y } }
+      N => { .{ x= pos.x, y= pos.y + distance } },
+      E => { .{ x= pos.x + distance, y= pos.y } },
+      S => { .{ x= pos.x, y= pos.y - distance } },
+      W => { .{ x= pos.x - distance, y= pos.y } }
     }
   }
 };

@@ -509,3 +509,10 @@ export function wrapResultValue(value, infectiousTypeName) {
   // This shouldn't happen in correct code
   return value;
 }
+
+export function panic(message) {
+  // Convert the message to a string, similar to the Zig backend
+  const msg = typeof message === "string" ? message : "Panic called with non-string message";
+  // Throw an error with the message
+  throw new Error(`Workman panic: ${msg}`);
+}

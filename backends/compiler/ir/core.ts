@@ -225,7 +225,7 @@ export interface CoreTypeConstructor {
   readonly exported: boolean;
 }
 
-export interface CoreRecordField {
+export interface CoreTypeRecordField {
   readonly name: string;
   readonly typeAnnotation?: string; // Zig type string for raw mode emission
 }
@@ -241,7 +241,7 @@ export interface CoreTypeDeclaration {
     readonly effectConstructors?: readonly string[];
   };
   /** For record types: field definitions */
-  readonly recordFields?: readonly CoreRecordField[];
+  readonly recordFields?: readonly CoreTypeRecordField[];
 }
 
 export type CoreImportSpecifier = {
@@ -575,6 +575,8 @@ function formatExprLines(
       }
       return lines;
     }
+    case "enum_literal":
+      return [`${indent}enum_literal ${expr.name}${typeSuffix}`];
   }
 }
 

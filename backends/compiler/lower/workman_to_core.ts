@@ -1,12 +1,13 @@
 import type { ModuleNode, ModuleSummary } from "../../../src/module_loader.ts";
 import type { AnalysisResult } from "../../../src/pipeline.ts";
-import type {
+import {
   CoreExport,
   CoreImport,
   CoreModule,
   CoreRecordField,
   CoreTypeConstructor,
   CoreTypeDeclaration,
+  CoreTypeRecordField,
 } from "../ir/core.ts";
 import { lowerProgramToValues } from "./marked_to_core.ts";
 import { InferError } from "../../../src/error.ts";
@@ -232,7 +233,7 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
 
     // Handle record declarations (for raw mode struct emission)
     if (topLevel.kind === "record_decl") {
-      const recordFields: CoreRecordField[] = [];
+      const recordFields: CoreTypeRecordField[] = [];
       for (const member of topLevel.members) {
         if (member.kind === "record_typed_field") {
           recordFields.push({

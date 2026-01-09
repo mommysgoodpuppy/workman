@@ -770,7 +770,7 @@ function emitCall(
   }
   
   // Handle curried zigField(obj)("fieldname") -> @field(obj, "fieldname")
-  if (expr.callee.kind === "app" && 
+  if (expr.callee.kind === "call" && 
       expr.callee.callee.kind === "var" && 
       expr.callee.callee.name === "zigField" &&
       expr.callee.args.length === 1 &&
@@ -1351,6 +1351,8 @@ function emitPrimOp(op: CorePrimOp, args: readonly CoreExpr[], ctx: EmitContext)
       return `std.debug.print("{any}", .{${emittedArgs[0]}})`;
     case "address_of":
       return `&${emittedArgs[0]}`;
+    case "panic":
+      return `@panic(${emittedArgs[0]})`;
   }
 }
 

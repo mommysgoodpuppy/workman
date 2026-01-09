@@ -348,7 +348,7 @@ function mapExtractedResult(extracted: ExtractedResult): ForeignTypeResult {
 
   for (const fn of extracted.fns) {
     const params = fn.params.map((param) => mapDesc(param, "param"));
-    const returnType = fn.return
+    const returnType: Type = fn.return
       ? mapDesc(fn.return, "return")
       : { kind: "unit" };
     const fnType = makeFunctionType(params, returnType);

@@ -59,7 +59,7 @@ export async function runProgramCommand(
   debugMode: boolean,
   traceOptions: TraceOptions = DEFAULT_TRACE_OPTIONS,
 ): Promise<void> {
-  let filePath: string;
+  let filePath: string | undefined = undefined;
   let lineNumber: number | undefined = undefined;
   let showTypeVarIds = false;
   let skipEvaluation = false;
@@ -658,7 +658,7 @@ function enhanceRuntimeError(
     : "unknown patterns";
   const valueDesc = metadata.valueDescription ?? "value";
 
-  const locationCandidates = [metadata.callSite, metadata].filter(
+  const locationCandidates = [metadata].filter(
     Boolean,
   ) as Array<{
     nodeId: number | null | undefined;

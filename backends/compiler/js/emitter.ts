@@ -263,7 +263,35 @@ function emitTypeDeclarations(
 ): string[] {
   const lines: string[] = [];
   for (const decl of declarations) {
-    // Emit constructors
+    // Emit record constructor if this is a record type
+    if (decl.recordFields && decl.recordFields.length > 0) {
+      const ctorName = resolveName(ctx.scope, decl.name, ctx.state);
+      const fieldNames = decl.recordFields.map(f => f.name);
+      const params = fieldNames.map(name => `${name}`);
+      const fields = fieldNames
+        .map((name, index) => `  ${name}: ${name}`)
+        .join(",\n");
+      const body = fields
+        ? `{\n${fields}\n}`
+        : `{}`;
+      lines.push(`const ${ctorName} = (${params.join(", ")}) => (${body});`);
+      
+      // Add to extra exports if the type is exported
+      if (decl.exported) {
+        const sanitized = makeIdentifierBase(decl.name);
+        ctx.extraExports.push({ local: ctorName, exported: sanitized });
+      }
+    } else if (decl.constructors.length > 0 && decl.exported) {
+      // For exported union types, emit a placeholder object to make imports work
+      const typeName = resolveName(ctx.scope, decl.name, ctx.state);
+      lines.push(`const ${typeName} = Object.freeze({ type: "${decl.name}" });`);
+      
+      // Add to extra exports
+      const sanitized = makeIdentifierBase(decl.name);
+      ctx.extraExports.push({ local: typeName, exported: sanitized });
+    }
+    
+    // Emit constructors for union types
     for (const ctor of decl.constructors) {
       lines.push(...emitConstructor(decl, ctor, ctx));
     }
@@ -321,6 +349,7 @@ function emitExports(module: CoreModule, ctx: EmitContext): string | undefined {
   const exportedNames = new Set<string>();
   for (const exp of module.exports) {
     if (exp.kind === "type") {
+      // Type exports are handled through the extraExports mechanism
       continue;
     }
     const local = exp.kind === "value"
@@ -1097,6 +1126,10 @@ function emitPrim(
       return `${emitArg(0)}.slice(${emitArg(1)}, ${emitArg(2)})`;
     case "native_print": {
       const fn = resolveVar("nativePrint", ctx);
+      return `${fn}(${emitArg(0)})`;
+    }
+    case "panic": {
+      const fn = resolveVar("panic", ctx);
       return `${fn}(${emitArg(0)})`;
     }
     case "record_get": {

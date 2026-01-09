@@ -739,6 +739,28 @@ async function summarizeGraph(
     for (const typeName of node.exportedTypeNames) {
       const info = inference.adtEnv.get(typeName);
       if (!info) {
+        // Check if there's a record that might be what the user intended
+        // Look for records with similar names (e.g., LetDecl -> LetDeclaration)
+        const records = Array.from(inference.adtEnv.entries()).filter(
+          ([name, info]) => info.recordFields !== undefined,
+        );
+        if (records.length > 0) {
+          // Check for exact match with different casing or common variations
+          const similarRecord = records.find(
+            ([name]) =>
+              name.toLowerCase() === typeName.toLowerCase() ||
+              name.startsWith(typeName) ||
+              typeName.startsWith(name),
+          );
+          const suggestion = similarRecord
+            ? `Did you mean to export the record '${
+              similarRecord[0]
+            }'? Use 'export record ${similarRecord[0]}' instead.`
+            : `If you want to export a record, use 'export record <name>' instead of 'export type <name>'.`;
+          throw moduleError(
+            `Exported type '${typeName}' was not defined in '${path}'. ${suggestion}`,
+          );
+        }
         throw moduleError(
           `Exported type '${typeName}' was not defined in '${path}'`,
         );

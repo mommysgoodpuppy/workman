@@ -1120,6 +1120,10 @@ export function typeToString(type: Type): string {
       }
       return `<${rendered.join(" | ")}>`;
     }
+    case "array": {
+      const lengthStr = type.length > 0 ? type.length.toString() : "";
+      return `[${lengthStr}]${typeToString(type.element)}`;
+    }
     default: {
       const _exhaustive: never = type;
       return _exhaustive;
@@ -1250,8 +1254,8 @@ export function registerAdtCarrier(
     },
     split: (type: Type): CarrierInfo | null => {
       if (type.kind !== "constructor" || type.name !== typeName) return null;
-      const value = type.args[0] || { kind: "unit" };
-      const state = arity > 1
+      const value: Type = type.args[0] || { kind: "unit" };
+      const state: Type = arity > 1
         ? (type.args[1] || { kind: "unit" })
         : { kind: "unit" };
       return { value, state };
@@ -1278,3 +1282,5 @@ export function registerAdtCarrier(
   };
   registerCarrier(domain, ops);
 }
+
+registerAdtCarrier("mem", "Ptr", "Ptr", ["Null"], 2);

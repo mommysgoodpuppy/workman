@@ -182,14 +182,15 @@ export async function compileToDirectory(
 
   // Run zig fmt on all emitted .zig files
   if (backend === "zig") {
-    const zigFiles = [...emitResult.moduleFiles.values()].filter((f) =>
+    const zigResult = emitResult as Awaited<ReturnType<typeof emitZigModuleGraph>>;
+    const zigFiles = [...zigResult.moduleFiles.values()].filter((f) =>
       f.endsWith(".zig")
     );
-    if (emitResult.runtimePath?.endsWith(".zig")) {
-      zigFiles.push(emitResult.runtimePath);
+    if (zigResult.runtimePath?.endsWith(".zig")) {
+      zigFiles.push(zigResult.runtimePath);
     }
-    if (emitResult.rootPath?.endsWith(".zig")) {
-      zigFiles.push(emitResult.rootPath);
+    if (zigResult.rootPath?.endsWith(".zig")) {
+      zigFiles.push(zigResult.rootPath);
     }
     await runZigFmt(zigFiles);
   }
@@ -203,9 +204,12 @@ export async function compileToDirectory(
     const runtimeRelative = relative(IO.cwd(), emitResult.runtimePath);
     console.log(`Runtime module: ${runtimeRelative}`);
   }
-  if (emitResult.rootPath) {
-    const rootRelative = relative(IO.cwd(), emitResult.rootPath);
-    console.log(`Root module: ${rootRelative}`);
+  if (backend === "zig") {
+    const zigResult = emitResult as Awaited<ReturnType<typeof emitZigModuleGraph>>;
+    if (zigResult.rootPath) {
+      const rootRelative = relative(IO.cwd(), zigResult.rootPath);
+      console.log(`Root module: ${rootRelative}`);
+    }
   }
 }
 

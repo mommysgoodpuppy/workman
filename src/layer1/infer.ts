@@ -429,6 +429,7 @@ function refineNullabilityType(
       carrierInfo.domain,
       carrierInfo.value,
       refinedState,
+      carrierInfo.carrier,
     );
     if (rejoined) return rejoined;
   }
@@ -1619,6 +1620,7 @@ function alignAnnotationWithCarrier(actual: Type, annotation: Type): Type {
       actualCarrier.domain,
       alignedInner,
       actualCarrier.state,
+      actualCarrier.carrier ?? actualCarrier.domain,
     );
     return rejoinedHole ?? alignedInner;
   }
@@ -1632,6 +1634,7 @@ function alignAnnotationWithCarrier(actual: Type, annotation: Type): Type {
       actualCarrier.domain,
       alignedValue,
       actualCarrier.state,
+      actualCarrier.carrier ?? actualCarrier.domain,
     );
     return rejoined ?? annotation;
   }
@@ -1643,6 +1646,7 @@ function alignAnnotationWithCarrier(actual: Type, annotation: Type): Type {
     actualCarrier.domain,
     alignedInner,
     actualCarrier.state,
+    actualCarrier.carrier ?? actualCarrier.domain,
   );
   return rejoined ?? annotation;
 }
@@ -2057,7 +2061,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       };
 
       if (recordSubject.kind === "array" && expr.field === "len") {
-        const lenType = ctx.rawMode ? freshTypeVar() : { kind: "int" };
+        const lenType: Type = ctx.rawMode ? freshTypeVar() : { kind: "int" };
         const projectionType = wrapWithCarrier(lenType);
         ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
         registerHoleForType(
@@ -2103,7 +2107,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         if (info && info.recordFields) {
           const index = info.recordFields.get(expr.field);
           if (index !== undefined) {
-            let projectedValueType = recordSubject.args[index];
+            let projectedValueType: Type | undefined = recordSubject.args[index];
             if (!projectedValueType && info.alias?.kind === "record") {
               const aliasInstance = instantiateRecordAlias(info);
               projectedValueType = aliasInstance?.fields.get(expr.field);
@@ -2422,12 +2426,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             );
             if (mergedState) {
               finalType =
-                joinCarrier(domain, flattened.value, mergedState, preferred) ??
+                joinCarrier(domain, flattened.value, mergedState, preferred ?? "") ??
                   finalType;
             }
           } else {
             // Wrap with carrier if finalType doesn't have this domain
-            finalType = joinCarrier(domain, finalType, state, preferred) ??
+            finalType = joinCarrier(domain, finalType, state, preferred ?? "") ??
               finalType;
           }
           finalType = collapseCarrier(finalType);
@@ -2665,12 +2669,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           );
           if (mergedState) {
             callType =
-              joinCarrier(domain, flattened.value, mergedState, preferred) ??
-                callType;
+              joinCarrier(domain, flattened.value, mergedState, preferred ?? domain) ??
+              callType;
           }
         } else {
           // Wrap with carrier if callType doesn't have this domain
-          callType = joinCarrier(domain, callType, state, preferred) ??
+          callType = joinCarrier(domain, callType, state, preferred ?? domain) ??
             callType;
         }
         callType = collapseCarrier(callType);
@@ -2794,7 +2798,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             carrierInfo.domain,
             carrierInfo.value,
             mergedState,
-            carrierInfo.carrier,
+            carrierInfo.carrier ?? carrierInfo.domain,
           );
           if (rejoined) {
             callType = rejoined;
@@ -3152,12 +3156,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             );
             if (mergedState) {
               callType =
-                joinCarrier(domain, flattened.value, mergedState, preferred) ??
+                joinCarrier(domain, flattened.value, mergedState, preferred ?? domain) ??
                   callType;
             }
           } else {
             // Wrap with carrier if callType doesn't have this domain
-            callType = joinCarrier(domain, callType, state, preferred) ??
+            callType = joinCarrier(domain, callType, state, preferred ?? domain) ??
               callType;
           }
           callType = collapseCarrier(callType);
@@ -3292,14 +3296,21 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
             state,
           );
           if (mergedState) {
-            callType =
-              joinCarrier(domain, flattened.value, mergedState, preferred) ??
-                callType;
+            callType = joinCarrier(
+              domain,
+              flattened.value,
+              mergedState,
+              preferred ?? domain,
+            ) ?? callType;
           }
         } else {
           // Wrap with carrier if callType doesn't have this domain
-          callType = joinCarrier(domain, callType, state, preferred) ??
-            callType;
+          callType = joinCarrier(
+            domain,
+            callType,
+            state,
+            preferred ?? domain,
+          ) ?? callType;
         }
         callType = collapseCarrier(callType);
       }

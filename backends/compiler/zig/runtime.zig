@@ -444,10 +444,12 @@ pub fn callInfectious(func_value: Value, args: []const Value, call_site: []const
             return shorted;
         }
 
+        // Lazy unwrapping: keep wrapped by default, only unwrap when the function needs it
+        // Pass through the original value if infected, let expect* functions handle unwrapping
         const arg_value = if (arg_info.infected) args[index] else arg_info.value;
         if (trace_enabled and arg_info.infected) {
             std.debug.print(
-                "trace: [id={d}] infected arg[{d}] {?s} passed through\n",
+                "trace: [id={d}] infected arg[{d}] {?s} passed through (lazy unwrap)\n",
                 .{ trace_counter, index, arg_info.type_name },
             );
         }
@@ -479,7 +481,13 @@ pub fn callInfectious(func_value: Value, args: []const Value, call_site: []const
 }
 
 pub fn expectBool(value: Value) bool {
-    return switch (value) {
+    // Handle Result types by unwrapping lazily
+    const unwrapped = unwrapResultForCall(value);
+    if (unwrapped.short_circuit) |_| {
+        printWorkmanStackAndPanic("expected bool, got error result");
+    }
+    const actual_value = if (unwrapped.infected) unwrapped.value else value;
+    return switch (actual_value) {
         .Bool => |v| v,
         else => printWorkmanStackAndPanic("expected bool"),
     };
@@ -611,7 +619,7 @@ pub fn valueEquals(a: Value, b: Value) bool {
 
 fn printWorkmanStackAndPanic(message: []const u8) noreturn {
     std.debug.print("\n=== PANIC: {s} ===\n", .{message});
-    
+
     if (trace_capture_enabled) {
         std.debug.print("Workman stack (top 8):\n", .{});
         var i: usize = call_id_stack.items.len;
@@ -845,42 +853,90 @@ pub const nativeWrite = makeFunc(nativeWriteImpl, null, "nativeWrite");
 pub const nativeMemcpy = makeFunc(nativeMemcpyImpl, null, "nativeMemcpy");
 
 pub fn expectInt(value: Value) i64 {
-    return switch (value) {
+    // Handle Result types by unwrapping lazily
+    const unwrapped = unwrapResultForCall(value);
+    if (unwrapped.short_circuit) |_| {
+        printWorkmanStackAndPanic("expected int, got error result");
+    }
+    const actual_value = if (unwrapped.infected) unwrapped.value else value;
+    return switch (actual_value) {
         .Int => |v| v,
         else => printWorkmanStackAndPanic("expected int"),
     };
 }
 
 pub fn expectString(value: Value) []const u8 {
-    return switch (value) {
+    // Handle Result types by unwrapping lazily
+    const unwrapped = unwrapResultForCall(value);
+    if (unwrapped.short_circuit) |_| {
+        printWorkmanStackAndPanic("expected string, got error result");
+    }
+    const actual_value = if (unwrapped.infected) unwrapped.value else value;
+    return switch (actual_value) {
         .String => |v| v,
         else => printWorkmanStackAndPanic("expected string"),
     };
 }
 
 pub fn expectTuple(value: Value) []Value {
-    return switch (value) {
+    // Handle Result types by unwrapping lazily
+    const unwrapped = unwrapResultForCall(value);
+    if (unwrapped.short_circuit) |_| {
+        printWorkmanStackAndPanic("expected tuple, got error result");
+    }
+    const actual_value = if (unwrapped.infected) unwrapped.value else value;
+    const elements = switch (actual_value) {
         .Tuple => |v| v.elements,
         else => printWorkmanStackAndPanic("expected tuple"),
     };
+    
+    // Unwrap any Result types in tuple elements for pattern matching
+    // This is needed because pattern matching expects unwrapped values
+    const unwrapped_elements = allocator().alloc(Value, elements.len) catch printWorkmanStackAndPanic("oom");
+    for (elements, 0..) |elem, i| {
+        const elem_info = unwrapResultForCall(elem);
+        if (elem_info.short_circuit) |_| {
+            printWorkmanStackAndPanic("tuple element is error result");
+        }
+        unwrapped_elements[i] = if (elem_info.infected) elem_info.value else elem;
+    }
+    return unwrapped_elements;
 }
 
 fn expectRecord(value: Value) *RecordValue {
-    return switch (value) {
+    // Handle Result types by unwrapping lazily
+    const unwrapped = unwrapResultForCall(value);
+    if (unwrapped.short_circuit) |_| {
+        printWorkmanStackAndPanic("expected record, got error result");
+    }
+    const actual_value = if (unwrapped.infected) unwrapped.value else value;
+    return switch (actual_value) {
         .Record => |v| v,
         else => printWorkmanStackAndPanic("expected record"),
     };
 }
 
 fn expectData(value: Value) DataValue {
-    return switch (value) {
+    // Handle Result types by unwrapping lazily
+    const unwrapped = unwrapResultForCall(value);
+    if (unwrapped.short_circuit) |_| {
+        printWorkmanStackAndPanic("expected data, got error result");
+    }
+    const actual_value = if (unwrapped.infected) unwrapped.value else value;
+    return switch (actual_value) {
         .Data => |v| v,
         else => printWorkmanStackAndPanic("expected data"),
     };
 }
 
 fn expectFunc(value: Value) FuncValue {
-    return switch (value) {
+    // Handle Result types by unwrapping lazily
+    const unwrapped = unwrapResultForCall(value);
+    if (unwrapped.short_circuit) |_| {
+        printWorkmanStackAndPanic("expected function, got error result");
+    }
+    const actual_value = if (unwrapped.infected) unwrapped.value else value;
+    return switch (actual_value) {
         .Func => |v| v,
         else => printWorkmanStackAndPanic("expected function"),
     };
