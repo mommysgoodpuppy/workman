@@ -1,5 +1,6 @@
 import { dirname, extname, join, relative } from "../../../src/io.ts";
 import { isCarrierType } from "../../../src/types.ts";
+import type { SourceSpan } from "../../../src/ast.ts";
 import type {
   CoreExpr,
   CoreLiteral,
@@ -40,6 +41,11 @@ export interface EmitModuleOptions {
     names: readonly string[];
   };
   readonly invokeEntrypoint?: boolean;
+  readonly getSourceLocation?: (
+    span: SourceSpan,
+  ) =>
+    | { line: number; column: number; file: string; lineText?: string }
+    | undefined;
 }
 
 const RESERVED = new Set<string>([
@@ -172,7 +178,7 @@ export function emitModule(
   const valueLines: string[] = [];
   for (const binding of module.values) {
     const bindingRef = resolveName(ctx.scope, binding.name, ctx.state);
-    const expr = emitExpr(binding.value, ctx);
+    const expr = emitExpr(binding.value, ctx, binding.name);
     const isExported = exportSet.has(binding.name) ||
       forcedValueExports.has(binding.name);
     valueLines.push(
@@ -192,7 +198,7 @@ export function emitModule(
     mainLines.push("");
     mainLines.push("pub fn main() void {");
     mainLines.push(indent(`${INIT_FN}();`));
-    mainLines.push(indent(`_ = runtime.call(${mainRef}, &[_]Value{});`));
+    mainLines.push(indent(`_ = runtime.call(${mainRef}, &[_]Value{}, "");`));
     mainLines.push("}");
   }
 
@@ -432,7 +438,9 @@ function emitConstructor(
   ctx.hoisted.push(indent(body));
   ctx.hoisted.push("}");
 
-  initLines.push(`${name} = runtime.makeFunc(${fnName}, null);`);
+  initLines.push(
+    `${name} = runtime.makeFunc(${fnName}, null, "${ctor.name}");`,
+  );
   return [
     `${ctor.exported ? "pub " : ""}var ${name}: Value = undefined;`,
   ];
@@ -489,7 +497,26 @@ function emitExports(
   return lines;
 }
 
-function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
+function emitExpr(expr: CoreExpr, ctx: EmitContext, nameHint?: string): string {
+  const result = emitExprInner(expr, ctx, nameHint);
+  if (ctx.options.getSourceLocation && expr.span) {
+    if (expr.kind === "match" || expr.kind === "call" || expr.kind === "if") {
+      const loc = ctx.options.getSourceLocation(expr.span);
+      if (loc) {
+        return `
+// ${loc.file}:${loc.line}
+${result}`;
+      }
+    }
+  }
+  return result;
+}
+
+function emitExprInner(
+  expr: CoreExpr,
+  ctx: EmitContext,
+  nameHint?: string,
+): string {
   switch (expr.kind) {
     case "literal":
       return emitLiteral(expr, ctx);
@@ -506,7 +533,7 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
     case "data":
       return emitData(expr, ctx);
     case "lambda":
-      return emitLambda(expr, ctx);
+      return emitLambda(expr, ctx, nameHint);
     case "call":
       return emitCall(expr, ctx);
     case "let":
@@ -534,10 +561,32 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
           matchLambda =
             `runtime.markResultHandler(${matchLambda}, &[_]usize{ 0 })`;
         }
-        if (dischargesCarrier && patternsHandleCarrier) {
-          return `runtime.call(${matchLambda}, &[_]Value{ ${scrutineeCode} })`;
+
+        let callSite = '""';
+        if (ctx.options.getSourceLocation && expr.span) {
+          const loc = ctx.options.getSourceLocation(expr.span);
+          if (loc) {
+            const escapedFile = loc.file.replace(/\\/g, "/");
+            let siteStr = `${escapedFile}:${loc.line}:${loc.column}`;
+            if (loc.lineText) {
+              const escapedLine = loc.lineText
+                .replace(/\\/g, "\\\\")
+                .replace(/"/g, '\\"')
+                .replace(/\n/g, "\\n")
+                .replace(/\r/g, "\\r")
+                .replace(/\t/g, "    ");
+
+              const indent = " ".repeat(Math.max(0, loc.column - 1));
+              siteStr += `\\n    ${escapedLine}\\n    ${indent}^`;
+            }
+            callSite = `"${siteStr}"`;
+          }
         }
-        return `runtime.callInfectious(${matchLambda}, &[_]Value{ ${scrutineeCode} })`;
+
+        if (dischargesCarrier && patternsHandleCarrier) {
+          return `runtime.call(${matchLambda}, &[_]Value{ ${scrutineeCode} }, ${callSite})`;
+        }
+        return `runtime.callInfectious(${matchLambda}, &[_]Value{ ${scrutineeCode} }, ${callSite})`;
       }
       return emitMatch(expr, ctx);
     default:
@@ -590,12 +639,16 @@ function emitData(expr: CoreExpr & { kind: "data" }, ctx: EmitContext): string {
 function emitLambda(
   expr: CoreExpr & { kind: "lambda" },
   ctx: EmitContext,
+  nameHint?: string,
 ): string {
   const handledParams = detectHandledResultParams(expr, expr.params);
   const usedVars = collectUsedVars(expr.body);
   const { freeVars } = collectFreeVars(expr.body, new Set(expr.params));
   const captures = Array.from(freeVars).filter((name) => ctx.scope.has(name));
-  const lambdaName = allocateTempName(ctx.state, "__lambda");
+  const lambdaName = allocateTempName(
+    ctx.state,
+    nameHint ? sanitizeIdentifier(nameHint, ctx.state) : "__lambda",
+  );
 
   let envType: string | undefined;
   let envInit = "null";
@@ -650,7 +703,22 @@ function emitLambda(
   ctx.hoisted.push(indent(`return ${body};`));
   ctx.hoisted.push("}");
 
-  const funcValue = `runtime.makeFunc(${lambdaName}, ${envInit})`;
+  let debugName = lambdaName;
+  const span = expr.span ?? expr.body.span;
+  if (ctx.options.getSourceLocation && span) {
+    const loc = ctx.options.getSourceLocation(span);
+    if (loc) {
+      debugName = `${lambdaName} (${loc.file}:${loc.line}:${loc.column})`;
+      {
+        const parts = loc.file.replace(/\\/g, "/").split("/");
+        const fileName = parts[parts.length - 1];
+        debugName = `${lambdaName} (${fileName}:${loc.line})`;
+      }
+    }
+  }
+
+  const funcValue =
+    `runtime.makeFunc(${lambdaName}, ${envInit}, "${debugName}")`;
   if (handledParams.length > 0) {
     return `runtime.markResultHandler(${funcValue}, &[_]usize{ ${
       handledParams.join(", ")
@@ -845,10 +913,33 @@ function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
   const resultIsInfectious = isCarrierType(expr.type);
   const calleeIsInfectious = isCarrierType(expr.callee.type);
   const anyArgIsInfectious = expr.args.some((arg) => isCarrierType(arg.type));
-  if (!resultIsInfectious && !calleeIsInfectious && !anyArgIsInfectious) {
-    return `runtime.call(${callee}, &[_]Value{ ${args} })`;
+
+  let callSite = '""';
+  if (ctx.options.getSourceLocation && expr.span) {
+    const loc = ctx.options.getSourceLocation(expr.span);
+    if (loc) {
+      // Escape for Zig string literal
+      const escapedFile = loc.file.replace(/\\/g, "/");
+      let siteStr = `${escapedFile}:${loc.line}:${loc.column}`;
+      if (loc.lineText) {
+        const escapedLine = loc.lineText
+          .replace(/\\/g, "\\\\")
+          .replace(/"/g, '\\"')
+          .replace(/\n/g, "\\n")
+          .replace(/\r/g, "\\r")
+          .replace(/\t/g, "    "); // convert tabs to spaces for alignment
+
+        const indent = " ".repeat(Math.max(0, loc.column - 1));
+        siteStr += `\\n    ${escapedLine}\\n    ${indent}^`;
+      }
+      callSite = `"${siteStr}"`;
+    }
   }
-  return `runtime.callInfectious(${callee}, &[_]Value{ ${args} })`;
+
+  if (!resultIsInfectious && !calleeIsInfectious && !anyArgIsInfectious) {
+    return `runtime.call(${callee}, &[_]Value{ ${args} }, ${callSite})`;
+  }
+  return `runtime.callInfectious(${callee}, &[_]Value{ ${args} }, ${callSite})`;
 }
 
 function emitLet(expr: CoreExpr & { kind: "let" }, ctx: EmitContext): string {
@@ -860,7 +951,12 @@ function emitLet(expr: CoreExpr & { kind: "let" }, ctx: EmitContext): string {
     ctx.state,
   );
   const valueScope = expr.binding.isRecursive ? innerScope : ctx.scope;
-  const valueCode = emitExprWithScope(expr.binding.value, ctx, valueScope);
+  const valueCode = emitExprWithScope(
+    expr.binding.value,
+    ctx,
+    valueScope,
+    expr.binding.name,
+  );
   const bodyCode = emitExprWithScope(expr.body, ctx, innerScope);
   const label = allocateLabel(ctx.state);
   const isStmt = expr.binding.name.startsWith("__stmt");
@@ -957,7 +1053,17 @@ function emitMatchWithScrutinee(
     const fallbackExpr = emitExprWithScope(expr.fallback, ctx, baseScope);
     lines.push(`break :${label} ${fallbackExpr};`);
   } else {
-    lines.push(`break :${label} runtime.nonExhaustiveMatch(${scrutineeTemp});`);
+    let locationString = '""';
+    if (ctx.options.getSourceLocation && expr.span) {
+      const loc = ctx.options.getSourceLocation(expr.span);
+      if (loc) {
+        lines.push(`// ${loc.file}:${loc.line}`);
+        locationString = `"${loc.file}:${loc.line}:${loc.column}"`;
+      }
+    }
+    lines.push(
+      `break :${label} runtime.nonExhaustiveMatch(${scrutineeTemp}, ${locationString});`,
+    );
   }
   const body = lines.map(indent).join("\n");
   return `${label}: {\n${body}\n}`;
@@ -1013,7 +1119,21 @@ function emitMatchLambda(
   ctx.hoisted.push(indent(`return ${body};`));
   ctx.hoisted.push("}");
 
-  return `runtime.makeFunc(${lambdaName}, ${envInit})`;
+  let debugName = lambdaName;
+  const span = expr.span ?? expr.scrutinee.span;
+  if (ctx.options.getSourceLocation && span) {
+    const loc = ctx.options.getSourceLocation(span);
+    if (loc) {
+      debugName = `${lambdaName} (${loc.file}:${loc.line}:${loc.column})`;
+      {
+        const parts = loc.file.replace(/\\/g, "/").split("/");
+        const fileName = parts[parts.length - 1];
+        debugName = `${lambdaName} (${fileName}:${loc.line})`;
+      }
+    }
+  }
+
+  return `runtime.makeFunc(${lambdaName}, ${envInit}, "${debugName}")`;
 }
 
 function collectFreeVarsInMatchBody(
@@ -1075,6 +1195,12 @@ function emitMatchCase(
   lines.push(`if (${conditionExpr}) {`);
   const innerLines: string[] = [];
   innerLines.push(...bindings);
+  for (const name of boundNamesInPattern(kase.pattern)) {
+    if (usedVars.has(name)) {
+      const ref = resolveName(caseScope, name, ctx.state);
+      innerLines.push(`runtime.traceBinding("${name}", ${ref});`);
+    }
+  }
   if (guardExpr) {
     innerLines.push(`if (runtime.expectBool(${guardExpr})) {`);
     innerLines.push(indent(`break :${label} ${bodyExpr};`));
@@ -1193,11 +1319,12 @@ function emitExprWithScope(
   expr: CoreExpr,
   ctx: EmitContext,
   scope: Map<string, VarRef>,
+  nameHint?: string,
 ): string {
   const previous = ctx.scope;
   ctx.scope = scope;
   try {
-    return emitExpr(expr, ctx);
+    return emitExpr(expr, ctx, nameHint);
   } finally {
     ctx.scope = previous;
   }

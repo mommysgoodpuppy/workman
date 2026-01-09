@@ -1,14 +1,48 @@
 const std = @import("std");
 
+pub var trace_enabled: bool = false;
+pub var trace_capture_enabled: bool = true;
+var trace_counter: usize = 0;
+var value_id_counter: usize = 0;
+
+const StackFrame = struct {
+    id: usize,
+    name: []const u8,
+    call_site: []const u8,
+};
+
+pub const TraceOptions = struct {
+    print: bool = false,
+    capture: bool = true,
+};
+
+// Trace globals
+var call_id_stack: std.ArrayListUnmanaged(StackFrame) = .{};
+var current_parent_id: usize = 0;
+var current_depth: usize = 0;
+
 pub const FuncValue = struct {
     func: *const anyopaque,
     env: ?*anyopaque,
+    name: []const u8,
+    id: usize,
 };
 
 pub const DataValue = struct {
     tag: []const u8,
     type_name: []const u8,
     fields: []Value,
+    id: usize,
+};
+
+pub const TupleValue = struct {
+    id: usize,
+    elements: []Value,
+};
+
+pub const RecordValue = struct {
+    id: usize,
+    fields: std.StringHashMap(Value),
 };
 
 pub const Value = union(enum) {
@@ -16,8 +50,8 @@ pub const Value = union(enum) {
     Int: i64,
     Bool: bool,
     String: []const u8,
-    Tuple: []Value,
-    Record: *std.StringHashMap(Value),
+    Tuple: *TupleValue,
+    Record: *RecordValue,
     Data: DataValue,
     Func: FuncValue,
 };
@@ -69,6 +103,21 @@ fn getHandledParamRegistry() *std.AutoHashMap(FuncKey, []const usize) {
     return &handled_param_registry;
 }
 
+pub fn configureTrace(options: TraceOptions) void {
+    trace_capture_enabled = options.capture;
+    trace_enabled = options.capture and options.print;
+    if (!trace_capture_enabled) {
+        resetTraceState();
+    }
+}
+
+fn resetTraceState() void {
+    call_id_stack.clearRetainingCapacity();
+    current_parent_id = 0;
+    current_depth = 0;
+    trace_counter = 0;
+}
+
 pub fn allocEnv(comptime T: type, value: T) *anyopaque {
     const ptr = allocator().create(T) catch @panic("oom");
     ptr.* = value;
@@ -98,7 +147,12 @@ pub fn makeString(value: []const u8) Value {
 pub fn makeTuple(values: []const Value) Value {
     const buf = allocator().alloc(Value, values.len) catch @panic("oom");
     std.mem.copyForwards(Value, buf, values);
-    return .{ .Tuple = buf };
+
+    const ptr = allocator().create(TupleValue) catch @panic("oom");
+    value_id_counter += 1;
+    ptr.* = .{ .id = value_id_counter, .elements = buf };
+
+    return .{ .Tuple = ptr };
 }
 
 pub fn tupleGet(value: Value, index: usize) Value {
@@ -111,7 +165,7 @@ pub fn tupleGet(value: Value, index: usize) Value {
 
 pub fn isTuple(value: Value, len: usize) bool {
     return switch (value) {
-        .Tuple => |tuple| tuple.len == len,
+        .Tuple => |tuple| tuple.elements.len == len,
         else => false,
     };
 }
@@ -121,14 +175,17 @@ pub fn makeRecord(fields: []const RecordField) Value {
     for (fields) |field| {
         map.put(field.name, field.value) catch @panic("oom");
     }
-    const ptr = allocator().create(std.StringHashMap(Value)) catch @panic("oom");
-    ptr.* = map;
+
+    const ptr = allocator().create(RecordValue) catch @panic("oom");
+    value_id_counter += 1;
+    ptr.* = .{ .id = value_id_counter, .fields = map };
+
     return .{ .Record = ptr };
 }
 
 pub fn recordGet(value: Value, field: []const u8) Value {
-    const map = expectRecord(value);
-    if (map.get(field)) |stored| {
+    const rec = expectRecord(value);
+    if (rec.fields.get(field)) |stored| {
         return stored;
     }
     @panic("missing record field");
@@ -139,8 +196,9 @@ pub fn recordGetInfectious(value: Value, field: []const u8) Value {
     if (info.short_circuit) |shorted| {
         return shorted;
     }
-    const map = expectRecord(info.value);
-    if (map.get(field)) |stored| {
+    // Record might be wrapped in infectious result, so info.value is the inner value
+    const rec = expectRecord(info.value);
+    if (rec.fields.get(field)) |stored| {
         if (!info.infected) {
             return stored;
         }
@@ -156,7 +214,8 @@ pub fn makeData(
 ) Value {
     const buf = allocator().alloc(Value, fields.len) catch @panic("oom");
     std.mem.copyForwards(Value, buf, fields);
-    return .{ .Data = .{ .tag = tag, .type_name = type_name, .fields = buf } };
+    value_id_counter += 1;
+    return .{ .Data = .{ .tag = tag, .type_name = type_name, .fields = buf, .id = value_id_counter } };
 }
 
 pub fn dataField(value: Value, index: usize) Value {
@@ -175,10 +234,61 @@ pub fn isData(value: Value, type_name: []const u8, tag: []const u8) bool {
     };
 }
 
-pub fn call(func_value: Value, args: []const Value) Value {
+pub fn traceBinding(name: []const u8, val: Value) void {
+    if (trace_enabled) {
+        std.debug.print("trace: [id={d}] bind {s} = {s}\n", .{ current_parent_id, name, formatValue(val) });
+    }
+}
+
+pub fn call(func_value: Value, args: []const Value, call_site: []const u8) Value {
     const func = expectFunc(func_value);
+    const trace_id = trace_counter;
+    var pushed_stack = false;
+    var parent_id: usize = current_parent_id;
+
+    if (trace_capture_enabled) {
+        trace_counter += 1;
+        call_id_stack.append(allocator(), .{
+            .id = current_parent_id,
+            .name = func.name,
+            .call_site = call_site,
+        }) catch @panic("oom");
+        parent_id = call_id_stack.items[call_id_stack.items.len - 1].id;
+        current_parent_id = trace_id;
+        current_depth += 1;
+        pushed_stack = true;
+    } else {
+        trace_enabled = false or trace_enabled; // placeholder to satisfy syntax?
+    }
+
+    if (trace_enabled) {
+        std.debug.print("trace: [id={d} parent={d} depth={d}] call {s} (", .{ trace_id, parent_id, current_depth, func.name });
+        for (args, 0..) |arg, i| {
+            if (i > 0) std.debug.print(", ", .{});
+            std.debug.print("{s}", .{formatValue(arg)});
+        }
+        if (call_site.len > 0) {
+            std.debug.print(") at {s}\n", .{call_site});
+        } else {
+            std.debug.print(")\n", .{});
+        }
+    }
     const fn_ptr: FnPtr = @ptrCast(@alignCast(func.func));
-    return fn_ptr(func.env, args);
+    const result = fn_ptr(func.env, args);
+    if (trace_enabled and pushed_stack) {
+        const parent = call_id_stack.items[call_id_stack.items.len - 1].id;
+        if (call_site.len > 0) {
+            std.debug.print("trace: [id={d} parent={d} depth={d}] return {s} -> {s} at {s}\n", .{ trace_id, parent, current_depth, func.name, formatValue(result), call_site });
+        } else {
+            std.debug.print("trace: [id={d} parent={d} depth={d}] return {s} -> {s}\n", .{ trace_id, parent, current_depth, func.name, formatValue(result) });
+        }
+    }
+    if (pushed_stack) {
+        const popped = call_id_stack.pop() orelse @panic("trace stack underflow");
+        current_parent_id = popped.id;
+        current_depth -= 1;
+    }
+    return result;
 }
 
 pub fn registerInfectiousType(
@@ -301,7 +411,14 @@ fn isParamHandled(handled: []const usize, index: usize) bool {
     return false;
 }
 
-pub fn callInfectious(func_value: Value, args: []const Value) Value {
+pub fn callInfectious(func_value: Value, args: []const Value, call_site: []const u8) Value {
+    if (trace_enabled) {
+        std.debug.print("trace: [id={d}] callInfectious_prepare ({s})\n", .{ trace_counter, call_site });
+        for (args, 0..) |arg, i| {
+            std.debug.print("  raw_arg[{d}] = {s}\n", .{ i, formatValue(arg) });
+        }
+    }
+
     const callee_info = unwrapResultForCall(func_value);
     if (callee_info.short_circuit) |shorted| {
         return shorted;
@@ -326,6 +443,13 @@ pub fn callInfectious(func_value: Value, args: []const Value) Value {
         if (arg_info.short_circuit) |shorted| {
             return shorted;
         }
+
+        if (arg_info.infected) {
+            if (trace_enabled) {
+                std.debug.print("trace: [id={d}] force arg[{d}] {?s} -> val\n", .{ trace_counter, index, arg_info.type_name });
+            }
+        }
+
         if (arg_info.infected and infectious_type_name == null) {
             infectious_type_name = arg_info.type_name;
         }
@@ -333,7 +457,16 @@ pub fn callInfectious(func_value: Value, args: []const Value) Value {
         processed[index] = arg_info.value;
     }
 
-    const result = call(callable, processed);
+    if (trace_enabled) {
+        for (processed, 0..) |arg, i| {
+            std.debug.print("  proc_arg[{d}] = {s}\n", .{ i, formatValue(arg) });
+        }
+        if (infectious_type_name) |name| {
+            std.debug.print("  infectious_type = {s}, infected = {any}\n", .{ name, infected });
+        }
+    }
+
+    const result = call(callable, processed, call_site);
     if (isInfectiousValue(result)) {
         return result;
     }
@@ -474,12 +607,32 @@ pub fn valueEquals(a: Value, b: Value) bool {
     };
 }
 
-pub fn nonExhaustiveMatch(_: Value) Value {
+pub fn nonExhaustiveMatch(val: Value, location: []const u8) Value {
+    std.debug.print("\n=== PANIC: Non-exhaustive match ===\n", .{});
+    std.debug.print("Location: {s}\n", .{if (location.len > 0) location else "unknown"});
+    std.debug.print("Scrutinee: {s}\n", .{formatValue(val)});
+
+    if (trace_capture_enabled) {
+        std.debug.print("Workman stack (top 8):\n", .{});
+        var i: usize = call_id_stack.items.len;
+        var count: usize = 0;
+        while (i > 0 and count < 8) {
+            i -= 1;
+            const frame = call_id_stack.items[i];
+            const site = if (frame.call_site.len > 0) frame.call_site else "unknown";
+            std.debug.print("  {s} called at {s}\n", .{ frame.name, site });
+            count += 1;
+        }
+    }
     @panic("non-exhaustive match");
 }
 
-pub fn makeFunc(func: FnPtr, env: ?*anyopaque) Value {
-    return .{ .Func = .{ .func = @ptrCast(func), .env = env } };
+pub fn makeFunc(func: FnPtr, env: ?*anyopaque, name: []const u8) Value {
+    if (@inComptime()) {
+        return .{ .Func = .{ .func = @ptrCast(func), .env = env, .name = name, .id = 0 } };
+    }
+    value_id_counter += 1;
+    return .{ .Func = .{ .func = @ptrCast(func), .env = env, .name = name, .id = value_id_counter } };
 }
 
 fn nativeBinary(op: *const fn (Value, Value) Value, env: ?*anyopaque, args: []const Value) Value {
@@ -571,7 +724,7 @@ fn nativeStringToListImpl(env: ?*anyopaque, args: []const Value) Value {
 
 fn nativeListToStringImpl(env: ?*anyopaque, args: []const Value) Value {
     _ = env;
-    var buffer = std.ArrayList(u8).empty;
+    var buffer = std.ArrayListUnmanaged(u8){};
     var current = args[0];
     while (true) {
         switch (current) {
@@ -651,25 +804,25 @@ fn nativeMemcpyImpl(env: ?*anyopaque, args: []const Value) Value {
     return makeUnit();
 }
 
-pub const nativeAdd = makeFunc(nativeAddImpl, null);
-pub const nativeSub = makeFunc(nativeSubImpl, null);
-pub const nativeMul = makeFunc(nativeMulImpl, null);
-pub const nativeDiv = makeFunc(nativeDivImpl, null);
-pub const nativeCmpInt = makeFunc(nativeCmpIntImpl, null);
-pub const nativeCharEq = makeFunc(nativeCharEqImpl, null);
-pub const nativePrint = makeFunc(nativePrintImpl, null);
-pub const nativeStringFromLiteral = makeFunc(nativeStringFromLiteralImpl, null);
-pub const nativeStrFromLiteral = makeFunc(nativeStrFromLiteralImpl, null);
-pub const nativeStrLength = makeFunc(nativeStrLengthImpl, null);
-pub const nativeStrCharAt = makeFunc(nativeStrCharAtImpl, null);
-pub const nativeStrSlice = makeFunc(nativeStrSliceImpl, null);
-pub const nativeStringToList = makeFunc(nativeStringToListImpl, null);
-pub const nativeListToString = makeFunc(nativeListToStringImpl, null);
-pub const nativeAlloc = makeFunc(nativeAllocImpl, null);
-pub const nativeFree = makeFunc(nativeFreeImpl, null);
-pub const nativeRead = makeFunc(nativeReadImpl, null);
-pub const nativeWrite = makeFunc(nativeWriteImpl, null);
-pub const nativeMemcpy = makeFunc(nativeMemcpyImpl, null);
+pub const nativeAdd = makeFunc(nativeAddImpl, null, "nativeAdd");
+pub const nativeSub = makeFunc(nativeSubImpl, null, "nativeSub");
+pub const nativeMul = makeFunc(nativeMulImpl, null, "nativeMul");
+pub const nativeDiv = makeFunc(nativeDivImpl, null, "nativeDiv");
+pub const nativeCmpInt = makeFunc(nativeCmpIntImpl, null, "nativeCmpInt");
+pub const nativeCharEq = makeFunc(nativeCharEqImpl, null, "nativeCharEq");
+pub const nativePrint = makeFunc(nativePrintImpl, null, "nativePrint");
+pub const nativeStringFromLiteral = makeFunc(nativeStringFromLiteralImpl, null, "nativeStringFromLiteral");
+pub const nativeStrFromLiteral = makeFunc(nativeStrFromLiteralImpl, null, "nativeStrFromLiteral");
+pub const nativeStrLength = makeFunc(nativeStrLengthImpl, null, "nativeStrLength");
+pub const nativeStrCharAt = makeFunc(nativeStrCharAtImpl, null, "nativeStrCharAt");
+pub const nativeStrSlice = makeFunc(nativeStrSliceImpl, null, "nativeStrSlice");
+pub const nativeStringToList = makeFunc(nativeStringToListImpl, null, "nativeStringToList");
+pub const nativeListToString = makeFunc(nativeListToStringImpl, null, "nativeListToString");
+pub const nativeAlloc = makeFunc(nativeAllocImpl, null, "nativeAlloc");
+pub const nativeFree = makeFunc(nativeFreeImpl, null, "nativeFree");
+pub const nativeRead = makeFunc(nativeReadImpl, null, "nativeRead");
+pub const nativeWrite = makeFunc(nativeWriteImpl, null, "nativeWrite");
+pub const nativeMemcpy = makeFunc(nativeMemcpyImpl, null, "nativeMemcpy");
 
 pub fn expectInt(value: Value) i64 {
     return switch (value) {
@@ -687,12 +840,12 @@ pub fn expectString(value: Value) []const u8 {
 
 pub fn expectTuple(value: Value) []Value {
     return switch (value) {
-        .Tuple => |v| v,
+        .Tuple => |v| v.elements,
         else => @panic("expected tuple"),
     };
 }
 
-fn expectRecord(value: Value) *std.StringHashMap(Value) {
+fn expectRecord(value: Value) *RecordValue {
     return switch (value) {
         .Record => |v| v,
         else => @panic("expected record"),
@@ -713,11 +866,11 @@ fn expectFunc(value: Value) FuncValue {
     };
 }
 
-fn tupleEquals(a: []Value, b: []Value) bool {
-    if (a.len != b.len) return false;
+fn tupleEquals(a: *TupleValue, b: *TupleValue) bool {
+    if (a.elements.len != b.elements.len) return false;
     var i: usize = 0;
-    while (i < a.len) : (i += 1) {
-        if (!valueEquals(a[i], b[i])) return false;
+    while (i < a.elements.len) : (i += 1) {
+        if (!valueEquals(a.elements[i], b.elements[i])) return false;
     }
     return true;
 }
@@ -725,18 +878,64 @@ fn tupleEquals(a: []Value, b: []Value) bool {
 fn dataEquals(a: DataValue, b: DataValue) bool {
     if (!std.mem.eql(u8, a.tag, b.tag)) return false;
     if (!std.mem.eql(u8, a.type_name, b.type_name)) return false;
-    return tupleEquals(a.fields, b.fields);
+
+    // Manual slice compare for fields
+    if (a.fields.len != b.fields.len) return false;
+    var i: usize = 0;
+    while (i < a.fields.len) : (i += 1) {
+        if (!valueEquals(a.fields[i], b.fields[i])) return false;
+    }
+    return true;
 }
 
 fn formatValue(value: Value) []const u8 {
     return switch (value) {
-        .Unit => "Void",
-        .Int => |v| std.fmt.allocPrint(allocator(), "{d}", .{v}) catch "oom",
-        .Bool => |v| if (v) "true" else "false",
-        .String => |v| v,
-        .Tuple => "tuple",
-        .Record => "record",
-        .Data => |v| v.tag,
-        .Func => "function",
+        .Unit => "Unit",
+        .Int => |v| std.fmt.allocPrint(allocator(), "Int({d})", .{v}) catch "oom",
+        .Bool => |v| if (v) "Bool(true)" else "Bool(false)",
+        .String => |v| std.fmt.allocPrint(allocator(), "String(\"{s}\")", .{v}) catch "oom",
+        .Tuple => |v| {
+            var buf = std.ArrayListUnmanaged(u8){};
+            buf.print(allocator(), "Tuple#{d}(", .{v.id}) catch @panic("oom");
+            for (v.elements, 0..) |elem, i| {
+                if (i > 0) buf.appendSlice(allocator(), ", ") catch @panic("oom");
+                buf.appendSlice(allocator(), formatValue(elem)) catch @panic("oom");
+            }
+            buf.appendSlice(allocator(), ")") catch @panic("oom");
+            return buf.toOwnedSlice(allocator()) catch @panic("oom");
+        },
+        .Record => |v| {
+            var buf = std.ArrayListUnmanaged(u8){};
+            buf.print(allocator(), "Record#{d}{{", .{v.id}) catch @panic("oom");
+            var it = v.fields.iterator();
+            var first = true;
+            while (it.next()) |entry| {
+                if (!first) buf.appendSlice(allocator(), ", ") catch @panic("oom");
+                buf.appendSlice(allocator(), entry.key_ptr.*) catch @panic("oom");
+                buf.appendSlice(allocator(), ": ") catch @panic("oom");
+                buf.appendSlice(allocator(), formatValue(entry.value_ptr.*)) catch @panic("oom");
+                first = false;
+            }
+            buf.appendSlice(allocator(), "}") catch @panic("oom");
+            return buf.toOwnedSlice(allocator()) catch @panic("oom");
+        },
+        .Data => |v| {
+            var buf = std.ArrayListUnmanaged(u8){};
+            buf.appendSlice(allocator(), v.type_name) catch @panic("oom");
+            buf.appendSlice(allocator(), ".") catch @panic("oom");
+            buf.appendSlice(allocator(), v.tag) catch @panic("oom");
+            buf.print(allocator(), "#{d}", .{v.id}) catch @panic("oom");
+
+            if (v.fields.len > 0) {
+                buf.appendSlice(allocator(), "(") catch @panic("oom");
+                for (v.fields, 0..) |elem, i| {
+                    if (i > 0) buf.appendSlice(allocator(), ", ") catch @panic("oom");
+                    buf.appendSlice(allocator(), formatValue(elem)) catch @panic("oom");
+                }
+                buf.appendSlice(allocator(), ")") catch @panic("oom");
+            }
+            return buf.toOwnedSlice(allocator()) catch @panic("oom");
+        },
+        .Func => |v| std.fmt.allocPrint(allocator(), "Fn#{d}(name={s})", .{ v.id, v.name }) catch "oom",
     };
 }

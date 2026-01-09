@@ -3,6 +3,11 @@ import { emitModuleGraph as emitJsModuleGraph } from "../backends/compiler/js/gr
 import { emitModuleGraph as emitZigModuleGraph } from "../backends/compiler/zig/graph_emitter.ts";
 import { dirname, fromFileUrl, IO, relative, resolve } from "../src/io.ts";
 import { createDefaultForeignTypeConfig } from "../src/foreign_types/c_header_provider.ts";
+import {
+  applyTraceFlag,
+  DEFAULT_TRACE_OPTIONS,
+  type TraceOptions,
+} from "./trace_options.ts";
 
 const WORKMAN_ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 
@@ -27,16 +32,19 @@ export interface CompileArgs {
   outDir?: string;
   backend: CompileBackend;
   force: boolean;
+  traceOptions: TraceOptions;
 }
 
 export function parseCompileArgs(
   args: string[],
   allowEmpty = false,
+  baseTraceOptions: TraceOptions = DEFAULT_TRACE_OPTIONS,
 ): CompileArgs {
   let entryPath: string | undefined;
   let outDir: string | undefined;
   let backend: CompileBackend | undefined;
   let force = false;
+  const traceOptions: TraceOptions = { ...baseTraceOptions };
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -65,6 +73,9 @@ export function parseCompileArgs(
       force = true;
       continue;
     }
+    if (applyTraceFlag(arg, traceOptions)) {
+      continue;
+    }
     if (arg.startsWith("-")) {
       throw new Error(`Unknown compile option '${arg}'`);
     }
@@ -85,6 +96,7 @@ export function parseCompileArgs(
     outDir,
     backend: backend ?? "zig",
     force,
+    traceOptions,
   };
 }
 
@@ -93,6 +105,7 @@ export async function compileToDirectory(
   outDir?: string,
   backend: CompileBackend = "zig",
   force = false,
+  traceOptions: TraceOptions = DEFAULT_TRACE_OPTIONS,
 ): Promise<void> {
   if (!entryPath.endsWith(".wm")) {
     throw new Error("Expected a .wm entry file");
@@ -136,6 +149,7 @@ export async function compileToDirectory(
   const emitResult = backend === "zig"
     ? await emitZigModuleGraph(compileResult.coreGraph, {
       outDir: resolvedOutDir,
+      traceOptions,
     })
     : await emitJsModuleGraph(compileResult.coreGraph, {
       outDir: resolvedOutDir,
@@ -174,7 +188,10 @@ export async function compileToDirectory(
  * Handle 'wm build' command - like 'zig build' but for workman.
  * Auto-detects build.wm in cwd, compiles to build.zig, then runs zig build.
  */
-export async function runBuildCommand(args: string[]): Promise<void> {
+export async function runBuildCommand(
+  args: string[],
+  traceOptions: TraceOptions = DEFAULT_TRACE_OPTIONS,
+): Promise<void> {
   const buildWmPath = resolve("build.wm");
 
   // Check if build.wm exists
@@ -204,6 +221,7 @@ export async function runBuildCommand(args: string[]): Promise<void> {
     commonRoot: buildDir,
     emitRuntime: false,
     emitRootMain: false,
+    traceOptions,
   });
 
   // Compile any referenced .wm source files to .zig
@@ -227,6 +245,7 @@ export async function runBuildCommand(args: string[]): Promise<void> {
       commonRoot: buildDir,
       emitRuntime: false,
       emitRootMain: false,
+      traceOptions,
     });
 
     zigFilesToFormat.push(zigOutputPath);

@@ -9,6 +9,11 @@ import {
   runBuildCommand,
 } from "./cli/compile.ts";
 import { runProgramCommand } from "./cli/run_command.ts";
+import {
+  applyTraceFlag,
+  DEFAULT_TRACE_OPTIONS,
+  type TraceOptions,
+} from "./cli/trace_options.ts";
 import { startWorkmanLanguageServer } from "./lsp/server/src/server.ts";
 
 export {
@@ -22,9 +27,13 @@ export {
 async function runCli(): Promise<void> {
   let debugMode = false;
   const args: string[] = [];
+  const globalTrace: TraceOptions = { ...DEFAULT_TRACE_OPTIONS };
   for (const arg of IO.args) {
     if (arg === "--debug") {
       debugMode = true;
+      continue;
+    }
+    if (applyTraceFlag(arg, globalTrace)) {
       continue;
     }
     args.push(arg);
@@ -54,10 +63,14 @@ async function runCli(): Promise<void> {
 
   if (command === "compile") {
     try {
-      const { entryPath, outDir, backend, force } = parseCompileArgs(
-        args.slice(1),
-      );
-      await compileToDirectory(entryPath, outDir, backend, force);
+      const {
+        entryPath,
+        outDir,
+        backend,
+        force,
+        traceOptions,
+      } = parseCompileArgs(args.slice(1), false, globalTrace);
+      await compileToDirectory(entryPath, outDir, backend, force, traceOptions);
     } catch (error) {
       handleCliError(error);
       IO.exit(1);
@@ -68,7 +81,7 @@ async function runCli(): Promise<void> {
   if (command === "build") {
     try {
       // 'wm build' works like 'zig build' - auto-detects build.wm
-      await runBuildCommand(args.slice(1));
+      await runBuildCommand(args.slice(1), globalTrace);
     } catch (error) {
       handleCliError(error);
       IO.exit(1);
@@ -76,7 +89,7 @@ async function runCli(): Promise<void> {
     IO.exit(0);
   }
 
-  await runProgramCommand(args, debugMode);
+  await runProgramCommand(args, debugMode, globalTrace);
 }
 
 function handleCliError(error: unknown): void {

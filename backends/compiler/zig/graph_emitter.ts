@@ -8,6 +8,7 @@ import {
   resolve,
 } from "../../../src/io.ts";
 
+import type { SourceSpan } from "../../../src/ast.ts";
 import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
 import { emitModule } from "./emitter.ts";
 import { emitRawModule } from "./raw_emitter.ts";
@@ -47,6 +48,22 @@ export async function emitModuleGraph(
     filePathFromModule(import.meta, "./runtime.zig");
 
   const modules = Array.from(graph.modules.values());
+
+  const sourceOffsets = new Map<string, number[]>();
+  const sourceTexts = new Map<string, string>();
+  await Promise.all(modules.map(async (mod) => {
+    // Only read .wm files for source info
+    if (mod.path.endsWith(".wm")) {
+      try {
+        const text = await IO.readTextFile(mod.path);
+        sourceTexts.set(mod.path, text);
+        sourceOffsets.set(mod.path, computeLineOffsets(text));
+      } catch (e: any) {
+        // console.error("Failed to read source for debug info:", mod.path, e.message);
+      }
+    }
+  }));
+
   let commonRoot: string;
   if (options.commonRoot) {
     commonRoot = resolve(options.commonRoot);
@@ -197,6 +214,19 @@ export async function emitModuleGraph(
         forcedValueExports: module.path === entryModule.path
           ? forcedEntryExports
           : undefined,
+        getSourceLocation: (span: SourceSpan) => {
+          const offsets = sourceOffsets.get(module.path);
+          if (!offsets) return undefined;
+          const loc = getLineCol(span, offsets, module.path);
+          const text = sourceTexts.get(module.path);
+          if (text) {
+             const startOp = offsets[loc.line - 1] ?? 0;
+             const endOp = offsets[loc.line]; // undefined if last
+             const lineStr = text.slice(startOp, endOp ? endOp - 1 : undefined);
+             return { ...loc, lineText: lineStr.replace(/\r$/, "") };
+          }
+          return loc;
+        },
       });
     }
     await writeTextFile(outputPath, code);
@@ -340,8 +370,34 @@ function buildRootMain(
   lines.push("pub fn main() void {");
   if (hasMain) {
     lines.push("  entry.__wm_init();");
-    lines.push("  _ = runtime.call(entry.main, &[_]Value{});");
+    lines.push('  _ = runtime.call(entry.main, &[_]Value{}, "");');
   }
   lines.push("}");
   return `${lines.join("\n")}\n`;
+}
+
+function computeLineOffsets(content: string): number[] {
+  const offsets = [0];
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === "\n") {
+      offsets.push(i + 1);
+    }
+  }
+  return offsets;
+}
+
+function getLineCol(span: SourceSpan, offsets: number[], file: string) {
+  let low = 0, high = offsets.length - 1;
+  let line = 0;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (offsets[mid] <= span.start) {
+      line = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  const column = span.start - offsets[line] + 1;
+  return { line: line + 1, column, file };
 }

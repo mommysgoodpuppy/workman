@@ -28,9 +28,14 @@ import {
 } from "../src/error.ts";
 import { substituteHoleSolutionsInType } from "./type_utils.ts";
 import type { SourceSpan } from "../src/ast.ts";
+import {
+  applyTraceFlag,
+  DEFAULT_TRACE_OPTIONS,
+  type TraceOptions,
+} from "./trace_options.ts";
 
 const RUN_USAGE =
-  "Usage: wm [fmt|type [--line <line>] [--var-ids] |err|compile] <file.wm> | wm <file.wm> [--backend <js|zig>] | wm (REPL mode)";
+  "Usage: wm [fmt|type [--line <line>] [--var-ids] |err|compile] <file.wm> | wm <file.wm> [--backend <js|zig>] [--trace|--perf] | wm (REPL mode)";
 
 type RunBackend = "js" | "zig";
 
@@ -52,6 +57,7 @@ interface NonExhaustiveMatchMetadata {
 export async function runProgramCommand(
   args: string[],
   debugMode: boolean,
+  traceOptions: TraceOptions = DEFAULT_TRACE_OPTIONS,
 ): Promise<void> {
   let filePath: string;
   let lineNumber: number | undefined = undefined;
@@ -59,6 +65,7 @@ export async function runProgramCommand(
   let skipEvaluation = false;
   let showErrorsOnly = false;
   let backend: RunBackend = "zig";
+  const effectiveTrace: TraceOptions = { ...traceOptions };
 
   if (args[0] === "type") {
     let index = 1;
@@ -117,6 +124,9 @@ export async function runProgramCommand(
         }
         backend = value;
         index += 1;
+        continue;
+      }
+      if (applyTraceFlag(arg, effectiveTrace)) {
         continue;
       }
       if (arg.startsWith("-")) {
@@ -185,7 +195,7 @@ export async function runProgramCommand(
           nodeLocations,
         );
       } else {
-        await executeZigModule(compileResult.coreGraph);
+        await executeZigModule(compileResult.coreGraph, effectiveTrace);
       }
     }
   } catch (error) {
@@ -571,6 +581,7 @@ async function executeJsModule(
 
 async function executeZigModule(
   coreGraph: any,
+  traceOptions: TraceOptions,
 ): Promise<void> {
   if (typeof Deno === "undefined") {
     throw new Error("Zig backend execution requires the Deno runtime");
@@ -579,6 +590,7 @@ async function executeZigModule(
   try {
     const emitResult = await emitZigModuleGraph(coreGraph, {
       outDir: tempDir,
+      traceOptions,
     });
     const rootPath = emitResult.rootPath;
     if (!rootPath) {
