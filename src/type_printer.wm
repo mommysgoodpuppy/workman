@@ -1,5 +1,0 @@
-let nextName = (index) {
-  let base = GENERIC_NAMES[index % GENERIC_NAMES.length];
-  let suffix = Math.floor(index / GENERIC_NAMES.length);
-  suffix === 0 ? base : `${base}${suffix + 1}`
-}
