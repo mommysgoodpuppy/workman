@@ -119,13 +119,13 @@ fn resetTraceState() void {
 }
 
 pub fn allocEnv(comptime T: type, value: T) *anyopaque {
-    const ptr = allocator().create(T) catch @panic("oom");
+    const ptr = allocator().create(T) catch printWorkmanStackAndPanic("oom");
     ptr.* = value;
     return @ptrCast(ptr);
 }
 
 pub fn allocValue() *Value {
-    return allocator().create(Value) catch @panic("oom");
+    return allocator().create(Value) catch printWorkmanStackAndPanic("oom");
 }
 
 pub fn makeUnit() Value {
@@ -145,10 +145,10 @@ pub fn makeString(value: []const u8) Value {
 }
 
 pub fn makeTuple(values: []const Value) Value {
-    const buf = allocator().alloc(Value, values.len) catch @panic("oom");
+    const buf = allocator().alloc(Value, values.len) catch printWorkmanStackAndPanic("oom");
     std.mem.copyForwards(Value, buf, values);
 
-    const ptr = allocator().create(TupleValue) catch @panic("oom");
+    const ptr = allocator().create(TupleValue) catch printWorkmanStackAndPanic("oom");
     value_id_counter += 1;
     ptr.* = .{ .id = value_id_counter, .elements = buf };
 
@@ -158,7 +158,7 @@ pub fn makeTuple(values: []const Value) Value {
 pub fn tupleGet(value: Value, index: usize) Value {
     const tuple = expectTuple(value);
     if (index >= tuple.len) {
-        @panic("tuple index out of bounds");
+        printWorkmanStackAndPanic("tuple index out of bounds");
     }
     return tuple[index];
 }
@@ -173,10 +173,10 @@ pub fn isTuple(value: Value, len: usize) bool {
 pub fn makeRecord(fields: []const RecordField) Value {
     var map = std.StringHashMap(Value).init(allocator());
     for (fields) |field| {
-        map.put(field.name, field.value) catch @panic("oom");
+        map.put(field.name, field.value) catch printWorkmanStackAndPanic("oom");
     }
 
-    const ptr = allocator().create(RecordValue) catch @panic("oom");
+    const ptr = allocator().create(RecordValue) catch printWorkmanStackAndPanic("oom");
     value_id_counter += 1;
     ptr.* = .{ .id = value_id_counter, .fields = map };
 
@@ -188,7 +188,7 @@ pub fn recordGet(value: Value, field: []const u8) Value {
     if (rec.fields.get(field)) |stored| {
         return stored;
     }
-    @panic("missing record field");
+    printWorkmanStackAndPanic("missing record field");
 }
 
 pub fn recordGetInfectious(value: Value, field: []const u8) Value {
@@ -204,7 +204,7 @@ pub fn recordGetInfectious(value: Value, field: []const u8) Value {
         }
         return wrapResultValue(stored, info.type_name);
     }
-    @panic("missing record field");
+    printWorkmanStackAndPanic("missing record field");
 }
 
 pub fn makeData(
@@ -212,7 +212,7 @@ pub fn makeData(
     tag: []const u8,
     fields: []const Value,
 ) Value {
-    const buf = allocator().alloc(Value, fields.len) catch @panic("oom");
+    const buf = allocator().alloc(Value, fields.len) catch printWorkmanStackAndPanic("oom");
     std.mem.copyForwards(Value, buf, fields);
     value_id_counter += 1;
     return .{ .Data = .{ .tag = tag, .type_name = type_name, .fields = buf, .id = value_id_counter } };
@@ -221,7 +221,7 @@ pub fn makeData(
 pub fn dataField(value: Value, index: usize) Value {
     const data = expectData(value);
     if (index >= data.fields.len) {
-        @panic("data field index out of bounds");
+        printWorkmanStackAndPanic("data field index out of bounds");
     }
     return data.fields[index];
 }
@@ -252,7 +252,7 @@ pub fn call(func_value: Value, args: []const Value, call_site: []const u8) Value
             .id = current_parent_id,
             .name = func.name,
             .call_site = call_site,
-        }) catch @panic("oom");
+        }) catch printWorkmanStackAndPanic("oom");
         parent_id = call_id_stack.items[call_id_stack.items.len - 1].id;
         current_parent_id = trace_id;
         current_depth += 1;
@@ -284,7 +284,7 @@ pub fn call(func_value: Value, args: []const Value, call_site: []const u8) Value
         }
     }
     if (pushed_stack) {
-        const popped = call_id_stack.pop() orelse @panic("trace stack underflow");
+        const popped = call_id_stack.pop() orelse printWorkmanStackAndPanic("trace stack underflow");
         current_parent_id = popped.id;
         current_depth -= 1;
     }
@@ -300,13 +300,13 @@ pub fn registerInfectiousType(
     registry.put(type_name, .{
         .value_constructor = value_constructor,
         .effect_constructors = effect_constructors,
-    }) catch @panic("oom");
+    }) catch printWorkmanStackAndPanic("oom");
 }
 
 pub fn markResultHandler(func_value: Value, handled_params: []const usize) Value {
     const func = expectFunc(func_value);
     const registry = getHandledParamRegistry();
-    registry.put(.{ .func = func.func, .env = func.env }, handled_params) catch @panic("oom");
+    registry.put(.{ .func = func.func, .env = func.env }, handled_params) catch printWorkmanStackAndPanic("oom");
     return func_value;
 }
 
@@ -431,7 +431,7 @@ pub fn callInfectious(func_value: Value, args: []const Value, call_site: []const
     const func = expectFunc(callable);
     const handled = getHandledParams(func);
 
-    const processed = allocator().alloc(Value, args.len) catch @panic("oom");
+    const processed = allocator().alloc(Value, args.len) catch printWorkmanStackAndPanic("oom");
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         if (handled != null and isParamHandled(handled.?, index)) {
@@ -481,7 +481,7 @@ pub fn callInfectious(func_value: Value, args: []const Value, call_site: []const
 pub fn expectBool(value: Value) bool {
     return switch (value) {
         .Bool => |v| v,
-        else => @panic("expected bool"),
+        else => printWorkmanStackAndPanic("expected bool"),
     };
 }
 
@@ -554,7 +554,7 @@ pub fn stringSlice(value: Value, start: Value, end: Value) Value {
     const start_index = @as(usize, @intCast(expectInt(start)));
     const end_index = @as(usize, @intCast(expectInt(end)));
     if (start_index > end_index or end_index > s.len) {
-        @panic("string slice out of bounds");
+        printWorkmanStackAndPanic("string slice out of bounds");
     }
     return makeString(s[start_index..end_index]);
 }
@@ -569,7 +569,7 @@ pub fn panic(message: Value) Value {
         .String => |s| s,
         else => "Panic called with non-string message",
     };
-    @panic(msg);
+    printWorkmanStackAndPanic(msg);
 }
 
 pub fn valueEquals(a: Value, b: Value) bool {
@@ -607,6 +607,24 @@ pub fn valueEquals(a: Value, b: Value) bool {
             else => false,
         },
     };
+}
+
+fn printWorkmanStackAndPanic(message: []const u8) noreturn {
+    std.debug.print("\n=== PANIC: {s} ===\n", .{message});
+    
+    if (trace_capture_enabled) {
+        std.debug.print("Workman stack (top 8):\n", .{});
+        var i: usize = call_id_stack.items.len;
+        var count: usize = 0;
+        while (i > 0 and count < 8) {
+            i -= 1;
+            const frame = call_id_stack.items[i];
+            const site = if (frame.call_site.len > 0) frame.call_site else "unknown";
+            std.debug.print("  {s} called at {s}\n", .{ frame.name, site });
+            count += 1;
+        }
+    }
+    @panic(message);
 }
 
 pub fn nonExhaustiveMatch(val: Value, location: []const u8) Value {
@@ -684,7 +702,7 @@ fn nativeStringFromLiteralImpl(env: ?*anyopaque, args: []const Value) Value {
     _ = env;
     return switch (args[0]) {
         .String => |v| makeString(v),
-        else => @panic("expected string literal"),
+        else => printWorkmanStackAndPanic("expected string literal"),
     };
 }
 
@@ -702,7 +720,7 @@ fn nativeStrCharAtImpl(env: ?*anyopaque, args: []const Value) Value {
     const s = expectString(args[0]);
     const index = @as(usize, @intCast(expectInt(args[1])));
     if (index >= s.len) {
-        @panic("string index out of bounds");
+        printWorkmanStackAndPanic("string index out of bounds");
     }
     return makeInt(@as(i64, @intCast(s[index])));
 }
@@ -732,35 +750,35 @@ fn nativeListToStringImpl(env: ?*anyopaque, args: []const Value) Value {
         switch (current) {
             .Data => |data| {
                 if (!std.mem.eql(u8, data.type_name, "List")) {
-                    @panic("expected List in nativeListToString");
+                    printWorkmanStackAndPanic("expected List in nativeListToString");
                 }
                 if (std.mem.eql(u8, data.tag, "Empty")) {
                     break;
                 }
                 if (!std.mem.eql(u8, data.tag, "Link")) {
-                    @panic("expected Link constructor in nativeListToString");
+                    printWorkmanStackAndPanic("expected Link constructor in nativeListToString");
                 }
                 if (data.fields.len != 2) {
-                    @panic("expected Link with 2 fields");
+                    printWorkmanStackAndPanic("expected Link with 2 fields");
                 }
                 const code = expectInt(data.fields[0]);
                 if (code < 0 or code > 255) {
-                    @panic("char code out of range");
+                    printWorkmanStackAndPanic("char code out of range");
                 }
-                buffer.append(allocator(), @as(u8, @intCast(code))) catch @panic("oom");
+                buffer.append(allocator(), @as(u8, @intCast(code))) catch printWorkmanStackAndPanic("oom");
                 current = data.fields[1];
             },
-            else => @panic("expected List value"),
+            else => printWorkmanStackAndPanic("expected List value"),
         }
     }
-    const slice = buffer.toOwnedSlice(allocator()) catch @panic("oom");
+    const slice = buffer.toOwnedSlice(allocator()) catch printWorkmanStackAndPanic("oom");
     return makeString(slice);
 }
 
 fn nativeAllocImpl(env: ?*anyopaque, args: []const Value) Value {
     _ = env;
     const len = @as(usize, @intCast(expectInt(args[0])));
-    const slice = rawAllocator().alloc(u8, len) catch @panic("oom");
+    const slice = rawAllocator().alloc(u8, len) catch printWorkmanStackAndPanic("oom");
     const addr = @as(i64, @intCast(@intFromPtr(slice.ptr)));
     return makeInt(addr);
 }
@@ -788,7 +806,7 @@ fn nativeWriteImpl(env: ?*anyopaque, args: []const Value) Value {
     const index = @as(usize, @intCast(expectInt(args[1])));
     const value = expectInt(args[2]);
     if (value < 0 or value > 255) {
-        @panic("byte value out of range");
+        printWorkmanStackAndPanic("byte value out of range");
     }
     const ptr: [*]u8 = @ptrFromInt(addr);
     ptr[index] = @as(u8, @intCast(value));
@@ -829,42 +847,42 @@ pub const nativeMemcpy = makeFunc(nativeMemcpyImpl, null, "nativeMemcpy");
 pub fn expectInt(value: Value) i64 {
     return switch (value) {
         .Int => |v| v,
-        else => @panic("expected int"),
+        else => printWorkmanStackAndPanic("expected int"),
     };
 }
 
 pub fn expectString(value: Value) []const u8 {
     return switch (value) {
         .String => |v| v,
-        else => @panic("expected string"),
+        else => printWorkmanStackAndPanic("expected string"),
     };
 }
 
 pub fn expectTuple(value: Value) []Value {
     return switch (value) {
         .Tuple => |v| v.elements,
-        else => @panic("expected tuple"),
+        else => printWorkmanStackAndPanic("expected tuple"),
     };
 }
 
 fn expectRecord(value: Value) *RecordValue {
     return switch (value) {
         .Record => |v| v,
-        else => @panic("expected record"),
+        else => printWorkmanStackAndPanic("expected record"),
     };
 }
 
 fn expectData(value: Value) DataValue {
     return switch (value) {
         .Data => |v| v,
-        else => @panic("expected data"),
+        else => printWorkmanStackAndPanic("expected data"),
     };
 }
 
 fn expectFunc(value: Value) FuncValue {
     return switch (value) {
         .Func => |v| v,
-        else => @panic("expected function"),
+        else => printWorkmanStackAndPanic("expected function"),
     };
 }
 
@@ -898,45 +916,45 @@ fn formatValue(value: Value) []const u8 {
         .String => |v| std.fmt.allocPrint(allocator(), "String(\"{s}\")", .{v}) catch "oom",
         .Tuple => |v| {
             var buf = std.ArrayListUnmanaged(u8){};
-            buf.print(allocator(), "Tuple#{d}(", .{v.id}) catch @panic("oom");
+            buf.print(allocator(), "Tuple#{d}(", .{v.id}) catch printWorkmanStackAndPanic("oom");
             for (v.elements, 0..) |elem, i| {
-                if (i > 0) buf.appendSlice(allocator(), ", ") catch @panic("oom");
-                buf.appendSlice(allocator(), formatValue(elem)) catch @panic("oom");
+                if (i > 0) buf.appendSlice(allocator(), ", ") catch printWorkmanStackAndPanic("oom");
+                buf.appendSlice(allocator(), formatValue(elem)) catch printWorkmanStackAndPanic("oom");
             }
-            buf.appendSlice(allocator(), ")") catch @panic("oom");
-            return buf.toOwnedSlice(allocator()) catch @panic("oom");
+            buf.appendSlice(allocator(), ")") catch printWorkmanStackAndPanic("oom");
+            return buf.toOwnedSlice(allocator()) catch printWorkmanStackAndPanic("oom");
         },
         .Record => |v| {
             var buf = std.ArrayListUnmanaged(u8){};
-            buf.print(allocator(), "Record#{d}{{", .{v.id}) catch @panic("oom");
+            buf.print(allocator(), "Record#{d}{{", .{v.id}) catch printWorkmanStackAndPanic("oom");
             var it = v.fields.iterator();
             var first = true;
             while (it.next()) |entry| {
-                if (!first) buf.appendSlice(allocator(), ", ") catch @panic("oom");
-                buf.appendSlice(allocator(), entry.key_ptr.*) catch @panic("oom");
-                buf.appendSlice(allocator(), ": ") catch @panic("oom");
-                buf.appendSlice(allocator(), formatValue(entry.value_ptr.*)) catch @panic("oom");
+                if (!first) buf.appendSlice(allocator(), ", ") catch printWorkmanStackAndPanic("oom");
+                buf.appendSlice(allocator(), entry.key_ptr.*) catch printWorkmanStackAndPanic("oom");
+                buf.appendSlice(allocator(), ": ") catch printWorkmanStackAndPanic("oom");
+                buf.appendSlice(allocator(), formatValue(entry.value_ptr.*)) catch printWorkmanStackAndPanic("oom");
                 first = false;
             }
-            buf.appendSlice(allocator(), "}") catch @panic("oom");
-            return buf.toOwnedSlice(allocator()) catch @panic("oom");
+            buf.appendSlice(allocator(), "}") catch printWorkmanStackAndPanic("oom");
+            return buf.toOwnedSlice(allocator()) catch printWorkmanStackAndPanic("oom");
         },
         .Data => |v| {
             var buf = std.ArrayListUnmanaged(u8){};
-            buf.appendSlice(allocator(), v.type_name) catch @panic("oom");
-            buf.appendSlice(allocator(), ".") catch @panic("oom");
-            buf.appendSlice(allocator(), v.tag) catch @panic("oom");
-            buf.print(allocator(), "#{d}", .{v.id}) catch @panic("oom");
+            buf.appendSlice(allocator(), v.type_name) catch printWorkmanStackAndPanic("oom");
+            buf.appendSlice(allocator(), ".") catch printWorkmanStackAndPanic("oom");
+            buf.appendSlice(allocator(), v.tag) catch printWorkmanStackAndPanic("oom");
+            buf.print(allocator(), "#{d}", .{v.id}) catch printWorkmanStackAndPanic("oom");
 
             if (v.fields.len > 0) {
-                buf.appendSlice(allocator(), "(") catch @panic("oom");
+                buf.appendSlice(allocator(), "(") catch printWorkmanStackAndPanic("oom");
                 for (v.fields, 0..) |elem, i| {
-                    if (i > 0) buf.appendSlice(allocator(), ", ") catch @panic("oom");
-                    buf.appendSlice(allocator(), formatValue(elem)) catch @panic("oom");
+                    if (i > 0) buf.appendSlice(allocator(), ", ") catch printWorkmanStackAndPanic("oom");
+                    buf.appendSlice(allocator(), formatValue(elem)) catch printWorkmanStackAndPanic("oom");
                 }
-                buf.appendSlice(allocator(), ")") catch @panic("oom");
+                buf.appendSlice(allocator(), ")") catch printWorkmanStackAndPanic("oom");
             }
-            return buf.toOwnedSlice(allocator()) catch @panic("oom");
+            return buf.toOwnedSlice(allocator()) catch printWorkmanStackAndPanic("oom");
         },
         .Func => |v| std.fmt.allocPrint(allocator(), "Fn#{d}(name={s})", .{ v.id, v.name }) catch "oom",
     };
