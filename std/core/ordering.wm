@@ -1,5 +1,0 @@
-export type Ordering = LT | EQ | GT;
-
-export let lt = LT;
-export let eq = EQ;
-export let gt = GT;

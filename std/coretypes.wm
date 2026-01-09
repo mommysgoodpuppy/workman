@@ -3,6 +3,11 @@ export infectious effect type Option<T> = @value Some<T> | @effect None;
 
 export type List<T> = Empty | Link<T, List<T>>;
 
+export type Ordering = LT | EQ | GT;
+
+export let lt = LT;
+export let eq = EQ;
+export let gt = GT;
 
 --weird--
 

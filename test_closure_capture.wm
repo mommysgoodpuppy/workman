@@ -8,7 +8,7 @@ let main = () => {
   let useBuffer = () => {
     -- since closure capture is used closed infection also gets captured
     -- detecting the potential illegal operation
-    'X' >> buffer[0];
+    'X' :> buffer[0];
   };
   free(buffer);
   useBuffer();
@@ -19,14 +19,14 @@ let main4 = () => {
   -- technically illegal buffer is both
   -- open and closed in the same scope
   -- rected valid program but keeps workmans non-linear simplicity
-  'X' >> buffer[0];
+  'X' :> buffer[0];
   free(buffer);
 };
 
 let main5 = () => {
   let useBuffer = () => {
     let buffer = alloc(100);
-    'X' >> buffer[0];
+    'X' :> buffer[0];
     buffer
   };
   let buffer = useBuffer();
@@ -43,7 +43,7 @@ let main2 = () => {
   let buffer = alloc(100);
   print(buffer);
   let useBuffer = (buffer) => {
-    'X' >> buffer[0];
+    'X' :> buffer[0];
     buffer
   };
   -- we use a shadow so "closed" infection doesnt spread backwards
@@ -56,15 +56,15 @@ let main6 = () => {
   let buffer = alloc(100);
   print(buffer);
   let useBuffer = (buffer) => {
-    'X' >> buffer[0];
+    'X' :> buffer[0];
     buffer
   };
   let buffer2 = useBuffer(buffer);
-  'X' >> buffer[1]; -- no error here
+  'X' :> buffer[1]; -- no error here
   -- the free op here creates a new non linear context
   free(buffer2);
   -- free the alias then use the original, error detected
-  'X' >> buffer[1];
+  'X' :> buffer[1];
 };
 
 --this should also be fine
@@ -72,7 +72,7 @@ let main3 = () => {
 
   let useBuffer = () => {
     let buffer = alloc(100);
-    'X' >> buffer[0];
+    'X' :> buffer[0];
     buffer
   };
   -- also no backwards propagation

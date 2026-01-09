@@ -1,7 +1,6 @@
 from "std/coretypes" import { Empty, Link };
 from "std/core/int" import { intAdd, intSub, intMul, intCompare, intEq as eq };
-from "std/coretypes" import { IOk, IErr };
-from "std/core/ordering" import { LT, EQ, GT };
+from "std/coretypes" import { IOk, IErr, LT, EQ, GT  };
 from "std/coretypes" import { Some, None };
 
 type ListErr =

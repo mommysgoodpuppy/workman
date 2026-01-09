@@ -5,8 +5,7 @@ from "std/core/string" import { strFromLiteral };
 from "std/coretypes" import { Some, None };
 from "std/coretypes" import { Empty, Link };
 from "std/core/int" import { intAdd as add, intSub as sub, intMul as mul, intDiv as div, intCompare as cmpInt, intEq as eq };
-from "std/core/ordering" import { LT, EQ, GT };
-from "std/coretypes" import { IOk, IErr };
+from "std/coretypes" import { IOk, IErr, LT, EQ, GT };
 
 -- Type alias for clarity (just documentation, not enforced)
 -- type String = List<Int>;

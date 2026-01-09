@@ -1,18 +1,8 @@
-from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
-from "std/nativeString" import { stringToList, stringConcat, intToString };
-from "std/result" import { stripErr };
-from "std/async/core" import { resolve, reject, Resolved, Rejected };
-
-let asyncfn = () => {
-  match (true) {
-    true => {resolve(1)}
-    false => {reject("error")}
-  }
+let double = (in) => {
+  in * 2
 };
 
 let main = () => {
-  match (asyncfn()) {
-    Resolved(val) => { print(val) },
-    Rejected(err) => { print(err) }
-  }
+  42 :> double :> add(10) :> print;
+  print(add(double(42), 10));
 };

@@ -1,4 +1,4 @@
-from "./ordering.wm" import { EQ, LT, GT };
+from "std/coretypes" import { EQ, LT, GT };
 
 export let intAdd = (left, right) => {
   nativeAdd(left, right)

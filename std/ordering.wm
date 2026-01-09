@@ -1,4 +1,4 @@
-from "std/core/ordering" import { Ordering, LT, EQ, GT };
+from "std/coretypes" import { Ordering, LT, EQ, GT };
 
 export let orderingIsLT = match(ordering) => {
   LT => { true },
