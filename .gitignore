@@ -20,3 +20,4 @@ sdl3-mingw/
 zig-out/
 distjs/
 **/wm/*.zig
+*.zig.wmmap.json
