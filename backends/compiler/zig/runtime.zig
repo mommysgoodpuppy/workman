@@ -163,11 +163,21 @@ pub fn tupleGet(value: Value, index: usize) Value {
     return tuple[index];
 }
 
+pub fn tupleGetWithoutUnwrap(value: Value, index: usize) Value {
+    const tuple = expectTuple(value);
+    if (index >= tuple.len) {
+        printWorkmanStackAndPanic("tuple index out of bounds");
+    }
+    return tuple[index];
+}
+
 pub fn isTuple(value: Value, len: usize) bool {
-    return switch (value) {
-        .Tuple => |tuple| tuple.elements.len == len,
-        else => false,
-    };
+    const elements = expectTuple(value);
+    return elements.len == len;
+}
+
+pub fn isTupleWithoutUnwrap(value: Value, len: usize) bool {
+    return isTuple(value, len);
 }
 
 pub fn makeRecord(fields: []const RecordField) Value {
@@ -352,21 +362,6 @@ fn unwrapResultForCall(value: Value) UnwrapInfo {
                         .type_name = data.type_name,
                     };
                 }
-            } else if (std.mem.eql(u8, data.tag, "IErr")) {
-                return .{
-                    .value = value,
-                    .infected = true,
-                    .short_circuit = value,
-                    .type_name = data.type_name,
-                };
-            } else if (std.mem.eql(u8, data.tag, "IOk")) {
-                const payload = if (data.fields.len > 0) data.fields[0] else makeUnit();
-                return .{
-                    .value = payload,
-                    .infected = true,
-                    .short_circuit = null,
-                    .type_name = data.type_name,
-                };
             }
         },
         else => {},
@@ -377,6 +372,47 @@ fn unwrapResultForCall(value: Value) UnwrapInfo {
         .short_circuit = null,
         .type_name = null,
     };
+}
+
+pub fn unwrapData(value: Value) Value {
+    // Only unwrap Result types but preserve the Data container
+    switch (value) {
+        .Data => |data| {
+            if (findInfectiousMeta(data.type_name)) |meta| {
+                if (isEffectConstructor(meta, data.tag)) {
+                    return value; // Keep effect constructors as-is
+                }
+                if (std.mem.eql(u8, data.tag, meta.value_constructor)) {
+                    // Return the payload only if it's a Data container, otherwise keep as-is
+                    const payload = if (data.fields.len > 0) data.fields[0] else makeUnit();
+                    return switch (payload) {
+                        .Data => payload, // Return Data payload as-is
+                        else => value, // Keep original Data container for non-Data payloads
+                    };
+                }
+            }
+            // Don't unwrap non-infectious IOk/IErr constructors
+        },
+        else => {},
+    }
+    return value;
+}
+
+pub fn unwrapDataValueConstructor(value: Value) Value {
+    // Unwrap only the @value constructor of infectious carriers, but preserve inner contents
+    switch (value) {
+        .Data => |data| {
+            if (findInfectiousMeta(data.type_name)) |meta| {
+                if (std.mem.eql(u8, data.tag, meta.value_constructor)) {
+                    // Return the payload directly without further unwrapping
+                    const payload = if (data.fields.len > 0) data.fields[0] else makeUnit();
+                    return payload;
+                }
+            }
+        },
+        else => {},
+    }
+    return value;
 }
 
 fn isInfectiousValue(value: Value) bool {
@@ -396,6 +432,38 @@ fn wrapResultValue(value: Value, type_name: ?[]const u8) Value {
         }
     }
     return value;
+}
+
+fn unwrapCarrierValue(value: Value, type_name: []const u8) UnwrapInfo {
+    switch (value) {
+        .Data => |data| {
+            if (!std.mem.eql(u8, data.type_name, type_name)) {
+                printWorkmanStackAndPanic("carrier_unwrap type mismatch");
+            }
+            if (findInfectiousMeta(type_name)) |meta| {
+                if (isEffectConstructor(meta, data.tag)) {
+                    return .{
+                        .value = value,
+                        .infected = true,
+                        .short_circuit = value,
+                        .type_name = type_name,
+                    };
+                }
+                if (std.mem.eql(u8, data.tag, meta.value_constructor)) {
+                    const payload = if (data.fields.len > 0) data.fields[0] else makeUnit();
+                    return .{
+                        .value = payload,
+                        .infected = true,
+                        .short_circuit = null,
+                        .type_name = type_name,
+                    };
+                }
+                printWorkmanStackAndPanic("carrier_unwrap unknown constructor");
+            }
+            printWorkmanStackAndPanic("carrier_unwrap unregistered carrier type");
+        },
+        else => printWorkmanStackAndPanic("carrier_unwrap expected data"),
+    }
 }
 
 fn getHandledParams(func: FuncValue) ?[]const usize {
@@ -444,12 +512,11 @@ pub fn callInfectious(func_value: Value, args: []const Value, call_site: []const
             return shorted;
         }
 
-        // Lazy unwrapping: keep wrapped by default, only unwrap when the function needs it
-        // Pass through the original value if infected, let expect* functions handle unwrapping
-        const arg_value = if (arg_info.infected) args[index] else arg_info.value;
+        // Unwrap infectious values for unhandled params; handlers receive the wrapped value.
+        const arg_value = arg_info.value;
         if (trace_enabled and arg_info.infected) {
             std.debug.print(
-                "trace: [id={d}] infected arg[{d}] {?s} passed through (lazy unwrap)\n",
+                "trace: [id={d}] infected arg[{d}] {?s} unwrapped for call\n",
                 .{ trace_counter, index, arg_info.type_name },
             );
         }
@@ -480,14 +547,45 @@ pub fn callInfectious(func_value: Value, args: []const Value, call_site: []const
     return result;
 }
 
-pub fn expectBool(value: Value) bool {
-    // Handle Result types by unwrapping lazily
-    const unwrapped = unwrapResultForCall(value);
-    if (unwrapped.short_circuit) |_| {
-        printWorkmanStackAndPanic("expected bool, got error result");
+pub fn carrierUnwrap(value: Value, type_name: []const u8) Value {
+    const info = unwrapCarrierValue(value, type_name);
+    if (info.short_circuit) |shorted| {
+        return shorted;
     }
-    const actual_value = if (unwrapped.infected) unwrapped.value else value;
-    return switch (actual_value) {
+    return info.value;
+}
+
+pub fn carrierWrap(value: Value, type_name: []const u8) Value {
+    if (findInfectiousMeta(type_name)) |meta| {
+        switch (value) {
+            .Data => |data| {
+                if (std.mem.eql(u8, data.type_name, type_name)) {
+                    return value;
+                }
+            },
+            else => {},
+        }
+        return makeData(type_name, meta.value_constructor, &[_]Value{value});
+    }
+    printWorkmanStackAndPanic("carrier_wrap unregistered carrier type");
+}
+
+pub fn carrierMatch(
+    func_value: Value,
+    scrutinee: Value,
+    type_name: []const u8,
+    call_site: []const u8,
+) Value {
+    const info = unwrapCarrierValue(scrutinee, type_name);
+    if (info.short_circuit) |shorted| {
+        return shorted;
+    }
+    const result = call(func_value, &[_]Value{info.value}, call_site);
+    return carrierWrap(result, type_name);
+}
+
+pub fn expectBool(value: Value) bool {
+    return switch (value) {
         .Bool => |v| v,
         else => printWorkmanStackAndPanic("expected bool"),
     };
@@ -853,90 +951,48 @@ pub const nativeWrite = makeFunc(nativeWriteImpl, null, "nativeWrite");
 pub const nativeMemcpy = makeFunc(nativeMemcpyImpl, null, "nativeMemcpy");
 
 pub fn expectInt(value: Value) i64 {
-    // Handle Result types by unwrapping lazily
-    const unwrapped = unwrapResultForCall(value);
-    if (unwrapped.short_circuit) |_| {
-        printWorkmanStackAndPanic("expected int, got error result");
-    }
-    const actual_value = if (unwrapped.infected) unwrapped.value else value;
-    return switch (actual_value) {
+    return switch (value) {
         .Int => |v| v,
         else => printWorkmanStackAndPanic("expected int"),
     };
 }
 
 pub fn expectString(value: Value) []const u8 {
-    // Handle Result types by unwrapping lazily
-    const unwrapped = unwrapResultForCall(value);
-    if (unwrapped.short_circuit) |_| {
-        printWorkmanStackAndPanic("expected string, got error result");
-    }
-    const actual_value = if (unwrapped.infected) unwrapped.value else value;
-    return switch (actual_value) {
+    return switch (value) {
         .String => |v| v,
         else => printWorkmanStackAndPanic("expected string"),
     };
 }
 
 pub fn expectTuple(value: Value) []Value {
-    // Handle Result types by unwrapping lazily
-    const unwrapped = unwrapResultForCall(value);
-    if (unwrapped.short_circuit) |_| {
-        printWorkmanStackAndPanic("expected tuple, got error result");
-    }
-    const actual_value = if (unwrapped.infected) unwrapped.value else value;
-    const elements = switch (actual_value) {
+    return switch (value) {
         .Tuple => |v| v.elements,
         else => printWorkmanStackAndPanic("expected tuple"),
     };
-    
-    // Unwrap any Result types in tuple elements for pattern matching
-    // This is needed because pattern matching expects unwrapped values
-    const unwrapped_elements = allocator().alloc(Value, elements.len) catch printWorkmanStackAndPanic("oom");
-    for (elements, 0..) |elem, i| {
-        const elem_info = unwrapResultForCall(elem);
-        if (elem_info.short_circuit) |_| {
-            printWorkmanStackAndPanic("tuple element is error result");
-        }
-        unwrapped_elements[i] = if (elem_info.infected) elem_info.value else elem;
-    }
-    return unwrapped_elements;
 }
 
 fn expectRecord(value: Value) *RecordValue {
-    // Handle Result types by unwrapping lazily
-    const unwrapped = unwrapResultForCall(value);
-    if (unwrapped.short_circuit) |_| {
-        printWorkmanStackAndPanic("expected record, got error result");
-    }
-    const actual_value = if (unwrapped.infected) unwrapped.value else value;
-    return switch (actual_value) {
+    return switch (value) {
         .Record => |v| v,
         else => printWorkmanStackAndPanic("expected record"),
     };
 }
 
 fn expectData(value: Value) DataValue {
-    // Handle Result types by unwrapping lazily
-    const unwrapped = unwrapResultForCall(value);
-    if (unwrapped.short_circuit) |_| {
-        printWorkmanStackAndPanic("expected data, got error result");
-    }
-    const actual_value = if (unwrapped.infected) unwrapped.value else value;
-    return switch (actual_value) {
+    // Debug: Log the incoming value
+    //std.log.debug("expectData called with value: {}", .{value});
+
+    return switch (value) {
         .Data => |v| v,
-        else => printWorkmanStackAndPanic("expected data"),
+        else => {
+            //std.log.err("expectData panic: expected Data but got {}", .{value});
+            printWorkmanStackAndPanic("expected data");
+        },
     };
 }
 
 fn expectFunc(value: Value) FuncValue {
-    // Handle Result types by unwrapping lazily
-    const unwrapped = unwrapResultForCall(value);
-    if (unwrapped.short_circuit) |_| {
-        printWorkmanStackAndPanic("expected function, got error result");
-    }
-    const actual_value = if (unwrapped.infected) unwrapped.value else value;
-    return switch (actual_value) {
+    return switch (value) {
         .Func => |v| v,
         else => printWorkmanStackAndPanic("expected function"),
     };

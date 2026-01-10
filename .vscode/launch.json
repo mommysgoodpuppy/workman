@@ -9,15 +9,18 @@
       "request": "launch",
       "name": "Launch Program",
       "type": "node",
-      "program": "${workspaceFolder}/tmp/debug_parse_lib.ts",
+      "program": "${workspaceFolder}/wm.ts",
       "cwd": "${workspaceFolder}",
       "env": {},
-      "runtimeExecutable": "C:\\Users\\Gamingprofile\\.version-fox\\cache\\deno\\current\\deno.EXE",
+      "runtimeExecutable": "C:/Users/Gamingprofile/.version-fox/cache/deno/current/deno.exe",
       "runtimeArgs": [
         "run",
-        "--unstable",
         "--inspect-wait",
         "--allow-all"
+      ],
+      "args": [
+        "err",
+        "std/list.wm"
       ],
       "attachSimplePort": 9229
     }

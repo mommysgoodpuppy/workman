@@ -16,3 +16,5 @@ dist_zig/
 *.pdb
 .zig-cache/
 .wm-cache/
+sdl3-mingw/
+zig-out/
