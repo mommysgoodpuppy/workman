@@ -1,0 +1,56 @@
+-- Formatting for literals
+
+from "std/nativeString" import { stringConcat, stringLength };
+from "std/coretypes" import { Some, None };
+
+export let formatLiteral = (lit: Literal) => {
+  match lit {
+    .{ kind = "int", value = v } => formatInt(v)
+    | .{ kind = "bool", value = v } => formatBool(v)
+    | .{ kind = "char", value = v } => formatChar(v)
+    | .{ kind = "string", value = v } => formatString(v)
+    | .{ kind = "unit" } => "()"
+  }
+};
+
+let formatInt = (value: Int) => {
+  -- TODO: Use proper integer to string conversion
+  -- For now, placeholder
+  "0"
+};
+
+let formatBool = (value: Bool) => {
+  if value {
+    "true"
+  } else {
+    "false"
+  }
+};
+
+let formatChar = (value: String) => {
+  let escaped = escapeChar(value);
+  stringConcat(stringConcat("'", escaped), "'")
+};
+
+let formatString = (value: String) => {
+  let escaped = escapeString(value);
+  stringConcat(stringConcat("\"", escaped), "\"")
+};
+
+let escapeChar = (ch: String) => {
+  match ch {
+    "'" => "\\'"
+    | "\\" => "\\\\"
+    | "\n" => "\\n"
+    | "\r" => "\\r"
+    | "\t" => "\\t"
+    | "\0" => "\\0"
+    | _ => ch
+  }
+};
+
+let escapeString = (s: String) => {
+  -- TODO: Implement proper string escaping
+  -- This needs to iterate through the string and escape special characters
+  s
+};

@@ -1,5 +1,6 @@
 @core;
-export infectious effect type Option<T> = @value Some<T> | @effect None;
+export type Option<T> = Some<T> | None;
+export infectious effect type IOption<T> = @value ISome<T> | @effect INone;
 
 export type List<T> = Empty | Link<T, List<T>>;
 

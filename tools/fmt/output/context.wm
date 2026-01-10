@@ -1,0 +1,189 @@
+-- Output context for managing indentation and newlines during formatting
+-- This replaces the TypeScript FormatContext class
+
+from "std/coretypes" import { List, Empty, Link };
+from "std/nativeString" import { stringLength, stringConcat };
+from "std/list" import { listReverse, listMap, listFoldl };
+
+export record OutputContext = {
+  indentLevel: Int,
+  indentSize: Int,
+  newline: String,
+  buffer: List<String>,
+  lineStart: Bool
+};
+
+export record OutputOptions = {
+  indentSize: Int,
+  newline: String
+};
+
+export let createContext = (options: OutputOptions) => {
+  if options.indentSize <= 0 {
+    panic("indentSize must be positive")
+  };
+  if stringLength(options.newline) == 0 {
+    panic("newline must be non-empty")
+  };
+  .{
+    indentLevel = 0,
+    indentSize = options.indentSize,
+    newline = options.newline,
+    buffer = Empty,
+    lineStart = true
+  }
+};
+
+export let write = (ctx: OutputContext, text: String) => {
+  if stringLength(text) == 0 {
+    ctx
+  } else {
+    writeInternal(ctx, text, true)
+  }
+};
+
+export let writeRaw = (ctx: OutputContext, text: String) => {
+  if stringLength(text) == 0 {
+    ctx
+  } else {
+    writeInternal(ctx, text, false)
+  }
+};
+
+export let writeLine = (ctx: OutputContext, text: String) => {
+  let ctx1 = if stringLength(text) > 0 {
+    write(ctx, text)
+  } else {
+    ctx
+  };
+  .{
+    ctx1 with
+    buffer = Link(ctx1.newline, ctx1.buffer),
+    lineStart = true
+  }
+};
+
+export let blankLine = (ctx: OutputContext) => {
+  writeLine(ctx, "")
+};
+
+export let withIndent = (ctx: OutputContext, f: (OutputContext) => OutputContext, levels: Int) => {
+  let ctx1 = increaseIndent(ctx, levels);
+  let ctx2 = f(ctx1);
+  decreaseIndent(ctx2, levels)
+};
+
+export let increaseIndent = (ctx: OutputContext, levels: Int) => {
+  if levels <= 0 {
+    panic("levels must be positive")
+  };
+  .{ ctx with indentLevel = ctx.indentLevel + levels }
+};
+
+export let decreaseIndent = (ctx: OutputContext, levels: Int) => {
+  if levels <= 0 {
+    panic("levels must be positive")
+  };
+  if levels > ctx.indentLevel {
+    panic("Cannot decrease indent below zero")
+  };
+  .{ ctx with indentLevel = ctx.indentLevel - levels }
+};
+
+export let getIndentString = (ctx: OutputContext, level: Int) => {
+  if level < 0 {
+    panic("level cannot be negative")
+  };
+  let spaces = level * ctx.indentSize;
+  repeatString(" ", spaces)
+};
+
+export let toString = (ctx: OutputContext) => {
+  let parts = listReverse(ctx.buffer);
+  joinStrings(parts, "")
+};
+
+-- Internal helpers
+
+let ensureIndent = (ctx: OutputContext) => {
+  if ctx.lineStart {
+    let indent = getIndentString(ctx, ctx.indentLevel);
+    .{
+      ctx with
+      buffer = Link(indent, ctx.buffer),
+      lineStart = false
+    }
+  } else {
+    ctx
+  }
+};
+
+let writeInternal = (ctx: OutputContext, text: String, applyIndent: Bool) => {
+  let segments = splitWithNewlines(text);
+  listFoldl(
+    (currentCtx, segment) => {
+      if stringLength(segment) == 0 {
+        currentCtx
+      } else if isNewline(segment) {
+        .{
+          currentCtx with
+          buffer = Link(segment, currentCtx.buffer),
+          lineStart = true
+        }
+      } else {
+        let ctx1 = if applyIndent {
+          ensureIndent(currentCtx)
+        } else {
+          .{ currentCtx with lineStart = false }
+        };
+        .{ ctx1 with buffer = Link(segment, ctx1.buffer) }
+      }
+    },
+    ctx,
+    segments
+  )
+};
+
+-- String utilities
+
+let repeatString = (s: String, count: Int) => {
+  if count <= 0 {
+    ""
+  } else {
+    let rec = (acc: String, n: Int) => {
+      if n == 0 {
+        acc
+      } else {
+        rec(stringConcat(acc, s), n - 1)
+      }
+    };
+    rec("", count)
+  }
+};
+
+let joinStrings = (parts: List<String>, sep: String) => {
+  let rec = (acc: String, rest: List<String>) => {
+    match rest {
+      Empty => acc
+      | Link(head, Empty) => stringConcat(acc, head)
+      | Link(head, tail) => rec(stringConcat(stringConcat(acc, head), sep), tail)
+    }
+  };
+  match parts {
+    Empty => ""
+    | Link(head, tail) => rec(head, tail)
+  }
+};
+
+let splitWithNewlines = (text: String) => {
+  -- Simple implementation: split on \n, \r\n, or \r
+  -- This is a simplified version; a full implementation would use regex
+  -- For now, we'll handle common cases
+  -- TODO: Implement proper newline splitting using string utilities
+  -- For now, return a list with just the text
+  Link(text, Empty)
+};
+
+let isNewline = (s: String) => {
+  s == "\n" || s == "\r" || s == "\r\n"
+};

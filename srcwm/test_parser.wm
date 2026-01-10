@@ -1,0 +1,90 @@
+-- Parser smoke tests for Workman parser prototype
+
+from "std/coretypes" import { Empty, Link };
+from "std/coretypes" import { IOk, IErr };
+from "std/nativeString" import { stringConcat, stringEq, intToString };
+
+from "./parser.wm" import { parseProgram };
+
+let printHeader = (title) => {
+  print("");
+  print(title);
+};
+
+let pass = (label) => {
+  print(stringConcat("PASS: ", label))
+};
+
+let fail = (label, message) => {
+  print(stringConcat("FAIL: ", stringConcat(label, message)))
+};
+
+let expectLetValueKind = (label, source, expectedKind) => {
+  match (parseProgram(source)) {
+    IOk(program) => {
+      match (program.declarations) {
+        Link(decl, _) => {
+          match (stringEq(decl.value.kind, expectedKind)) {
+            true => { pass(label) },
+            false => {
+              let msg = stringConcat("expected value kind ", expectedKind);
+              fail(label, stringConcat(" but got ", decl.value.kind))
+            }
+          }
+        },
+        Empty => {
+          fail(label, " program had no declarations")
+        }
+      }
+    },
+    IErr(err) => {
+      fail(label, stringConcat(" parse error: ", err.message))
+    }
+  }
+};
+
+let expectParseError = (label, source) => {
+  match (parseProgram(source)) {
+    IOk(_) => {
+      fail(label, " expected parse error but got success")
+    },
+    IErr(err) => {
+      let pos = intToString(err.span.start);
+      let msg = stringConcat("error at ", pos);
+      pass(stringConcat(label, stringConcat(" (", msg)))
+    }
+  }
+};
+
+let main = => {
+  printHeader("Parser tests");
+
+  expectLetValueKind(
+    "identifier literal",
+    "let name = foo;\n",
+    "identifier"
+  );
+
+  expectLetValueKind(
+    "number literal",
+    "let count = 123;",
+    "number"
+  );
+
+  expectLetValueKind(
+    "string literal",
+    "let greeting = \"hi\";",
+    "string"
+  );
+
+  expectLetValueKind(
+    "call expression",
+    "let answer = compute(1, helper());",
+    "call"
+  );
+
+  expectParseError(
+    "missing semicolon",
+    "let bad = 1"
+  );
+};

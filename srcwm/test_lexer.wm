@@ -127,7 +127,7 @@ let testRealistic = () => {
   print("")
 };
 
-let main = () => {
+let main = => {
   testBasic();
   testKeywords();
   testOperators();

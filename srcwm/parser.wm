@@ -1,0 +1,296 @@
+-- Minimal parser for Workman expressions and let declarations
+
+from "std/coretypes" import { Empty, Link, Some, None };
+from "std/coretypes" import { IOk, IErr };
+from "std/list" import { listReverse };
+from "std/nativeString" import { stringConcat };
+
+from "./lexer.wm" import { lex };
+from "./token.wm" import {
+  Token,
+  TokenKind,
+  Span,
+  span,
+  spanMerge,
+  tokenKindToString,
+  TkLet,
+  TkIdentifier,
+  TkNumber,
+  TkString,
+  TkLParen,
+  TkRParen,
+  TkComma,
+  TkEquals,
+  TkSemicolon,
+  TkEof
+};
+from "./ast.wm" import {
+  Program,
+  Expr,
+  LetDeclaration,
+  ParseError,
+  identifierExpr,
+  numberExpr,
+  stringExpr,
+  callExpr,
+  letDeclaration,
+  program
+};
+
+let mkError = (message, sp:Span) => {
+  .{ message = message, span = sp }
+};
+
+let unexpectedTokenError = (expected, token) => {
+  let base = stringConcat("Expected ", expected);
+  let got = stringConcat(", but found ", tokenKindToString(token.kind));
+  mkError(stringConcat(base, got), token.span)
+};
+
+let eofError = (expected) => {
+  let msg = stringConcat("Unexpected end of input, expected ", expected);
+  mkError(msg, span(0, 0))
+};
+
+let peekToken = match(tokens) => {
+  Empty => { None },
+  Link(tok, _) => { Some(tok) }
+};
+
+let tokenKindEquals = match(kind, expected) => {
+  (TkLet, TkLet) => { true },
+  (TkIdentifier, TkIdentifier) => { true },
+  (TkNumber, TkNumber) => { true },
+  (TkString, TkString) => { true },
+  (TkLParen, TkLParen) => { true },
+  (TkRParen, TkRParen) => { true },
+  (TkComma, TkComma) => { true },
+  (TkEquals, TkEquals) => { true },
+  (TkSemicolon, TkSemicolon) => { true },
+  (TkEof, TkEof) => { true },
+  _ => { false }
+};
+
+let expectKind = (tokens, expectedKind, expectedText) => {
+  match (tokens) {
+    Empty => { IErr(eofError(expectedText)) },
+    Link(tok, rest) => {
+      match (tokenKindEquals(tok.kind, expectedKind)) {
+        true => { IOk((tok, rest)) },
+        false => { IErr(unexpectedTokenError(expectedText, tok)) }
+      }
+    }
+  }
+};
+
+-- =============================================================================
+-- Public API
+-- =============================================================================
+
+export let parseProgram = (source) => {
+  let tokens = lex(source);
+  parseProgramTokens(tokens)
+};
+
+export let parseProgramTokens = (tokens) => {
+  match (parseDeclarations(tokens, Empty)) {
+    IErr(err) => { IErr(err) },
+    IOk((decls, _)) => { IOk(program(decls)) }
+  }
+};
+
+-- =============================================================================
+-- Declaration parsing
+-- =============================================================================
+
+let rec parseDeclarations = match(tokens, acc) => {
+  (tokens, acc) => {
+    match (peekToken(tokens)) {
+      None => { IOk((listReverse(acc), tokens)) },
+      Some(tok) => {
+        match (tok.kind) {
+          TkEof => { IOk((listReverse(acc), tokens)) },
+          _ => {
+            match (parseLetDeclaration(tokens)) {
+              IErr(err) => { IErr(err) },
+              IOk((decl, rest)) => {
+                parseDeclarations(rest, Link(decl, acc))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+let parseLetDeclaration = (tokens) => {
+  match (expectKind(tokens, TkLet, "let")) {
+    IErr(err) => { IErr(err) },
+    IOk((letTok, afterLet)) => {
+      match (expectKind(afterLet, TkIdentifier, "identifier")) {
+        IErr(err) => { IErr(err) },
+        IOk((nameTok, afterName)) => {
+          match (expectKind(afterName, TkEquals, "=")) {
+            IErr(err) => { IErr(err) },
+            IOk((_, afterEquals)) => {
+              match (parseExpression(afterEquals)) {
+                IErr(err) => { IErr(err) },
+                IOk((valueExpr, afterExpr)) => {
+                  match (expectKind(afterExpr, TkSemicolon, ";")) {
+                    IErr(err) => { IErr(err) },
+                    IOk((semiTok, afterSemi)) => {
+                      let declSpan = spanMerge(letTok.span, semiTok.span);
+                      IOk((letDeclaration(nameTok.lexeme, valueExpr, declSpan), afterSemi))
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+-- =============================================================================
+-- Expression parsing
+-- =============================================================================
+
+let parseExpression = (tokens) => {
+  parseCallExpression(tokens)
+};
+
+let parseCallExpression = (tokens) => {
+  match (parsePrimary(tokens)) {
+    IErr(err) => { IErr(err) },
+    IOk((expr, rest)) => {
+      parseCallSuffix(expr, rest)
+    }
+  }
+};
+
+let rec parseCallSuffix = match(expr, tokens) => {
+  (expr, tokens) => {
+    match (peekToken(tokens)) {
+      Some(tok) => {
+        match (tokenKindEquals(tok.kind, TkLParen)) {
+          true => {
+            match (expectKind(tokens, TkLParen, "(")) {
+              IErr(err) => { IErr(err) },
+              IOk((_, afterOpen)) => {
+                match (parseArguments(afterOpen)) {
+                  IErr(err) => { IErr(err) },
+                  IOk((args, closeSpan, afterArgs)) => {
+                    let callSpan = spanMerge(expr.span, closeSpan);
+                    let callNode = callExpr(expr, args, callSpan);
+                    parseCallSuffix(callNode, afterArgs)
+                  }
+                }
+              }
+            }
+          },
+          false => { IOk((expr, tokens)) }
+        }
+      },
+      None => { IOk((expr, tokens)) }
+    }
+  }
+};
+
+let parsePrimary = (tokens) => {
+  match (tokens) {
+    Empty => { IErr(eofError("expression")) },
+    Link(tok, rest) => {
+      match (tok.kind) {
+        TkIdentifier => {
+          IOk((identifierExpr(tok.lexeme, tok.span), rest))
+        },
+        TkNumber => {
+          IOk((numberExpr(tok.lexeme, tok.span), rest))
+        },
+        TkString => {
+          IOk((stringExpr(tok.lexeme, tok.span), rest))
+        },
+        TkLParen => {
+          match (parseExpression(rest)) {
+            IErr(err) => { IErr(err) },
+            IOk((expr, afterExpr)) => {
+              match (expectKind(afterExpr, TkRParen, ")")) {
+                IErr(err) => { IErr(err) },
+                IOk((closeTok, afterClose)) => {
+                  let merged = spanMerge(tok.span, closeTok.span);
+                  IOk((.{ ..expr, span = merged }, afterClose))
+                }
+              }
+            }
+          }
+        },
+        _ => { IErr(unexpectedTokenError("expression", tok)) }
+      }
+    }
+  }
+};
+
+-- =============================================================================
+-- Argument parsing
+-- =============================================================================
+
+let parseArguments = (tokens) => {
+  match (peekToken(tokens)) {
+    Some(tok) => {
+      match (tokenKindEquals(tok.kind, TkRParen)) {
+        true => {
+          match (expectKind(tokens, TkRParen, ")")) {
+            IErr(err) => { IErr(err) },
+            IOk((closeTok, afterClose)) => {
+              IOk((Empty, closeTok.span, afterClose))
+            }
+          }
+        },
+        false => {
+          match (parseArgumentSequence(tokens, Empty)) {
+            IErr(err) => { IErr(err) },
+            IOk((args, afterArgs)) => {
+              match (expectKind(afterArgs, TkRParen, ")")) {
+                IErr(err) => { IErr(err) },
+                IOk((closeTok, afterClose)) => {
+                  IOk((args, closeTok.span, afterClose))
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    None => { IErr(eofError(")")) }
+  }
+};
+
+let rec parseArgumentSequence = match(tokens, acc) => {
+  (tokens, acc) => {
+    match (parseExpression(tokens)) {
+      IErr(err) => { IErr(err) },
+      IOk((expr, rest)) => {
+        let newAcc = Link(expr, acc);
+        match (peekToken(rest)) {
+          Some(tok) => {
+            match (tokenKindEquals(tok.kind, TkComma)) {
+              true => {
+                match (expectKind(rest, TkComma, ",")) {
+                  IErr(err) => { IErr(err) },
+                  IOk((_, afterComma)) => {
+                    parseArgumentSequence(afterComma, newAcc)
+                  }
+                }
+              },
+              false => { IOk((listReverse(newAcc), rest)) }
+            }
+          },
+          None => { IOk((listReverse(newAcc), rest)) }
+        }
+      }
+    }
+  }
+};

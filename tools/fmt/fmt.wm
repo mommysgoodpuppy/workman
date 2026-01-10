@@ -1,0 +1,12 @@
+-- Main entry point for the Workman formatter
+-- This will eventually replace tools/fmt.ts
+
+-- TODO: Implement CLI argument parsing
+-- TODO: Implement file reading/writing
+-- TODO: Integrate with parser
+-- TODO: Implement main formatting pipeline
+
+export let main = () => {
+  -- Placeholder for now
+  print("Formatter not yet implemented")
+};

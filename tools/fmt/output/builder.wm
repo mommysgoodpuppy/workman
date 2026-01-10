@@ -1,0 +1,50 @@
+-- String building utilities for formatter
+
+from "std/coretypes" import { List, Empty, Link };
+from "std/nativeString" import { stringConcat };
+
+export let join = (parts: List<String>, sep: String) => {
+  let rec = (acc: String, rest: List<String>) => {
+    match rest {
+      Empty => acc
+      | Link(head, Empty) => stringConcat(acc, head)
+      | Link(head, tail) => rec(stringConcat(stringConcat(acc, head), sep), tail)
+    }
+  };
+  match parts {
+    Empty => ""
+    | Link(head, tail) => rec(head, tail)
+  }
+};
+
+export let joinComma = (parts: List<String>) => {
+  join(parts, ", ")
+};
+
+export let joinSpace = (parts: List<String>) => {
+  join(parts, " ")
+};
+
+export let joinNewline = (parts: List<String>) => {
+  join(parts, "\n")
+};
+
+export let wrap = (prefix: String, content: String, suffix: String) => {
+  stringConcat(stringConcat(prefix, content), suffix)
+};
+
+export let wrapParens = (content: String) => {
+  wrap("(", content, ")")
+};
+
+export let wrapBraces = (content: String) => {
+  wrap("{", content, "}")
+};
+
+export let wrapBrackets = (content: String) => {
+  wrap("[", content, "]")
+};
+
+export let wrapAngle = (content: String) => {
+  wrap("<", content, ">")
+};

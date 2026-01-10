@@ -1,0 +1,84 @@
+-- Minimal AST definitions for the Workman self-hosted parser
+
+from "std/coretypes" import { Empty, Link };
+from "./token.wm" import { Span, span, spanMerge };
+
+-- Parser error information
+export record ParseError = {
+  message: String,
+  span: Span
+};
+
+-- =============================================================================
+-- Expressions
+-- =============================================================================
+
+export type Expr =
+  | IdentifierExpr
+  | NumberExpr
+  | StringExpr
+  | CallExpr;
+
+export record IdentifierExpr = {
+  kind: String,
+  name: String,
+  span: Span
+};
+
+export record NumberExpr = {
+  kind: String,
+  value: String,
+  span: Span
+};
+
+export record StringExpr = {
+  kind: String,
+  value: String,
+  span: Span
+};
+
+export record CallExpr = {
+  kind: String,
+  callee: Expr,
+  args: List<Expr>,
+  span: Span
+};
+
+export let identifierExpr = (name, sp) => {
+  .{ kind = "identifier", name = name, span = sp }
+};
+
+export let numberExpr = (value, sp) => {
+  .{ kind = "number", value = value, span = sp }
+};
+
+export let stringExpr = (value, sp) => {
+  .{ kind = "string", value = value, span = sp }
+};
+
+export let callExpr = (callee, args, sp) => {
+  .{ kind = "call", callee = callee, args = args, span = sp }
+};
+
+-- =============================================================================
+-- Declarations / Program
+-- =============================================================================
+
+export record LetDeclaration = {
+  kind: String,
+  name: String,
+  value: Expr,
+  span: Span
+};
+
+export let letDeclaration = (name, value, sp) => {
+  .{ kind = "let", name = name, value = value, span = sp }
+};
+
+export record Program = {
+  declarations: List<LetDeclaration>
+};
+
+export let program = (decls) => {
+  .{ declarations = decls }
+};

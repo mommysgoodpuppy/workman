@@ -35,6 +35,14 @@ export let stripErr = match(in) => {
   }
 };
 
+export let stripErr2 = match(in) => {
+  IOk(stripped) => { Panic("x") },
+  Var(stripped) => { stripped },
+  IErr(_) => {
+    --noop
+  }
+};
+
 -- Check if result is Ok
 export let resultIsOk = match(result) => {
   IOk(_) => { true },

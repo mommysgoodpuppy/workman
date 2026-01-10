@@ -1,0 +1,156 @@
+-- Expression formatting
+-- This module handles formatting of all expression types
+
+from "./literal.wm" import { formatLiteral };
+from "../output/builder.wm" import { wrapParens, joinComma };
+from "std/list" import { listMap, listFoldl };
+from "std/coretypes" import { Empty, Link };
+from "std/nativeString" import { stringConcat };
+
+export let formatExpr = (expr: Expr) => {
+  match expr {
+    .{ kind = "identifier", name = n } => n
+    | .{ kind = "literal", literal = lit } => formatLiteral(lit)
+    | .{ kind = "call", callee = c, arguments = args } => 
+        formatCall(c, args)
+    | .{ kind = "binary", left = l, operator = op, right = r } => 
+        formatBinary(l, op, r)
+    | .{ kind = "unary", operator = op, operand = o } => 
+        formatUnary(op, o)
+    | .{ kind = "tuple", elements = elems } => 
+        formatTuple(elems)
+    | .{ kind = "record_projection", target = t, field = f } => 
+        formatRecordProjection(t, f)
+    | .{ kind = "index", target = t, index = i } => 
+        formatIndex(t, i)
+    | .{ kind = "constructor", name = n, args = args } => 
+        formatConstructor(n, args)
+    | .{ kind = "record_literal", fields = fields } => 
+        formatRecordLiteral(fields)
+    | .{ kind = "arrow", parameters = params, body = body, returnAnnotation = retAnn } => 
+        formatArrow(params, body, retAnn)
+    | .{ kind = "block", statements = stmts, result = result } => 
+        formatBlock(stmts, result)
+    | .{ kind = "if", condition = cond, thenBranch = then_, elseBranch = else_ } => 
+        formatIf(cond, then_, else_)
+    | .{ kind = "match", scrutinee = scrut, bundle = bundle } => 
+        formatMatch(scrut, bundle)
+    | .{ kind = "match_fn", parameters = params, bundle = bundle } => 
+        formatMatchFn(params, bundle)
+    | .{ kind = "match_bundle_literal", bundle = bundle } => 
+        formatMatchBundleLiteral(bundle)
+    | .{ kind = "hole" } => "?"
+    | .{ kind = "enum_literal", name = n } => n
+    | .{ kind = "list_literal", elements = elems } => 
+        formatListLiteral(elems)
+    | .{ kind = "panic", message = msg } => 
+        formatPanic(msg)
+    | .{ kind = "type_as", expression = expr, typeAnnotation = typeAnn } => 
+        formatTypeAs(expr, typeAnn)
+  }
+};
+
+let formatCall = (callee: Expr, args: List<Expr>) => {
+  let calleeStr = formatExpr(callee);
+  let argsStr = formatArgs(args);
+  stringConcat(stringConcat(stringConcat(calleeStr, "("), argsStr), ")")
+};
+
+let formatArgs = (args: List<Expr>) => {
+  let formatted = listMap(formatExpr, args);
+  joinComma(formatted)
+};
+
+let formatBinary = (left: Expr, op: String, right: Expr) => {
+  let leftStr = formatExpr(left);
+  let rightStr = formatExpr(right);
+  stringConcat(stringConcat(stringConcat(stringConcat(leftStr, " "), op), " "), rightStr)
+};
+
+let formatUnary = (op: String, operand: Expr) => {
+  let operandStr = formatExpr(operand);
+  stringConcat(op, operandStr)
+};
+
+let formatTuple = (elems: List<Expr>) => {
+  match elems {
+    Empty => "()"
+    | Link(_, _) => {
+        let formatted = listMap(formatExpr, elems);
+        wrapParens(joinComma(formatted))
+      }
+  }
+};
+
+let formatRecordProjection = (target: Expr, field: String) => {
+  let targetStr = formatExpr(target);
+  stringConcat(stringConcat(targetStr, "."), field)
+};
+
+let formatIndex = (target: Expr, index: Expr) => {
+  let targetStr = formatExpr(target);
+  let indexStr = formatExpr(index);
+  stringConcat(stringConcat(stringConcat(stringConcat(targetStr, "["), indexStr), "]"), "")
+};
+
+let formatConstructor = (name: String, args: List<Expr>) => {
+  match args {
+    Empty => name
+    | Link(_, _) => {
+        let argsStr = formatArgs(args);
+        stringConcat(stringConcat(stringConcat(name, "("), argsStr), ")")
+      }
+  }
+};
+
+let formatRecordLiteral = (fields: List<RecordField>) => {
+  -- TODO: Implement record literal formatting
+  ".{}"
+};
+
+let formatArrow = (params: List<Parameter>, body: BlockExpr, retAnn: Option<TypeExpr>) => {
+  -- TODO: Implement arrow function formatting
+  "() => {}"
+};
+
+let formatBlock = (stmts: List<BlockStatement>, result: Option<Expr>) => {
+  -- TODO: Implement block formatting
+  "{}"
+};
+
+let formatIf = (cond: Expr, then_: Expr, else_: Expr) => {
+  -- TODO: Implement if expression formatting
+  "if () {} else {}"
+};
+
+let formatMatch = (scrutinee: Expr, bundle: MatchBundle) => {
+  -- TODO: Implement match expression formatting
+  "match() {}"
+};
+
+let formatMatchFn = (params: List<Expr>, bundle: MatchBundle) => {
+  -- TODO: Implement match function formatting
+  "match() => {}"
+};
+
+let formatMatchBundleLiteral = (bundle: MatchBundle) => {
+  -- TODO: Implement match bundle literal formatting
+  "match {}"
+};
+
+let formatListLiteral = (elems: List<Expr>) => {
+  -- TODO: Implement list literal formatting
+  "[]"
+};
+
+let formatPanic = (msg: Expr) => {
+  let msgStr = formatExpr(msg);
+  stringConcat(stringConcat("panic(", msgStr), ")")
+};
+
+let formatTypeAs = (expr: Expr, typeAnn: TypeExpr) => {
+  -- TODO: Implement type as formatting
+  formatExpr(expr) ++ " as " ++ "Type"
+};
+
+-- Helper functions are now imported from std/list
