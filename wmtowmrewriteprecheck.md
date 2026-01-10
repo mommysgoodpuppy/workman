@@ -40,11 +40,11 @@ match (expr) {
 }
 ```
 
-- [ ] Parser: `Pattern when condition => body`
-- [ ] AST: add `guard?: Expr` to MatchPatternArm
-- [ ] Type checker: check guard is Bool
-- [ ] Exhaustiveness: guards make patterns potentially non-exhaustive
-- [ ] Codegen: emit conditional check after pattern match
+- [x] Parser: `Pattern when condition => body`
+- [x] AST: add `guard?: Expr` to MatchPatternArm
+- [x] Type checker: check guard is Bool
+- [x] Exhaustiveness: guards make patterns potentially non-exhaustive
+- [x] Codegen: emit conditional check after pattern match
 
 ---
 
@@ -110,19 +110,19 @@ AST transformations constantly create modified nodes:
 
 ---
 
-### `fail` / `panic` Expression — REQUIRED
+### `panic` Expression — REQUIRED
 
 For internal compiler errors (ICE):
 
 ```
 match (impossible) {
-  _ => fail "unreachable: this should never happen"
+  _ => Panic("unreachable: this should never happen")
 }
 ```
 
-- [ ] Parser: `fail "message"`
-- [ ] Type: `fail : forall a. String -> a` (bottom type)
-- [ ] Runtime: halt with error message
+- [x] Parser: `fail "message"`
+- [x] Type: `fail : forall a. String -> a` (bottom type)
+- [x] Runtime: halt with error message
 
 ---
 
@@ -136,8 +136,8 @@ stringConcat(stringConcat(a, " "), b)
 a ++ " " ++ b
 ```
 
-- [ ] Define `++` infix operator for strings
-- [ ] `infixl 5 ++ = stringConcat`
+- [x] Define `++` infix operator for strings
+- [x] `infixl 5 ++ = stringConcat`
 
 ---
 
@@ -172,41 +172,41 @@ visited sets, free vars.
 
 ### StringMap (start here)
 
-- [ ] `type StringMap<V>` — association list keyed by String
-- [ ] `stringMapEmpty : StringMap<V>`
-- [ ] `stringMapInsert : (String, V, StringMap<V>) -> StringMap<V>`
-- [ ] `stringMapLookup : (String, StringMap<V>) -> Option<V>`
-- [ ] `stringMapContains : (String, StringMap<V>) -> Bool`
-- [ ] `stringMapRemove : (String, StringMap<V>) -> StringMap<V>`
-- [ ] `stringMapToList : StringMap<V> -> List<(String, V)>`
-- [ ] `stringMapFromList : List<(String, V)> -> StringMap<V>`
-- [ ] `stringMapKeys : StringMap<V> -> List<String>`
-- [ ] `stringMapValues : StringMap<V> -> List<V>`
-- [ ] `stringMapMap : (V -> W, StringMap<V>) -> StringMap<W>`
-- [ ] `stringMapFold : ((Acc, String, V) -> Acc, Acc, StringMap<V>) -> Acc`
-- [ ] `stringMapUnion : (StringMap<V>, StringMap<V>) -> StringMap<V>`
+- [x] `type StringMap<V>` — association list keyed by String
+- [x] `stringMapEmpty : StringMap<V>`
+- [x] `stringMapInsert : (String, V, StringMap<V>) -> StringMap<V>`
+- [x] `stringMapLookup : (String, StringMap<V>) -> Option<V>`
+- [x] `stringMapContains : (String, StringMap<V>) -> Bool`
+- [x] `stringMapRemove : (String, StringMap<V>) -> StringMap<V>`
+- [x] `stringMapToList : StringMap<V> -> List<(String, V)>`
+- [x] `stringMapFromList : List<(String, V)> -> StringMap<V>`
+- [x] `stringMapKeys : StringMap<V> -> List<String>`
+- [x] `stringMapValues : StringMap<V> -> List<V>`
+- [x] `stringMapMap : (V -> W, StringMap<V>) -> StringMap<W>`
+- [x] `stringMapFold : ((Acc, String, V) -> Acc, Acc, StringMap<V>) -> Acc`
+- [x] `stringMapUnion : (StringMap<V>, StringMap<V>) -> StringMap<V>`
 
 ### StringSet
 
-- [ ] `type StringSet` — association list
-- [ ] `stringSetEmpty : StringSet`
-- [ ] `stringSetInsert : (String, StringSet) -> StringSet`
-- [ ] `stringSetContains : (String, StringSet) -> Bool`
-- [ ] `stringSetRemove : (String, StringSet) -> StringSet`
-- [ ] `stringSetToList : StringSet -> List<String>`
-- [ ] `stringSetFromList : List<String> -> StringSet`
-- [ ] `stringSetUnion : (StringSet, StringSet) -> StringSet`
-- [ ] `stringSetDifference : (StringSet, StringSet) -> StringSet`
+- [x] `type StringSet` — association list
+- [x] `stringSetEmpty : StringSet`
+- [x] `stringSetInsert : (String, StringSet) -> StringSet`
+- [x] `stringSetContains : (String, StringSet) -> Bool`
+- [x] `stringSetRemove : (String, StringSet) -> StringSet`
+- [x] `stringSetToList : StringSet -> List<String>`
+- [x] `stringSetFromList : List<String> -> StringSet`
+- [x] `stringSetUnion : (StringSet, StringSet) -> StringSet`
+- [x] `stringSetDifference : (StringSet, StringSet) -> StringSet`
 
 ### IntMap (for node IDs)
 
-- [ ] `type IntMap<V>`
-- [ ] `intMapEmpty`, `intMapInsert`, `intMapLookup`, `intMapContains`
+- [x] `type IntMap<V>`
+- [x] `intMapEmpty`, `intMapInsert`, `intMapLookup`, `intMapContains`
 
 ### IntSet (for visited sets, free vars)
 
-- [ ] `type IntSet`
-- [ ] `intSetEmpty`, `intSetInsert`, `intSetContains`, `intSetUnion`
+- [x] `type IntSet`
+- [x] `intSetEmpty`, `intSetInsert`, `intSetContains`, `intSetUnion`
 
 **Note:** Association-list is O(n) but fine for bootstrap. Upgrade to balanced
 tree later.
@@ -217,16 +217,16 @@ tree later.
 
 ### Core (required for lexer/parser)
 
-- [ ] `stringLength : String -> Int`
-- [ ] `stringCharAt : (String, Int) -> Option<Char>`
-- [ ] `stringSubstring : (String, Int, Int) -> String`
-- [ ] `stringIndexOf : (Char, String) -> Option<Int>`
-- [ ] `stringStartsWith : (String, String) -> Bool`
-- [ ] `stringEndsWith : (String, String) -> Bool`
-- [ ] `stringContains : (String, String) -> Bool`
-- [ ] `stringToList : String -> List<Char>`
-- [ ] `stringFromList : List<Char> -> String`
-- [ ] `stringIsEmpty : String -> Bool`
+- [x] `stringLength : String -> Int`
+- [x] `stringCharAt : (String, Int) -> Option<Char>`
+- [x] `stringSubstring : (String, Int, Int) -> String`
+- [x] `stringIndexOf : (Char, String) -> Option<Int>`
+- [x] `stringStartsWith : (String, String) -> Bool`
+- [x] `stringEndsWith : (String, String) -> Bool`
+- [x] `stringContains : (String, String) -> Bool`
+- [x] `stringToList : String -> List<Char>`
+- [x] `stringFromList : List<Char> -> String`
+- [x] `stringIsEmpty : String -> Bool`
 
 ### String Building (for codegen/pretty-printing)
 
