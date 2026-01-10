@@ -1,6 +1,7 @@
 import { compileWorkmanGraph } from "../backends/compiler/frontends/workman.ts";
 import { emitModuleGraph as emitJsModuleGraph } from "../backends/compiler/js/graph_emitter.ts";
 import { emitModuleGraph as emitZigModuleGraph } from "../backends/compiler/zig/graph_emitter.ts";
+import { elaborateCarrierOpsGraph } from "../backends/compiler/passes/elaborate_carriers.ts";
 import { dirname, fromFileUrl, IO, relative, resolve } from "../src/io.ts";
 import { createDefaultForeignTypeConfig } from "../src/foreign_types/c_header_provider.ts";
 import {
@@ -158,6 +159,8 @@ export async function compileToDirectory(
   if (debug) {
     await IO.ensureDir(resolvedOutDir);
     const irPath = resolve(resolvedOutDir, "debug_ir.json");
+    const elaboratedPath = resolve(resolvedOutDir, "debug_ir_elaborated.json");
+    const elaboratedGraph = elaborateCarrierOpsGraph(compileResult.coreGraph);
     // Convert ReadonlyMap to plain object for JSON serialization
     const serializableGraph = {
       entry: compileResult.coreGraph.entry,
@@ -165,10 +168,20 @@ export async function compileToDirectory(
       modules: Object.fromEntries(compileResult.coreGraph.modules),
       prelude: compileResult.coreGraph.prelude,
     };
+    const serializableElaborated = {
+      entry: elaboratedGraph.entry,
+      order: elaboratedGraph.order,
+      modules: Object.fromEntries(elaboratedGraph.modules),
+      prelude: elaboratedGraph.prelude,
+    };
     const irJson = JSON.stringify(serializableGraph, null, 2);
+    const elaboratedJson = JSON.stringify(serializableElaborated, null, 2);
     await Deno.writeTextFile(irPath, irJson);
+    await Deno.writeTextFile(elaboratedPath, elaboratedJson);
     const irRelative = relative(IO.cwd(), irPath);
+    const elaboratedRelative = relative(IO.cwd(), elaboratedPath);
     console.log(`IR saved to: ${irRelative}`);
+    console.log(`Elaborated IR saved to: ${elaboratedRelative}`);
   }
 
   const emitResult = backend === "zig"

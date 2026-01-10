@@ -112,12 +112,19 @@ export interface CoreMatchCoverage {
   readonly dischargesResult: boolean;
 }
 
+export interface CoreCarrierMatchInfo {
+  readonly typeName: string;
+  readonly domain: string;
+}
+
 export interface CoreMatchExpr extends CoreNodeMeta {
   readonly kind: "match";
   readonly scrutinee: CoreExpr;
   readonly cases: readonly CoreMatchCase[];
   readonly fallback?: CoreExpr;
   readonly effectRowCoverage?: CoreMatchCoverage;
+  readonly carrierMatch?: CoreCarrierMatchInfo;
+  readonly dischargedCarrier?: CoreCarrierMatchInfo;
 }
 
 export interface CoreCarrierUnwrapExpr extends CoreNodeMeta {

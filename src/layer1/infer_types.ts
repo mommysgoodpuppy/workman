@@ -41,4 +41,6 @@ export interface MatchBranchesResult {
   bodyTypes: Type[];
   effectRowCoverage?: MatchEffectRowCoverage;
   dischargesResult?: boolean;
+  carrierMatch?: { typeName: string; domain: string };
+  dischargedCarrier?: { typeName: string; domain: string };
 }

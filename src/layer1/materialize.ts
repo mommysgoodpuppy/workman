@@ -104,6 +104,8 @@ export function materializeMatchBundle(
     type: resolvedBundleType,
     effectRowCoverage: effectRowCoverage,
     dischargesResult: matchResult?.dischargesResult ?? false,
+    carrierMatch: matchResult?.carrierMatch,
+    dischargedCarrier: matchResult?.dischargedCarrier,
   } satisfies MMatchBundle;
 }
 

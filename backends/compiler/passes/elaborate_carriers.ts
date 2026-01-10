@@ -7,16 +7,16 @@ import type {
   CorePattern,
   CorePrimOp,
 } from "../ir/core.ts";
-import {
-  cloneType,
-  isCarrierType,
-  splitCarrier,
-  unknownType,
-} from "../../../src/types.ts";
+import { cloneType, unknownType } from "../../../src/types.ts";
 
 interface ElaborateState {
   counter: number;
   usedNames: Set<string>;
+}
+
+interface CarrierContext {
+  carriers: Set<string>;
+  state: ElaborateState;
 }
 
 interface CarrierBinding {
@@ -29,21 +29,29 @@ interface CarrierBinding {
 export function elaborateCarrierOpsGraph(
   graph: CoreModuleGraph,
 ): CoreModuleGraph {
+  const carriers = collectCarrierTypes(graph);
   const modules = new Map<string, CoreModule>();
   for (const [path, module] of graph.modules.entries()) {
-    modules.set(path, elaborateCarrierOpsModule(module));
+    modules.set(
+      path,
+      elaborateCarrierOpsModule(module, carriers),
+    );
   }
   return { ...graph, modules };
 }
 
-export function elaborateCarrierOpsModule(module: CoreModule): CoreModule {
+export function elaborateCarrierOpsModule(
+  module: CoreModule,
+  carriers: Set<string>,
+): CoreModule {
   if (module.mode === "raw") {
     return module;
   }
   const state = createState(module);
+  const ctx: CarrierContext = { carriers, state };
   const values = module.values.map((binding) => ({
     ...binding,
-    value: elaborateExpr(binding.value, state),
+    value: elaborateExpr(binding.value, ctx),
   }));
   return { ...module, values };
 }
@@ -57,12 +65,12 @@ function createState(module: CoreModule): ElaborateState {
   return { counter: 0, usedNames };
 }
 
-function freshName(state: ElaborateState, prefix: string): string {
-  let name = `${prefix}${state.counter++}`;
-  while (state.usedNames.has(name)) {
-    name = `${prefix}${state.counter++}`;
+function freshName(ctx: CarrierContext, prefix: string): string {
+  let name = `${prefix}${ctx.state.counter++}`;
+  while (ctx.state.usedNames.has(name)) {
+    name = `${prefix}${ctx.state.counter++}`;
   }
-  state.usedNames.add(name);
+  ctx.state.usedNames.add(name);
   return name;
 }
 
@@ -146,7 +154,7 @@ function collectPatternNames(pattern: CorePattern, used: Set<string>): void {
   }
 }
 
-function elaborateExpr(expr: CoreExpr, state: ElaborateState): CoreExpr {
+function elaborateExpr(expr: CoreExpr, ctx: CarrierContext): CoreExpr {
   switch (expr.kind) {
     case "literal":
     case "var":
@@ -155,22 +163,22 @@ function elaborateExpr(expr: CoreExpr, state: ElaborateState): CoreExpr {
     case "tuple":
       return {
         ...expr,
-        elements: expr.elements.map((el) => elaborateExpr(el, state)),
+        elements: expr.elements.map((el) => elaborateExpr(el, ctx)),
       };
     case "record":
       return {
         ...expr,
         fields: expr.fields.map((field) => ({
           ...field,
-          value: elaborateExpr(field.value, state),
+          value: elaborateExpr(field.value, ctx),
         })),
       };
     case "tuple_get": {
-      const target = elaborateExpr(expr.target, state);
-      if (!isCarrierType(target.type)) {
+      const target = elaborateExpr(expr.target, ctx);
+      if (!isCarrierType(target.type, ctx.carriers)) {
         return { ...expr, target };
       }
-      const binding = freshName(state, "__carrier_val_");
+      const binding = freshName(ctx, "__carrier_val_");
       const valueType = getCarrierValueType(target.type);
       const body: CoreExpr = {
         kind: "tuple_get",
@@ -192,43 +200,43 @@ function elaborateExpr(expr: CoreExpr, state: ElaborateState): CoreExpr {
     case "data":
       return {
         ...expr,
-        fields: expr.fields.map((field) => elaborateExpr(field, state)),
+        fields: expr.fields.map((field) => elaborateExpr(field, ctx)),
       };
     case "lambda":
       return {
         ...expr,
-        body: elaborateExpr(expr.body, state),
+        body: elaborateExpr(expr.body, ctx),
       };
     case "call":
-      return elaborateCall(expr, state);
+      return elaborateCall(expr, ctx);
     case "let":
       return {
         ...expr,
         binding: {
           ...expr.binding,
-          value: elaborateExpr(expr.binding.value, state),
+          value: elaborateExpr(expr.binding.value, ctx),
         },
-        body: elaborateExpr(expr.body, state),
+        body: elaborateExpr(expr.body, ctx),
       };
     case "let_rec":
       return {
         ...expr,
         bindings: expr.bindings.map((binding) => ({
           ...binding,
-          value: elaborateExpr(binding.value, state) as CoreExpr & {
+          value: elaborateExpr(binding.value, ctx) as CoreExpr & {
             kind: "lambda";
           },
         })),
-        body: elaborateExpr(expr.body, state),
+        body: elaborateExpr(expr.body, ctx),
       };
     case "if": {
-      const condition = elaborateExpr(expr.condition, state);
-      const thenBranch = elaborateExpr(expr.thenBranch, state);
-      const elseBranch = elaborateExpr(expr.elseBranch, state);
-      if (!isCarrierType(condition.type)) {
+      const condition = elaborateExpr(expr.condition, ctx);
+      const thenBranch = elaborateExpr(expr.thenBranch, ctx);
+      const elseBranch = elaborateExpr(expr.elseBranch, ctx);
+      if (!isCarrierType(condition.type, ctx.carriers)) {
         return { ...expr, condition, thenBranch, elseBranch };
       }
-      const binding = freshName(state, "__carrier_cond_");
+      const binding = freshName(ctx, "__carrier_cond_");
       const valueType = getCarrierValueType(condition.type);
       const body: CoreExpr = {
         kind: "if",
@@ -249,44 +257,44 @@ function elaborateExpr(expr: CoreExpr, state: ElaborateState): CoreExpr {
       );
     }
     case "prim":
-      return elaboratePrim(expr.op, expr.args, expr, state);
+      return elaboratePrim(expr.op, expr.args, expr, ctx);
     case "match":
-      return elaborateMatch(expr, state);
+      return elaborateMatch(expr, ctx);
     case "carrier_unwrap":
     case "carrier_wrap":
       return {
         ...expr,
-        target: elaborateExpr(expr.target, state),
+        target: elaborateExpr(expr.target, ctx),
       };
     case "carrier_match":
       return {
         ...expr,
-        scrutinee: elaborateExpr(expr.scrutinee, state),
+        scrutinee: elaborateExpr(expr.scrutinee, ctx),
         cases: expr.cases.map((kase) => ({
           ...kase,
-          body: elaborateExpr(kase.body, state),
-          guard: kase.guard ? elaborateExpr(kase.guard, state) : undefined,
+          body: elaborateExpr(kase.body, ctx),
+          guard: kase.guard ? elaborateExpr(kase.guard, ctx) : undefined,
         })),
-        fallback: expr.fallback ? elaborateExpr(expr.fallback, state) : undefined,
+        fallback: expr.fallback ? elaborateExpr(expr.fallback, ctx) : undefined,
       };
   }
 }
 
 function elaborateCall(
   expr: CoreExpr & { kind: "call" },
-  state: ElaborateState,
+  ctx: CarrierContext,
 ): CoreExpr {
-  const callee = elaborateExpr(expr.callee, state);
-  const args = expr.args.map((arg) => elaborateExpr(arg, state));
-  const calleeParamType = isCarrierType(callee.type)
+  const callee = elaborateExpr(expr.callee, ctx);
+  const args = expr.args.map((arg) => elaborateExpr(arg, ctx));
+  const calleeParamType = isCarrierType(callee.type, ctx.carriers)
     ? getCarrierValueType(callee.type)
     : callee.type;
   const paramTypes = collectCallParamTypes(calleeParamType, args.length);
 
   const bindings: CarrierBinding[] = [];
   let calleeExpr: CoreExpr = callee;
-  if (isCarrierType(callee.type)) {
-    const bindingName = freshName(state, "__carrier_callee_");
+  if (isCarrierType(callee.type, ctx.carriers)) {
+    const bindingName = freshName(ctx, "__carrier_callee_");
     const valueType = getCarrierValueType(callee.type);
     bindings.push({
       carrierType: getCarrierTypeName(callee.type),
@@ -298,14 +306,14 @@ function elaborateCall(
   }
 
   const argExprs = args.map((arg, index) => {
-    if (!isCarrierType(arg.type)) {
+    if (!isCarrierType(arg.type, ctx.carriers)) {
       return arg;
     }
     const paramType = paramTypes[index];
-    if (paramType && isCarrierType(paramType)) {
+    if (paramType && isCarrierType(paramType, ctx.carriers)) {
       return arg;
     }
-    const bindingName = freshName(state, "__carrier_arg_");
+    const bindingName = freshName(ctx, "__carrier_arg_");
     const valueType = getCarrierValueType(arg.type);
     bindings.push({
       carrierType: getCarrierTypeName(arg.type),
@@ -327,30 +335,32 @@ function elaborateCall(
 
 function elaborateMatch(
   expr: CoreExpr & { kind: "match" },
-  state: ElaborateState,
+  ctx: CarrierContext,
 ): CoreExpr {
-  const scrutinee = elaborateExpr(expr.scrutinee, state);
+  const scrutinee = elaborateExpr(expr.scrutinee, ctx);
   const cases = expr.cases.map((kase) => ({
     ...kase,
-    body: elaborateExpr(kase.body, state),
-    guard: kase.guard ? elaborateExpr(kase.guard, state) : undefined,
+    body: elaborateExpr(kase.body, ctx),
+    guard: kase.guard ? elaborateExpr(kase.guard, ctx) : undefined,
   }));
-  const fallback = expr.fallback ? elaborateExpr(expr.fallback, state) : undefined;
+  const fallback = expr.fallback ? elaborateExpr(expr.fallback, ctx) : undefined;
 
-  if (!isCarrierType(scrutinee.type)) {
+  if (!isCarrierType(scrutinee.type, ctx.carriers)) {
     return { ...expr, scrutinee, cases, fallback };
   }
 
-  const dischargesCarrier = Boolean(expr.effectRowCoverage?.dischargesResult);
-  const patternsHandleCarrier = cases.some((kase) =>
-    patternHandlesCarrier(kase.pattern) || kase.pattern.kind === "all_errors"
-  );
+  const carrierTypeName = getCarrierTypeName(scrutinee.type);
+  const carrierMatch = expr.carrierMatch;
+  const dischargedCarrier = expr.dischargedCarrier;
+  const handlesCarrier = carrierMatch && carrierMatch.typeName === carrierTypeName;
+  const dischargesCarrier = dischargedCarrier &&
+    dischargedCarrier.typeName === carrierTypeName;
 
-  if (dischargesCarrier && patternsHandleCarrier) {
+  if (handlesCarrier || dischargesCarrier) {
     return { ...expr, scrutinee, cases, fallback };
   }
 
-  const binding = freshName(state, "__carrier_match_");
+  const binding = freshName(ctx, "__carrier_match_");
   const valueType = getCarrierValueType(scrutinee.type);
   const matchExpr: CoreExpr = {
     ...expr,
@@ -359,7 +369,7 @@ function elaborateMatch(
     fallback,
   };
   return makeCarrierMatch(
-    getCarrierTypeName(scrutinee.type),
+    carrierTypeName,
     scrutinee,
     binding,
     valueType,
@@ -372,16 +382,16 @@ function elaboratePrim(
   op: CorePrimOp,
   args: readonly CoreExpr[],
   expr: CoreExpr & { kind: "prim" },
-  state: ElaborateState,
+  ctx: CarrierContext,
 ): CoreExpr {
-  const loweredArgs = args.map((arg) => elaborateExpr(arg, state));
+  const loweredArgs = args.map((arg) => elaborateExpr(arg, ctx));
 
   if (op === "record_get") {
     const target = loweredArgs[0];
-    if (!target || !isCarrierType(target.type)) {
+    if (!target || !isCarrierType(target.type, ctx.carriers)) {
       return { ...expr, args: loweredArgs };
     }
-    const binding = freshName(state, "__carrier_record_");
+    const binding = freshName(ctx, "__carrier_record_");
     const valueType = getCarrierValueType(target.type);
     const body: CoreExpr = {
       ...expr,
@@ -399,10 +409,10 @@ function elaboratePrim(
 
   const bindings: CarrierBinding[] = [];
   const rewrittenArgs = loweredArgs.map((arg) => {
-    if (!isCarrierType(arg.type)) {
+    if (!isCarrierType(arg.type, ctx.carriers)) {
       return arg;
     }
-    const bindingName = freshName(state, "__carrier_arg_");
+    const bindingName = freshName(ctx, "__carrier_arg_");
     const valueType = getCarrierValueType(arg.type);
     bindings.push({
       carrierType: getCarrierTypeName(arg.type),
@@ -488,9 +498,8 @@ function getCarrierTypeName(type: CoreExpr["type"]): string {
 }
 
 function getCarrierValueType(type: CoreExpr["type"]): CoreExpr["type"] {
-  const info = splitCarrier(type);
-  if (info) {
-    return cloneType(info.value);
+  if (type.kind === "constructor" && type.args.length > 0) {
+    return cloneType(type.args[0]);
   }
   return unknownType({
     kind: "incomplete",
@@ -508,17 +517,18 @@ function collectCallParamTypes(type: CoreExpr["type"], count: number): CoreExpr[
   return params;
 }
 
-function patternHandlesCarrier(pattern: CorePattern): boolean {
-  switch (pattern.kind) {
-    case "constructor":
-      return isCarrierType(pattern.type);
-    case "tuple":
-      return pattern.elements.some(patternHandlesCarrier);
-    case "wildcard":
-    case "binding":
-    case "literal":
-    case "all_errors":
-    case "pinned":
-      return false;
+function isCarrierType(type: CoreExpr["type"], carriers: Set<string>): boolean {
+  return type.kind === "constructor" && carriers.has(type.name);
+}
+
+function collectCarrierTypes(graph: CoreModuleGraph): Set<string> {
+  const carriers = new Set<string>();
+  for (const module of graph.modules.values()) {
+    for (const decl of module.typeDeclarations) {
+      if (decl.infectious) {
+        carriers.add(decl.name);
+      }
+    }
   }
+  return carriers;
 }

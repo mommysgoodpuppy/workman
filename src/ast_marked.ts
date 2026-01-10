@@ -171,6 +171,14 @@ export interface MMatchBundle extends MTypedNode {
   arms: MMatchArm[];
   effectRowCoverage?: MEffectRowCoverage;
   dischargesResult?: boolean;
+  carrierMatch?: {
+    typeName: string;
+    domain: string;
+  };
+  dischargedCarrier?: {
+    typeName: string;
+    domain: string;
+  };
 }
 
 export type MMatchArm = MMatchPatternArm | MMatchBundleReferenceArm;

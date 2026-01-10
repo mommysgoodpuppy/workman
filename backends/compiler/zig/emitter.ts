@@ -676,16 +676,16 @@ function emitLambda(
       const fieldName = sanitizeIdentifier(name, ctx.state);
       fieldNames.set(name, fieldName);
       scope.set(name, {
-        value: `env.${fieldName}.*`,
-        address: `env.${fieldName}`,
+        value: `env.${fieldName}`,
+        address: `&env.${fieldName}`,
       });
-      return `${fieldName}: *const Value`;
+      return `${fieldName}: Value`;
     });
     ctx.hoisted.push(`const ${envType} = struct { ${fields.join(", ")} };`);
     const initFields = captures.map((name) => {
       const ref = resolveVar(name, ctx);
       const fieldName = fieldNames.get(name)!;
-      return `.${fieldName} = ${ref.address}`;
+      return `.${fieldName} = ${ref.value}`;
     }).join(", ");
     envInit = `runtime.allocEnv(${envType}, .{ ${initFields} })`;
   }
@@ -1124,16 +1124,16 @@ function emitMatchLambda(
       const fieldName = sanitizeIdentifier(name, ctx.state);
       fieldNames.set(name, fieldName);
       scope.set(name, {
-        value: `env.${fieldName}.*`,
-        address: `env.${fieldName}`,
+        value: `env.${fieldName}`,
+        address: `&env.${fieldName}`,
       });
-      return `${fieldName}: *const Value`;
+      return `${fieldName}: Value`;
     });
     ctx.hoisted.push(`const ${envType} = struct { ${fields.join(", ")} };`);
     const initFields = captures.map((name) => {
       const ref = resolveVar(name, ctx);
       const fieldName = fieldNames.get(name)!;
-      return `.${fieldName} = ${ref.address}`;
+      return `.${fieldName} = ${ref.value}`;
     }).join(", ");
     envInit = `runtime.allocEnv(${envType}, .{ ${initFields} })`;
   }

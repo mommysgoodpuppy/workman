@@ -443,6 +443,8 @@ function lowerMatchExpr(
     origin: expr.id,
     span: expr.span,
     effectRowCoverage: effectRowCoverage,
+    carrierMatch: bundle.carrierMatch,
+    dischargedCarrier: bundle.dischargedCarrier,
   };
 }
 

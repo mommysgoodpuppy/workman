@@ -4776,6 +4776,32 @@ export function inferMatchBranches(
     }
   }
 
+  const resultCarrier = splitCarrier(resolvedResult);
+  let dischargedCarrier: { typeName: string; domain: string } | undefined;
+  if (
+    scrutineeCarrier &&
+    (!resultCarrier || resultCarrier.domain !== scrutineeCarrier.domain)
+  ) {
+    dischargedCarrier = {
+      typeName: scrutineeCarrier.carrier,
+      domain: scrutineeCarrier.domain,
+    };
+  }
+
+  let carrierMatch: { typeName: string; domain: string } | undefined;
+  if (scrutineeCarrier) {
+    const matchesCarrier = patternInfos.some((info) =>
+      info.coverage.kind === "constructor" &&
+      info.coverage.typeName === scrutineeCarrier.carrier
+    );
+    if (matchesCarrier || hasAllErrors) {
+      carrierMatch = {
+        typeName: scrutineeCarrier.carrier,
+        domain: scrutineeCarrier.domain,
+      };
+    }
+  }
+
   const resultVars = freeTypeVars(resolvedResult);
   const scrutineeVars = freeTypeVars(resolvedScrutinee);
   for (const id of resultVars) {
@@ -4790,6 +4816,8 @@ export function inferMatchBranches(
     bodyTypes,
     effectRowCoverage: effectRowCoverage,
     dischargesResult: dischargedResult,
+    carrierMatch,
+    dischargedCarrier,
   };
   ctx.matchResults.set(bundle, result);
   return result;
