@@ -749,6 +749,29 @@ function getCalleeName(expr: Expr): string | undefined {
   return undefined;
 }
 
+function shouldCoerceSliceToPtr(
+  expected: Type,
+  actual: Type,
+  ctx: Context,
+): boolean {
+  if (expected.kind !== "constructor" || actual.kind !== "constructor") {
+    return false;
+  }
+  if (actual.name !== "Slice") {
+    return false;
+  }
+  if (expected.name !== "Ptr" && expected.name !== "ManyPtr") {
+    return false;
+  }
+  if (expected.args.length > 0 && actual.args.length > 0) {
+    unify(ctx, expected.args[0], actual.args[0]);
+  }
+  if (expected.args.length > 1 && actual.args.length > 1) {
+    unify(ctx, expected.args[1], actual.args[1]);
+  }
+  return true;
+}
+
 function resolveOpRule(
   registry: Context["infectionRegistry"],
   name: string,
@@ -1739,7 +1762,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       let litType = literalType(expr.literal);
       // In raw mode, numeric literals are polymorphic (like Zig's comptime_int)
       if (ctx.rawMode && expr.literal.kind === "int") {
-        litType = freshTypeVar();
+        litType = { kind: "constructor", name: "ComptimeInt", args: [] };
       }
       // In raw mode, treat string literals as Zig slices (u8 + len).
       if (ctx.rawMode && expr.literal.kind === "string") {
@@ -2507,6 +2530,12 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           (fnType.kind !== "func" && expectedParamType === undefined);
 
         let argumentValueType = resolvedArg;
+        if (
+          ctx.rawMode && expectedParamType &&
+          shouldCoerceSliceToPtr(expectedParamType, resolvedArg, ctx)
+        ) {
+          argumentValueType = expectedParamType;
+        }
         if (!expectsCarrier && argCarrierInfo && !fnTypeIsUnknown) {
           argumentValueType = argBareValueType;
           // Accumulate carrier state using generic union (only if domain infects return)

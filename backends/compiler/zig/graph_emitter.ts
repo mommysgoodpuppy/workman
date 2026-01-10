@@ -12,8 +12,24 @@ import type { TraceOptions } from "../../../src/trace_options.ts";
 import type { SourceSpan } from "../../../src/ast.ts";
 import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
 import { elaborateCarrierOpsGraph } from "../passes/elaborate_carriers.ts";
+import { lowerRawTypesGraph } from "../passes/lower_raw_types.ts";
 import { emitModule } from "./emitter.ts";
 import { emitRawModule } from "./raw_emitter.ts";
+
+interface WmSourceMapEntry {
+  genLine: number;
+  genCol: number;
+  srcFile: string;
+  srcLine: number;
+  srcCol: number;
+  srcLineText?: string;
+}
+
+interface WmSourceMap {
+  version: 1;
+  file: string;
+  mappings: WmSourceMapEntry[];
+}
 
 export interface EmitGraphOptions {
   readonly outDir: string;
@@ -44,7 +60,7 @@ export async function emitModuleGraph(
   graph: CoreModuleGraph,
   options: EmitGraphOptions,
 ): Promise<EmitGraphResult> {
-  const elaboratedGraph = elaborateCarrierOpsGraph(graph);
+  const elaboratedGraph = lowerRawTypesGraph(elaborateCarrierOpsGraph(graph));
   const outDir = resolve(options.outDir);
   //console.log(`emitModuleGraph: outDir=${outDir}`);
   const extension = options.extension ?? ".zig";
@@ -198,12 +214,27 @@ export async function emitModuleGraph(
       }
       : undefined;
 
+    const getSourceLocation = (span: SourceSpan) => {
+      const offsets = sourceOffsets.get(module.path);
+      if (!offsets) return undefined;
+      const loc = getLineCol(span, offsets, module.path);
+      const text = sourceTexts.get(module.path);
+      if (text) {
+        const startOp = offsets[loc.line - 1] ?? 0;
+        const endOp = offsets[loc.line];
+        const lineStr = text.slice(startOp, endOp ? endOp - 1 : undefined);
+        return { ...loc, lineText: lineStr.replace(/\r$/, "") };
+      }
+      return loc;
+    };
+
     // Use raw emitter for raw mode modules, runtime emitter otherwise
     let code: string;
     if (module.mode === "raw") {
       const rawResult = emitRawModule(module, elaboratedGraph, {
         extension,
         baseDir: dirname(outputPath),
+        getSourceLocation,
       });
       code = rawResult.code;
       for (const wmPath of rawResult.wmSourcePaths) {
@@ -222,19 +253,7 @@ export async function emitModuleGraph(
         traceOptions: module.path === entryModule.path
           ? options.traceOptions
           : undefined,
-        getSourceLocation: (span: SourceSpan) => {
-          const offsets = sourceOffsets.get(module.path);
-          if (!offsets) return undefined;
-          const loc = getLineCol(span, offsets, module.path);
-          const text = sourceTexts.get(module.path);
-          if (text) {
-             const startOp = offsets[loc.line - 1] ?? 0;
-             const endOp = offsets[loc.line]; // undefined if last
-             const lineStr = text.slice(startOp, endOp ? endOp - 1 : undefined);
-             return { ...loc, lineText: lineStr.replace(/\r$/, "") };
-          }
-          return loc;
-        },
+        getSourceLocation,
       });
     }
     await writeTextFile(outputPath, code);
@@ -331,6 +350,7 @@ async function writeTextFile(path: string, contents: string): Promise<void> {
 function normalizeSlashes(path: string): string {
   return path.replace(/\\/g, "/");
 }
+
 
 function shouldModuleImportPrelude(
   module: CoreModule,

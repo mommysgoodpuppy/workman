@@ -662,8 +662,11 @@ export function materializeTypeExpr(
         })),
       };
     case "type_pointer":
-      // TypePointer is not supported in materialized AST
-      // This should not occur in normal compilation, but handle it gracefully
-      throw new Error("TypePointer not supported in materialized AST");
+      return {
+        kind: "type_pointer",
+        span: typeExpr.span,
+        id: typeExpr.id,
+        pointee: materializeTypeExpr(ctx, typeExpr.pointee),
+      };
   }
 }

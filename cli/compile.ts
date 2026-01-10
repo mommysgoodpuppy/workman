@@ -9,6 +9,10 @@ import {
   DEFAULT_TRACE_OPTIONS,
   type TraceOptions,
 } from "./trace_options.ts";
+import {
+  generateWmSourceMaps,
+  reportWorkmanDiagnosticsForZig,
+} from "./zig_diagnostics.ts";
 
 const WORKMAN_ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
 
@@ -206,6 +210,7 @@ export async function compileToDirectory(
       zigFiles.push(zigResult.rootPath);
     }
     await runZigFmt(zigFiles);
+    await generateWmSourceMaps(zigFiles);
   }
 
   console.log(
@@ -234,13 +239,64 @@ export async function runBuildCommand(
   args: string[],
   traceOptions: TraceOptions = DEFAULT_TRACE_OPTIONS,
 ): Promise<void> {
-  const buildWmPath = resolve("build.wm");
+  // Parse force flag and optional directory from args
+  let force = false;
+  let buildDirPath: string | undefined;
+  const remainingArgs: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--force" || arg === "-f") {
+      force = true;
+    } else if (applyTraceFlag(arg, traceOptions)) {
+      // Trace flags are handled by the caller
+    } else if (!arg.startsWith("-") && !buildDirPath) {
+      // Check if this looks like a directory path (ends with separator or exists and contains build.wm)
+      const looksLikeDir = arg.endsWith("/") || arg.endsWith("\\");
+      if (looksLikeDir) {
+        buildDirPath = arg;
+      } else {
+        // Check if it's a directory that exists and contains build.wm
+        try {
+          const testPath = resolve(arg);
+          const stat = await Deno.stat(testPath);
+          if (stat.isDirectory) {
+            const testBuildWmPath = resolve(testPath, "build.wm");
+            try {
+              await Deno.stat(testBuildWmPath);
+              buildDirPath = arg;
+            } catch {
+              // Not a directory with build.wm, treat as zig build arg
+              remainingArgs.push(arg);
+            }
+          } else {
+            // Not a directory, treat as zig build arg
+            remainingArgs.push(arg);
+          }
+        } catch {
+          // Path doesn't exist, treat as zig build arg
+          remainingArgs.push(arg);
+        }
+      }
+    } else {
+      remainingArgs.push(arg);
+    }
+  }
+
+  // Determine build.wm path - either in specified directory or current directory
+  let buildWmPath: string;
+  if (buildDirPath) {
+    buildWmPath = resolve(buildDirPath, "build.wm");
+  } else {
+    buildWmPath = resolve("build.wm");
+  }
 
   // Check if build.wm exists
   try {
     await Deno.stat(buildWmPath);
   } catch {
-    throw new Error("No build.wm found in current directory");
+    const searchPath = buildDirPath ? `directory '${buildDirPath}'` : "current directory";
+    throw new Error(`No build.wm found in ${searchPath}`);
   }
 
   const buildDir = dirname(buildWmPath);
@@ -254,7 +310,32 @@ export async function runBuildCommand(
       preludeModule: "std/prelude",
       foreignTypes: createDefaultForeignTypeConfig(buildWmPath),
     },
+    lowering: {
+      showAllErrors: true,
+    },
   });
+
+  // Check for type errors
+  let hasErrors = false;
+  for (const artifact of compileResult.modules.values()) {
+    const layer3 = artifact.analysis.layer3;
+    if (
+      layer3.diagnostics.solver.length > 0 ||
+      layer3.diagnostics.conflicts.length > 0
+    ) {
+      hasErrors = true;
+    }
+  }
+
+  if (hasErrors && !force) {
+    // Errors are already printed by lowerAnalyzedModule/showAllErrors
+    throw new Error(
+      "Compilation failed due to type errors. Use --force to compile anyway.",
+    );
+  }
+  if (hasErrors) {
+    console.warn("Compilation continued despite type errors (--force used).");
+  }
 
   // Emit to the build directory (will create build.zig from build.wm)
   // Use buildDir as commonRoot so build.wm emits directly as build.zig
@@ -280,7 +361,32 @@ export async function runBuildCommand(
         preludeModule: "std/prelude",
         foreignTypes: createDefaultForeignTypeConfig(absoluteWmPath),
       },
+      lowering: {
+        showAllErrors: true,
+      },
     });
+
+    // Check for type errors in source files
+    let sourceHasErrors = false;
+    for (const artifact of sourceCompileResult.modules.values()) {
+      const layer3 = artifact.analysis.layer3;
+      if (
+        layer3.diagnostics.solver.length > 0 ||
+        layer3.diagnostics.conflicts.length > 0
+      ) {
+        sourceHasErrors = true;
+      }
+    }
+
+    if (sourceHasErrors && !force) {
+      // Errors are already printed by lowerAnalyzedModule/showAllErrors
+      throw new Error(
+        "Compilation failed due to type errors. Use --force to compile anyway.",
+      );
+    }
+    if (sourceHasErrors) {
+      console.warn("Compilation continued despite type errors (--force used).");
+    }
 
     await emitZigModuleGraph(sourceCompileResult.coreGraph, {
       outDir: buildDir,
@@ -295,20 +401,27 @@ export async function runBuildCommand(
 
   // Run zig fmt on all generated .zig files
   await runZigFmt(zigFilesToFormat);
+  await generateWmSourceMaps(zigFilesToFormat);
 
   console.log("Running zig build...");
 
-  // Pass through any additional args to zig build
-  const zigArgs = ["build", ...args];
+  // Pass through any additional args to zig build (excluding the directory argument if it was used)
+  const zigArgs = ["build", "--color", "on", ...remainingArgs];
   const command = new Deno.Command("zig", {
     args: zigArgs,
     cwd: buildDir,
     stdout: "inherit",
-    stderr: "inherit",
+    stderr: "piped",
   });
 
   const result = await command.output();
   if (!result.success) {
+    if (result.stderr.length > 0) {
+      await Deno.stderr.write(result.stderr);
+    }
+    const stderrText = new TextDecoder().decode(result.stderr);
+    await reportWorkmanDiagnosticsForZig(stderrText, buildDir);
     throw new Error(`zig build failed with exit code ${result.code}`);
   }
 }
+

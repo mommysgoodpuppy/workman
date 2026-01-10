@@ -1,4 +1,4 @@
---@raw;
+@raw;
 
 -- Raw-only memory helpers for FFI allocation.
 from "std/zig/types.wm" import { Usize };

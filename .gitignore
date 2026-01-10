@@ -18,3 +18,5 @@ dist_zig/
 .wm-cache/
 sdl3-mingw/
 zig-out/
+distjs/
+**/wm/*.zig

@@ -40,7 +40,7 @@ export function elaborateCarrierOpsGraph(
   return { ...graph, modules };
 }
 
-export function elaborateCarrierOpsModule(
+function elaborateCarrierOpsModule(
   module: CoreModule,
   carriers: Set<string>,
 ): CoreModule {

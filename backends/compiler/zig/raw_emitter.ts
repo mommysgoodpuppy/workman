@@ -1,4 +1,5 @@
 import { dirname, extname, relative } from "../../../src/io.ts";
+import type { SourceSpan } from "../../../src/ast.ts";
 import type {
   CoreExpr,
   CoreLiteral,
@@ -55,6 +56,12 @@ export interface EmitModuleOptions {
   readonly baseDir?: string;
   /** If true, rewrite .wm paths to .zig in string literals */
   readonly rewriteWmPaths?: boolean;
+  readonly getSourceLocation?: (span: SourceSpan) => {
+    file: string;
+    line: number;
+    column: number;
+    lineText?: string;
+  } | undefined;
 }
 
 export interface EmitRawResult {
@@ -410,6 +417,18 @@ function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): strin
 }
 
 function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
+  const result = emitExprInner(expr, ctx);
+  const loc = ctx.options.getSourceLocation && expr.span
+    ? ctx.options.getSourceLocation(expr.span)
+    : undefined;
+  if (loc && (expr.kind === "match" || expr.kind === "call" || expr.kind === "if")) {
+    const location = formatSourceLocation(loc);
+    return `// wm: ${location}\n${result}`;
+  }
+  return result;
+}
+
+function emitExprInner(expr: CoreExpr, ctx: EmitContext): string {
   switch (expr.kind) {
     case "literal":
       return emitLiteral(expr.literal, ctx);
@@ -453,6 +472,21 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
     default:
       throw new Error(`Unsupported expression kind '${(expr as CoreExpr).kind}' in raw mode`);
   }
+}
+
+function formatSourceLocation(loc: {
+  file: string;
+  line: number;
+  column: number;
+  lineText?: string;
+}): string {
+  const escapedFile = loc.file.replace(/\\/g, "/");
+  let location = `${escapedFile}:${loc.line}:${loc.column}`;
+  if (loc.lineText) {
+    const escapedLine = loc.lineText.replace(/\\/g, "\\\\").replace(/\r/g, "");
+    location += ` | ${escapedLine}`;
+  }
+  return location;
 }
 
 function emitLiteral(lit: CoreLiteral, ctx: EmitContext): string {
@@ -569,21 +603,7 @@ function emitNamedLambda(
 
   const params = boundParams.map((p, i) => {
     const pname = p.ref.value;
-    if (rawMem && name === "freeSlice") {
-      return `${pname}: anytype`;
-    }
     const ptype = paramTypes[i];
-    if (
-      rawMem &&
-      name === "freeSlice" &&
-      ptype &&
-      ptype.kind === "constructor" &&
-      ptype.name === "Slice" &&
-      ptype.args.length === 1 &&
-      ptype.args[0].kind === "var"
-    ) {
-      return `${pname}: anytype`;
-    }
     if (hasTypeParams && ptype && ptype.kind === "var") {
       const existing = typeParamNames.get(ptype.id);
       if (!existing) {
@@ -798,8 +818,43 @@ function emitCall(
   }
   
   const fn = emitExpr(expr.callee, ctx);
-  const args = expr.args.map((arg) => emitExpr(arg, ctx)).join(", ");
+  const paramTypes = collectCallParamTypes(expr.callee.type, expr.args.length);
+  const args = expr.args.map((arg, index) => {
+    const emitted = emitExpr(arg, ctx);
+    const expected = paramTypes[index];
+    if (shouldCoerceSliceToPtr(expected, arg.type)) {
+      return `(${emitted}).ptr`;
+    }
+    return emitted;
+  }).join(", ");
   return `${fn}(${args})`;
+}
+
+function collectCallParamTypes(
+  type: Type,
+  count: number,
+): Type[] {
+  const params: Type[] = [];
+  let current = type;
+  while (current.kind === "func" && params.length < count) {
+    params.push(current.from);
+    current = current.to;
+  }
+  return params;
+}
+
+function shouldCoerceSliceToPtr(
+  expected: Type | undefined,
+  actual: Type,
+): boolean {
+  if (!expected) return false;
+  if (expected.kind !== "constructor" || actual.kind !== "constructor") {
+    return false;
+  }
+  if (actual.name !== "Slice") {
+    return false;
+  }
+  return expected.name === "Ptr" || expected.name === "ManyPtr";
 }
 
 const RAW_MEM_TYPE_PARAM_FUNCS = new Set<string>([
@@ -863,6 +918,14 @@ function emitTypeWithTypeParams(
           return `?*${base}`;
         }
         return `*${base}`;
+      }
+      if (type.name === "ManyPtr" && type.args.length >= 1) {
+        const base = emitTypeWithTypeParams(type.args[0], typeParamNames);
+        const state = type.args[1];
+        if (state && state.kind === "effect_row" && state.cases.has("Null")) {
+          return `?[*]${base}`;
+        }
+        return `[*]${base}`;
       }
       if (type.args.length === 0) {
         return type.name;
@@ -1647,6 +1710,15 @@ function emitType(type: Type, ctx?: EmitContext): string {
           return `?*${base}`;
         }
         return `*${base}`;
+      }
+      // Handle ManyPtr<T, S> -> [*]T
+      if (type.name === "ManyPtr" && type.args.length >= 1) {
+        const base = emitType(type.args[0], ctx);
+        const state = type.args[1];
+        if (state && state.kind === "effect_row" && state.cases.has("Null")) {
+          return `?[*]${base}`;
+        }
+        return `[*]${base}`;
       }
       // Opaque types like i32, u64 etc. - emit directly
       if (type.args.length === 0) {

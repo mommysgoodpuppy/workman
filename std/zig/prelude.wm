@@ -13,7 +13,7 @@ from "std/zig/types.wm" import {
 
 
 -- FP helper: wraps any Zig error union into IResult
-export let tryXDD = (zigErrorUnion:T):IResult<T, <_>> => {
+export let try = (zigErrorUnion:T):IResult<T, <_>> => {
   --IGNORE; zigres special keyword
   let zigres:IResult<T, <_>> = zigErrorUnion as IResult<T, <_>>; 
   zigres

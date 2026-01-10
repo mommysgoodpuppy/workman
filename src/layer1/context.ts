@@ -1296,6 +1296,12 @@ function unifyTypes(
       }
     }
 
+    if (left.name === "ComptimeInt" && isNumericConstructorName(right.name)) {
+      return { success: true, subst };
+    }
+    if (right.name === "ComptimeInt" && isNumericConstructorName(left.name)) {
+      return { success: true, subst };
+    }
     if (
       left.name !== right.name &&
       areNumericConstructorsCompatible(left.name, right.name)
@@ -1447,6 +1453,40 @@ export const RAW_NUMERIC_COMPAT: ReadonlyMap<string, ReadonlySet<string>> =
     ["I8", new Set(["CChar"])],
     ["CChar", new Set(["I8"])],
   ]);
+
+const RAW_NUMERIC_CONSTRUCTORS = new Set<string>([
+  "ComptimeInt",
+  "ComptimeFloat",
+  "I8",
+  "I16",
+  "I32",
+  "I64",
+  "I128",
+  "Isize",
+  "U8",
+  "U16",
+  "U32",
+  "U64",
+  "U128",
+  "Usize",
+  "F16",
+  "F32",
+  "F64",
+  "F128",
+  "CChar",
+  "CShort",
+  "CUShort",
+  "CInt",
+  "CUInt",
+  "CLong",
+  "CULong",
+  "CLongLong",
+  "CULongLong",
+]);
+
+function isNumericConstructorName(name: string): boolean {
+  return RAW_NUMERIC_CONSTRUCTORS.has(name);
+}
 
 function areNumericConstructorsCompatible(
   left: string,

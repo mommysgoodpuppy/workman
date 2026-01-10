@@ -11,8 +11,10 @@ Usage:
   wm type --var-ids <file.wm>
                         Type-check and show type variable IDs
   wm err <file.wm>      Check for type errors only
-  wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>] [--debug]
+  wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>] [--force] [--debug]
                         Emit backend modules for the given entry
+  wm build [--force] [dir]
+                        Build using build.wm (like zig build)
   wm fmt <files...>     Format Workman files
   wm --help             Show this help message
 

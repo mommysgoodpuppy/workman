@@ -315,6 +315,11 @@ export interface MTypeUnit extends MNodeBase {
   kind: "type_unit";
 }
 
+export interface MTypePointer extends MNodeBase {
+  kind: "type_pointer";
+  pointee: MTypeExpr;
+}
+
 export interface MTypeEffectRowCase extends MNodeBase {
   kind: "type_effect_row_case";
   name: string;
@@ -335,6 +340,7 @@ export type MTypeExpr =
   | MTypeArray
   | MTypeRecordExpr
   | MTypeUnit
+  | MTypePointer
   | MTypeEffectRowExpr
   | MTypeExprMark;
 

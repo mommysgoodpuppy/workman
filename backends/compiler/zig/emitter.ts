@@ -353,7 +353,8 @@ function emitImports(
       const local = resolveName(ctx.scope, spec.local, ctx.state);
       const exported = exportSet.has(spec.local) ? "pub " : "";
       lines.push(`${exported}var ${local}: Value = undefined;`);
-      initLines.push(`${local} = ${alias}.${spec.imported};`);
+      const fieldName = spec.imported.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      initLines.push(`${local} = @field(${alias}, "${fieldName}");`);
     }
   }
 
@@ -364,20 +365,21 @@ function emitPreludeImports(
   ctx: EmitContext,
   prelude?: { specifier: string; names: readonly string[] },
   initLines: string[] = [],
-): string[] {
-  if (!prelude) return [];
-  const lines: string[] = [];
-  const alias = allocateTempName(ctx.state, "__prelude");
-  lines.push(`const ${alias} = @import("${prelude.specifier}");`);
-  initLines.push(`${alias}.${INIT_FN}();`);
-  for (const name of prelude.names) {
-    if (ctx.scope.has(name)) continue;
-    const local = resolveName(ctx.scope, name, ctx.state);
-    lines.push(`var ${local}: Value = undefined;`);
-    initLines.push(`${local} = ${alias}.${name};`);
+  ): string[] {
+    if (!prelude) return [];
+    const lines: string[] = [];
+    const alias = allocateTempName(ctx.state, "__prelude");
+    lines.push(`const ${alias} = @import("${prelude.specifier}");`);
+    initLines.push(`${alias}.${INIT_FN}();`);
+    for (const name of prelude.names) {
+      if (ctx.scope.has(name)) continue;
+      const local = resolveName(ctx.scope, name, ctx.state);
+      lines.push(`var ${local}: Value = undefined;`);
+      const fieldName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      initLines.push(`${local} = @field(${alias}, "${fieldName}");`);
+    }
+    return lines;
   }
-  return lines;
-}
 
 function makeImportPath(
   fromDir: string,
@@ -520,7 +522,7 @@ function emitExpr(expr: CoreExpr, ctx: EmitContext, nameHint?: string): string {
       const loc = ctx.options.getSourceLocation(expr.span);
       if (loc) {
         return `
-// ${loc.file}:${loc.line}
+${formatWmComment(loc)}
 ${result}`;
       }
     }
@@ -612,6 +614,21 @@ function emitExprInner(
   }
 }
 
+function formatWmComment(loc: {
+  file: string;
+  line: number;
+  column: number;
+  lineText?: string;
+}): string {
+  const escapedFile = loc.file.replace(/\\/g, "/");
+  let comment = `// wm: ${escapedFile}:${loc.line}:${loc.column}`;
+  if (loc.lineText) {
+    const escapedLine = loc.lineText.replace(/\\/g, "\\\\").replace(/\r/g, "");
+    comment += ` | ${escapedLine}`;
+  }
+  return comment;
+}
+
 function emitLiteral(
   expr: { literal: { kind: string; value?: unknown } },
   _ctx: EmitContext,
@@ -674,18 +691,21 @@ function emitLambda(
     const fieldNames = new Map<string, string>();
     const fields = captures.map((name) => {
       const fieldName = sanitizeIdentifier(name, ctx.state);
+      const ref = resolveVar(name, ctx);
+      const captureByRef = !ref.address.startsWith("&");
       fieldNames.set(name, fieldName);
       scope.set(name, {
-        value: `env.${fieldName}`,
-        address: `&env.${fieldName}`,
+        value: captureByRef ? `env.${fieldName}.*` : `env.${fieldName}`,
+        address: captureByRef ? `env.${fieldName}` : `&env.${fieldName}`,
       });
-      return `${fieldName}: Value`;
+      return `${fieldName}: ${captureByRef ? "*Value" : "Value"}`;
     });
     ctx.hoisted.push(`const ${envType} = struct { ${fields.join(", ")} };`);
     const initFields = captures.map((name) => {
       const ref = resolveVar(name, ctx);
       const fieldName = fieldNames.get(name)!;
-      return `.${fieldName} = ${ref.value}`;
+      const captureByRef = !ref.address.startsWith("&");
+      return `.${fieldName} = ${captureByRef ? ref.address : ref.value}`;
     }).join(", ");
     envInit = `runtime.allocEnv(${envType}, .{ ${initFields} })`;
   }
@@ -1093,7 +1113,7 @@ function emitMatchWithScrutinee(
     if (ctx.options.getSourceLocation && expr.span) {
       const loc = ctx.options.getSourceLocation(expr.span);
       if (loc) {
-        lines.push(`// ${loc.file}:${loc.line}`);
+        lines.push(formatWmComment(loc));
         locationString = `"${loc.file}:${loc.line}:${loc.column}"`;
       }
     }
@@ -1122,18 +1142,21 @@ function emitMatchLambda(
     const fieldNames = new Map<string, string>();
     const fields = captures.map((name) => {
       const fieldName = sanitizeIdentifier(name, ctx.state);
+      const ref = resolveVar(name, ctx);
+      const captureByRef = !ref.address.startsWith("&");
       fieldNames.set(name, fieldName);
       scope.set(name, {
-        value: `env.${fieldName}`,
-        address: `&env.${fieldName}`,
+        value: captureByRef ? `env.${fieldName}.*` : `env.${fieldName}`,
+        address: captureByRef ? `env.${fieldName}` : `&env.${fieldName}`,
       });
-      return `${fieldName}: Value`;
+      return `${fieldName}: ${captureByRef ? "*Value" : "Value"}`;
     });
     ctx.hoisted.push(`const ${envType} = struct { ${fields.join(", ")} };`);
     const initFields = captures.map((name) => {
       const ref = resolveVar(name, ctx);
       const fieldName = fieldNames.get(name)!;
-      return `.${fieldName} = ${ref.value}`;
+      const captureByRef = !ref.address.startsWith("&");
+      return `.${fieldName} = ${captureByRef ? ref.address : ref.value}`;
     }).join(", ");
     envInit = `runtime.allocEnv(${envType}, .{ ${initFields} })`;
   }
@@ -1507,19 +1530,20 @@ function sanitizeExportName(
   if (candidate === "") {
     candidate = "_";
   }
-  if (RESERVED.has(candidate)) {
-    candidate = `_${candidate}`;
-  }
-  if (candidate === localName) {
-    return candidate;
+  const formatExport = (name: string): string =>
+    RESERVED.has(name) ? `@"${name}"` : name;
+  const formattedCandidate = formatExport(candidate);
+  if (formattedCandidate === localName) {
+    return formattedCandidate;
   }
   let unique = candidate;
   let counter = 0;
-  while (state.used.has(unique)) {
+  while (state.used.has(formatExport(unique))) {
     unique = `${candidate}_${counter++}`;
   }
-  state.used.add(unique);
-  return unique;
+  const exported = formatExport(unique);
+  state.used.add(exported);
+  return exported;
 }
 
 function allocateTempName(state: NameState, base: string): string {
