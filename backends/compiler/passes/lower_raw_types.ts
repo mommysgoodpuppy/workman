@@ -126,6 +126,14 @@ function lowerExpr(expr: CoreExpr): CoreExpr {
         type,
         target: lowerExpr(expr.target),
       };
+    case "coerce":
+      return {
+        ...expr,
+        type,
+        fromType: lowerRawType(expr.fromType),
+        toType: lowerRawType(expr.toType),
+        expr: lowerExpr(expr.expr),
+      };
     case "carrier_match": {
       const lowered: CoreCarrierMatchExpr = {
         ...expr,

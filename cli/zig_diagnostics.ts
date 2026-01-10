@@ -36,7 +36,12 @@ export async function reportWorkmanDiagnosticsForZig(
 ): Promise<void> {
   const errors = parseZigErrors(stderrText);
   console.log(`Parsed ${errors.length} Zig error(s) for Workman diagnostics.`);
-  if (errors.length === 0) return;
+  if (errors.length === 0) {
+    if (stderrText.includes("error:")) {
+      console.error("Zig error parsing failed.");
+    }
+    return;
+  }
   const reports: string[] = [];
   for (const err of errors) {
     const annotation = await findWorkmanAnnotationFromMap(
@@ -44,7 +49,16 @@ export async function reportWorkmanDiagnosticsForZig(
       err.line,
       baseDir,
     );
-    if (!annotation) continue;
+    if (!annotation) {
+      reports.push(`Workman: (no source map) ${err.file}:${err.line}:${err.column}`);
+      reports.push(`  Zig: ${err.message}`);
+      for (const note of err.notes) {
+        reports.push(
+          `  Note: ${note.message} (${note.file}:${note.line}:${note.column})`,
+        );
+      }
+      continue;
+    }
     reports.push(`Workman: ${annotation.file}:${annotation.line}:${annotation.column}`);
     if (annotation.lineText) {
       reports.push(`  ${annotation.lineText}`);

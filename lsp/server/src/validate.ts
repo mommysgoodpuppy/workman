@@ -15,7 +15,7 @@ import {
   positionToOffset,
 } from "./util.ts";
 import type { WorkmanLanguageServer } from "./server.ts";
-import { computeStdRoots, uriToFsPath } from "./fsio.ts";
+import { computeStdRoots, pathToUri, uriToFsPath } from "./fsio.ts";
 type LspServerContext = WorkmanLanguageServer;
 
 export function ensureValidation(
@@ -57,6 +57,8 @@ export async function validateDocument(
   text: string,
 ) {
   const diagnostics: any[] = [];
+  const diagnosticsByUri = new Map<string, any[]>();
+  diagnosticsByUri.set(uri, diagnostics);
 
   ctx.log(`[LSP] Validating document: ${uri}`);
 
@@ -142,68 +144,94 @@ export async function validateDocument(
     } else if (error instanceof ModuleLoaderError) {
       // Check if the ModuleLoaderError wraps a WorkmanError with location info
       const cause = (error as any).cause;
-      let range;
+      const inferredModulePath =
+        error.modulePath ?? extractModulePathFromMessage(String(error.message));
+      const targetPath = inferredModulePath ?? entryPath;
+      const targetUri = targetPath ? pathToUri(targetPath) : uri;
+      const targetDiagnostics = ensureDiagnosticsBucket(
+        diagnosticsByUri,
+        targetUri,
+      );
+      const targetText = await getModuleSourceText(
+        ctx,
+        targetPath,
+        entryPath,
+        text,
+        targetUri,
+      );
+      const rangeFallback = {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 1 },
+      };
+      let range = rangeFallback;
       let message = String(error.message);
       let source = "workman-modules";
       let code = "module-error";
 
       if (cause instanceof LexError) {
-        const position = offsetToPosition(text, cause.position);
-        const endPos = offsetToPosition(text, cause.position + 1);
-        range = { start: position, end: endPos };
-        message = cause.format(text);
+        if (targetText) {
+          const position = offsetToPosition(targetText, cause.position);
+          const endPos = offsetToPosition(targetText, cause.position + 1);
+          range = { start: position, end: endPos };
+        }
+        message = cause.format(targetText);
         source = "workman-lexer";
         code = "lex-error";
       } else if (cause instanceof ParseError) {
-        const startPos = offsetToPosition(text, cause.token.start);
-        const endPos = offsetToPosition(text, cause.token.end);
-        range = { start: startPos, end: endPos };
-        message = cause.format(text);
+        if (targetText) {
+          const startPos = offsetToPosition(targetText, cause.token.start);
+          const endPos = offsetToPosition(targetText, cause.token.end);
+          range = { start: startPos, end: endPos };
+        }
+        message = cause.format(targetText);
         source = "workman-parser";
         code = "parse-error";
       } else if (cause instanceof InferError) {
-        range = cause.span
-          ? {
-            start: offsetToPosition(text, cause.span.start),
-            end: offsetToPosition(text, cause.span.end),
-          }
-          : estimateRangeFromMessage(text, cause.message);
-        message = cause.format(text);
+        if (cause.span && targetText) {
+          range = {
+            start: offsetToPosition(targetText, cause.span.start),
+            end: offsetToPosition(targetText, cause.span.end),
+          };
+        } else if (targetText) {
+          range = estimateRangeFromMessage(targetText, cause.message) ??
+            rangeFallback;
+        }
+        message = cause.format(targetText);
         source = "workman-typechecker";
         code = "type-error";
       } else {
-        // Try to parse location from formatted error message
-        const locationMatch = message.match(/at line (\d+), column (\d+)/);
-        if (locationMatch) {
-          const line = Number.parseInt(locationMatch[1], 10) - 1; // 0-indexed
-          const column = Number.parseInt(locationMatch[2], 10) - 1; // 0-indexed
-          // Find the token at this location
-          const errorOffset = positionToOffset(text, {
-            line,
-            character: column,
-          });
-          const { word, start, end } = getWordAtOffset(
-            text,
-            errorOffset,
-          );
-          // Use the word boundaries if we found a word, otherwise just highlight the position
-          if (word && word.length > 0) {
-            range = {
-              start: offsetToPosition(text, start),
-              end: offsetToPosition(text, end),
-            };
+        if (targetText) {
+          const locationMatch = message.match(/at line (\d+), column (\d+)/);
+          if (locationMatch) {
+            const line = Number.parseInt(locationMatch[1], 10) - 1;
+            const column = Number.parseInt(locationMatch[2], 10) - 1;
+            const errorOffset = positionToOffset(targetText, {
+              line,
+              character: column,
+            });
+            const { word, start, end } = getWordAtOffset(
+              targetText,
+              errorOffset,
+            );
+            if (word && word.length > 0) {
+              range = {
+                start: offsetToPosition(targetText, start),
+                end: offsetToPosition(targetText, end),
+              };
+            } else {
+              range = {
+                start: { line, character: column },
+                end: { line, character: column + 1 },
+              };
+            }
           } else {
-            range = {
-              start: { line, character: column },
-              end: { line, character: column + 1 },
-            };
+            range = estimateRangeFromMessage(targetText, message) ??
+              rangeFallback;
           }
-        } else {
-          range = estimateRangeFromMessage(text, message);
         }
       }
 
-      diagnostics.push({
+      targetDiagnostics.push({
         range,
         severity: 1,
         message,
@@ -226,19 +254,70 @@ export async function validateDocument(
     }
   }
 
-  ctx.diagnostics.set(uri, diagnostics);
-  ctx.log(`[LSP] Sending ${diagnostics.length} diagnostics for ${uri}`);
+  await publishDiagnostics(ctx, diagnosticsByUri);
+}
 
-  // Send diagnostics notification
-  try {
-    await ctx.sendNotification("textDocument/publishDiagnostics", {
-      uri,
-      diagnostics,
-    });
-    ctx.log(`[LSP] Diagnostics sent successfully`);
-  } catch (error) {
-    ctx.log(`[LSP] Failed to send diagnostics: ${error}`);
+async function getModuleSourceText(
+  ctx: LspServerContext,
+  modulePath: string | undefined,
+  entryPath: string,
+  entryText: string,
+  moduleUri: string,
+): Promise<string | undefined> {
+  if (!modulePath || modulePath === entryPath) {
+    return entryText;
   }
+  const openDocument = ctx.documents.get(moduleUri);
+  if (openDocument !== undefined) {
+    return openDocument;
+  }
+  try {
+    return await Deno.readTextFile(modulePath);
+  } catch {
+    return undefined;
+  }
+}
+
+function ensureDiagnosticsBucket(
+  buckets: Map<string, any[]>,
+  targetUri: string,
+): any[] {
+  let bucket = buckets.get(targetUri);
+  if (!bucket) {
+    bucket = [];
+    buckets.set(targetUri, bucket);
+  }
+  return bucket;
+}
+
+async function publishDiagnostics(
+  ctx: LspServerContext,
+  diagnosticsByUri: Map<string, any[]>,
+) {
+  for (const [targetUri, list] of diagnosticsByUri.entries()) {
+    ctx.diagnostics.set(targetUri, list);
+    ctx.log(`[LSP] Sending ${list.length} diagnostics for ${targetUri}`);
+    try {
+      await ctx.sendNotification("textDocument/publishDiagnostics", {
+        uri: targetUri,
+        diagnostics: list,
+      });
+    } catch (error) {
+      ctx.log(`[LSP] Failed to send diagnostics for ${targetUri}: ${error}`);
+    }
+  }
+}
+
+function extractModulePathFromMessage(message: string): string | undefined {
+  const inMatch = message.match(/\bin ['"]([^'"]+\.wm)['"]/i);
+  if (inMatch) {
+    return inMatch[1];
+  }
+  const pathMatch = message.match(/['"]([a-zA-Z]:\\[^'"]+\.wm)['"]/);
+  if (pathMatch) {
+    return pathMatch[1];
+  }
+  return undefined;
 }
 
 function appendSolverDiagnostics(

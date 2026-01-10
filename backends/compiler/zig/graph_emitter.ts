@@ -153,6 +153,7 @@ export async function emitModuleGraph(
   const moduleFiles = new Map<string, string>();
   const copiedFiles = new Set<string>();
   const collectedWmPaths = new Set<string>();
+  const isRawEntry = entryModule.mode === "raw";
 
   for (const module of modules) {
     // Copy Zig imports
@@ -230,7 +231,9 @@ export async function emitModuleGraph(
 
     // Use raw emitter for raw mode modules, runtime emitter otherwise
     let code: string;
-    if (module.mode === "raw") {
+    const useRawEmitter = module.mode === "raw" ||
+      (isRawEntry && module.core === true);
+    if (useRawEmitter) {
       const rawResult = emitRawModule(module, elaboratedGraph, {
         extension,
         baseDir: dirname(outputPath),

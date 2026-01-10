@@ -147,6 +147,14 @@ export interface CoreCarrierMatchExpr extends CoreNodeMeta {
   readonly fallback?: CoreExpr;
 }
 
+export interface CoreCoerceExpr extends CoreNodeMeta {
+  readonly kind: "coerce";
+  readonly fromType: Type;
+  readonly toType: Type;
+  readonly coercion: string;
+  readonly expr: CoreExpr;
+}
+
 export interface CoreEnumLiteralExpr extends CoreNodeMeta {
   readonly kind: "enum_literal";
   readonly name: string;
@@ -169,6 +177,7 @@ export type CoreExpr =
   | CoreCarrierUnwrapExpr
   | CoreCarrierWrapExpr
   | CoreCarrierMatchExpr
+  | CoreCoerceExpr
   | CoreEnumLiteralExpr;
 
 export type CorePrimOp =
@@ -253,6 +262,7 @@ export interface CoreTypeConstructor {
   readonly name: string;
   readonly arity: number;
   readonly exported: boolean;
+  readonly span?: SourceSpan;
 }
 
 export interface CoreTypeRecordField {
@@ -264,6 +274,7 @@ export interface CoreTypeDeclaration {
   readonly name: string;
   readonly constructors: readonly CoreTypeConstructor[];
   readonly exported: boolean;
+  readonly span?: SourceSpan;
   readonly origin?: NodeId;
   readonly infectious?: {
     readonly domain: string;
@@ -642,6 +653,13 @@ function formatExprLines(
           ...formatExprLines(expr.fallback, options, depth + 2),
         );
       }
+      return lines;
+    }
+    case "coerce": {
+      const lines = [
+        `${indent}coerce ${expr.coercion} ${typeToString(expr.fromType)} -> ${typeToString(expr.toType)}${typeSuffix}`,
+      ];
+      lines.push(...formatExprLines(expr.expr, options, depth + 1));
       return lines;
     }
     case "enum_literal":

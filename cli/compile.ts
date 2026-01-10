@@ -348,12 +348,19 @@ export async function runBuildCommand(
   });
 
   // Compile any referenced .wm source files to .zig
-  const zigFilesToFormat = [buildZigPath];
+  const zigFilesToFormat = new Set<string>([buildZigPath]);
+  for (const file of emitResult.moduleFiles.values()) {
+    if (file.endsWith(".zig")) {
+      zigFilesToFormat.add(file);
+    }
+  }
   for (const wmPath of emitResult.wmSourcePaths) {
     const absoluteWmPath = resolve(buildDir, wmPath);
     const zigOutputPath = resolve(buildDir, wmPath.slice(0, -3) + ".zig");
+    const relativeWmPath = relative(buildDir, absoluteWmPath);
+    const relativeZigPath = relative(buildDir, zigOutputPath);
 
-    console.log(`Compiling ${wmPath} to ${wmPath.slice(0, -3)}.zig...`);
+    console.log(`Compiling ${relativeWmPath} to ${relativeZigPath} ...`);
 
     const sourceCompileResult = await compileWorkmanGraph(absoluteWmPath, {
       loader: {
@@ -388,7 +395,7 @@ export async function runBuildCommand(
       console.warn("Compilation continued despite type errors (--force used).");
     }
 
-    await emitZigModuleGraph(sourceCompileResult.coreGraph, {
+    const sourceEmitResult = await emitZigModuleGraph(sourceCompileResult.coreGraph, {
       outDir: buildDir,
       commonRoot: buildDir,
       emitRuntime: false,
@@ -396,12 +403,18 @@ export async function runBuildCommand(
       traceOptions,
     });
 
-    zigFilesToFormat.push(zigOutputPath);
+    zigFilesToFormat.add(zigOutputPath);
+    for (const file of sourceEmitResult.moduleFiles.values()) {
+      if (file.endsWith(".zig")) {
+        zigFilesToFormat.add(file);
+      }
+    }
   }
 
   // Run zig fmt on all generated .zig files
-  await runZigFmt(zigFilesToFormat);
-  await generateWmSourceMaps(zigFilesToFormat);
+  const zigFilesList = Array.from(zigFilesToFormat);
+  await runZigFmt(zigFilesList);
+  await generateWmSourceMaps(zigFilesList);
 
   console.log("Running zig build...");
 

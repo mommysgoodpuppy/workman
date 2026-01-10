@@ -251,14 +251,32 @@ export function emitRawModule(
     // For lambdas, emit as named functions
     if (binding.value.kind === "lambda") {
       if (isStdZigOption && RAW_STD_ZIG_OPTION_HELPERS.has(binding.name)) {
-        lines.push(emitRawZigOptionHelper(binding.name, bindingRef, isExported));
+        lines.push(
+          emitWithSpan(
+            binding.value.span,
+            emitRawZigOptionHelper(binding.name, bindingRef, isExported),
+            ctx,
+          ),
+        );
       } else {
         const fnCode = emitNamedLambda(binding.value, bindingRef, ctx);
-        lines.push(`${isExported ? "pub " : ""}${fnCode}`);
+        lines.push(
+          emitWithSpan(
+            binding.value.span,
+            `${isExported ? "pub " : ""}${fnCode}`,
+            ctx,
+          ),
+        );
       }
     } else {
-      const expr = emitExpr(binding.value, ctx);
-      lines.push(`${isExported ? "pub " : ""}const ${bindingRef} = ${expr};`);
+      const expr = emitExprInner(binding.value, ctx);
+      lines.push(
+        emitWithSpan(
+          binding.value.span,
+          `${isExported ? "pub " : ""}const ${bindingRef} = ${expr};`,
+          ctx,
+        ),
+      );
     }
   }
 
@@ -375,6 +393,8 @@ function resolveName(scope: Map<string, VarRef>, name: string, state: NameState)
 
 function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): string[] {
   const lines: string[] = [];
+  const emitDeclLine = (code: string, spanOverride?: SourceSpan) =>
+    emitWithSpan(spanOverride ?? decl.span, code, ctx);
   
   // Handle record types (emit as Zig struct)
   if (decl.recordFields && decl.recordFields.length > 0) {
@@ -382,7 +402,7 @@ function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): strin
       .map(f => `${f.name}: ${f.typeAnnotation ?? "anytype"}`)
       .join(", ");
     const pub = decl.exported ? "pub " : "";
-    lines.push(`${pub}const ${decl.name} = struct { ${fields} };`);
+    lines.push(emitDeclLine(`${pub}const ${decl.name} = struct { ${fields} };`));
     return lines;
   }
   
@@ -390,11 +410,17 @@ function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): strin
   if (decl.constructors.length === 0) {
     // Special case: GpaHandle maps to DebugAllocator
     if (decl.name === "GpaHandle") {
-      lines.push(`pub const GpaHandle = @import("std").heap.DebugAllocator(.{});`);
+      lines.push(
+        emitDeclLine(
+          `pub const GpaHandle = @import("std").heap.DebugAllocator(.{});`,
+        ),
+      );
       return lines;
     }
     if (decl.name === "Allocator") {
-      lines.push(`pub const Allocator = @import("std").mem.Allocator;`);
+      lines.push(
+        emitDeclLine(`pub const Allocator = @import("std").mem.Allocator;`),
+      );
       return lines;
     }
     // Opaque type - these map directly to Zig types
@@ -407,25 +433,44 @@ function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): strin
   const pub = decl.exported ? "pub " : "";
   if (decl.constructors.length > 0) {
     // Export the type name as a function that returns anytype (for type annotations)
-    lines.push(`${pub}fn ${decl.name}(comptime T: type, comptime E: type) type { return union(enum) { IOk: T, IErr: E }; }`);
+    lines.push(
+      emitDeclLine(
+        `${pub}fn ${decl.name}(comptime T: type, comptime E: type) type { return union(enum) { IOk: T, IErr: E }; }`,
+      ),
+    );
     // Export constructor names as marker constants
     for (const ctor of decl.constructors) {
-      lines.push(`${pub}const ${ctor.name} = .${ctor.name};`);
+      const ctorName = sanitizeIdentifier(ctor.name, ctx.state);
+      lines.push(
+        emitDeclLine(
+          `${pub}const ${ctorName} = .${ctorName};`,
+          ctor.span,
+        ),
+      );
     }
   }
   return lines;
 }
 
+function getWmComment(span: SourceSpan | undefined, ctx: EmitContext): string | null {
+  if (!span || !ctx.options.getSourceLocation) return null;
+  const loc = ctx.options.getSourceLocation(span);
+  if (!loc) return null;
+  return `// wm: ${formatSourceLocation(loc)}`;
+}
+
 function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
-  const result = emitExprInner(expr, ctx);
-  const loc = ctx.options.getSourceLocation && expr.span
-    ? ctx.options.getSourceLocation(expr.span)
-    : undefined;
-  if (loc && (expr.kind === "match" || expr.kind === "call" || expr.kind === "if")) {
-    const location = formatSourceLocation(loc);
-    return `// wm: ${location}\n${result}`;
-  }
-  return result;
+  return emitExprInner(expr, ctx);
+}
+
+function emitWithSpan(
+  span: SourceSpan | undefined,
+  code: string,
+  ctx: EmitContext,
+): string {
+  const comment = getWmComment(span, ctx);
+  if (!comment) return code;
+  return `${comment}\n${code}`;
 }
 
 function emitExprInner(expr: CoreExpr, ctx: EmitContext): string {
@@ -467,6 +512,11 @@ function emitExprInner(expr: CoreExpr, ctx: EmitContext): string {
       return emitData(expr, ctx);
     case "tuple":
       return emitTuple(expr, ctx);
+    case "coerce": {
+      const targetType = emitType(expr.toType, ctx);
+      const inner = emitExpr(expr.expr, ctx);
+      return `@as(${targetType}, ${inner})`;
+    }
     case "enum_literal":
       return `.${expr.name}`;
     default:
@@ -1268,10 +1318,11 @@ function emitMatchCase(
     return `else => ${body}`;
   }
   if (matchCase.pattern.kind === "constructor" && matchCase.pattern.fields.length > 0) {
-    const args = matchCase.pattern.fields.map((a) => emitPattern(a, ctx)).join(", ");
-    return `.${matchCase.pattern.constructor} => |${args}| ${body}`;
+    const args = matchCase.pattern.fields.map((a) => emitPattern(a, innerCtx)).join(", ");
+    const ctorName = sanitizeIdentifier(matchCase.pattern.constructor, ctx.state);
+    return `.${ctorName} => |${args}| ${body}`;
   }
-  const pattern = emitPattern(matchCase.pattern, ctx);
+  const pattern = emitPattern(matchCase.pattern, innerCtx);
   if (pattern === "_") {
     return `else => ${body}`;
   }
@@ -1299,14 +1350,14 @@ function emitPattern(pattern: CorePattern, ctx: EmitContext): string {
       if (pattern.name.startsWith("_")) {
         return "_";
       }
-      return sanitizeIdentifier(pattern.name, ctx.state);
+      return resolveName(ctx.scope, pattern.name, ctx.state);
     case "literal":
       return emitLiteral(pattern.literal, ctx);
     case "constructor":
       if (pattern.fields.length === 0) {
-        return `.${pattern.constructor}`;
+        return `.${sanitizeIdentifier(pattern.constructor, ctx.state)}`;
       }
-      return `.${pattern.constructor}`;
+      return `.${sanitizeIdentifier(pattern.constructor, ctx.state)}`;
     case "tuple":
       const elements = pattern.elements.map((e) => emitPattern(e, ctx)).join(", ");
       return `.{ ${elements} }`;
@@ -1514,7 +1565,9 @@ function emitLetRec(
       ctx.hoisted.push(fnCode);
     } else {
       // Non-lambda bindings can't really be recursive, emit inline
-      ctx.hoisted.push(`const ${ref.value} = ${emitExpr(binding.value, { ...ctx, scope })};`);
+      ctx.hoisted.push(
+        `const ${ref.value} = ${emitExprInner(binding.value, { ...ctx, scope })};`,
+      );
     }
   }
   

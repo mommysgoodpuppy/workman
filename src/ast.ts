@@ -1,6 +1,10 @@
 export interface SourceSpan {
   start: number;
   end: number;
+  line?: number;
+  column?: number;
+  endLine?: number;
+  endColumn?: number;
 }
 
 export type NodeId = number;

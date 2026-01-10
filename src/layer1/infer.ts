@@ -118,6 +118,7 @@ import {
 import { materializeExpr, materializeMarkedLet } from "./materialize.ts";
 import { resetNodeIds } from "../node_ids.ts";
 import { unknownFromReason } from "./infer_utils.ts";
+import { getZigRawCoercion } from "./coercions_zig_raw.ts";
 import type {
   EffectRowCoverage,
   MatchBranchesResult,
@@ -747,29 +748,6 @@ function getCalleeName(expr: Expr): string | undefined {
     return expr.name;
   }
   return undefined;
-}
-
-function shouldCoerceSliceToPtr(
-  expected: Type,
-  actual: Type,
-  ctx: Context,
-): boolean {
-  if (expected.kind !== "constructor" || actual.kind !== "constructor") {
-    return false;
-  }
-  if (actual.name !== "Slice") {
-    return false;
-  }
-  if (expected.name !== "Ptr" && expected.name !== "ManyPtr") {
-    return false;
-  }
-  if (expected.args.length > 0 && actual.args.length > 0) {
-    unify(ctx, expected.args[0], actual.args[0]);
-  }
-  if (expected.args.length > 1 && actual.args.length > 1) {
-    unify(ctx, expected.args[1], actual.args[1]);
-  }
-  return true;
 }
 
 function resolveOpRule(
@@ -2532,7 +2510,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
         let argumentValueType = resolvedArg;
         if (
           ctx.rawMode && expectedParamType &&
-          shouldCoerceSliceToPtr(expectedParamType, resolvedArg, ctx)
+          getZigRawCoercion(expectedParamType, resolvedArg, ctx)
         ) {
           argumentValueType = expectedParamType;
         }
@@ -3954,9 +3932,8 @@ export function inferPattern(
           type: resolvedExpected,
           bindings,
           coverage: {
-            kind: "constructor",
-            typeName: "__mem_nullability",
-            ctor: pattern.name,
+            kind: "nullability",
+            ctor: pattern.name as "Null" | "NonNull",
           },
           marked: {
             kind: "constructor",
@@ -4025,9 +4002,8 @@ export function inferPattern(
           type: resolvedExpected,
           bindings,
           coverage: {
-            kind: "constructor",
-            typeName: "__mem_nullability",
-            ctor: pattern.name,
+            kind: "nullability",
+            ctor: pattern.name as "Null" | "NonNull",
           },
           marked: {
             kind: "constructor",
@@ -4409,6 +4385,7 @@ export function inferMatchBranches(
   let hasAllErrors = false;
   let hasErrConstructor = false;
   const handledErrorConstructors = new Set<string>();
+  const nullabilityCoverage = new Set<"Null" | "NonNull">();
   const patternInfos: PatternInfo[] = [];
   const bodyTypes: Type[] = [];
   const branchBodies: Expr[] = [];
@@ -4538,6 +4515,10 @@ export function inferMatchBranches(
         set.add(patternInfo.coverage.ctor);
         coverageMap.set(key, set);
       }
+    } else if (patternInfo.coverage.kind === "nullability") {
+      if (!arm.guard) {
+        nullabilityCoverage.add(patternInfo.coverage.ctor);
+      }
     } else if (patternInfo.coverage.kind === "bool") {
       // Guarded patterns don't guarantee bool coverage
       if (!arm.guard) {
@@ -4602,9 +4583,18 @@ export function inferMatchBranches(
       branchBodies.push(arm.body);
       if (!resultType) {
         resultType = bodyType;
-      } else {
-        unify(ctx, resultType, bodyType);
-        resultType = applyCurrentSubst(ctx, resultType);
+      } else if (!branchMetadata.some((meta) => meta.type.kind === "unknown")) {
+        const unified = unify(ctx, resultType, bodyType);
+        if (!unified) {
+          resultType = createUnknownAndRegister(
+            ctx,
+            holeOriginFromExpr(expr),
+            { kind: "incomplete", reason: "match.branch_mismatch" },
+            [arm.body.id],
+          );
+        } else {
+          resultType = applyCurrentSubst(ctx, resultType);
+        }
       }
     }
   }
@@ -4660,6 +4650,11 @@ export function inferMatchBranches(
   const scrutineeInfo = flattenResultType(resolvedScrutinee);
   const scrutineeCarrier = splitCarrier(resolvedScrutinee);
   let scrutineeFullyCovered = hasWildcard;
+  if (scrutineeCarrier?.domain === "mem") {
+    if (nullabilityCoverage.has("Null") && nullabilityCoverage.has("NonNull")) {
+      scrutineeFullyCovered = true;
+    }
+  }
   if (!scrutineeFullyCovered && resolvedScrutinee.kind === "constructor") {
     const coverage = coverageMap.get(resolvedScrutinee.name);
     const adtInfo = ctx.adtEnv.get(resolvedScrutinee.name);
@@ -4777,8 +4772,9 @@ export function inferMatchBranches(
   // If there's a wildcard, it covers all constructors including effect ones
   // so we should treat it as fully covered for rewrapping purposes
   const effectFullyCovered = handledErrorConstructors.size > 0 || hasWildcard;
+  const resultIsHole = isHoleType(resolvedResult);
 
-  const shouldRewrapCarrier = scrutineeCarrier &&
+  const shouldRewrapCarrier = scrutineeCarrier && !resultIsHole &&
     ((scrutineeCarrier.domain === "effect" && !effectFullyCovered) ||
       (scrutineeCarrier.domain !== "effect" && !scrutineeFullyCovered));
 

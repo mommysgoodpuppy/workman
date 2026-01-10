@@ -54,6 +54,38 @@ export interface ParseSurfaceProgramOptions {
   preservePipeOperator?: boolean;
 }
 
+function computeLineOffsets(source: string): number[] {
+  const offsets = [0];
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] === "\n") {
+      offsets.push(i + 1);
+    }
+  }
+  return offsets;
+}
+
+function offsetToLineCol(
+  offset: number,
+  offsets: number[],
+): { line: number; column: number } {
+  let low = 0;
+  let high = offsets.length - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const start = offsets[mid];
+    const next = mid + 1 < offsets.length ? offsets[mid + 1] : Number.MAX_SAFE_INTEGER;
+    if (offset < start) {
+      high = mid - 1;
+    } else if (offset >= next) {
+      low = mid + 1;
+    } else {
+      return { line: mid + 1, column: offset - start + 1 };
+    }
+  }
+  const lastStart = offsets[offsets.length - 1] ?? 0;
+  return { line: offsets.length, column: offset - lastStart + 1 };
+}
+
 export function parseSurfaceProgram(
   tokens: Token[],
   source?: string,
@@ -84,6 +116,7 @@ class SurfaceParser {
   private index = 0;
   private operators: Map<string, OperatorInfo>;
   private prefixOperators: Set<string>;
+  private readonly lineOffsets?: number[];
 
   constructor(
     private readonly tokens: Token[],
@@ -109,6 +142,7 @@ class SurfaceParser {
     this.prefixOperators = initialPrefixOperators
       ? new Set(initialPrefixOperators)
       : new Set();
+    this.lineOffsets = source ? computeLineOffsets(source) : undefined;
   }
 
   parseProgram(): Program {
@@ -3071,11 +3105,23 @@ class SurfaceParser {
   }
 
   private createSpan(start: Token, end: Token): SourceSpan {
-    return { start: start.start, end: end.end };
+    return this.spanFrom(start.start, end.end);
   }
 
   private spanFrom(start: number, end: number): SourceSpan {
-    return { start, end };
+    if (!this.lineOffsets || !this.source) {
+      return { start, end };
+    }
+    const startLoc = offsetToLineCol(start, this.lineOffsets);
+    const endLoc = offsetToLineCol(end, this.lineOffsets);
+    return {
+      start,
+      end,
+      line: startLoc.line,
+      column: startLoc.column,
+      endLine: endLoc.line,
+      endColumn: endLoc.column,
+    };
   }
 
   private expectKeyword(value: string): Token {

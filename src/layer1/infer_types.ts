@@ -17,6 +17,7 @@ export type PatternCoverage =
     ctor: string;
     effectRow?: EffectRowCoverage;
   }
+  | { kind: "nullability"; ctor: "Null" | "NonNull" }
   | { kind: "bool"; value: boolean }
   | { kind: "none" }
   | { kind: "all_errors" };

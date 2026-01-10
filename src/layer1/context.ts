@@ -355,7 +355,7 @@ export function recordBranchJoinConstraint(
     effectRowCoverage?: MatchEffectRowCoverage;
   },
 ): void {
-  const coverage = metadata?.effectRowCoverage!
+  const coverage = metadata?.effectRowCoverage
     ? {
       row: metadata.effectRowCoverage.effectRow,
       coveredConstructors: Array.from(

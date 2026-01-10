@@ -128,6 +128,9 @@ function collectBindingNames(expr: CoreExpr, used: Set<string>): void {
     case "carrier_wrap":
       collectBindingNames(expr.target, used);
       return;
+    case "coerce":
+      collectBindingNames(expr.expr, used);
+      return;
     case "literal":
     case "var":
     case "enum_literal":
@@ -265,6 +268,11 @@ function elaborateExpr(expr: CoreExpr, ctx: CarrierContext): CoreExpr {
       return {
         ...expr,
         target: elaborateExpr(expr.target, ctx),
+      };
+    case "coerce":
+      return {
+        ...expr,
+        expr: elaborateExpr(expr.expr, ctx),
       };
     case "carrier_match":
       return {

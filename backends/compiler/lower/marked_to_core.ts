@@ -3,6 +3,7 @@ import type {
   MBlockExpr,
   MBlockStatement,
   MExpr,
+  MCallExpr,
   MLetDeclaration,
   MMatchArm,
   MMatchBundle,
@@ -28,6 +29,7 @@ import type {
   CorePrimOp,
   CoreValueBinding,
 } from "../ir/core.ts";
+import { getZigRawCoercion } from "../../../src/layer1/coercions_zig_raw.ts";
 
 export class CoreLoweringError extends Error {
   constructor(message: string, public readonly nodeId?: number) {
@@ -43,6 +45,7 @@ interface LoweringState {
   readonly bundleArms: Map<string, MMatchArm[]>;
   readonly recordDefaultExprs: Map<string, Map<string, MExpr>>;
   readonly adtEnv: import("../../../src/types.ts").TypeEnvADT;
+  readonly rawMode: boolean;
 }
 
 const UNKNOWN_PROVENANCE = "core.lowering.unresolved_type";
@@ -52,6 +55,7 @@ export function lowerProgramToValues(
   resolvedTypes: Map<number, Type>,
   recordDefaultExprs: Map<string, Map<string, MExpr>> = new Map(),
   adtEnv: import("../../../src/types.ts").TypeEnvADT = new Map(),
+  rawMode = false,
 ): CoreValueBinding[] {
   const state: LoweringState = {
     tempIndex: 0,
@@ -59,6 +63,7 @@ export function lowerProgramToValues(
     bundleArms: new Map(),
     recordDefaultExprs,
     adtEnv,
+    rawMode,
   };
   const values: CoreValueBinding[] = [];
   for (const declaration of program.declarations) {
@@ -308,14 +313,7 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
     case "constructor":
       return lowerConstructorExpr(expr, state);
     case "call":
-      return {
-        kind: "call",
-        callee: lowerExpr(expr.callee, state),
-        args: expr.arguments.map((argument) => lowerExpr(argument, state)),
-        type: resolveNodeType(state, expr.id, expr.type),
-        origin: expr.id,
-        span: expr.span,
-      };
+      return lowerCallExpr(expr, state);
     case "type_as":
       // Type assertion: `expr as Type` - just lower the inner expression
       // The type system has already validated/applied the assertion
@@ -411,6 +409,123 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
   }
 }
 
+function lowerCallExpr(expr: MCallExpr, state: LoweringState): CoreExpr {
+  const callee = lowerExpr(expr.callee, state);
+  const calleeType = resolveNodeType(state, expr.callee.id, expr.callee.type);
+  const paramTypes = getFunctionParamTypes(calleeType, expr.arguments.length);
+  const args = expr.arguments.map((argument, index) => {
+    const lowered = lowerExpr(argument, state);
+    const actualType = resolveNodeType(state, argument.id, argument.type);
+    const expectedType = paramTypes[index];
+    return expectedType
+      ? applyRawCoercion(lowered, actualType, expectedType, state)
+      : lowered;
+  });
+  return {
+    kind: "call",
+    callee,
+    args,
+    type: resolveNodeType(state, expr.id, expr.type),
+    origin: expr.id,
+    span: expr.span,
+  };
+}
+
+function getFunctionParamTypes(type: Type, count: number): Type[] {
+  const params: Type[] = [];
+  let current = type;
+  for (let i = 0; i < count && current.kind === "func"; i += 1) {
+    params.push(current.from);
+    current = current.to;
+  }
+  return params;
+}
+
+function applyRawCoercion(
+  expr: CoreExpr,
+  actualType: Type,
+  expectedType: Type,
+  state: LoweringState,
+): CoreExpr {
+  if (!state.rawMode) return expr;
+  if (typesEqual(actualType, expectedType)) return expr;
+  const coercion = getZigRawCoercion(expectedType, actualType);
+  if (coercion === "comptime_int_to_numeric") {
+    return {
+      kind: "coerce",
+      expr,
+      fromType: actualType,
+      toType: expectedType,
+      coercion,
+      type: expectedType,
+    };
+  }
+  return expr;
+}
+
+function typesEqual(left: Type, right: Type): boolean {
+  if (left.kind !== right.kind) return false;
+  switch (left.kind) {
+    case "int":
+    case "bool":
+    case "char":
+    case "string":
+    case "unit":
+      return true;
+    case "var":
+      return left.id === (right as typeof left).id;
+    case "func":
+      return typesEqual(left.from, (right as typeof left).from) &&
+        typesEqual(left.to, (right as typeof left).to);
+    case "constructor": {
+      const rightCtor = right as typeof left;
+      if (left.name !== rightCtor.name) return false;
+      if (left.args.length !== rightCtor.args.length) return false;
+      for (let i = 0; i < left.args.length; i += 1) {
+        if (!typesEqual(left.args[i], rightCtor.args[i])) return false;
+      }
+      return true;
+    }
+    case "tuple": {
+      const rightTuple = right as typeof left;
+      if (left.elements.length !== rightTuple.elements.length) return false;
+      for (let i = 0; i < left.elements.length; i += 1) {
+        if (!typesEqual(left.elements[i], rightTuple.elements[i])) return false;
+      }
+      return true;
+    }
+    case "array": {
+      const rightArray = right as typeof left;
+      return left.length === rightArray.length &&
+        typesEqual(left.element, rightArray.element);
+    }
+    case "record": {
+      const rightRecord = right as typeof left;
+      if (left.fields.size !== rightRecord.fields.size) return false;
+      for (const [name, fieldType] of left.fields.entries()) {
+        const other = rightRecord.fields.get(name);
+        if (!other || !typesEqual(fieldType, other)) return false;
+      }
+      return true;
+    }
+    case "effect_row": {
+      const rightRow = right as typeof left;
+      if (left.cases.size !== rightRow.cases.size) return false;
+      for (const [label, payload] of left.cases.entries()) {
+        const other = rightRow.cases.get(label);
+        if (payload && other) {
+          if (!typesEqual(payload, other)) return false;
+        } else if (payload !== other) {
+          return false;
+        }
+      }
+      if (!left.tail && !rightRow.tail) return true;
+      if (!left.tail || !rightRow.tail) return false;
+      return typesEqual(left.tail, rightRow.tail);
+    }
+  }
+}
+
 function lowerMatchExpr(
   scrutinee: MExpr,
   bundle: MMatchBundle,
@@ -419,8 +534,9 @@ function lowerMatchExpr(
 ): CoreExpr {
   const loweredScrutinee = lowerExpr(scrutinee, state);
   const expandedArms = expandBundleArms(bundle.arms, state);
+  const expectedType = resolveNodeType(state, expr.id, expr.type);
   const cases: CoreMatchCase[] = expandedArms.map((arm) =>
-    lowerMatchArm(arm, state)
+    lowerMatchArm(arm, state, expectedType)
   );
   const effectRowCoverage = bundle.effectRowCoverage
     ? {
@@ -448,23 +564,33 @@ function lowerMatchExpr(
   };
 }
 
-function lowerMatchArm(arm: MMatchArm, state: LoweringState): CoreMatchCase {
+function lowerMatchArm(
+  arm: MMatchArm,
+  state: LoweringState,
+  expectedType?: Type,
+): CoreMatchCase {
   if (arm.kind !== "match_pattern") {
     throw new CoreLoweringError(
       "Match bundle references are not supported in Core lowering yet",
       arm.id,
     );
   }
-  return lowerPatternArm(arm, state);
+  return lowerPatternArm(arm, state, expectedType);
 }
 
 function lowerPatternArm(
   arm: MMatchPatternArm,
   state: LoweringState,
+  expectedType?: Type,
 ): CoreMatchCase {
+  const loweredBody = lowerExpr(arm.body, state);
+  const bodyType = resolveNodeType(state, arm.body.id, arm.body.type);
+  const coercedBody = expectedType
+    ? applyRawCoercion(loweredBody, bodyType, expectedType, state)
+    : loweredBody;
   return {
     pattern: lowerPattern(arm.pattern, state),
-    body: lowerExpr(arm.body, state),
+    body: coercedBody,
     guard: arm.guard ? lowerExpr(arm.guard, state) : undefined,
   };
 }

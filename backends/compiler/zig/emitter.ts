@@ -191,6 +191,12 @@ export function emitModule(
     valueLines.push(
       `${isExported ? "pub " : ""}var ${bindingRef}: Value = undefined;`,
     );
+    if (ctx.options.getSourceLocation && binding.value.span) {
+      const loc = ctx.options.getSourceLocation(binding.value.span);
+      if (loc) {
+        initLines.push(formatWmComment(loc));
+      }
+    }
     initLines.push(`${bindingRef} = ${expr};`);
   }
   const exportLines = emitExports(module, ctx, exportSet, initLines);
@@ -516,15 +522,17 @@ function emitExports(
 }
 
 function emitExpr(expr: CoreExpr, ctx: EmitContext, nameHint?: string): string {
+  return emitExprInner(expr, ctx, nameHint);
+}
+
+function emitExprWithComment(expr: CoreExpr, ctx: EmitContext, nameHint?: string): string {
   const result = emitExprInner(expr, ctx, nameHint);
   if (ctx.options.getSourceLocation && expr.span) {
-    if (expr.kind === "match" || expr.kind === "call" || expr.kind === "if") {
-      const loc = ctx.options.getSourceLocation(expr.span);
-      if (loc) {
-        return `
+    const loc = ctx.options.getSourceLocation(expr.span);
+    if (loc) {
+      return `
 ${formatWmComment(loc)}
 ${result}`;
-      }
     }
   }
   return result;
@@ -607,6 +615,8 @@ function emitExprInner(
 
       return `runtime.carrierMatch(${matchLambda}, ${scrutineeCode}, "${expr.carrierType}", ${callSite})`;
     }
+    case "coerce":
+      return emitExpr(expr.expr, ctx);
     default:
       throw new Error(
         `Unsupported expression kind '${(expr as CoreExpr).kind}'`,

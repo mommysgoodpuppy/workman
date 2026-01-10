@@ -990,9 +990,35 @@ function solveBranchJoinConstraint(
 
   let mergedType = getTypeForNode(state, stub.branches[0]);
   let currentSubst = state.substitution;
+  let branchHole = isHoleType(mergedType) ? mergedType : null;
+
+  const reportMismatch = (index: number, actualType: Type) => {
+    state.diagnostics.push({
+      origin: stub.origin,
+      reason: "branch_mismatch",
+      details: {
+        branchIndex: index,
+        dischargesResult: stub.dischargesResult ?? false,
+        effectRow: stub.effectRowCoverage?.row,
+        missingConstructors: stub.effectRowCoverage?.missingConstructors,
+        expectedType: mergedType,
+        actualType,
+        firstBranchNodeId: stub.branches[0],
+        mismatchBranchNodeId: stub.branches[index],
+      },
+    });
+    state.nodeTypeById.set(
+      stub.origin,
+      unknownType({ kind: "incomplete", reason: "branch_mismatch" }),
+    );
+  };
 
   for (let index = 1; index < stub.branches.length; index += 1) {
     const branchType = getTypeForNode(state, stub.branches[index]);
+
+    if (!branchHole && isHoleType(branchType)) {
+      branchHole = branchType;
+    }
 
     // Check if both types are carriers in the same domain
     const leftCarrier = splitCarrier(mergedType);
@@ -1008,20 +1034,7 @@ function solveBranchJoinConstraint(
         currentSubst,
       );
       if (!valueUnify.success) {
-        state.diagnostics.push({
-          origin: stub.origin,
-          reason: "branch_mismatch",
-          details: {
-            branchIndex: index,
-            dischargesResult: stub.dischargesResult ?? false,
-            effectRow: stub.effectRowCoverage?.row,
-            missingConstructors: stub.effectRowCoverage?.missingConstructors,
-            expectedType: mergedType,
-            actualType: branchType,
-            firstBranchNodeId: stub.branches[0],
-            mismatchBranchNodeId: stub.branches[index],
-          },
-        });
+        reportMismatch(index, branchType);
         return;
       }
       currentSubst = valueUnify.subst;
@@ -1048,24 +1061,15 @@ function solveBranchJoinConstraint(
       // Normal unification
       const unified = unifyTypes(mergedType, branchType, currentSubst);
       if (!unified.success) {
-        state.diagnostics.push({
-          origin: stub.origin,
-          reason: "branch_mismatch",
-          details: {
-            branchIndex: index,
-            dischargesResult: stub.dischargesResult ?? false,
-            effectRow: stub.effectRowCoverage?.row,
-            missingConstructors: stub.effectRowCoverage?.missingConstructors,
-            expectedType: mergedType,
-            actualType: branchType,
-            firstBranchNodeId: stub.branches[0],
-            mismatchBranchNodeId: stub.branches[index],
-          },
-        });
+        reportMismatch(index, branchType);
         return;
       }
       currentSubst = unified.subst;
     }
+  }
+
+  if (branchHole) {
+    mergedType = branchHole;
   }
 
   // Store the merged type (with unions) directly

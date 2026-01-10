@@ -68,6 +68,8 @@ export function lowerAnalyzedModule(
       program,
       analysis.layer2.resolvedNodeTypes,
       analysis.layer1.recordDefaultExprs,
+      analysis.layer1.adtEnv,
+      node.program?.mode === "raw",
     ),
     exports: convertExports(node, input.summary),
     mode: node.program?.mode,
@@ -197,6 +199,7 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
           name: member.name,
           arity: member.typeArgs.length,
           exported: Boolean(topLevel.export),
+          span: member.span,
         });
       }
 
@@ -228,6 +231,7 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
         constructors,
         exported: Boolean(topLevel.export),
         infectious,
+        span: topLevel.span,
       });
     }
 
@@ -253,6 +257,7 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
         constructors: [], // Records have no ADT constructors
         exported: Boolean(topLevel.export),
         recordFields,
+        span: topLevel.span,
       });
     }
   }
