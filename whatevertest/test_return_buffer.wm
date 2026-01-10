@@ -1,0 +1,13 @@
+from "std/zig/mem" import { alloc, free, write };
+
+let allocAndUse = () => {
+  let buffer = alloc(100);
+  'X' >> buffer[0];
+  buffer
+};
+
+let main = () => {
+  let buf = allocAndUse();
+  'Y' >> buf[0];  -- Use after function return
+  free(buf)
+};

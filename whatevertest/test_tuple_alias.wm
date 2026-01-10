@@ -1,0 +1,14 @@
+from "std/zig/mem" import { alloc, free, write };
+
+let main = () => {
+  let pair = {
+    let buffer = alloc(100);
+    (buffer, buffer)
+  };
+  match(pair) {
+    (a, b) => {
+      free(a);
+      'X' >> b[0]
+    }
+  }
+};

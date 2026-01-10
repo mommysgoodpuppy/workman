@@ -1,0 +1,29 @@
+from "std/list" import { listSlice, listFilter, listRemove, listAt, listTake, listLength, listTakeUntil, listSplitBy, listMap, listUncons, listFoldr };
+from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
+from "std/nativeString" import { stringToList, stringConcat, intToString };
+from "std/result" import { stripErr };
+from "std/char" import {charToInt};
+
+let rec yoink = (infectedList) => {
+  match(listUncons(infectedList)) {
+    IOk((head, tail)) => {
+      match(head, yoink(tail)) {
+        (IOk(value), IOk(restList)) => { IOk(Link(value, restList)) },
+        (IErr(err), _) => { IErr(err) },
+        (_, IErr(err)) => { IErr(err) }
+      }
+    },
+    IErr(_) => { IOk(Empty) }
+  }
+};
+
+
+let main = () => {
+
+  let a = IOk(1);
+  let b = IOk(2);
+
+  let list = [a, b];
+
+  let x4 = yoink(list);
+}

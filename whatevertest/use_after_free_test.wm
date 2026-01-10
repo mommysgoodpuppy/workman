@@ -1,0 +1,16 @@
+from "std/zig/mem" import { alloc, free, write, read };
+from "std/zig/debug" import { print };
+
+let main = () => {
+  let buf = alloc(10);
+  
+  'A' >> buf[0];
+  'B' >> buf[1];
+  
+  free(buf);
+  
+  -- This should be a type error - using buf after free!
+  'C' >> buf[2];
+  
+  print("Wrote to freed buffer!\n", buf);
+};

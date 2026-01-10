@@ -1,0 +1,46 @@
+from "std/zig/mem" import { alloc, write, free, copy, slice };
+from "std/zig/debug" import { print };
+
+let main = () => {
+  -- 1. Allocate buffers
+  let hello = alloc(5);
+  let world = alloc(5);
+
+  -- 2. Write "Hello"
+  'H' >> hello[0];
+  'e' >> hello[1];
+  'l' >> hello[2];
+  'l' >> hello[3];
+  'o' >> hello[4];
+
+  -- 3. Write "World"
+  'W' >> world[0];
+  'o' >> world[1];
+  'r' >> world[2];
+  'l' >> world[3];
+  'd' >> world[4];
+
+  -- 4. Allocate combined buffer (5 + 1 + 5 = 11)
+  let combined = alloc(11);
+
+  -- 5. Copy "Hello"
+  copy(combined, hello, 5);
+
+  -- 6. Write space
+  ' ' >> combined[5];
+
+  -- 7. Copy "World" to offset 6
+  let destSlice = slice(combined, 6, 11);
+  copy(destSlice, world, 5);
+
+  -- 8. Print
+  print("Combined: {s}\n", combined);
+  let hello = hello;
+  let world = world;
+  let combined = combined;
+
+  -- 9. Free
+  free(hello);
+  free(world);
+  free(combined);
+};

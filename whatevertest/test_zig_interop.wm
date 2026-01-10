@@ -1,0 +1,7 @@
+from "./examples/my_math.zig" import { add };
+from "std/nativeString" import { intToString, stringConcat };
+
+let main = () => {
+  let res = add(10, 20);
+  print(stringConcat("10 + 20 = ", intToString(res)));
+};
