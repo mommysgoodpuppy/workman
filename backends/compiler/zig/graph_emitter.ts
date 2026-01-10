@@ -11,6 +11,7 @@ import type { TraceOptions } from "../../../src/trace_options.ts";
 
 import type { SourceSpan } from "../../../src/ast.ts";
 import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
+import { elaborateCarrierOpsGraph } from "../passes/elaborate_carriers.ts";
 import { emitModule } from "./emitter.ts";
 import { emitRawModule } from "./raw_emitter.ts";
 
@@ -43,6 +44,7 @@ export async function emitModuleGraph(
   graph: CoreModuleGraph,
   options: EmitGraphOptions,
 ): Promise<EmitGraphResult> {
+  const elaboratedGraph = elaborateCarrierOpsGraph(graph);
   const outDir = resolve(options.outDir);
   //console.log(`emitModuleGraph: outDir=${outDir}`);
   const extension = options.extension ?? ".zig";
@@ -50,7 +52,7 @@ export async function emitModuleGraph(
   const runtimeSourcePath = options.runtimeSourcePath ??
     filePathFromModule(import.meta, "./runtime.zig");
 
-  const modules = Array.from(graph.modules.values());
+  const modules = Array.from(elaboratedGraph.modules.values());
 
   const sourceOffsets = new Map<string, number[]>();
   const sourceTexts = new Map<string, string>();
@@ -74,9 +76,9 @@ export async function emitModuleGraph(
     const absoluteModulePaths = modules.map((module) => resolve(module.path));
     commonRoot = common(absoluteModulePaths) ?? resolve(".");
   }
-  const preludePath = graph.prelude;
+  const preludePath = elaboratedGraph.prelude;
   const preludeModule = preludePath
-    ? graph.modules.get(preludePath)
+    ? elaboratedGraph.modules.get(preludePath)
     : undefined;
   const preludeValueExports = preludeModule
     ? preludeModule.exports
@@ -108,10 +110,10 @@ export async function emitModuleGraph(
         // essentially we just need to find the Key in graph.modules
         // The graph keys are usually absolute paths.
 
-        let targetModule = graph.modules.get(targetPath);
+        let targetModule = elaboratedGraph.modules.get(targetPath);
         // Try with .wm extension if not found (common pattern)
         if (!targetModule && !targetPath.endsWith(".wm")) {
-          targetModule = graph.modules.get(targetPath + ".wm");
+          targetModule = elaboratedGraph.modules.get(targetPath + ".wm");
         }
 
         if (targetModule && !visited.has(targetModule.path)) {
@@ -123,9 +125,9 @@ export async function emitModuleGraph(
     }
   }
 
-  const entryModule = graph.modules.get(graph.entry);
+  const entryModule = elaboratedGraph.modules.get(elaboratedGraph.entry);
   if (!entryModule) {
-    throw new Error(`Entry module '${graph.entry}' not found in graph`);
+    throw new Error(`Entry module '${elaboratedGraph.entry}' not found in graph`);
   }
   const forcedEntryExports =
     entryModule.values.some((binding) => binding.name === "main")
@@ -158,7 +160,7 @@ export async function emitModuleGraph(
         (imp as any).isNative = true;
       } else {
         // Workman module - point to where it will be emitted
-        const importedModule = graph.modules.get(imp.source);
+        const importedModule = elaboratedGraph.modules.get(imp.source);
         if (importedModule) {
           const destPath = computeOutputPath(
             importedModule,
@@ -199,7 +201,7 @@ export async function emitModuleGraph(
     // Use raw emitter for raw mode modules, runtime emitter otherwise
     let code: string;
     if (module.mode === "raw") {
-      const rawResult = emitRawModule(module, graph, {
+      const rawResult = emitRawModule(module, elaboratedGraph, {
         extension,
         baseDir: dirname(outputPath),
       });
@@ -208,7 +210,7 @@ export async function emitModuleGraph(
         collectedWmPaths.add(wmPath);
       }
     } else {
-      code = emitModule(module, graph, {
+      code = emitModule(module, elaboratedGraph, {
         extension,
         runtimeModule: runtimeSpecifier,
         baseDir: dirname(outputPath),

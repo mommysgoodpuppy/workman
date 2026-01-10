@@ -120,6 +120,26 @@ export interface CoreMatchExpr extends CoreNodeMeta {
   readonly effectRowCoverage?: CoreMatchCoverage;
 }
 
+export interface CoreCarrierUnwrapExpr extends CoreNodeMeta {
+  readonly kind: "carrier_unwrap";
+  readonly carrierType: string;
+  readonly target: CoreExpr;
+}
+
+export interface CoreCarrierWrapExpr extends CoreNodeMeta {
+  readonly kind: "carrier_wrap";
+  readonly carrierType: string;
+  readonly target: CoreExpr;
+}
+
+export interface CoreCarrierMatchExpr extends CoreNodeMeta {
+  readonly kind: "carrier_match";
+  readonly carrierType: string;
+  readonly scrutinee: CoreExpr;
+  readonly cases: readonly CoreMatchCase[];
+  readonly fallback?: CoreExpr;
+}
+
 export interface CoreEnumLiteralExpr extends CoreNodeMeta {
   readonly kind: "enum_literal";
   readonly name: string;
@@ -139,6 +159,9 @@ export type CoreExpr =
   | CoreIfExpr
   | CorePrimExpr
   | CoreMatchExpr
+  | CoreCarrierUnwrapExpr
+  | CoreCarrierWrapExpr
+  | CoreCarrierMatchExpr
   | CoreEnumLiteralExpr;
 
 export type CorePrimOp =
@@ -552,6 +575,45 @@ function formatExprLines(
     }
     case "match": {
       const lines = [`${indent}match${typeSuffix}`];
+      lines.push(`${indent}${options.indent}scrutinee:`);
+      lines.push(...formatExprLines(expr.scrutinee, options, depth + 2));
+      for (const kase of expr.cases) {
+        const pattern = formatPattern(kase.pattern, options);
+        lines.push(`${indent}${options.indent}case ${pattern}:`);
+        if (kase.guard) {
+          lines.push(`${indent}${options.indent}${options.indent}guard:`);
+          lines.push(
+            ...formatExprLines(kase.guard, options, depth + 3),
+          );
+        }
+        lines.push(
+          ...formatExprLines(kase.body, options, depth + 2),
+        );
+      }
+      if (expr.fallback) {
+        lines.push(`${indent}${options.indent}else:`);
+        lines.push(
+          ...formatExprLines(expr.fallback, options, depth + 2),
+        );
+      }
+      return lines;
+    }
+    case "carrier_unwrap": {
+      const lines = [
+        `${indent}carrier_unwrap ${expr.carrierType}${typeSuffix}`,
+      ];
+      lines.push(...formatExprLines(expr.target, options, depth + 1));
+      return lines;
+    }
+    case "carrier_wrap": {
+      const lines = [
+        `${indent}carrier_wrap ${expr.carrierType}${typeSuffix}`,
+      ];
+      lines.push(...formatExprLines(expr.target, options, depth + 1));
+      return lines;
+    }
+    case "carrier_match": {
+      const lines = [`${indent}carrier_match ${expr.carrierType}${typeSuffix}`];
       lines.push(`${indent}${options.indent}scrutinee:`);
       lines.push(...formatExprLines(expr.scrutinee, options, depth + 2));
       for (const kase of expr.cases) {

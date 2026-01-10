@@ -1,5 +1,4 @@
 import { dirname, extname, join, relative } from "../../../src/io.ts";
-import { isCarrierType } from "../../../src/types.ts";
 import type { SourceSpan } from "../../../src/ast.ts";
 import type { TraceOptions } from "../../../src/trace_options.ts";
 import type {
@@ -564,48 +563,48 @@ function emitExprInner(
         emitExpr(expr.thenBranch, ctx)
       } else ${emitExpr(expr.elseBranch, ctx)}`;
     case "match":
-      if (isCarrierType(expr.scrutinee.type)) {
-        const scrutineeCode = emitExpr(expr.scrutinee, ctx);
-        const dischargesCarrier = Boolean(
-          expr.effectRowCoverage?.dischargesResult,
-        );
-        const patternsHandleCarrier = expr.cases.some((kase) =>
-          hasResultConstructorPattern(kase.pattern) ||
-          kase.pattern.kind === "all_errors"
-        );
-        let matchLambda = emitMatchLambda(expr, ctx);
-        if (patternsHandleCarrier) {
-          matchLambda =
-            `runtime.markResultHandler(${matchLambda}, &[_]usize{ 0 })`;
-        }
-
-        let callSite = '""';
-        if (ctx.options.getSourceLocation && expr.span) {
-          const loc = ctx.options.getSourceLocation(expr.span);
-          if (loc) {
-            const escapedFile = loc.file.replace(/\\/g, "/");
-            let siteStr = `${escapedFile}:${loc.line}:${loc.column}`;
-            if (loc.lineText) {
-              const escapedLine = loc.lineText
-                .replace(/\\/g, "\\\\")
-                .replace(/"/g, '\\"')
-                .replace(/\n/g, "\\n")
-                .replace(/\r/g, "\\r")
-                .replace(/\t/g, "    ");
-
-              const indent = " ".repeat(Math.max(0, loc.column - 1));
-              siteStr += `\\n    ${escapedLine}\\n    ${indent}^`;
-            }
-            callSite = `"${siteStr}"`;
-          }
-        }
-
-        if (dischargesCarrier && patternsHandleCarrier) {
-          return `runtime.call(${matchLambda}, &[_]Value{ ${scrutineeCode} }, ${callSite})`;
-        }
-        return `runtime.callInfectious(${matchLambda}, &[_]Value{ ${scrutineeCode} }, ${callSite})`;
-      }
       return emitMatch(expr, ctx);
+    case "carrier_unwrap":
+      return `runtime.carrierUnwrap(${emitExpr(expr.target, ctx)}, "${expr.carrierType}")`;
+    case "carrier_wrap":
+      return `runtime.carrierWrap(${emitExpr(expr.target, ctx)}, "${expr.carrierType}")`;
+    case "carrier_match": {
+      const scrutineeCode = emitExpr(expr.scrutinee, ctx);
+      const matchExpr: CoreExpr & { kind: "match" } = {
+        kind: "match",
+        type: expr.type,
+        scrutinee: expr.scrutinee,
+        cases: expr.cases,
+        fallback: expr.fallback,
+        effectRowCoverage: undefined,
+        origin: expr.origin,
+        span: expr.span,
+      };
+      const matchLambda = emitMatchLambda(matchExpr, ctx);
+
+      let callSite = '""';
+      if (ctx.options.getSourceLocation && expr.span) {
+        const loc = ctx.options.getSourceLocation(expr.span);
+        if (loc) {
+          const escapedFile = loc.file.replace(/\\/g, "/");
+          let siteStr = `${escapedFile}:${loc.line}:${loc.column}`;
+          if (loc.lineText) {
+            const escapedLine = loc.lineText
+              .replace(/\\/g, "\\\\")
+              .replace(/"/g, '\\"')
+              .replace(/\n/g, "\\n")
+              .replace(/\r/g, "\\r")
+              .replace(/\t/g, "    ");
+
+            const indent = " ".repeat(Math.max(0, loc.column - 1));
+            siteStr += `\\n    ${escapedLine}\\n    ${indent}^`;
+          }
+          callSite = `"${siteStr}"`;
+        }
+      }
+
+      return `runtime.carrierMatch(${matchLambda}, ${scrutineeCode}, "${expr.carrierType}", ${callSite})`;
+    }
     default:
       throw new Error(
         `Unsupported expression kind '${(expr as CoreExpr).kind}'`,
@@ -658,7 +657,6 @@ function emitLambda(
   ctx: EmitContext,
   nameHint?: string,
 ): string {
-  const handledParams = detectHandledResultParams(expr, expr.params);
   const usedVars = collectUsedVars(expr.body);
   const { freeVars } = collectFreeVars(expr.body, new Set(expr.params));
   const captures = Array.from(freeVars).filter((name) => ctx.scope.has(name));
@@ -734,14 +732,7 @@ function emitLambda(
     }
   }
 
-  const funcValue =
-    `runtime.makeFunc(${lambdaName}, ${envInit}, "${debugName}")`;
-  if (handledParams.length > 0) {
-    return `runtime.markResultHandler(${funcValue}, &[_]usize{ ${
-      handledParams.join(", ")
-    } })`;
-  }
-  return funcValue;
+  return `runtime.makeFunc(${lambdaName}, ${envInit}, "${debugName}")`;
 }
 
 function collectFreeVars(
@@ -804,6 +795,25 @@ function collectFreeVars(
         node.args.forEach((arg) => visit(arg, localBound));
         return;
       case "match": {
+        visit(node.scrutinee, localBound);
+        for (const kase of node.cases) {
+          const caseBound = new Set(localBound);
+          for (const name of boundNamesInPattern(kase.pattern)) {
+            caseBound.add(name);
+          }
+          if (kase.guard) visit(kase.guard, caseBound);
+          visit(kase.body, caseBound);
+        }
+        if (node.fallback) visit(node.fallback, localBound);
+        return;
+      }
+      case "carrier_unwrap":
+        visit(node.target, localBound);
+        return;
+      case "carrier_wrap":
+        visit(node.target, localBound);
+        return;
+      case "carrier_match": {
         visit(node.scrutinee, localBound);
         for (const kase of node.cases) {
           const caseBound = new Set(localBound);
@@ -879,6 +889,21 @@ function collectUsedVars(expr: CoreExpr): Set<string> {
         });
         if (node.fallback) visit(node.fallback);
         return;
+      case "carrier_unwrap":
+        visit(node.target);
+        return;
+      case "carrier_wrap":
+        visit(node.target);
+        return;
+      case "carrier_match":
+        visit(node.scrutinee);
+        node.cases.forEach((kase) => {
+          collectPinnedNames(kase.pattern).forEach((name) => used.add(name));
+          if (kase.guard) visit(kase.guard);
+          visit(kase.body);
+        });
+        if (node.fallback) visit(node.fallback);
+        return;
       default:
         return;
     }
@@ -927,9 +952,6 @@ function boundNamesInPattern(pattern: CorePattern): string[] {
 function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
   const callee = emitExpr(expr.callee, ctx);
   const args = expr.args.map((arg) => emitExpr(arg, ctx)).join(", ");
-  const resultIsInfectious = isCarrierType(expr.type);
-  const calleeIsInfectious = isCarrierType(expr.callee.type);
-  const anyArgIsInfectious = expr.args.some((arg) => isCarrierType(arg.type));
 
   let callSite = '""';
   if (ctx.options.getSourceLocation && expr.span) {
@@ -953,10 +975,7 @@ function emitCall(expr: CoreExpr & { kind: "call" }, ctx: EmitContext): string {
     }
   }
 
-  if (!resultIsInfectious && !calleeIsInfectious && !anyArgIsInfectious) {
-    return `runtime.call(${callee}, &[_]Value{ ${args} }, ${callSite})`;
-  }
-  return `runtime.callInfectious(${callee}, &[_]Value{ ${args} }, ${callSite})`;
+  return `runtime.call(${callee}, &[_]Value{ ${args} }, ${callSite})`;
 }
 
 function emitLet(expr: CoreExpr & { kind: "let" }, ctx: EmitContext): string {
@@ -1300,10 +1319,12 @@ function emitPattern(
         `runtime.isData(${ref}, "${typeName}", "${pattern.constructor}")`,
       ];
       const bindings: string[] = [];
+      
       for (let index = 0; index < pattern.fields.length; index += 1) {
+        const fieldRef = `runtime.dataField(${ref}, ${index})`;
         const nested = emitPattern(
           pattern.fields[index],
-          `runtime.dataField(${ref}, ${index})`,
+          fieldRef,
           ctx,
           scope,
           usedVars,
@@ -1344,108 +1365,6 @@ function emitExprWithScope(
     return emitExpr(expr, ctx, nameHint);
   } finally {
     ctx.scope = previous;
-  }
-}
-
-function detectHandledResultParams(
-  expr: CoreExpr & { kind: "lambda" },
-  originalParams: readonly string[],
-): number[] {
-  const directMatch = resolveMatchInLambda(expr.body, originalParams);
-  if (directMatch) {
-    const { matchExpr, paramIndex } = directMatch;
-    if (paramIndex !== -1) {
-      if (!isCarrierType(matchExpr.scrutinee.type)) {
-        return [];
-      }
-      const hasResultPatterns = matchExpr.cases.some((c) =>
-        hasResultConstructorPattern(c.pattern)
-      );
-      if (hasResultPatterns) {
-        return [paramIndex];
-      }
-      const coverage = matchExpr.effectRowCoverage;
-      if (coverage?.dischargesResult) {
-        return [paramIndex];
-      }
-    }
-  }
-
-  if (expr.body.kind === "match" && expr.body.scrutinee.kind === "tuple") {
-    if (!isCarrierType(expr.body.scrutinee.type)) {
-      return [];
-    }
-    const handledIndices: number[] = [];
-    for (const matchCase of expr.body.cases) {
-      if (matchCase.pattern.kind === "tuple") {
-        for (let i = 0; i < matchCase.pattern.elements.length; i += 1) {
-          const element = matchCase.pattern.elements[i];
-          if (hasResultConstructorPattern(element)) {
-            const scrutineeElement = expr.body.scrutinee.elements[i];
-            if (scrutineeElement?.kind === "var") {
-              const paramIndex = originalParams.indexOf(scrutineeElement.name);
-              if (paramIndex !== -1 && !handledIndices.includes(paramIndex)) {
-                handledIndices.push(paramIndex);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    if (handledIndices.length > 0) {
-      return handledIndices;
-    }
-
-    const coverage = expr.body.effectRowCoverage;
-    if (coverage?.dischargesResult) {
-      for (const element of expr.body.scrutinee.elements) {
-        if (element.kind === "var") {
-          const paramIndex = originalParams.indexOf(element.name);
-          if (paramIndex !== -1) {
-            handledIndices.push(paramIndex);
-          }
-        }
-      }
-      return handledIndices;
-    }
-  }
-
-  return [];
-}
-
-function resolveMatchInLambda(
-  body: CoreExpr,
-  params: readonly string[],
-): { matchExpr: CoreExpr & { kind: "match" }; paramIndex: number } | null {
-  if (body.kind === "match" && body.scrutinee.kind === "var") {
-    const paramIndex = params.indexOf(body.scrutinee.name);
-    if (paramIndex === -1) return null;
-    return { matchExpr: body, paramIndex };
-  }
-  if (
-    body.kind === "call" && body.args.length === 1 &&
-    body.args[0].kind === "var" && body.callee.kind === "match"
-  ) {
-    const paramIndex = params.indexOf(body.args[0].name);
-    if (paramIndex === -1) return null;
-    return { matchExpr: body.callee, paramIndex };
-  }
-  return null;
-}
-
-function hasResultConstructorPattern(pattern: CorePattern): boolean {
-  switch (pattern.kind) {
-    case "constructor":
-      return isCarrierType(pattern.type);
-    case "tuple":
-      return pattern.elements.some(hasResultConstructorPattern);
-    case "wildcard":
-    case "binding":
-    case "literal":
-    case "all_errors":
-    case "pinned":
-      return false;
   }
 }
 
@@ -1500,9 +1419,6 @@ function emitPrim(
         throw new Error("record_get expects string literal field");
       }
       const fieldName = JSON.stringify(field.literal.value);
-      if (isCarrierType(args[0].type)) {
-        return `runtime.recordGetInfectious(${target}, ${fieldName})`;
-      }
       return `runtime.recordGet(${target}, ${fieldName})`;
     }
     case "panic":

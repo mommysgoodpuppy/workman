@@ -632,13 +632,9 @@ function emitCallInternal(
   expr: CoreExpr & { kind: "call" },
   ctx: EmitContext,
 ): string {
-  // Check if the result, callee, or any argument has an infectious type
   const resultIsInfectious = isCarrierType(expr.type);
   const calleeIsInfectious = isCarrierType(expr.callee.type);
-  const anyArgIsInfectious = expr.args.some((arg) => isCarrierType(arg.type));
-
-  const needsInfectiousCall = resultIsInfectious || calleeIsInfectious ||
-    anyArgIsInfectious;
+  const needsInfectiousCall = resultIsInfectious || calleeIsInfectious;
 
   if (!needsInfectiousCall) {
     const callee = emitExpr(expr.callee, ctx);

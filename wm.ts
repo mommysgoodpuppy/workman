@@ -28,13 +28,13 @@ async function runCli(): Promise<void> {
   let debugMode = false;
   const args: string[] = [];
   const globalTrace: TraceOptions = { ...DEFAULT_TRACE_OPTIONS };
-  
+
   // Find the command (first non-flag argument, or --help/-h)
-  const command = IO.args.find((arg) => 
+  const command = IO.args.find((arg) =>
     arg === "--help" || arg === "-h" || (!arg.startsWith("-") && arg !== "")
   );
   const isCompileOrBuild = command === "compile" || command === "build";
-  
+
   for (const arg of IO.args) {
     // Only consume --debug globally for run commands, not for compile/build
     if (arg === "--debug" && !isCompileOrBuild) {
@@ -79,7 +79,14 @@ async function runCli(): Promise<void> {
         debug,
         traceOptions,
       } = parseCompileArgs(args.slice(1), false, globalTrace);
-      await compileToDirectory(entryPath, outDir, backend, force, debug, traceOptions);
+      await compileToDirectory(
+        entryPath,
+        outDir,
+        backend,
+        force,
+        debug,
+        traceOptions,
+      );
     } catch (error) {
       handleCliError(error);
       IO.exit(1);
