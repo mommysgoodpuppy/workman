@@ -13,8 +13,15 @@ import {
   generateWmSourceMaps,
   reportWorkmanDiagnosticsForZig,
 } from "./zig_diagnostics.ts";
+import { Pty } from "@sigma/pty-ffi";
+import { writeAll } from "@std/io/write-all";
 
 const WORKMAN_ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
+const RAW_LIVE_TAIL_LIMIT = 8_192;
+const DIAGNOSTIC_TAIL_MAX_LINES = 200;
+const DIAGNOSTIC_TAIL_MAX_CHARS = 24_576;
+const PROGRESS_LINE_PATTERN =
+  /^\s*(\[\d+\]\s+Compile Build Script|├─|\└─|\│|\s+Target\.|Build Summary|run\s*$|workman diagnostics:?)/i;
 
 async function runZigFmt(files: string[]): Promise<void> {
   if (files.length === 0) return;
@@ -30,6 +37,250 @@ async function runZigFmt(files: string[]): Promise<void> {
   }
 }
 
+async function runZigBuildWithPty(
+  args: string[],
+  cwd: string,
+): Promise<{
+  exitCode: number;
+  output: string;
+  rawLiveOutput: string;
+  liveContentPossiblyLost: boolean;
+}> {
+  const pty = new Pty("zig", { args, cwd });
+  if (typeof pty.setPollingInterval === "function") {
+    pty.setPollingInterval(1);
+  }
+  const stopResizeSync = syncPtySizeToStdout(pty);
+  const encoder = new TextEncoder();
+  const display = new PtyDisplay();
+  const preLiveChunks: string[] = [];
+  const rawLiveChunks: string[] = [];
+  let rawLiveLength = 0;
+  let preLiveReplayed = false;
+  let liveContentPossiblyLost = false;
+  let combinedOutput = "";
+  try {
+    for await (const chunk of pty.readable) {
+      if (chunk.length === 0) continue;
+      combinedOutput += chunk;
+      const sanitized = sanitizeDisplayChunk(chunk);
+      const wasLive = display.isLiveMode();
+      if (!wasLive) {
+        preLiveChunks.push(sanitized);
+      }
+      const inLiveMode = display.isLiveMode();
+      await display.append(inLiveMode ? chunk : sanitized);
+      if (inLiveMode) {
+        if (DESTRUCTIVE_ANSI_PATTERN.test(chunk)) {
+          liveContentPossiblyLost = true;
+        }
+        rawLiveChunks.push(chunk);
+        rawLiveLength += chunk.length;
+        while (
+          rawLiveLength > RAW_LIVE_TAIL_LIMIT && rawLiveChunks.length > 1
+        ) {
+          const removed = rawLiveChunks.shift()!;
+          rawLiveLength -= removed.length;
+        }
+        if (!preLiveReplayed && preLiveChunks.length > 0) {
+          await writeAll(Deno.stdout, encoder.encode(preLiveChunks.join("")));
+          preLiveChunks.length = 0;
+          preLiveReplayed = true;
+        }
+      }
+    }
+    await display.finish();
+  } finally {
+    stopResizeSync?.();
+    pty.close();
+  }
+  return {
+    exitCode: pty.exitCode ?? 0,
+    output: combinedOutput,
+    rawLiveOutput: rawLiveChunks.join(""),
+    liveContentPossiblyLost,
+  };
+}
+
+class PtyDisplay {
+  #encoder = new TextEncoder();
+  #currentLine = "";
+  #lastVisibleLength = 0;
+  #emptyLineRun = 0;
+  #liveMode = false;
+
+  async append(text: string): Promise<void> {
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+      if (char === "\r") {
+        if (!this.#liveMode) {
+          await this.#ensureLiveMode();
+        }
+        await this.#renderCurrent(false);
+        this.#currentLine = "";
+      } else if (char === "\n") {
+        await this.#renderCurrent(true);
+        this.#currentLine = "";
+      } else {
+        this.#currentLine += char;
+      }
+    }
+  }
+
+  async finish(): Promise<void> {
+    if (this.#currentLine.length > 0) {
+      await this.#renderCurrent(true);
+      this.#currentLine = "";
+    }
+  }
+
+  isLiveMode(): boolean {
+    return this.#liveMode;
+  }
+
+  async #ensureLiveMode(): Promise<void> {
+    if (this.#liveMode) return;
+    this.#liveMode = true;
+    if (this.#currentLine.length > 0) {
+      await this.#write(`${this.#currentLine}\n`);
+      this.#currentLine = "";
+    }
+    await this.#write("\n");
+    this.#lastVisibleLength = 0;
+    this.#emptyLineRun = 0;
+  }
+
+  async #renderCurrent(newline: boolean): Promise<void> {
+    const { visibleLength, hasVisibleChars } = getVisibleMetrics(
+      this.#currentLine,
+    );
+    const isVisiblyEmpty = !hasVisibleChars;
+    if (isVisiblyEmpty && !newline) {
+      return;
+    }
+    if (newline) {
+      if (isVisiblyEmpty) {
+        if (this.#emptyLineRun > 0) {
+          return;
+        }
+        this.#emptyLineRun += 1;
+        await this.#write("\n");
+        this.#lastVisibleLength = 0;
+        return;
+      }
+      this.#emptyLineRun = 0;
+      await this.#write(`${this.#currentLine}\n`);
+      this.#lastVisibleLength = 0;
+    } else {
+      this.#emptyLineRun = 0;
+      const padding = this.#lastVisibleLength > visibleLength
+        ? " ".repeat(this.#lastVisibleLength - visibleLength)
+        : "";
+      await this.#write(`\r${this.#currentLine}${padding}`);
+      this.#lastVisibleLength = visibleLength;
+    }
+  }
+
+  async #write(text: string): Promise<void> {
+    if (text.length === 0) return;
+    await writeAll(Deno.stdout, this.#encoder.encode(text));
+  }
+}
+
+const ANSI_PATTERN = /\x1B\[[0-9;?]*[ -/]*[@-~]/g;
+const DESTRUCTIVE_ANSI_PATTERN = /\x1B\[[0-9;?]*[JKHhfABCD]/g;
+
+function getVisibleMetrics(text: string): {
+  visibleLength: number;
+  hasVisibleChars: boolean;
+} {
+  const stripped = text.replace(ANSI_PATTERN, "");
+  const trimmed = stripped.trim();
+  return {
+    visibleLength: stripped.length,
+    hasVisibleChars: trimmed.length > 0,
+  };
+}
+
+function sanitizeDisplayChunk(text: string): string {
+  return text.replace(DESTRUCTIVE_ANSI_PATTERN, "");
+}
+
+function extractDiagnosticTail(raw: string): string {
+  const sanitized = sanitizeDisplayChunk(raw);
+  const lines = sanitized.split(/\r?\n/);
+  const important: string[] = [];
+  let capturing = false;
+  for (const line of lines) {
+    if (!capturing) {
+      const trimmed = line.trim();
+      if (
+        trimmed.includes("error:") ||
+        trimmed.toLowerCase().includes("workman diagnostics") ||
+        trimmed.toLowerCase().includes("build summary") ||
+        trimmed.toLowerCase().includes("zig build failed")
+      ) {
+        capturing = true;
+      } else {
+        continue;
+      }
+    }
+    if (capturing) {
+      if (PROGRESS_LINE_PATTERN.test(line)) {
+        continue;
+      }
+      if (important.length === 0 || important[important.length - 1] !== line) {
+        important.push(line);
+      }
+    }
+  }
+  const limitedLines = important.slice(-DIAGNOSTIC_TAIL_MAX_LINES);
+  let tail = limitedLines.join("\n");
+  if (tail.length > DIAGNOSTIC_TAIL_MAX_CHARS) {
+    tail = tail.slice(tail.length - DIAGNOSTIC_TAIL_MAX_CHARS);
+    const firstNewline = tail.indexOf("\n");
+    if (firstNewline !== -1) {
+      tail = tail.slice(firstNewline + 1);
+    }
+  }
+  return tail.replace(/\s+$/, "");
+}
+
+function syncPtySizeToStdout(pty: Pty): (() => void) | undefined {
+  if (typeof Deno.consoleSize !== "function") return undefined;
+
+  const applySize = () => {
+    try {
+      const { columns, rows } = Deno.consoleSize();
+      if (Number.isFinite(columns) && Number.isFinite(rows)) {
+        pty.resize({ cols: columns, rows });
+      }
+    } catch {
+      // stdout might not be a TTY; ignore
+    }
+  };
+
+  applySize();
+
+  if (
+    typeof Deno.addSignalListener === "function" &&
+    typeof Deno.removeSignalListener === "function" &&
+    Deno.build.os !== "windows"
+  ) {
+    const handler = () => applySize();
+    Deno.addSignalListener("SIGWINCH", handler);
+    return () => {
+      try {
+        Deno.removeSignalListener("SIGWINCH", handler);
+      } catch {
+        // ignore cleanup errors
+      }
+    };
+  }
+
+  return undefined;
+}
+
 export type CompileBackend = "js" | "zig";
 
 export interface CompileArgs {
@@ -39,6 +290,7 @@ export interface CompileArgs {
   force: boolean;
   debug: boolean;
   traceOptions: TraceOptions;
+  rebuild: boolean;
 }
 
 export function parseCompileArgs(
@@ -51,6 +303,7 @@ export function parseCompileArgs(
   let backend: CompileBackend | undefined;
   let force = false;
   let debug = false;
+  let rebuild = false;
   const traceOptions: TraceOptions = { ...baseTraceOptions };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -84,6 +337,10 @@ export function parseCompileArgs(
       debug = true;
       continue;
     }
+    if (arg === "--rebuild") {
+      rebuild = true;
+      continue;
+    }
     if (applyTraceFlag(arg, traceOptions)) {
       continue;
     }
@@ -98,7 +355,7 @@ export function parseCompileArgs(
 
   if (!entryPath && !allowEmpty) {
     throw new Error(
-      "Usage: wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>] [--force] [--debug]",
+      "Usage: wm compile <file.wm> [--out-dir <dir>] [--backend <js|zig>] [--force] [--debug] [--rebuild]",
     );
   }
 
@@ -109,6 +366,7 @@ export function parseCompileArgs(
     force,
     debug,
     traceOptions,
+    rebuild,
   };
 }
 
@@ -119,6 +377,7 @@ export async function compileToDirectory(
   force = false,
   debug = false,
   traceOptions: TraceOptions = DEFAULT_TRACE_OPTIONS,
+  rebuild = false,
 ): Promise<void> {
   if (!entryPath.endsWith(".wm")) {
     throw new Error("Expected a .wm entry file");
@@ -126,6 +385,17 @@ export async function compileToDirectory(
 
   const resolvedEntry = resolve(entryPath);
   const resolvedOutDir = resolve(outDir ?? "dist");
+
+  // Handle rebuild logic
+  if (rebuild && backend === "zig") {
+    // Delete fresh cache directory if it exists
+    const freshCacheDir = resolve(resolvedOutDir, ".zig-cache-fresh");
+    try {
+      await Deno.remove(freshCacheDir, { recursive: true });
+    } catch {
+      // Directory doesn't exist, that's fine
+    }
+  }
 
   const compileResult = await compileWorkmanGraph(resolvedEntry, {
     loader: {
@@ -192,6 +462,7 @@ export async function compileToDirectory(
     ? await emitZigModuleGraph(compileResult.coreGraph, {
       outDir: resolvedOutDir,
       traceOptions,
+      rebuild,
     })
     : await emitJsModuleGraph(compileResult.coreGraph, {
       outDir: resolvedOutDir,
@@ -241,6 +512,7 @@ export async function runBuildCommand(
 ): Promise<void> {
   // Parse force flag and optional directory from args
   let force = false;
+  let rebuild = false;
   let buildDirPath: string | undefined;
   const remainingArgs: string[] = [];
 
@@ -248,6 +520,8 @@ export async function runBuildCommand(
     const arg = args[i];
     if (arg === "--force" || arg === "-f") {
       force = true;
+    } else if (arg === "--rebuild") {
+      rebuild = true;
     } else if (applyTraceFlag(arg, traceOptions)) {
       // Trace flags are handled by the caller
     } else if (!arg.startsWith("-") && !buildDirPath) {
@@ -302,6 +576,17 @@ export async function runBuildCommand(
   const buildDir = dirname(buildWmPath);
   const buildZigPath = resolve(buildDir, "build.zig");
 
+  // Handle rebuild logic
+  if (rebuild) {
+    // Delete fresh cache directory if it exists
+    const freshCacheDir = resolve(buildDir, ".zig-cache-fresh");
+    try {
+      await Deno.remove(freshCacheDir, { recursive: true });
+    } catch {
+      // Directory doesn't exist, that's fine
+    }
+  }
+
   // Compile build.wm to build.zig
   console.log("Compiling build.wm to build.zig...");
   const compileResult = await compileWorkmanGraph(buildWmPath, {
@@ -345,6 +630,7 @@ export async function runBuildCommand(
     emitRuntime: false,
     emitRootMain: false,
     traceOptions,
+    rebuild,
   });
 
   // Compile any referenced .wm source files to .zig
@@ -401,6 +687,7 @@ export async function runBuildCommand(
       emitRuntime: false,
       emitRootMain: false,
       traceOptions,
+      rebuild,
     });
 
     zigFilesToFormat.add(zigOutputPath);
@@ -419,22 +706,32 @@ export async function runBuildCommand(
   console.log("Running zig build...");
 
   // Pass through any additional args to zig build (excluding the directory argument if it was used)
-  const zigArgs = ["build", "--color", "on", ...remainingArgs];
-  const command = new Deno.Command("zig", {
-    args: zigArgs,
-    cwd: buildDir,
-    stdout: "inherit",
-    stderr: "piped",
-  });
-
-  const result = await command.output();
-  if (!result.success) {
-    if (result.stderr.length > 0) {
-      await Deno.stderr.write(result.stderr);
+  const zigArgs = rebuild
+    ? ["build", "--cache-dir", resolve(buildDir, ".zig-cache-fresh"), "-fno-incremental", "--color", "on", ...remainingArgs]
+    : ["build", "--color", "on", ...remainingArgs];
+  const {
+    exitCode,
+    output,
+    rawLiveOutput,
+    liveContentPossiblyLost,
+  } = await runZigBuildWithPty(
+    zigArgs,
+    buildDir,
+  );
+  if (exitCode !== 0) {
+    // never actually true
+    const liveContentPossiblyLost = false;
+    if (liveContentPossiblyLost) {
+      const diagnosticTail = extractDiagnosticTail(rawLiveOutput);
+      if (diagnosticTail.length > 0) {
+        const failureEncoder = new TextEncoder();
+        await writeAll(
+          Deno.stdout,
+          failureEncoder.encode(`\n${diagnosticTail}\n`),
+        );
+      }
     }
-    const stderrText = new TextDecoder().decode(result.stderr);
-    await reportWorkmanDiagnosticsForZig(stderrText, buildDir);
-    throw new Error(`zig build failed with exit code ${result.code}`);
+    await reportWorkmanDiagnosticsForZig(output, buildDir);
+    throw new Error(`zig build failed with exit code ${exitCode}`);
   }
 }
-
