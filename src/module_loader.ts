@@ -10,8 +10,15 @@ import type {
   Program,
   SourceSpan,
 } from "./ast.ts";
-import type { TypeInfo, TypeScheme } from "./types.ts";
-import { cloneTypeInfo, cloneTypeScheme, unknownType } from "./types.ts";
+import type { Type, TypeInfo, TypeScheme } from "./types.ts";
+import {
+  applySubstitution,
+  cloneType,
+  cloneTypeInfo,
+  cloneTypeScheme,
+  freshTypeVar,
+  unknownType,
+} from "./types.ts";
 import { inferProgram } from "./layer1/infer.ts";
 import type { RuntimeValue } from "./value.ts";
 import { lookupValue } from "./value.ts";
@@ -93,7 +100,7 @@ export interface ForeignTypeConfig {
 export interface ModuleImportRecord {
   sourcePath: string;
   kind: ModuleSourceKind;
-  specifiers: NamedImportRecord[];
+  specifiers: ImportRecord[];
   span: SourceSpan;
   rawSource: string;
   importerPath: string;
@@ -107,8 +114,17 @@ export interface ModuleReexportRecord {
   importerPath: string;
 }
 
+export type ImportRecord = NamedImportRecord | NamespaceImportRecord;
+
 export interface NamedImportRecord {
+  kind: "named";
   imported: string;
+  local: string;
+  span: SourceSpan;
+}
+
+export interface NamespaceImportRecord {
+  kind: "namespace";
   local: string;
   span: SourceSpan;
 }
@@ -153,6 +169,23 @@ function moduleError(message: string, modulePath?: string): ModuleError {
 
 function normalizeModulePath(path: string): string {
   return path.replaceAll("\\", "/").toLowerCase();
+}
+
+function offsetToLineCol(
+  source: string,
+  position: number,
+): { line: number; column: number } {
+  let line = 1;
+  let column = 1;
+  for (let i = 0; i < position && i < source.length; i += 1) {
+    if (source[i] === "\n") {
+      line += 1;
+      column = 1;
+    } else {
+      column += 1;
+    }
+  }
+  return { line, column };
 }
 
 function sameModulePath(a?: string, b?: string): boolean {
@@ -739,6 +772,28 @@ async function summarizeGraph(
     for (const typeName of node.exportedTypeNames) {
       const info = inference.adtEnv.get(typeName);
       if (!info) {
+        const declared = node.program.declarations.find((decl) =>
+          (decl.kind === "type" || decl.kind === "record_decl") &&
+          decl.name === typeName
+        );
+        if (declared) {
+          const kindLabel = declared.kind === "record_decl" ? "record" : "type";
+          const locationHint = node.source && declared.span
+            ? (() => {
+              const { line, column } = offsetToLineCol(
+                node.source,
+                declared.span.start,
+              );
+              return ` at line ${line}, column ${column}`;
+            })()
+            : "";
+          const orderingHint = declared.kind === "type"
+            ? " This can happen when the type depends on record constructors declared later. Try moving the 'type' declaration above its constructor records."
+            : "";
+          throw moduleError(
+            `Exported ${kindLabel} '${typeName}' was declared in '${path}'${locationHint} but was not registered.${orderingHint}`,
+          );
+        }
         // Check if there's a record that might be what the user intended
         // Look for records with similar names (e.g., LetDecl -> LetDeclaration)
         const records = Array.from(inference.adtEnv.entries()).filter(
@@ -1229,6 +1284,9 @@ function resolveImports(
         path,
       );
     }
+    if (kind !== "workman") {
+      assertNoNamespaceImports(entry.specifiers, path, entry.source);
+    }
     const specifiers = entry.specifiers.map((specifier) =>
       parseImportSpecifier(specifier, path)
     );
@@ -1247,17 +1305,32 @@ function resolveImports(
 function parseImportSpecifier(
   specifier: ImportSpecifier,
   path: string,
-): NamedImportRecord {
+): ImportRecord {
   if (specifier.kind === "namespace") {
-    throw moduleError(
-      `Namespace imports are not supported in Stage M1 (${path})`,
-    );
+    return {
+      kind: "namespace",
+      local: specifier.local,
+      span: specifier.span,
+    };
   }
   return {
+    kind: "named",
     imported: specifier.imported,
     local: specifier.local,
     span: specifier.span,
   };
+}
+
+function assertNoNamespaceImports(
+  specifiers: ImportSpecifier[],
+  path: string,
+  source: string,
+): void {
+  if (specifiers.some((spec) => spec.kind === "namespace")) {
+    throw moduleError(
+      `Namespace imports are only supported for Workman modules (imported '${source}' in '${path}')`,
+    );
+  }
 }
 
 function collectExports(
@@ -1456,6 +1529,16 @@ function applyImports(
 ): void {
   const autoImportedTypes = new Set<string>();
   for (const spec of record.specifiers) {
+    if (spec.kind === "namespace") {
+      applyNamespaceImport(
+        record,
+        provider,
+        spec,
+        targetEnv,
+        targetRuntime,
+      );
+      continue;
+    }
     const valueExport = provider.exports.values.get(spec.imported);
     const typeExport = provider.exports.types.get(spec.imported);
     if (!valueExport && !typeExport) {
@@ -1530,6 +1613,70 @@ function applyImports(
   }
 }
 
+function applyNamespaceImport(
+  record: ModuleImportRecord,
+  provider: ModuleSummary,
+  spec: NamespaceImportRecord,
+  targetEnv: Map<string, TypeScheme>,
+  targetRuntime?: Map<string, RuntimeValue>,
+): void {
+  if (targetEnv.has(spec.local)) {
+    throw moduleError(
+      `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
+    );
+  }
+  const { scheme, runtimeValue } = buildNamespaceImport(provider);
+  targetEnv.set(spec.local, scheme);
+  if (targetRuntime && runtimeValue) {
+    targetRuntime.set(spec.local, runtimeValue);
+  }
+}
+
+function buildNamespaceImport(
+  provider: ModuleSummary,
+): { scheme: TypeScheme; runtimeValue: RuntimeValue | undefined } {
+  const fields = new Map<string, Type>();
+  const quantifiers: number[] = [];
+  const runtimeValue: Record<string, RuntimeValue> = {};
+
+  for (const [name, scheme] of provider.exports.values.entries()) {
+    const remapped = refreshSchemeQuantifiers(scheme);
+    remapped.quantifiers.forEach((id) => quantifiers.push(id));
+    fields.set(name, remapped.type);
+    const runtime = provider.runtime.get(name);
+    if (runtime !== undefined) {
+      runtimeValue[name] = runtime;
+    }
+  }
+
+  return {
+    scheme: {
+      quantifiers,
+      type: { kind: "record", fields },
+    },
+    runtimeValue: Object.keys(runtimeValue).length > 0 ? runtimeValue : undefined,
+  };
+}
+
+function refreshSchemeQuantifiers(
+  scheme: TypeScheme,
+): TypeScheme {
+  if (scheme.quantifiers.length === 0) {
+    return cloneTypeScheme(scheme);
+  }
+  const subst = new Map<number, Type>();
+  const quantifiers: number[] = [];
+  for (const id of scheme.quantifiers) {
+    const fresh = freshTypeVar();
+    subst.set(id, fresh);
+    quantifiers.push(fresh.id);
+  }
+  return {
+    quantifiers,
+    type: applySubstitution(cloneType(scheme.type), subst),
+  };
+}
+
 async function applyForeignTypeImports(
   record: ModuleImportRecord,
   targetEnv: Map<string, TypeScheme>,
@@ -1540,6 +1687,7 @@ async function applyForeignTypeImports(
   if (record.kind !== "c_header") {
     return false;
   }
+  assertNoNamespaceImportRecords(record);
   if (!rawMode) {
     seedForeignImports(record, targetEnv);
     return true;
@@ -1552,7 +1700,9 @@ async function applyForeignTypeImports(
   }
   const result = await provider({
     headerPath: record.sourcePath,
-    specifiers: record.specifiers,
+    specifiers: record.specifiers.filter((spec): spec is NamedImportRecord =>
+      spec.kind !== "namespace"
+    ),
     includeDirs: config?.includeDirs ?? [],
     defines: config?.defines ?? [],
     buildWmPath: config?.buildWmPath,
@@ -1570,6 +1720,9 @@ function applyForeignTypeResult(
   targetAdtEnv: Map<string, TypeInfo>,
 ): void {
   for (const spec of record.specifiers) {
+    if (spec.kind === "namespace") {
+      continue;
+    }
     const valueExport = result.values.get(spec.imported);
     const typeExport = result.types.get(spec.imported);
 
@@ -1602,6 +1755,9 @@ function seedForeignImports(
   targetEnv: Map<string, TypeScheme>,
 ): void {
   for (const spec of record.specifiers) {
+    if (spec.kind === "namespace") {
+      continue;
+    }
     seedForeignImportSpec(record, spec, targetEnv);
   }
 }
@@ -1631,4 +1787,12 @@ function createForeignImportScheme(
         `${record.kind} import '${spec.imported}' from '${record.rawSource}' in '${record.importerPath}'`,
     }),
   };
+}
+
+function assertNoNamespaceImportRecords(record: ModuleImportRecord): void {
+  if (record.specifiers.some((spec) => spec.kind === "namespace")) {
+    throw moduleError(
+      `Namespace imports are only supported for Workman modules (imported '${record.rawSource}' in '${record.importerPath}')`,
+    );
+  }
 }

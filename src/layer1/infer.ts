@@ -626,6 +626,25 @@ function instantiateRecordAlias(
   return applied.kind === "record" ? applied : null;
 }
 
+function instantiateRecordAliasWithArgs(
+  info: TypeInfo,
+  args: Type[],
+): Extract<Type, { kind: "record" }> | null {
+  if (!info.alias || info.alias.kind !== "record") {
+    return null;
+  }
+  if (info.parameters.length !== args.length) {
+    return null;
+  }
+  const aliasClone = cloneType(info.alias) as Extract<Type, { kind: "record" }>;
+  const subst = new Map<number, Type>();
+  info.parameters.forEach((paramId, index) => {
+    subst.set(paramId, args[index]);
+  });
+  const applied = applySubstitution(aliasClone, subst);
+  return applied.kind === "record" ? applied : null;
+}
+
 function buildRecordConstructorType(
   recordName: string,
   recordInfo: TypeInfo,
@@ -2023,7 +2042,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           registerHoleForType(ctx, holeOriginFromExpr(expr), markType);
           return recordExprType(ctx, expr, markType);
         }
-        targetType = scheme.type;
+        targetType = instantiateAndApply(ctx, scheme);
       } else {
         targetType = inferExpr(ctx, targetExpr);
       }
@@ -3317,8 +3336,6 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // TypeScript-style type assertion: `expr as Type`
       // Infer the expression's type (we need it for the marked AST),
       // then return the asserted type from the annotation
-      const exprType = inferExpr(ctx, expr.expression);
-      void exprType; // Expression type is recorded for diagnostics, but assertion overrides it
 
       // Convert the type annotation to an internal Type
       const annotationScope = new Map<string, Type>();
@@ -3334,12 +3351,105 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       // Store the annotation type for later use
       storeAnnotationType(ctx, expr.typeAnnotation, assertedType);
 
+      const exprType = expr.expression.kind === "record_literal"
+        ? inferRecordLiteralWithExpectedType(ctx, expr.expression, assertedType)
+        : inferExpr(ctx, expr.expression);
+      void exprType; // Expression type is recorded for diagnostics, but assertion overrides it
+
       return recordExprType(ctx, expr, assertedType);
     }
     default:
       const mark = markUnsupportedExpr(ctx, expr, (expr as Expr).kind);
       return recordExprType(ctx, expr, mark.type);
   }
+}
+
+function inferRecordLiteralWithExpectedType(
+  ctx: Context,
+  expr: Extract<Expr, { kind: "record_literal" }>,
+  expectedType: Type,
+): Type {
+  let spreadType: Type | undefined;
+  if (expr.spread) {
+    spreadType = inferExpr(ctx, expr.spread);
+    spreadType = applyCurrentSubst(ctx, spreadType);
+  }
+
+  const fields = new Map<string, Type>();
+  const fieldNames = new Set<string>();
+  for (const field of expr.fields) {
+    if (fieldNames.has(field.name)) {
+      recordLayer1Diagnostic(ctx, expr.id, "duplicate_record_field", {
+        field: field.name,
+      });
+      const unknown = unknownType({
+        kind: "incomplete",
+        reason: "duplicate_record_field",
+      });
+      return recordExprType(ctx, expr, unknown);
+    }
+    fieldNames.add(field.name);
+    const fieldType = inferExpr(ctx, field.value);
+    fields.set(field.name, applyCurrentSubst(ctx, fieldType));
+  }
+
+  const resolvedExpected = collapseCarrier(
+    applyCurrentSubst(ctx, expectedType),
+  );
+
+  if (spreadType) {
+    unify(ctx, spreadType, resolvedExpected);
+  }
+
+  if (resolvedExpected.kind === "constructor") {
+    const info = ctx.adtEnv.get(resolvedExpected.name);
+    if (info?.recordFields) {
+      const missingFields = Array.from(info.recordFields.keys()).filter(
+        (fieldName) => !fields.has(fieldName),
+      );
+      const availableDefaults = ctx.recordDefaultFields.get(resolvedExpected.name);
+      for (const missingField of missingFields) {
+        if (availableDefaults?.has(missingField)) {
+          continue;
+        }
+        recordLayer1Diagnostic(ctx, expr.id, "missing_field", {
+          field: missingField,
+        });
+      }
+      for (const [fieldName, fieldType] of fields.entries()) {
+        const index = info.recordFields.get(fieldName);
+        if (index === undefined) {
+          recordLayer1Diagnostic(ctx, expr.id, "missing_field", {
+            field: fieldName,
+          });
+          continue;
+        }
+        let expectedFieldType = resolvedExpected.args[index];
+        if (!expectedFieldType && info.alias?.kind === "record") {
+          expectedFieldType = instantiateRecordAliasWithArgs(
+            info,
+            resolvedExpected.args,
+          )?.fields.get(fieldName);
+        }
+        if (expectedFieldType) {
+          unify(ctx, expectedFieldType, fieldType);
+        }
+      }
+    }
+    return recordExprType(ctx, expr, resolvedExpected);
+  }
+
+  if (resolvedExpected.kind === "record") {
+    for (const [fieldName, fieldType] of fields.entries()) {
+      const expectedFieldType = resolvedExpected.fields.get(fieldName);
+      if (expectedFieldType) {
+        unify(ctx, expectedFieldType, fieldType);
+      }
+    }
+    return recordExprType(ctx, expr, resolvedExpected);
+  }
+
+  return recordExprType(ctx, expr, resolvedExpected);
 }
 
 export function inferProgram(

@@ -8,13 +8,14 @@ import {
   CoreTypeConstructor,
   CoreTypeDeclaration,
   CoreTypeRecordField,
+  CoreValueBinding,
 } from "../ir/core.ts";
 import { lowerProgramToValues } from "./marked_to_core.ts";
 import { InferError } from "../../../src/error.ts";
 import type { ConstraintDiagnostic } from "../../../src/diagnostics.ts";
 import { isHoleType, splitCarrier, typeToString } from "../../../src/types.ts";
 import type { Type } from "../../../src/types.ts";
-import { applySubstitution, cloneType } from "../../../src/types.ts";
+import { applySubstitution, cloneType, freshTypeVar } from "../../../src/types.ts";
 import type { NodeId, SourceSpan } from "../../../src/ast.ts";
 import type { MProgram } from "../../../src/ast_marked.ts";
 
@@ -22,6 +23,7 @@ export interface WorkmanLoweringInput {
   readonly node: ModuleNode;
   readonly analysis: AnalysisResult;
   readonly summary?: ModuleSummary;
+  readonly summaries?: Map<string, ModuleSummary>;
 }
 
 export interface WorkmanLoweringOptions {
@@ -61,17 +63,20 @@ export function lowerAnalyzedModule(
   }
 
   const program = analysis.layer2.remarkedProgram;
+  const summaries = input.summaries ?? new Map<string, ModuleSummary>();
+  const values = lowerProgramToValues(
+    program,
+    analysis.layer2.resolvedNodeTypes,
+    analysis.layer1.recordDefaultExprs,
+    analysis.layer1.adtEnv,
+    node.program?.mode === "raw",
+  );
+  const namespaceBindings = buildNamespaceBindings(node, summaries);
   return {
     path: node.path,
-    imports: convertImports(node, input.summary),
+    imports: convertImports(node, input.summary, summaries),
     typeDeclarations: extractTypeDeclarations(node, analysis.layer1.adtEnv),
-    values: lowerProgramToValues(
-      program,
-      analysis.layer2.resolvedNodeTypes,
-      analysis.layer1.recordDefaultExprs,
-      analysis.layer1.adtEnv,
-      node.program?.mode === "raw",
-    ),
+    values: [...namespaceBindings, ...values],
     exports: convertExports(node, input.summary),
     mode: node.program?.mode,
     core: node.program?.core,
@@ -85,6 +90,7 @@ function isStdModule(path: string): boolean {
 function convertImports(
   node: ModuleNode,
   summary?: ModuleSummary,
+  summaries?: Map<string, ModuleSummary>,
 ): CoreImport[] {
   const imports: CoreImport[] = [];
 
@@ -92,7 +98,7 @@ function convertImports(
   for (const record of node.imports) {
     imports.push({
       source: record.sourcePath,
-      specifiers: record.specifiers.map((specifier) => ({
+      specifiers: expandNamespaceSpecifiers(record, summaries).map((specifier) => ({
         kind: "value" as const,
         imported: specifier.imported,
         local: specifier.local,
@@ -186,6 +192,108 @@ function convertImports(
   }
 
   return imports;
+}
+
+function expandNamespaceSpecifiers(
+  record: ModuleNode["imports"][number],
+  summaries?: Map<string, ModuleSummary>,
+): Array<{ imported: string; local: string }> {
+  const expanded: Array<{ imported: string; local: string }> = [];
+  const seen = new Set<string>();
+  for (const spec of record.specifiers) {
+    if (spec.kind === "namespace") {
+      const provider = summaries?.get(record.sourcePath);
+      if (!provider) {
+        throw new Error(
+          `Missing summary for namespace import '${record.sourcePath}' (imported by '${record.importerPath}')`,
+        );
+      }
+      for (const name of provider.exports.values.keys()) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        expanded.push({ imported: name, local: name });
+      }
+      continue;
+    }
+    if (seen.has(spec.local)) continue;
+    seen.add(spec.local);
+    expanded.push({ imported: spec.imported, local: spec.local });
+  }
+  return expanded;
+}
+
+function buildNamespaceBindings(
+  node: ModuleNode,
+  summaries: Map<string, ModuleSummary>,
+): CoreValueBinding[] {
+  const bindings: CoreValueBinding[] = [];
+  for (const record of node.imports) {
+    for (const spec of record.specifiers) {
+      if (spec.kind !== "namespace") continue;
+      const provider = summaries.get(record.sourcePath);
+      if (!provider) {
+        throw new Error(
+          `Missing summary for namespace import '${record.sourcePath}' (imported by '${record.importerPath}')`,
+        );
+      }
+      const { recordType, fields } = buildNamespaceRecord(provider);
+      bindings.push({
+        name: spec.local,
+        exported: false,
+        value: {
+          kind: "record",
+          fields,
+          type: recordType,
+        },
+      });
+    }
+  }
+  return bindings;
+}
+
+function buildNamespaceRecord(
+  provider: ModuleSummary,
+): { recordType: Type; fields: CoreRecordField[] } {
+  const fields: CoreRecordField[] = [];
+  const fieldTypes = new Map<string, Type>();
+  for (const [name, scheme] of provider.exports.values.entries()) {
+    const remapped = refreshSchemeQuantifiers(scheme);
+    fieldTypes.set(name, remapped.type);
+    fields.push({
+      name,
+      value: {
+        kind: "var",
+        name,
+        type: remapped.type,
+      },
+    });
+  }
+  return {
+    recordType: { kind: "record", fields: fieldTypes },
+    fields,
+  };
+}
+
+function refreshSchemeQuantifiers(
+  scheme: import("../../../src/types.ts").TypeScheme,
+): import("../../../src/types.ts").TypeScheme {
+  if (scheme.quantifiers.length === 0) {
+    return {
+      quantifiers: [],
+      type: cloneType(scheme.type),
+    };
+  }
+  const subst = new Map<number, Type>();
+  const quantifiers: number[] = [];
+  for (const id of scheme.quantifiers) {
+    const fresh = freshTypeVar();
+    subst.set(id, fresh);
+    quantifiers.push(fresh.id);
+  }
+  return {
+    quantifiers,
+    type: applySubstitution(cloneType(scheme.type), subst),
+  };
 }
 
 function extractTypeDeclarations(

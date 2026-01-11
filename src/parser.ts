@@ -605,7 +605,13 @@ class SurfaceParser {
     const nameSpan = this.spanFrom(nameToken.start, nameToken.end);
     const annotation = this.matchSymbol(":") ? this.parseTypeExpr() : undefined;
     this.expectSymbol("=");
-    const initializer = this.parseExpression();
+    let initializer: Expr;
+    if (annotation && this.checkSymbol("{")) {
+      const open = this.expectSymbol("{");
+      initializer = this.parseRecordLiteralExprFromOpen(open, open.start);
+    } else {
+      initializer = this.parseExpression();
+    }
 
     // Handle first-class match: match(x) => { ... } desugars to (x) => { match(x) { ... } }
     if (initializer.kind === "match_fn") {
@@ -2282,6 +2288,23 @@ class SurfaceParser {
             id: nextNodeId(),
           } as Expr;
         }
+        const snapshot = this.index;
+        const typeAnnotation = this.parseTypePrimary();
+        if (this.checkSymbol("{")) {
+          const open = this.expectSymbol("{");
+          const recordExpr = this.parseRecordLiteralExprFromOpen(
+            open,
+            typeAnnotation.span.start,
+          );
+          return {
+            kind: "type_as",
+            expression: recordExpr,
+            typeAnnotation,
+            span: this.spanFrom(typeAnnotation.span.start, recordExpr.span.end),
+            id: nextNodeId(),
+          } as Expr;
+        }
+        this.index = snapshot;
         const ctor = this.consume();
         return {
           kind: "constructor",

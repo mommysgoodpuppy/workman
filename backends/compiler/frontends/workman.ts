@@ -20,10 +20,14 @@ import {
 import {
   cloneTypeInfo,
   cloneTypeScheme,
+  applySubstitution,
+  cloneType,
+  freshTypeVar,
   type TypeInfo,
   type TypeScheme,
   unknownType,
 } from "../../../src/types.ts";
+import type { Type } from "../../../src/types.ts";
 
 export interface WorkmanCompilerOptions {
   readonly loader?: ModuleLoaderOptions;
@@ -89,7 +93,7 @@ export async function compileWorkmanGraph(
     );
     const summary = summaries.get(path);
     const core = lowerAnalyzedModule(
-      { node, analysis, summary },
+      { node, analysis, summary, summaries },
       loweringOptions,
     );
     moduleArtifacts.set(path, { node, analysis, core });
@@ -158,6 +162,11 @@ function seedImports(
   for (const record of node.imports) {
     if (record.kind === "js" || record.kind === "zig") {
       for (const spec of record.specifiers) {
+        if (spec.kind === "namespace") {
+          throw new Error(
+            `Namespace imports are only supported for Workman modules (imported '${record.rawSource}' in '${record.importerPath}')`,
+          );
+        }
         env.set(spec.local, createForeignImportScheme(spec, record));
       }
       continue;
@@ -172,6 +181,16 @@ function seedImports(
       );
     }
     for (const spec of record.specifiers) {
+      if (spec.kind === "namespace") {
+        if (env.has(spec.local)) {
+          throw new Error(
+            `Duplicate imported binding '${spec.local}' in module '${record.importerPath}'`,
+          );
+        }
+        const scheme = buildNamespaceImportScheme(provider);
+        env.set(spec.local, scheme);
+        continue;
+      }
       const valueExport = provider.exports.values.get(spec.imported);
       if (valueExport) {
         env.set(spec.local, cloneTypeScheme(valueExport));
@@ -224,6 +243,39 @@ function seedImports(
   }
 }
 
+function buildNamespaceImportScheme(provider: ModuleSummary): TypeScheme {
+  const fields = new Map<string, Type>();
+  const quantifiers: number[] = [];
+  for (const [name, scheme] of provider.exports.values.entries()) {
+    const remapped = refreshSchemeQuantifiers(scheme);
+    remapped.quantifiers.forEach((id) => quantifiers.push(id));
+    fields.set(name, remapped.type);
+  }
+  return {
+    quantifiers,
+    type: { kind: "record", fields },
+  };
+}
+
+function refreshSchemeQuantifiers(
+  scheme: TypeScheme,
+): TypeScheme {
+  if (scheme.quantifiers.length === 0) {
+    return cloneTypeScheme(scheme);
+  }
+  const subst = new Map<number, Type>();
+  const quantifiers: number[] = [];
+  for (const id of scheme.quantifiers) {
+    const fresh = freshTypeVar();
+    subst.set(id, fresh);
+    quantifiers.push(fresh.id);
+  }
+  return {
+    quantifiers,
+    type: applySubstitution(cloneType(scheme.type), subst),
+  };
+}
+
 async function seedForeignTypeImports(
   node: ModuleNode,
   loaderOptions: ModuleLoaderOptions | undefined,
@@ -237,8 +289,16 @@ async function seedForeignTypeImports(
     if (record.kind !== "c_header") {
       continue;
     }
+    if (record.specifiers.some((spec) => spec.kind === "namespace")) {
+      throw new Error(
+        `Namespace imports are only supported for Workman modules (imported '${record.rawSource}' in '${record.importerPath}')`,
+      );
+    }
     if (!rawMode || !provider) {
       for (const spec of record.specifiers) {
+        if (spec.kind === "namespace") {
+          continue;
+        }
         env.set(spec.local, createForeignImportScheme(spec, record));
       }
       continue;
@@ -263,6 +323,9 @@ function applyForeignTypeResult(
   adtEnv: Map<string, TypeInfo>,
 ): void {
   for (const spec of record.specifiers) {
+    if (spec.kind === "namespace") {
+      continue;
+    }
     const valueExport = result.values.get(spec.imported);
     const typeExport = result.types.get(spec.imported);
 
