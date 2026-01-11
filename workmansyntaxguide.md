@@ -740,6 +740,25 @@ let makePoint = (x: Int, y: Int): Point => { .{ x, y } };
 let movePoint = (p: Point) => { .{ ..p, x = p.x + 1 } };
 ```
 
+### 8. Infectious Error Payloads Are Normal Values
+
+In infectious types like `IResult<T, E>`, the error payload `E` is still a
+normal value. You can pattern match on `IErr(err)` and project fields from `err`
+as long as the record definition is in scope:
+
+```workman
+from "./parser.wm" import { parseProgram };
+from "./ast.wm" import { ParseError };
+
+match (parseProgram(source)) {
+  IOk(_) => { () },
+  IErr(err) => { err.message }
+};
+```
+
+See `workmaninfectionguide.md` for details on infectious types and effect
+propagation.
+
 #### Opaque Types
 
 Declare types without exposing their implementation:

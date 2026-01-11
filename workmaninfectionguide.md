@@ -323,6 +323,21 @@ let process = (input) => {
 };
 ```
 
+### 1b. Accessing Error Payload Fields
+
+The `@effect` payload is still a normal value. You can project fields from it
+after matching, as long as the record definition is in scope:
+
+```workman
+from "./parser.wm" import { parseProgram };
+from "./ast.wm" import { ParseError };
+
+match (parseProgram(source)) {
+  IOk(_) => { () },
+  IErr(err) => { err.message }
+};
+```
+
 ### 2. Using orElse Instead of alt for Piping
 
 The standard `orElse` has signature `(fallback, option)` - fallback first. For
