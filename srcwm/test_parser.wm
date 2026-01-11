@@ -3,8 +3,15 @@
 from "std/coretypes" import { Empty, Link };
 from "std/coretypes" import { IOk, IErr };
 from "std/nativeString" import { stringConcat, stringEq, intToString };
-
 from "./parser.wm" import { parseProgram };
+from "./ast.wm" import {
+  Expr,
+  IdentifierExpr,
+  NumberExpr,
+  StringExpr,
+  CallExpr,
+  ParseError
+};
 
 let printHeader = (title) => {
   print("");

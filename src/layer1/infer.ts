@@ -888,6 +888,9 @@ function expandErrorRowTail(
   if (!adtInfo || adtInfo.isAlias) {
     return effectRow;
   }
+  if (adtInfo.recordFields) {
+    return effectRow;
+  }
 
   // Expand the ADT constructors into the error_row cases
   const expandedCases = new Map(effectRow.cases);
@@ -1088,11 +1091,10 @@ function createAndRegisterCarrier(
     },
 
     join: (value: Type, state: Type): Type => {
-      const stateRow = ensureRow(state);
       return {
         kind: "constructor",
         name: typeName,
-        args: [value, stateRow],
+        args: [value, state],
       };
     },
 
@@ -2051,9 +2053,19 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       );
       const targetCarrierInfo = splitCarrier(resolvedTarget);
       let recordSubject = targetCarrierInfo?.value ?? resolvedTarget;
+      const fromEffectRow = recordSubject.kind === "effect_row";
 
       if (targetCarrierInfo?.domain === "mem") {
         emitRequireNotState(ctx, targetExpr.id, "mem", ["Null", "Closed"]);
+      }
+
+      if (recordSubject.kind === "effect_row") {
+        const flattened = ensureRow(recordSubject);
+        if (flattened.tail) {
+          recordSubject = flattened.tail;
+        } else {
+          recordSubject = freshTypeVar();
+        }
       }
 
       const wrapWithCarrier = (value: Type): Type => {
@@ -2191,6 +2203,17 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
           reason: "missing_field",
         });
         return recordExprType(ctx, expr, unknown);
+      }
+      if (fromEffectRow) {
+        const fieldType = freshTypeVar();
+        ctx.nodeTypes.set(targetExpr.id, applyCurrentSubst(ctx, targetType));
+        registerHoleForType(
+          ctx,
+          holeOriginFromExpr(targetExpr),
+          applyCurrentSubst(ctx, targetType),
+        );
+        registerHoleForType(ctx, holeOriginFromExpr(expr), fieldType);
+        return recordExprType(ctx, expr, fieldType);
       }
 
       // If targetType or carrier subject is a type variable (so unresolved), unify to exactly one nominal record

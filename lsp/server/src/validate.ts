@@ -309,6 +309,10 @@ async function publishDiagnostics(
 }
 
 function extractModulePathFromMessage(message: string): string | undefined {
+  const importedByMatch = message.match(/\bimported by ['"]([^'"]+\.wm)['"]/i);
+  if (importedByMatch) {
+    return importedByMatch[1];
+  }
   const inMatch = message.match(/\bin ['"]([^'"]+\.wm)['"]/i);
   if (inMatch) {
     return inMatch[1];

@@ -8,82 +8,82 @@ type ListErr =
   | UErr;
 
 -- Returns the number of elements in the list
-export let rec listLength = match(list) => {
+export let rec length = match(list) => {
   Empty => { 0 },
-  Link(_, rest) => { intAdd(1, listLength(rest)) }
+  Link(_, rest) => { intAdd(1, length(rest)) }
 };
 
 -- Appends two lists together
-export let rec listAppend = match(xs, ys) => {
+export let rec append = match(xs, ys) => {
   (Empty, ys) => { ys },
-  (Link(x, rest), ys) => { Link(x, listAppend(rest, ys)) }
+  (Link(x, rest), ys) => { Link(x, append(rest, ys)) }
 };
 
 -- Applies a function to each element of the list and returns a new list with the results
-export let rec listMap = match(f, list) => {
+export let rec map = match(f, list) => {
   (f, Empty) => { Empty },
-  (f, Link(x, rest)) => { Link(f(x), listMap(f, rest)) }
+  (f, Link(x, rest)) => { Link(f(x), map(f, rest)) }
 };
 
 -- Filters the list to include only elements that satisfy the predicate function
-export let rec listFilter = match(predicate, list) => {
+export let rec filter = match(predicate, list) => {
   (predicate, Empty) => { Empty },
   (predicate, Link(x, rest)) => {
     match(predicate(x)) {
-      true => { Link(x, listFilter(predicate, rest)) },
-      false => { listFilter(predicate, rest) }
+      true => { Link(x, filter(predicate, rest)) },
+      false => { filter(predicate, rest) }
     }
   }
 };
 
 -- Removes all occurrences of `value` from the list
-export let rec listRemove = match(value, list) => {
+export let rec remove = match(value, list) => {
   (value, Empty) => { Empty },
   (value, Link(x, rest)) => {
     match(eq(x, value)) {
-      true => { listRemove(value, rest) },
-      false => { Link(x, listRemove(value, rest)) }
+      true => { remove(value, rest) },
+      false => { Link(x, remove(value, rest)) }
     }
   }
 };
 
 -- Takes the first 'count' elements from the list
-export let rec listTake = match(list, count) => {
+export let rec take = match(list, count) => {
   (Empty, _) => { Empty },
   (_, 0) => { Empty },
-  (Link(x, rest), count) => { Link(x, listTake(rest, intSub(count, 1))) }
+  (Link(x, rest), count) => { Link(x, take(rest, intSub(count, 1))) }
 };
 
 -- Drops the first 'count' elements from the list and returns the rest
-export let rec listDrop = match(list, count) => {
+export let rec drop = match(list, count) => {
   (list, 0) => { list },
   (Empty, _) => { Empty },
-  (Link(_, rest), count) => { listDrop(rest, intSub(count, 1)) }
+  (Link(_, rest), count) => { drop(rest, intSub(count, 1)) }
 };
 
 -- Returns a sublist from index 'start' to 'end' (exclusive)
-export let listSlice = (list, start, end) => {
-  let dropped = listDrop(list, start);
-  listTake(dropped, intSub(end, start))
+export let slice = (list, start, end) => {
+  let dropped = drop(list, start);
+  take(dropped, intSub(end, start))
 };
 
 -- Returns the element at the specified index, or an error if out of bounds
-export let rec listAt = match(list, index) => {
+export let rec at = match(list, index) => {
   (Empty, _) => { IErr(OutOfBounds) },
   (Link(x, _), 0) => { IOk(x) },
-  (Link(_, rest), index) => { listAt(rest, intSub(index, 1), OutOfBounds) }
+  (Link(_, rest), index) => { at(rest, intSub(index, 1), OutOfBounds) }
 };
 
 -- Folds the list from the left using the function and accumulator
-export let rec listFoldl = match(f, acc, list) => {
+export let rec foldl = match(f, acc, list) => {
   (f, acc, Empty) => { acc },
-  (f, acc, Link(x, rest)) => { listFoldl(f, f(acc, x), rest) }
+  (f, acc, Link(x, rest)) => { foldl(f, f(acc, x), rest) }
 };
 
 -- Folds the list from the right using the function and accumulator
-export let rec listFoldr = match(f, acc, list) => {
+export let rec foldr = match(f, acc, list) => {
   (f, acc, Empty) => { acc },
-  (f, acc, Link(x, rest)) => { f(x, listFoldr(f, acc, rest)) }
+  (f, acc, Link(x, rest)) => { f(x, foldr(f, acc, rest)) }
 };
 
 let rec reverseAcc = match(list, acc) => {
@@ -92,28 +92,28 @@ let rec reverseAcc = match(list, acc) => {
 };
 
 -- Reverses the order of elements in the list
-export let listReverse = (list) => {
+export let reverse = (list) => {
   reverseAcc(list, Empty)
 };
 
 -- Creates a list of integers from 'start' to 'finish' (inclusive)
-export let rec listRange = match(start, finish) => {
+export let rec range = match(start, finish) => {
   (start, finish) => {
     match(intCompare(start, finish)) {
       GT => { Empty },
-      _ => { Link(start, listRange(intAdd(start, 1), finish)) }
+      _ => { Link(start, range(intAdd(start, 1), finish)) }
     }
   }
 };
 
 -- Inserts a value into the list in sorted order using the comparison function
-export let rec listInsertBy = match(cmp, value, list) => {
+export let rec insertBy = match(cmp, value, list) => {
   (cmp, value, list) => {
     match(list) {
       Empty => { Link(value, Empty) },
       Link(x, rest) => {
         match(cmp(value, x)) {
-          GT => { Link(x, listInsertBy(cmp, value, rest)) },
+          GT => { Link(x, insertBy(cmp, value, rest)) },
           _ => { Link(value, Link(x, rest)) }
         }
       }
@@ -122,98 +122,98 @@ export let rec listInsertBy = match(cmp, value, list) => {
 };
 
 -- Sorts the list using insertion sort with the given comparison function
-export let rec listInsertionSortBy = match(cmp, list) => {
+export let rec insertionSortBy = match(cmp, list) => {
   (cmp, list) => {
     match(list) {
       Empty => { Empty },
-      Link(x, rest) => { listInsertBy(cmp, x, listInsertionSortBy(cmp, rest)) }
+      Link(x, rest) => { insertBy(cmp, x, insertionSortBy(cmp, rest)) }
     }
   }
 };
 
 -- Sorts a list of integers in ascending order
-export let listSortInt = (list) => {
-  listInsertionSortBy(intCompare, list)
+export let sortInt = (list) => {
+  insertionSortBy(intCompare, list)
 };
 
 -- Joins a list of lists with a separator between them
 -- Join a list of lists with a separator
--- For strings: listJoin(separator, listOfStrings)
-export let rec listJoin = match(sep, list) => {
+-- For strings: join(separator, listOfStrings)
+export let rec join = match(sep, list) => {
   (sep, Empty) => { Empty },
   (sep, Link(x, Empty)) => { x },
-  (sep, Link(x, rest)) => { listAppend(x, listAppend(sep, listJoin(sep, rest))) }
+  (sep, Link(x, rest)) => { append(x, append(sep, join(sep, rest))) }
 };
 
 -- Applies a function to each element for side effects
 -- Execute a function for each element (for side effects)
-export let rec listForEach = match(f, list) => {
+export let rec forEach = match(f, list) => {
   (f, Empty) => { () },
   (f, Link(x, rest)) => {
     let result = f(x);
-    listForEach(f, rest)
+    forEach(f, rest)
   }
 };
 
 -- Maps each element to a list and flattens the result into a single list
 -- Map and flatten: f returns a list for each element
-export let rec listFlatMap = match(f, list) => {
+export let rec flatMap = match(f, list) => {
   (f, Empty) => { Empty },
-  (f, Link(x, rest)) => { listAppend(f(x), listFlatMap(f, rest)) }
+  (f, Link(x, rest)) => { append(f(x), flatMap(f, rest)) }
 };
 
 -- Finds the first element that satisfies the predicate, returning Some(value) or None
 -- Find first element matching predicate
-export let rec listFind = match(predicate, list) => {
+export let rec find = match(predicate, list) => {
   (predicate, Empty) => { None },
   (predicate, Link(x, rest)) => {
     match(predicate(x)) {
       true => { Some(x) },
-      false => { listFind(predicate, rest) }
+      false => { find(predicate, rest) }
     }
   }
 };
 
 -- Checks if any element in the list satisfies the predicate
 -- Check if any element matches predicate
-export let rec listAny = match(predicate, list) => {
+export let rec any = match(predicate, list) => {
   (predicate, Empty) => { false },
   (predicate, Link(x, rest)) => {
     match(predicate(x)) {
       true => { true },
-      false => { listAny(predicate, rest) }
+      false => { any(predicate, rest) }
     }
   }
 };
 
 -- Checks if all elements in the list satisfy the predicate
 -- Check if all elements match predicate
-export let rec listAll = match(predicate, list) => {
+export let rec all = match(predicate, list) => {
   (predicate, Empty) => { true },
   (predicate, Link(x, rest)) => {
     match(predicate(x)) {
       false => { false },
-      true => { listAll(predicate, rest) }
+      true => { all(predicate, rest) }
     }
   }
 };
 
 -- Combines two lists into a list of pairs
 -- Zip two lists into pairs
-export let rec listZip = match(xs, ys) => {
+export let rec zip = match(xs, ys) => {
   (Empty, _) => { Empty },
   (_, Empty) => { Empty },
-  (Link(x, restX), Link(y, restY)) => { Link((x, y), listZip(restX, restY)) }
+  (Link(x, restX), Link(y, restY)) => { Link((x, y), zip(restX, restY)) }
 };
 
 -- Splits the list into two lists: one with elements that satisfy the predicate, one with those that don't
 -- Partition list into two based on predicate (true, false)
 -- Returns a record with 'trues' and 'falses' fields
 record Helper<T> = { trues: List<T>, falses: List<T> };
-export let rec listPartition = match(predicate, list) => {
+export let rec partition = match(predicate, list) => {
   (predicate, Empty) => { (.{ trues= Empty, falses= Empty }) },
   (predicate, Link(x, rest)) => {
-    let partitioned = listPartition(predicate, rest);
+    let partitioned = partition(predicate, rest);
     match(predicate(x)) {
       true => { (.{ trues= Link(x, partitioned.trues), falses= partitioned.falses }) },
       false => { (.{ trues= partitioned.trues, falses= Link(x, partitioned.falses) }) }
@@ -222,12 +222,12 @@ export let rec listPartition = match(predicate, list) => {
 };
 
 -- Takes elements from the list until the specified element is found (inclusive), or returns None if not found
-export let listTakeUntil = (list, elem) => {
+export let takeUntil = (list, elem) => {
   let rec helper = match(lst, acc) => {
     (Empty, _) => { None },
     (Link(x, rest), acc) => {
       match(eq(x, elem)) {
-        true => { Some(listReverse(Link(x, acc))) },
+        true => { Some(reverse(Link(x, acc))) },
         false => { helper(rest, Link(x, acc)) }
       }
     }
@@ -235,11 +235,11 @@ export let listTakeUntil = (list, elem) => {
   helper(list, Empty)
 };
 
-let rec listSplitByHelper = (lst, sep, acc) => {
+let rec splitByHelper = (lst, sep, acc) => {
   match(lst) {
-    Empty => { listReverse(acc) },
+    Empty => { reverse(acc) },
     _ => {
-      let option = listTakeUntil(lst, sep);
+      let option = takeUntil(lst, sep);
       handleSplitOption(option, lst, sep, acc)
     }
   }
@@ -248,23 +248,23 @@ let rec listSplitByHelper = (lst, sep, acc) => {
 -- Splits the list into sublists separated by the specified separator element
 handleSplitOption = (option, lst, sep, acc) => {
   match(option) {
-    None => { listReverse(Link(lst, acc)) },
+    None => { reverse(Link(lst, acc)) },
     Some(prefx) => {
-      let prefixLen = listLength(prefx);
-      let part = listTake(prefx, intSub(prefixLen, 1));
-      let nextLst = listDrop(lst, prefixLen);
-      listSplitByHelper(nextLst, sep, Link(part, acc))
+      let prefixLen = length(prefx);
+      let part = take(prefx, intSub(prefixLen, 1));
+      let nextLst = drop(lst, prefixLen);
+      splitByHelper(nextLst, sep, Link(part, acc))
     }
   }
 };
 
 
-export let listSplitBy = (list, sep) => {
-  listSplitByHelper(list, sep, Empty)
+export let splitBy = (list, sep) => {
+  splitByHelper(list, sep, Empty)
 };
 
 -- Returns the first element and the rest of the list as a tuple, or None if the list is empty
-export let listUncons = (list) => {
+export let uncons = (list) => {
   match(list) {
     Empty => { IErr(OutOfBounds) },
     Link(x, rest) => { IOk((x, rest)) }
@@ -272,7 +272,7 @@ export let listUncons = (list) => {
 };
 
 -- Returns the first element of the list, or None if empty
-export let listHead = (list) => {
+export let head = (list) => {
   match(list) {
     Empty => { None },
     Link(x, _) => { Some(x) }
@@ -280,10 +280,10 @@ export let listHead = (list) => {
 };
 
 -- Alias for backward compatibility
-export let listTakeHead = listHead;
+export let takeHead = head;
 
 -- Returns the tail of the list (everything but first element), or None if empty
-export let listTail = (list) => {
+export let tail = (list) => {
   match(list) {
     Empty => { None },
     Link(_, rest) => { Some(rest) }
@@ -291,57 +291,57 @@ export let listTail = (list) => {
 };
 
 -- Returns the nth element (0-indexed), or None if out of bounds
-export let rec listNth = match(n, list) => {
+export let rec nth = match(n, list) => {
   (_, Empty) => { None },
   (0, Link(x, _)) => { Some(x) },
-  (n, Link(_, rest)) => { listNth(intSub(n, 1), rest) }
+  (n, Link(_, rest)) => { nth(intSub(n, 1), rest) }
 };
 
 -- Zip two lists with a combining function
-export let rec listZipWith = match(f, xs, ys) => {
+export let rec zipWith = match(f, xs, ys) => {
   (f, Empty, _) => { Empty },
   (f, _, Empty) => { Empty },
   (f, Link(x, restX), Link(y, restY)) => { 
-    Link(f(x, y), listZipWith(f, restX, restY)) 
+    Link(f(x, y), zipWith(f, restX, restY)) 
   }
 };
 
 -- Flatten a list of lists into a single list
-export let rec listFlatten = match(lists) => {
+export let rec flatten = match(lists) => {
   Empty => { Empty },
-  Link(list, rest) => { listAppend(list, listFlatten(rest)) }
+  Link(list, rest) => { append(list, flatten(rest)) }
 };
 
 -- Map and filter in one pass: f returns Some(b) to include, None to exclude
-export let rec listFilterMap = match(f, list) => {
+export let rec filterMap = match(f, list) => {
   (f, Empty) => { Empty },
   (f, Link(x, rest)) => {
     match (f(x)) {
-      Some(y) => { Link(y, listFilterMap(f, rest)) },
-      None => { listFilterMap(f, rest) }
+      Some(y) => { Link(y, filterMap(f, rest)) },
+      None => { filterMap(f, rest) }
     }
   }
 };
 
 -- Find index of first element satisfying predicate
-let rec listFindIndexHelper = (pred, list, idx) => {
+let rec findIndexHelper = (pred, list, idx) => {
   match (list) {
     Empty => { None },
     Link(x, rest) => {
       match (pred(x)) {
         true => { Some(idx) },
-        false => { listFindIndexHelper(pred, rest, intAdd(idx, 1)) }
+        false => { findIndexHelper(pred, rest, intAdd(idx, 1)) }
       }
     }
   }
 };
 
-export let listFindIndex = (pred, list) => {
-  listFindIndexHelper(pred, list, 0)
+export let findIndex = (pred, list) => {
+  findIndexHelper(pred, list, 0)
 };
 
 -- Check if list is empty
-export let listIsEmpty = (list) => {
+export let isEmpty = (list) => {
   match (list) {
     Empty => { true },
     _ => { false }
@@ -349,41 +349,41 @@ export let listIsEmpty = (list) => {
 };
 
 -- Map with index: f receives (index, element)
-let rec listMapiHelper = (f, list, idx) => {
+let rec mapiHelper = (f, list, idx) => {
   match (list) {
     Empty => { Empty },
-    Link(x, rest) => { Link(f(idx, x), listMapiHelper(f, rest, intAdd(idx, 1))) }
+    Link(x, rest) => { Link(f(idx, x), mapiHelper(f, rest, intAdd(idx, 1))) }
   }
 };
 
-export let listMapi = (f, list) => {
-  listMapiHelper(f, list, 0)
+export let mapi = (f, list) => {
+  mapiHelper(f, list, 0)
 };
 
 -- Check if list contains an element (using eq)
-export let rec listContains = match(elem, list) => {
+export let rec contains = match(elem, list) => {
   (elem, Empty) => { false },
   (elem, Link(x, rest)) => {
     match (eq(elem, x)) {
       true => { true },
-      false => { listContains(elem, rest) }
+      false => { contains(elem, rest) }
     }
   }
 };
 
 -- Get last element of list
-export let rec listLast = match(list) => {
+export let rec last = match(list) => {
   Empty => { None },
   Link(x, Empty) => { Some(x) },
-  Link(_, rest) => { listLast(rest) }
+  Link(_, rest) => { last(rest) }
 };
 
 -- Get all but last element
-export let rec listInit = match(list) => {
+export let rec init = match(list) => {
   Empty => { None },
   Link(_, Empty) => { Some(Empty) },
   Link(x, rest) => {
-    match (listInit(rest)) {
+    match (init(rest)) {
       None => { None },
       Some(init) => { Some(Link(x, init)) }
     }
@@ -391,96 +391,96 @@ export let rec listInit = match(list) => {
 };
 
 -- Replicate an element n times
-export let rec listReplicate = match(n, elem) => {
+export let rec replicate = match(n, elem) => {
   (0, _) => { Empty },
-  (n, elem) => { Link(elem, listReplicate(intSub(n, 1), elem)) }
+  (n, elem) => { Link(elem, replicate(intSub(n, 1), elem)) }
 };
 
 -- Create a singleton list
-export let listSingleton = (x) => { Link(x, Empty) };
+export let singleton = (x) => { Link(x, Empty) };
 
 -- Intersperse an element between all elements of a list
-export let rec listIntersperse = match(sep, list) => {
+export let rec intersperse = match(sep, list) => {
   (sep, Empty) => { Empty },
   (sep, Link(x, Empty)) => { Link(x, Empty) },
-  (sep, Link(x, rest)) => { Link(x, Link(sep, listIntersperse(sep, rest))) }
+  (sep, Link(x, rest)) => { Link(x, Link(sep, intersperse(sep, rest))) }
 };
 
 -- Sum of all integers in a list
-export let rec listSum = match(list) => {
+export let rec sum = match(list) => {
   Empty => { 0 },
-  Link(x, rest) => { intAdd(x, listSum(rest)) }
+  Link(x, rest) => { intAdd(x, sum(rest)) }
 };
 
 -- Product of all integers in a list
-export let rec listProduct = match(list) => {
+export let rec product = match(list) => {
   Empty => { 1 },
-  Link(x, rest) => { intMul(x, listProduct(rest)) }
+  Link(x, rest) => { intMul(x, product(rest)) }
 };
 
 -- Unzip a list of pairs into a pair of lists
-export let rec listUnzip = match(pairs) => {
+export let rec unzip = match(pairs) => {
   Empty => { (Empty, Empty) },
   Link((a, b), rest) => {
-    let (xs, ys) = listUnzip(rest);
+    let (xs, ys) = unzip(rest);
     (Link(a, xs), Link(b, ys))
   }
 };
 
 -- Take elements while predicate holds
-export let rec listTakeWhile = match(pred, list) => {
+export let rec takeWhile = match(pred, list) => {
   (pred, Empty) => { Empty },
   (pred, Link(x, rest)) => {
     match (pred(x)) {
-      true => { Link(x, listTakeWhile(pred, rest)) },
+      true => { Link(x, takeWhile(pred, rest)) },
       false => { Empty }
     }
   }
 };
 
 -- Drop elements while predicate holds
-export let rec listDropWhile = match(pred, list) => {
+export let rec dropWhile = match(pred, list) => {
   (pred, Empty) => { Empty },
   (pred, Link(x, rest)) => {
     match (pred(x)) {
-      true => { listDropWhile(pred, rest) },
+      true => { dropWhile(pred, rest) },
       false => { Link(x, rest) }
     }
   }
 };
 
 -- Reject elements that match predicate (opposite of filter)
-export let rec listReject = match(predicate, list) => {
+export let rec reject = match(predicate, list) => {
   (predicate, Empty) => { Empty },
   (predicate, Link(x, rest)) => {
     match (predicate(x)) {
-      true => { listReject(predicate, rest) },
-      false => { Link(x, listReject(predicate, rest)) }
+      true => { reject(predicate, rest) },
+      false => { Link(x, reject(predicate, rest)) }
     }
   }
 };
 
 -- Split list at first element not matching predicate
 -- Returns (matching prefix, rest)
-export let listSpan = (pred, list) => {
-  let taken = listTakeWhile(pred, list);
-  let dropped = listDropWhile(pred, list);
+export let span = (pred, list) => {
+  let taken = takeWhile(pred, list);
+  let dropped = dropWhile(pred, list);
   (taken, dropped)
 };
 
 -- Filter with index: predicate receives (index, element)
-let rec listFilteriHelper = (pred, list, idx) => {
+let rec filteriHelper = (pred, list, idx) => {
   match (list) {
     Empty => { Empty },
     Link(x, rest) => {
       match (pred(idx, x)) {
-        true => { Link(x, listFilteriHelper(pred, rest, intAdd(idx, 1))) },
-        false => { listFilteriHelper(pred, rest, intAdd(idx, 1)) }
+        true => { Link(x, filteriHelper(pred, rest, intAdd(idx, 1))) },
+        false => { filteriHelper(pred, rest, intAdd(idx, 1)) }
       }
     }
   }
 };
 
-export let listFilteri = (pred, list) => {
-  listFilteriHelper(pred, list, 0)
+export let filteri = (pred, list) => {
+  filteriHelper(pred, list, 0)
 };

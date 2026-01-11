@@ -3,8 +3,13 @@
 import { fromFileUrl } from "std/path/from_file_url.ts";
 import { dirname, isAbsolute, normalize, resolve } from "std/path/mod.ts";
 import { LSPMessage } from "./server.ts";
-import { splitCarrier, Type, type TypeInfo } from "../../../src/types.ts";
-import { formatType, formatTypeWithCarriers } from "../../../src/type_printer.ts";
+import {
+  applySubstitution,
+  splitCarrier,
+  Type,
+  type TypeInfo,
+} from "../../../src/types.ts";
+import { formatType } from "../../../src/type_printer.ts";
 import { createDefaultForeignTypeConfig } from "../../../src/foreign_types/c_header_provider.ts";
 
 import { findNodeAtOffset } from "../../../src/layer3/mod.ts";
@@ -494,13 +499,31 @@ async function handleHover(
     }
     const { layer3, env } = context;
     const offset = positionToOffset(text, position);
-    const nodeId = findNodeAtOffset(layer3.spanIndex, offset);
-    if (nodeId) {
-      const nodeIndex = buildNodeIndex(context);
-      const node = nodeIndex.get(nodeId);
-      if (node?.kind === "identifier") {
-        const scheme = env.get(node.name);
-        if (scheme) {
+      const nodeId = findNodeAtOffset(layer3.spanIndex, offset);
+      if (nodeId) {
+        const nodeIndex = buildNodeIndex(context);
+        const node = nodeIndex.get(nodeId);
+        const recordFieldHover = formatRecordFieldHover(
+          ctx,
+          nodeId,
+          node,
+          context,
+        );
+        if (recordFieldHover) {
+          return {
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              contents: {
+                kind: "markdown",
+                value: recordFieldHover,
+              },
+            },
+          };
+        }
+        if (node?.kind === "identifier") {
+          const scheme = env.get(node.name);
+          if (scheme) {
           const localParamNames = collectLocalParamNameMap(context);
           const cHeaderImports = collectCHeaderImportMap(context);
           const includeDirs = getCHeaderIncludeDirs(context.entryPath);
@@ -1063,28 +1086,29 @@ async function handleInlayHint(
     }
 
     const recordFieldTargets = collectRecordFieldTargets(context);
-    for (const target of recordFieldTargets) {
-      const type = getBestAvailableType(layer3.nodeViews, target.valueNodeId);
-      if (!type) {
-        continue;
-      }
-      const typeStr = formatTypeForInlay(ctx, type, context);
-      if (!typeStr) continue;
-      let label = `${typeStr}`;
-      if (label.length > MAX_LABEL_LENGTH) {
-        label = label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
-      }
-      const colonOffset = findColonOffset(
-        text,
-        target.fieldSpanStart,
-        target.valueSpanStart,
-      );
-      const position = offsetToPosition(text, colonOffset);
-      hints.push({
-        position,
-        label,
-        kind: 1,
-        paddingLeft: true,
+      for (const target of recordFieldTargets) {
+        const type = getBestAvailableType(layer3.nodeViews, target.valueNodeId);
+        if (!type) {
+          continue;
+        }
+        const typeStr = formatTypeForInlay(ctx, type, context);
+        if (!typeStr) continue;
+        let label = `: ${typeStr}`;
+        if (label.length > MAX_LABEL_LENGTH) {
+          label = label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
+        }
+        const insertOffset = findRecordFieldTypeOffset(
+          text,
+          target.fieldSpanStart,
+          target.valueSpanStart,
+          target.fieldName,
+        );
+        const position = offsetToPosition(text, insertOffset);
+        hints.push({
+          position,
+          label,
+          kind: 1,
+          paddingLeft: true,
         paddingRight: true,
       });
       ctx.log(
@@ -1612,14 +1636,15 @@ function collectLetTargetsFromIndex(
     fallbackType?: Type;
   }> = [];
   for (const node of nodeIndex.values()) {
-    if (
-      node &&
-      node.kind === "let" &&
-      typeof node.id === "number" &&
-      node.nameSpan &&
-      typeof node.nameSpan.start === "number" &&
-      typeof node.nameSpan.end === "number"
-    ) {
+      if (
+        node &&
+        node.kind === "let" &&
+        typeof node.id === "number" &&
+        node.nameSpan &&
+        !node.annotation &&
+        typeof node.nameSpan.start === "number" &&
+        typeof node.nameSpan.end === "number"
+      ) {
       targets.push({
         nodeId: node.id,
         nameSpan: {
@@ -2081,21 +2106,28 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function findColonOffset(
-  text: string,
-  fieldSpanStart: number,
-  valueSpanStart: number,
-): number {
-  const start = Math.max(0, Math.min(fieldSpanStart, text.length));
-  const end = Math.max(start, Math.min(valueSpanStart, text.length));
-  for (let i = start; i < end; i++) {
-    const ch = text[i];
-    if (ch === ":") {
-      return i;
+  function findRecordFieldTypeOffset(
+    text: string,
+    fieldSpanStart: number,
+    valueSpanStart: number,
+    fieldName: string,
+  ): number {
+    const start = Math.max(0, Math.min(fieldSpanStart, text.length));
+    const end = Math.max(start, Math.min(valueSpanStart, text.length));
+    for (let i = start; i < end; i++) {
+      const ch = text[i];
+      if (ch === "=") {
+        return i;
+      }
     }
+    if (fieldName) {
+      const nameIndex = text.indexOf(fieldName, start);
+      if (nameIndex !== -1) {
+        return nameIndex + fieldName.length;
+      }
+    }
+    return end;
   }
-  return end;
-}
 
 function formatTypeForInlay(
   ctx: LspServerContext,
@@ -2107,28 +2139,31 @@ function formatTypeForInlay(
 ): string | null {
   try {
     const substituted = ctx.substituteTypeWithLayer3(type, context.layer3);
+    const normalized = replaceNominalRecordTypes(substituted, context.adtEnv);
     const printCtx = { names: new Map(), next: 0 };
     let typeStr = ctx.replaceIResultFormats(
-      formatTopLevelType(substituted, printCtx),
+      formatTopLevelType(normalized, printCtx),
+      { showState: false },
     );
+    typeStr = typeStr.replace(/⚡([^\[]+?)\s*\[[^\]]*\]/g, "⚡$1");
     const simplified = simplifyRecordConstructorDisplay(
-      substituted,
+      normalized,
       context.adtEnv,
     );
     if (simplified) {
       typeStr = simplified;
     }
     const summary = ctx.summarizeEffectRowFromType(
-      substituted,
+      normalized,
       context.adtEnv,
     );
     if (
-      summary && substituted.kind === "constructor" &&
-      substituted.args.length > 0
+      summary && normalized.kind === "constructor" &&
+      normalized.args.length > 0
     ) {
       typeStr = `⚡${
-        formatType(substituted.args[0], printCtx, 0)
-      } [<${summary}>]`;
+        formatType(normalized.args[0], printCtx, 0)
+      }`;
     }
     return typeStr;
   } catch {
@@ -2148,7 +2183,8 @@ function formatNamedFunctionSignature(
     return null;
   }
   const substituted = ctx.substituteTypeWithLayer3(type, layer3);
-  const parts = collectFunctionTypeParts(substituted);
+  const normalized = replaceNominalRecordTypes(substituted, adtEnv);
+  const parts = collectFunctionTypeParts(normalized);
   if (!parts) return null;
   const params = parts.params.map((paramType, index) => {
     const displayName = paramNames[index] ?? `arg${index + 1}`;
@@ -2172,66 +2208,191 @@ function formatTypeForSignature(
   type: Type,
   adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
 ): string {
+  const normalized = replaceNominalRecordTypes(type, adtEnv);
   const printCtx = { names: new Map(), next: 0 };
   let typeStr = ctx.replaceIResultFormats(
-    formatType(type, printCtx, 0),
+    formatType(normalized, printCtx, 0),
   );
-  const simplified = simplifyRecordConstructorDisplay(type, adtEnv);
+  const simplified = simplifyRecordConstructorDisplay(normalized, adtEnv);
   if (simplified) {
     typeStr = simplified;
   }
-  const carrier = splitCarrier(type);
+  const carrier = splitCarrier(normalized);
   if (carrier && carrier.domain === "effect") {
-    const summary = ctx.summarizeEffectRowFromType(type, adtEnv);
+    const summary = ctx.summarizeEffectRowFromType(normalized, adtEnv);
     if (
-      summary && type.kind === "constructor" &&
-      type.args.length > 0
+      summary && normalized.kind === "constructor" &&
+      normalized.args.length > 0
     ) {
       typeStr = `?${
-        formatType(type.args[0], printCtx, 0)
+        formatType(normalized.args[0], printCtx, 0)
       } [<${summary}>]`;
     }
   }
   return typeStr;
 }
 
-function formatTopLevelType(
-  type: Type,
-  printCtx: { names: Map<number, string>; next: number },
-): string {
-  return splitCarrier(type)
-    ? formatTypeWithCarriers(type)
-    : formatType(type, printCtx, 0);
-}
+  function formatTopLevelType(
+    type: Type,
+    printCtx: { names: Map<number, string>; next: number },
+  ): string {
+    return formatType(type, printCtx, 0);
+  }
 
-function formatTypeInfoHover(
-  ctx: LspServerContext,
-  name: string,
-  info: TypeInfo,
-  adtEnv: Map<string, TypeInfo>,
-): string | null {
-  if (!info.alias || info.alias.kind !== "record") {
+  function formatTypeInfoHover(
+    ctx: LspServerContext,
+    name: string,
+    info: TypeInfo,
+    adtEnv: Map<string, TypeInfo>,
+  ): string | null {
+    if (info.alias && info.alias.kind === "record") {
+      const entries = Array.from(info.alias.fields.entries());
+      const order = info.recordFields
+        ? Array.from(info.recordFields.entries())
+          .sort((a, b) => a[1] - b[1])
+          .map(([field]) => field)
+        : entries.map(([field]) => field);
+      const fieldMap = new Map(entries);
+      const fieldLines = order.map((field) => {
+        const fieldType = fieldMap.get(field);
+        const rendered = fieldType
+          ? formatTypeForSignature(ctx, fieldType, adtEnv)
+          : "Unknown";
+        return `  ${field}: ${rendered}`;
+      });
+      if (fieldLines.length === 0) {
+        return `type ${name} = {}`;
+      }
+      return `type ${name} = {\n${fieldLines.join("\n")}\n}`;
+    }
+
+    if (info.constructors.length > 0) {
+      const constructors = info.constructors.map((ctor) =>
+        formatConstructorInfo(ctx, ctor, adtEnv)
+      );
+      return `type ${name} = ${constructors.join(" | ")}`;
+    }
+
     return null;
   }
-  const entries = Array.from(info.alias.fields.entries());
-  const order = info.recordFields
-    ? Array.from(info.recordFields.entries())
-      .sort((a, b) => a[1] - b[1])
-      .map(([field]) => field)
-    : entries.map(([field]) => field);
-  const fieldMap = new Map(entries);
-  const fieldLines = order.map((field) => {
-    const fieldType = fieldMap.get(field);
-    const rendered = fieldType
-      ? formatTypeForSignature(ctx, fieldType, adtEnv)
-      : "Unknown";
-    return `  ${field}: ${rendered}`;
-  });
-  if (fieldLines.length === 0) {
-    return `type ${name} = {}`;
+
+  function formatRecordFieldHover(
+    ctx: LspServerContext,
+    nodeId: number,
+    node: any,
+    context: {
+      layer3: import("../../../src/layer3/mod.ts").Layer3Result;
+      program: import("../../../src/ast_marked.ts").MProgram;
+      adtEnv: Map<string, TypeInfo>;
+    },
+  ): string | null {
+    const parentIndex = buildParentIndex(context);
+    let fieldNode = node;
+    let fieldName: string | undefined = undefined;
+
+    if (node?.kind === "record_field") {
+      fieldName = node.name;
+    } else if (node?.kind === "identifier") {
+      const parent = parentIndex.get(nodeId);
+      if (parent?.kind === "record_field") {
+        fieldNode = parent.node;
+        fieldName = parent.node?.name;
+      }
+    }
+
+    if (!fieldName || !fieldNode || fieldNode.kind !== "record_field") {
+      return null;
+    }
+
+    const recordParent = parentIndex.get(fieldNode.id);
+    if (!recordParent || recordParent.node?.kind !== "record_literal") {
+      return null;
+    }
+
+    const recordType = getBestAvailableType(
+      context.layer3.nodeViews,
+      recordParent.node.id,
+    );
+    if (!recordType) {
+      return null;
+    }
+
+    const fieldType = resolveRecordFieldType(
+      recordType,
+      fieldName,
+      context.adtEnv,
+    );
+    if (!fieldType) {
+      return null;
+    }
+
+    const typeStr = formatTypeForSignature(
+      ctx,
+      normalizeCarrierType(fieldType),
+      context.adtEnv,
+    );
+    const typeInfo = fieldType.kind === "constructor"
+      ? context.adtEnv.get(fieldType.name)
+      : null;
+    const typeInfoText = typeInfo
+      ? formatTypeInfoHover(ctx, fieldType.name, typeInfo, context.adtEnv)
+      : null;
+    const lines = [`${fieldName} : ${typeStr}`];
+    if (typeInfoText) {
+      lines.push("", typeInfoText);
+    }
+    return `\`\`\`workman\n${lines.join("\n")}\n\`\`\``;
   }
-  return `type ${name} = {\n${fieldLines.join("\n")}\n}`;
-}
+
+  function resolveRecordFieldType(
+    recordType: Type,
+    fieldName: string,
+    adtEnv: Map<string, TypeInfo>,
+  ): Type | null {
+    if (recordType.kind === "record") {
+      return recordType.fields.get(fieldName) ?? null;
+    }
+    if (recordType.kind !== "constructor") {
+      return null;
+    }
+    const info = adtEnv.get(recordType.name);
+    if (!info || !info.alias || info.alias.kind !== "record") {
+      return null;
+    }
+    let aliasType = info.alias;
+    if (info.parameters.length > 0) {
+      const subst = new Map<number, Type>();
+      info.parameters.forEach((paramId, index) => {
+        const arg = recordType.args[index];
+        if (arg) {
+          subst.set(paramId, arg);
+        }
+      });
+      aliasType = applySubstitution(aliasType, subst);
+    }
+    if (aliasType.kind !== "record") {
+      return null;
+    }
+    return aliasType.fields.get(fieldName) ?? null;
+  }
+
+  function formatConstructorInfo(
+    ctx: LspServerContext,
+    ctor: import("../../../src/types.ts").ConstructorInfo,
+    adtEnv: Map<string, TypeInfo>,
+  ): string {
+    const parts = collectFunctionTypeParts(ctor.scheme.type);
+    if (!parts) {
+      return ctor.name;
+    }
+    const params = parts.params.map((param) =>
+      formatTypeForSignature(ctx, normalizeCarrierType(param), adtEnv)
+    );
+    if (params.length === 0) {
+      return ctor.name;
+    }
+    return `${ctor.name}(${params.join(", ")})`;
+  }
 
 function collectFunctionTypeParts(
   type: Type,
@@ -2267,6 +2428,98 @@ function simplifyRecordConstructorDisplay(
     return null;
   }
   return type.name;
+}
+
+function replaceNominalRecordTypes(
+  type: Type,
+  adtEnv: Map<string, TypeInfo>,
+): Type {
+  switch (type.kind) {
+    case "record": {
+      const name = findNominalRecordName(type, adtEnv);
+      if (name) {
+        return { kind: "constructor", name, args: [] };
+      }
+      const fields = new Map<string, Type>();
+      for (const [fieldName, fieldType] of type.fields.entries()) {
+        fields.set(fieldName, replaceNominalRecordTypes(fieldType, adtEnv));
+      }
+      return { kind: "record", fields };
+    }
+    case "constructor":
+      return {
+        kind: "constructor",
+        name: type.name,
+        args: type.args.map((arg) => replaceNominalRecordTypes(arg, adtEnv)),
+      };
+    case "func":
+      return {
+        kind: "func",
+        from: replaceNominalRecordTypes(type.from, adtEnv),
+        to: replaceNominalRecordTypes(type.to, adtEnv),
+      };
+    case "tuple":
+      return {
+        kind: "tuple",
+        elements: type.elements.map((el) =>
+          replaceNominalRecordTypes(el, adtEnv)
+        ),
+      };
+    case "array":
+      return {
+        kind: "array",
+        length: type.length,
+        element: replaceNominalRecordTypes(type.element, adtEnv),
+      };
+    case "effect_row": {
+      const cases = new Map<string, Type | null>();
+      for (const [label, payload] of type.cases.entries()) {
+        cases.set(
+          label,
+          payload ? replaceNominalRecordTypes(payload, adtEnv) : null,
+        );
+      }
+      return {
+        kind: "effect_row",
+        cases,
+        tail: type.tail ? replaceNominalRecordTypes(type.tail, adtEnv) : undefined,
+      };
+    }
+    case "var":
+    case "int":
+    case "bool":
+    case "char":
+    case "string":
+    case "unit":
+      return type;
+  }
+}
+
+function findNominalRecordName(
+  type: Extract<Type, { kind: "record" }>,
+  adtEnv: Map<string, TypeInfo>,
+): string | null {
+  const fieldNames = new Set(type.fields.keys());
+  const matches: string[] = [];
+  for (const [name, info] of adtEnv.entries()) {
+    if (!info.alias || info.alias.kind !== "record") continue;
+    if (info.parameters.length > 0) continue;
+    if (info.alias.fields.size !== fieldNames.size) continue;
+    let ok = true;
+    for (const aliasField of info.alias.fields.keys()) {
+      if (!fieldNames.has(aliasField)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      matches.push(name);
+      if (matches.length > 1) {
+        return null;
+      }
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function peelFuncType(

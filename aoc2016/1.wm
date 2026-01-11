@@ -1,4 +1,4 @@
-from "std/list" import { listSlice, listFilter, listRemove, listAt, listTake, listLength, listTakeUntil, listSplitBy, listMap, listUncons, listFoldr };
+from "std/list" import * as list;
 from "std/string" import { isDigit, charCToString, char, posIntStringToInt };
 from "std/nativeString" import { stringToList, stringConcat, intToString };
 from "std/result" import { stripErr };
@@ -13,23 +13,30 @@ record Location = { x: Int, y: Int };
 record Operation = { direction: Direction, distance: Int };
 type Direction = L | R;
 type Orientation = N | E | S | W;
-let start = .{ x = 0, y = 0 };
+let start: Location = { x = 0, y = 0 };
 
 let produceOp = (in) => {
   let intL = 'L' :> charToInt;
   let intR = 'R' :> charToInt;
-  let val = stripErr(listAt(in, 0));
-  let dir = stripErr(
+  let val = (in, 0) :> list.at :> stripErr;
+  let direction = stripErr(
     match(val) {
       intL => { IOk(L) },
       intR => { IOk(R) },
       _ => { IErr(Error) }
     }
   );
-  let distance = posIntStringToInt(listFilter(isDigit, in));
-  let yoink = match(dir, distance) {
-    (dir, Some(distance)) => { IOk(.{ direction= dir, distance= distance }) },
-    (dir, None) => { IErr((dir, distance)) }
+  let distance = 
+    (isDigit, in) 
+    :> list.filter 
+    :> posIntStringToInt;
+  let yoink = match(direction, distance) {
+    (direction, Some(distance)) => { 
+      IOk(Operation{ direction, distance }) 
+    },
+    (direction, None) => { 
+      IErr((direction, distance)) 
+    }
   };
   yoink
 };
@@ -37,15 +44,15 @@ let produceOp = (in) => {
 let move = (orient, distance) => {
   (pos) => {
     match(orient) {
-      N => { .{ x= pos.x, y= pos.y + distance } },
-      E => { .{ x= pos.x + distance, y= pos.y } },
-      S => { .{ x= pos.x, y= pos.y - distance } },
-      W => { .{ x= pos.x - distance, y= pos.y } }
+      N => { Location{ x= pos.x, y= pos.y + distance } },
+      E => { Location{ x= pos.x + distance, y= pos.y } },
+      S => { Location{ x= pos.x, y= pos.y - distance } },
+      W => { Location{ x= pos.x - distance, y= pos.y } }
     }
   }
 };
 let rec walker = (opList, orient, location) => {
-  let (opx, opList2) = stripErr(listUncons(opList));
+  let (opx, opList2) = stripErr(list.uncons(opList));
   let newOrient = match((opx.direction, orient)) {
     (L, N) => { W },
     (L, E) => { N },
@@ -58,7 +65,7 @@ let rec walker = (opList, orient, location) => {
   };
   let amount = opx.distance;
   let newLoc = move(newOrient, amount)(location);
-  if (listLength(opList2) > 0) { 
+  if (list.length(opList2) > 0) { 
     walker(opList2, newOrient, newLoc) 
   } else {
     newLoc
@@ -66,7 +73,7 @@ let rec walker = (opList, orient, location) => {
 };
 
 let rec yoink = (infectedList) => {
-  match(listUncons(infectedList)) {
+  match(list.uncons(infectedList)) {
     IOk((head, tail)) => {
       match(head, yoink(tail)) {
         (IOk(value), IOk(restList)) => { IOk(Link(value, restList)) },
@@ -80,21 +87,14 @@ let rec yoink = (infectedList) => {
 
 let process = (in) => {
   let str = stringToList(in);
-  let cleanedStr = listRemove(char(" "), str);
-  let opStrList = listSplitBy(cleanedStr, char(","));
-  let opList = listMap(produceOp, opStrList);
+  let cleanedStr = list.remove(char(" "), str);
+  let opStrList = list.splitBy(cleanedStr, char(","));
+  let opList = list.map(produceOp, opStrList);
   let cleanOpList = stripErr(yoink(opList));
   let finalLoc = walker(cleanOpList, N, start);
   abs(finalLoc.x) + abs(finalLoc.y)
 };
 
 let main = () => {
-
-  let a = IOk(1);
-  let b = IOk(2);
-
-  let list = [a, b];
-
-  let baba = listUncons(list);
   print(process(input));
 }

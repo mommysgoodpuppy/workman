@@ -274,9 +274,10 @@ function applyReexports(
   for (const typeExport of record.typeExports) {
     const providedType = provider.exports.types.get(typeExport.name);
     if (!providedType) {
-      throw moduleError(
-        `Module '${record.importerPath}' re-exports type '${typeExport.name}' from '${record.rawSource}' which does not export it`,
-      );
+        throw moduleError(
+          `Module '${record.importerPath}' re-exports type '${typeExport.name}' from '${record.rawSource}' which does not export it`,
+          record.importerPath,
+        );
     }
     if (exportedTypes.has(typeExport.name)) {
       throw moduleError(
@@ -291,6 +292,7 @@ function applyReexports(
         if (!providedScheme) {
           throw moduleError(
             `Module '${record.importerPath}' re-exports constructors for type '${typeExport.name}' but constructor '${ctor.name}' is missing in provider`,
+            record.importerPath,
           );
         }
         if (exportedValues.has(ctor.name)) {
@@ -304,6 +306,7 @@ function applyReexports(
           if (!runtimeValue) {
             throw moduleError(
               `Module '${record.importerPath}' re-exports constructor '${ctor.name}' from '${record.rawSource}' but runtime value is missing in provider`,
+              record.importerPath,
             );
           }
           exportedRuntime.set(ctor.name, runtimeValue);
@@ -1542,9 +1545,10 @@ function applyImports(
     const valueExport = provider.exports.values.get(spec.imported);
     const typeExport = provider.exports.types.get(spec.imported);
     if (!valueExport && !typeExport) {
-      throw moduleError(
-        `Module '${record.sourcePath}' does not export '${spec.imported}' (imported by '${record.importerPath}')`,
-      );
+        throw moduleError(
+          `Module '${record.sourcePath}' does not export '${spec.imported}' (imported by '${record.importerPath}')`,
+          record.importerPath,
+        );
     }
 
     if (valueExport) {

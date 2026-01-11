@@ -14,50 +14,23 @@ export record ParseError = {
 -- =============================================================================
 
 export type Expr =
-  | IdentifierExpr
-  | NumberExpr
-  | StringExpr
-  | CallExpr;
+  | IdentifierExpr<String, Span>
+  | NumberExpr<String, Span>
+  | StringExpr<String, Span>
+  | CallExpr<Expr, List<Expr>, Span>;
 
-record IdentifierExpr = {
-  kind: String,
-  name: String,
-  span: Span
+export let exprSpan = match(expr) => {
+  IdentifierExpr(_, sp) => { sp },
+  NumberExpr(_, sp) => { sp },
+  StringExpr(_, sp) => { sp },
+  CallExpr(_, _, sp) => { sp }
 };
 
-record NumberExpr = {
-  kind: String,
-  value: String,
-  span: Span
-};
-
-record StringExpr = {
-  kind: String,
-  value: String,
-  span: Span
-};
-
-record CallExpr = {
-  kind: String,
-  callee: Expr,
-  args: List<Expr>,
-  span: Span
-};
-
-export let identifierExpr = (name, sp) => {
-  .{ kind = "identifier", name = name, span = sp }
-};
-
-export let numberExpr = (value, sp) => {
-  .{ kind = "number", value = value, span = sp }
-};
-
-export let stringExpr = (value, sp) => {
-  .{ kind = "string", value = value, span = sp }
-};
-
-export let callExpr = (callee, args, sp) => {
-  .{ kind = "call", callee = callee, args = args, span = sp }
+export let exprWithSpan = match(expr, sp) => {
+  (IdentifierExpr(name, _), sp) => { IdentifierExpr(name, sp) },
+  (NumberExpr(value, _), sp) => { NumberExpr(value, sp) },
+  (StringExpr(value, _), sp) => { StringExpr(value, sp) },
+  (CallExpr(callee, args, _), sp) => { CallExpr(callee, args, sp) }
 };
 
 -- =============================================================================
@@ -72,7 +45,7 @@ export record LetDeclaration = {
 };
 
 export let letDeclaration = (name, value, sp) => {
-  .{ kind = "let", name = name, value = value, span = sp }
+  LetDeclaration{ kind = "let", name = name, value = value, span = sp }
 };
 
 export record Program = {
@@ -80,5 +53,5 @@ export record Program = {
 };
 
 export let program = (decls) => {
-  .{ declarations = decls }
+  Program{ declarations = decls }
 };

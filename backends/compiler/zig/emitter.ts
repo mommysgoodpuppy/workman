@@ -450,13 +450,13 @@ function emitConstructor(
   }
 
   const fnName = allocateTempName(ctx.state, `__ctor_${ctor.name}`);
-  const params = Array.from({ length: ctor.arity }, (_, i) => `args[${i}]`);
+  const params = Array.from({ length: ctor.arity }, (_, i) => `__args[${i}]`);
   const fields = params.join(", ");
   const body =
     `return runtime.makeData("${decl.name}", "${ctor.name}", &[_]Value{ ${fields} });`;
 
   ctx.hoisted.push(
-    `fn ${fnName}(env_ptr: ?*anyopaque, args: []const Value) Value {`,
+    `fn ${fnName}(env_ptr: ?*anyopaque, __args: []const Value) Value {`,
   );
   ctx.hoisted.push(indent("_ = env_ptr;"));
   ctx.hoisted.push(indent(body));
@@ -728,7 +728,7 @@ function emitLambda(
   const body = emitExprWithScope(expr.body, ctx, scope);
 
   ctx.hoisted.push(
-    `fn ${lambdaName}(env_ptr: ?*anyopaque, args: []const Value) Value {`,
+    `fn ${lambdaName}(env_ptr: ?*anyopaque, __args: []const Value) Value {`,
   );
   if (captures.length > 0) {
     ctx.hoisted.push(
@@ -738,11 +738,11 @@ function emitLambda(
     ctx.hoisted.push(indent("_ = env_ptr;"));
   }
   if (params.length === 0) {
-    ctx.hoisted.push(indent("_ = args;"));
+    ctx.hoisted.push(indent("_ = __args;"));
   }
   for (const param of params) {
     ctx.hoisted.push(
-      indent(`const ${param.name} = args[${param.index}];`),
+      indent(`const ${param.name} = __args[${param.index}];`),
     );
   }
   ctx.hoisted.push(indent(`return ${body};`));
@@ -1027,10 +1027,14 @@ function emitLet(expr: CoreExpr & { kind: "let" }, ctx: EmitContext): string {
   const label = allocateLabel(ctx.state);
   const isStmt = expr.binding.name.startsWith("__stmt");
   const isUsed = usedVars.has(expr.binding.name);
+  const valueIsTrivial = expr.binding.value.kind === "var" ||
+    expr.binding.value.kind === "literal";
   if (isStmt || (!isUsed && !expr.binding.isRecursive)) {
-    return `${label}: {\n${indent(`_ = ${valueCode};`)}\n${
-      indent(`break :${label} ${bodyCode};`)
-    }\n}`;
+    const evaluateValue = !valueIsTrivial;
+    const valueLine = evaluateValue ? indent(`_ = ${valueCode};`) : "";
+    const bodyLine = indent(`break :${label} ${bodyCode};`);
+    const lines = [valueLine, bodyLine].filter((line) => line !== "");
+    return `${label}: {\n${lines.join("\n")}\n}`;
   }
   return `${label}: {\n${indent(`const ${bindingName} = ${valueCode};`)}\n${
     indent(`break :${label} ${bodyCode};`)
@@ -1175,7 +1179,7 @@ function emitMatchLambda(
   const body = emitMatchWithScrutinee(expr, ctx, paramName, scope);
 
   ctx.hoisted.push(
-    `fn ${lambdaName}(env_ptr: ?*anyopaque, args: []const Value) Value {`,
+    `fn ${lambdaName}(env_ptr: ?*anyopaque, __args: []const Value) Value {`,
   );
   if (captures.length > 0) {
     ctx.hoisted.push(
@@ -1184,7 +1188,7 @@ function emitMatchLambda(
   } else {
     ctx.hoisted.push(indent("_ = env_ptr;"));
   }
-  ctx.hoisted.push(indent(`const ${paramName} = args[0];`));
+  ctx.hoisted.push(indent(`const ${paramName} = __args[0];`));
   ctx.hoisted.push(indent(`return ${body};`));
   ctx.hoisted.push("}");
 

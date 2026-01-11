@@ -2,7 +2,7 @@
 
 from "std/coretypes" import { Empty, Link, Some, None };
 from "std/coretypes" import { IOk, IErr };
-from "std/list" import { listReverse };
+from "std/list" import { reverse };
 from "std/nativeString" import { stringConcat };
 
 from "./lexer.wm" import { lex };
@@ -27,12 +27,13 @@ from "./token.wm" import {
 from "./ast.wm" import {
   Program,
   Expr,
-  LetDeclaration,
   ParseError,
-  identifierExpr,
-  numberExpr,
-  stringExpr,
-  callExpr,
+  IdentifierExpr,
+  NumberExpr,
+  StringExpr,
+  CallExpr,
+  exprSpan,
+  exprWithSpan,
   letDeclaration,
   program
 };
@@ -86,30 +87,29 @@ let expectKind = (tokens, expectedKind, expectedText) => {
 -- =============================================================================
 -- Public API
 -- =============================================================================
-
-export let parseProgram = (source) => {
+export let rec parseProgram = (source) => {
   let tokens = lex(source);
   parseProgramTokens(tokens)
-};
+}
 
-export let parseProgramTokens = (tokens) => {
+and parseProgramTokens = (tokens) => {
   match (parseDeclarations(tokens, Empty)) {
     IErr(err) => { IErr(err) },
     IOk((decls, _)) => { IOk(program(decls)) }
   }
-};
+}
 
 -- =============================================================================
 -- Declaration parsing
 -- =============================================================================
 
-let rec parseDeclarations = match(tokens, acc) => {
+and parseDeclarations = match(tokens, acc) => {
   (tokens, acc) => {
     match (peekToken(tokens)) {
-      None => { IOk((listReverse(acc), tokens)) },
+      None => { IOk((reverse(acc), tokens)) },
       Some(tok) => {
         match (tok.kind) {
-          TkEof => { IOk((listReverse(acc), tokens)) },
+          TkEof => { IOk((reverse(acc), tokens)) },
           _ => {
             match (parseLetDeclaration(tokens)) {
               IErr(err) => { IErr(err) },
@@ -122,9 +122,9 @@ let rec parseDeclarations = match(tokens, acc) => {
       }
     }
   }
-};
+}
 
-let parseLetDeclaration = (tokens) => {
+and parseLetDeclaration = (tokens) => {
   match (expectKind(tokens, TkLet, "let")) {
     IErr(err) => { IErr(err) },
     IOk((letTok, afterLet)) => {
@@ -152,26 +152,26 @@ let parseLetDeclaration = (tokens) => {
       }
     }
   }
-};
+}
 
 -- =============================================================================
 -- Expression parsing
 -- =============================================================================
 
-let parseExpression = (tokens) => {
+and parseExpression = (tokens) => {
   parseCallExpression(tokens)
-};
+}
 
-let parseCallExpression = (tokens) => {
+and parseCallExpression = (tokens) => {
   match (parsePrimary(tokens)) {
     IErr(err) => { IErr(err) },
     IOk((expr, rest)) => {
       parseCallSuffix(expr, rest)
     }
   }
-};
+}
 
-let rec parseCallSuffix = match(expr, tokens) => {
+and parseCallSuffix = match(expr, tokens) => {
   (expr, tokens) => {
     match (peekToken(tokens)) {
       Some(tok) => {
@@ -183,8 +183,8 @@ let rec parseCallSuffix = match(expr, tokens) => {
                 match (parseArguments(afterOpen)) {
                   IErr(err) => { IErr(err) },
                   IOk((args, closeSpan, afterArgs)) => {
-                    let callSpan = spanMerge(expr.span, closeSpan);
-                    let callNode = callExpr(expr, args, callSpan);
+                    let callSpan = spanMerge(exprSpan(expr), closeSpan);
+                    let callNode = CallExpr(expr, args, callSpan);
                     parseCallSuffix(callNode, afterArgs)
                   }
                 }
@@ -197,21 +197,21 @@ let rec parseCallSuffix = match(expr, tokens) => {
       None => { IOk((expr, tokens)) }
     }
   }
-};
+}
 
-let parsePrimary = (tokens) => {
+and parsePrimary = (tokens) => {
   match (tokens) {
     Empty => { IErr(eofError("expression")) },
     Link(tok, rest) => {
       match (tok.kind) {
         TkIdentifier => {
-          IOk((identifierExpr(tok.lexeme, tok.span), rest))
+          IOk((IdentifierExpr(tok.lexeme, tok.span), rest))
         },
         TkNumber => {
-          IOk((numberExpr(tok.lexeme, tok.span), rest))
+          IOk((NumberExpr(tok.lexeme, tok.span), rest))
         },
         TkString => {
-          IOk((stringExpr(tok.lexeme, tok.span), rest))
+          IOk((StringExpr(tok.lexeme, tok.span), rest))
         },
         TkLParen => {
           match (parseExpression(rest)) {
@@ -221,7 +221,7 @@ let parsePrimary = (tokens) => {
                 IErr(err) => { IErr(err) },
                 IOk((closeTok, afterClose)) => {
                   let merged = spanMerge(tok.span, closeTok.span);
-                  IOk((.{ ..expr, span = merged }, afterClose))
+                  IOk((exprWithSpan(expr, merged), afterClose))
                 }
               }
             }
@@ -231,13 +231,13 @@ let parsePrimary = (tokens) => {
       }
     }
   }
-};
+}
 
 -- =============================================================================
 -- Argument parsing
 -- =============================================================================
 
-let parseArguments = (tokens) => {
+and parseArguments = (tokens) => {
   match (peekToken(tokens)) {
     Some(tok) => {
       match (tokenKindEquals(tok.kind, TkRParen)) {
@@ -266,9 +266,9 @@ let parseArguments = (tokens) => {
     },
     None => { IErr(eofError(")")) }
   }
-};
+}
 
-let rec parseArgumentSequence = match(tokens, acc) => {
+and parseArgumentSequence = match(tokens, acc) => {
   (tokens, acc) => {
     match (parseExpression(tokens)) {
       IErr(err) => { IErr(err) },
@@ -285,10 +285,10 @@ let rec parseArgumentSequence = match(tokens, acc) => {
                   }
                 }
               },
-              false => { IOk((listReverse(newAcc), rest)) }
+              false => { IOk((reverse(newAcc), rest)) }
             }
           },
-          None => { IOk((listReverse(newAcc), rest)) }
+          None => { IOk((reverse(newAcc), rest)) }
         }
       }
     }

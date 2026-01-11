@@ -6,7 +6,7 @@ from "std/coretypes" import { Some, None };
 from "std/coretypes" import { IOk, IErr };
 from "std/char" import { isDigit, isUppercase, isLowercase, isAlpha, isAlphaNum, isWhitespace };
 from "std/nativeString" import { stringEq, stringConcat, stringLength, stringSlice };
-from "std/list" import { listReverse, listLength };
+from "std/list" import { reverse, length };
 from "std/option" import { alt };
 -- Note: Record/type names (Span, Token, TokenKind) are not runtime values - only import functions and constructors
 from "./token.wm" import {

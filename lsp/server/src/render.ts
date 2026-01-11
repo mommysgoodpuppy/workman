@@ -1,20 +1,20 @@
-import type { WorkmanLanguageServer } from "./server.ts";
+import {
+  formatTypeWithNominalRecordDetails,
+  type WorkmanLanguageServer,
+} from "./server.ts";
 import {
   Layer3Result,
   MatchCoverageView,
   NodeView,
   PartialType,
 } from "../../../src/layer3/mod.ts";
-import {
-  formatScheme,
-  formatType,
-  formatTypeWithCarriers,
-} from "../../../src/type_printer.ts";
+import { formatScheme, formatType } from "../../../src/type_printer.ts";
 import {
   getCarrierRegistrySize,
   getRegisteredCarrierInfo,
   splitCarrier,
   Type,
+  type TypeInfo,
 } from "../../../src/types.ts";
 
 type LspServerContext = WorkmanLanguageServer;
@@ -29,7 +29,13 @@ export function renderNodeView(
   // Create printing context once and reuse it throughout
   const printCtx = { names: new Map(), next: 0 };
 
-  let typeStr = partialTypeToString(ctx, view.finalType, layer3, printCtx);
+  let typeStr = partialTypeToString(
+    ctx,
+    view.finalType,
+    layer3,
+    printCtx,
+    adtEnv,
+  );
   if (!typeStr) {
     return null;
   }
@@ -48,7 +54,12 @@ export function renderNodeView(
     summary = ctx.summarizeEffectRowFromType(t, adtEnv ?? new Map());
     if (summary && t && t.kind === "constructor" && t.args.length > 0) {
       // Format infected Result types specially
-      typeStr = `⚡${formatType(t.args[0], printCtx, 0)} [<${summary}>]`;
+      const formattedValue = formatTypeWithNominalRecordDetails(
+        t.args[0],
+        printCtx,
+        adtEnv ?? new Map(),
+      );
+      typeStr = `⚡${formattedValue} [<${summary}>]`;
     }
   } catch {
     // ignore
@@ -70,6 +81,15 @@ export function renderNodeView(
     const recordText = formatRecordInfo(ctx, recordInfo, adtEnv);
     if (recordText) {
       result += `\n\n\`\`\`workman\n${recordText}\n\`\`\``;
+    }
+  }
+  if (t && t.kind === "constructor" && adtEnv) {
+    const adtInfo = adtEnv.get(t.name);
+    if (adtInfo && (!adtInfo.alias || adtInfo.alias.kind !== "record")) {
+      const adtText = formatAdtInfo(ctx, adtInfo, adtEnv);
+      if (adtText) {
+        result += `\n\n\`\`\`workman\n${adtText}\n\`\`\``;
+      }
     }
   }
 
@@ -214,11 +234,69 @@ function formatRecordInfo(
   return `type ${record.name} = {\n${fieldLines.join("\n")}\n}`;
 }
 
+function formatAdtInfo(
+  ctx: LspServerContext,
+  info: TypeInfo,
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
+): string | null {
+  if (info.constructors.length === 0) {
+    return null;
+  }
+  const parts = info.constructors.map((ctor) =>
+    formatConstructorInfo(ctx, ctor, adtEnv)
+  );
+  return `type ${info.name} = ${parts.join(" | ")}`;
+}
+
+function formatConstructorInfo(
+  ctx: LspServerContext,
+  ctor: TypeInfo["constructors"][number],
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
+): string {
+  const parts = collectFunctionTypeParts(ctor.scheme.type);
+  if (!parts) {
+    return ctor.name;
+  }
+  const printCtx = { names: new Map(), next: 0 };
+  const params = parts.params.map((param) =>
+    formatTypeWithNominalRecordDetails(
+      normalizeCarrierType(param),
+      printCtx,
+      adtEnv,
+    )
+  );
+  if (params.length === 0) {
+    return ctor.name;
+  }
+  return `${ctor.name}(${params.join(", ")})`;
+}
+
+function collectFunctionTypeParts(
+  type: Type,
+): { params: Type[]; result: Type } | null {
+  const params: Type[] = [];
+  let current: Type | null = type;
+  while (current && current.kind === "func") {
+    params.push(current.from);
+    current = current.to;
+  }
+  if (params.length === 0 || !current) {
+    return null;
+  }
+  return { params, result: current };
+}
+
+function normalizeCarrierType(type: Type): Type {
+  const carrier = splitCarrier(type);
+  return carrier ? carrier.value : type;
+}
+
 function partialTypeToString(
   ctx: LspServerContext,
   partial: PartialType,
   layer3: Layer3Result,
   printCtx: { names: Map<number, string>; next: number },
+  adtEnv?: Map<string, import("../../../src/types.ts").TypeInfo>,
 ): string | null {
   switch (partial.kind) {
     case "unknown": {
@@ -228,17 +306,25 @@ function partialTypeToString(
         layer3,
       );
       let str = substituted
-        ? formatTopLevelType(substituted, printCtx)
+        ? formatTypeWithNominalRecordDetails(
+          substituted,
+          printCtx,
+          adtEnv ?? new Map(),
+        )
         : "?";
       // Post-process to format Result types using a robust replacer
       str = ctx.replaceIResultFormats(str);
       return str;
     }
     case "concrete": {
-      let str = partial.type
-        ? formatTopLevelType(
-          ctx.substituteTypeWithLayer3(partial.type, layer3),
+      const substituted = partial.type
+        ? ctx.substituteTypeWithLayer3(partial.type, layer3)
+        : null;
+      let str = substituted
+        ? formatTypeWithNominalRecordDetails(
+          substituted,
           printCtx,
+          adtEnv ?? new Map(),
         )
         : null;
       if (str) {
@@ -252,11 +338,4 @@ function partialTypeToString(
   }
 }
 
-function formatTopLevelType(
-  type: Type,
-  printCtx: { names: Map<number, string>; next: number },
-): string {
-  return splitCarrier(type)
-    ? formatTypeWithCarriers(type)
-    : formatType(type, printCtx, 0);
-}
+ 

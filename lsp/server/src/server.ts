@@ -8,10 +8,11 @@
 // Redirect console.log to stderr to prevent polluting LSP stdout with debug messages
 console.log = console.error;
 
-import { formatScheme, formatType } from "../../../src//type_printer.ts";
+import { formatType } from "../../../src//type_printer.ts";
 import {
   getCarrierRegistrySize,
   getProvenance,
+  ensureRow,
   isHoleType,
   splitCarrier,
   type Type,
@@ -125,11 +126,15 @@ export class WorkmanLanguageServer {
   // Replace top-level IResult<A, B> occurrences with a prettier form.
   // Handles nested angle brackets, braces, parens and quoted strings so that
   // commas inside nested types (like records) don't break the split.
-  replaceIResultFormats(input: string): string {
+  replaceIResultFormats(
+    input: string,
+    options: { showState?: boolean } = {},
+  ): string {
     if (!input || input.indexOf("IResult<") === -1) return input;
     let out = "";
     let idx = 0;
     const needle = "IResult<";
+    const showState = options.showState ?? true;
     while (true) {
       const pos = input.indexOf(needle, idx);
       if (pos === -1) {
@@ -198,7 +203,7 @@ export class WorkmanLanguageServer {
       const second = input.slice(commaIndex + 1, i).trim();
 
       // Desired display: ⚡<first> [<second>]
-      out += `⚡${first} [${second}]`;
+      out += showState ? `⚡${first} [${second}]` : `⚡${first}`;
 
       idx = i + 1;
     }
@@ -316,10 +321,7 @@ export class WorkmanLanguageServer {
       scheme,
       layer3,
     );
-    let typeStr = formatScheme(substitutedScheme);
-
-    // Post-process to format Result types using a robust replacer
-    typeStr = this.replaceIResultFormats(typeStr);
+    let renderType = substitutedScheme.type;
 
     // Check if this binding has partial type information from Layer 3
     const holeId = this.extractHoleId(scheme);
@@ -327,24 +329,32 @@ export class WorkmanLanguageServer {
       const solution = layer3.holeSolutions.get(holeId);
       if (solution?.state === "partial" && solution.partial?.known) {
         // Show the partial type instead of error provenance (without suffix)
-        typeStr = formatScheme({
-          quantifiers: substitutedScheme.quantifiers,
-          type: this.substituteTypeWithLayer3(
-            solution.partial.known,
-            layer3,
-          ),
-        });
+        renderType = this.substituteTypeWithLayer3(
+          solution.partial.known,
+          layer3,
+        );
       } else if (solution?.state === "conflicted" && solution.conflicts) {
         // Show conflict information
-        typeStr = `? (conflicted: ${solution.conflicts.length} conflicts)`;
+        return `? (conflicted: ${solution.conflicts.length} conflicts)`;
       } else {
         // For unsolved holes, just show "?" without error provenance
-        typeStr = typeStr.replace(/\?\([^)]+\)/g, "?");
+        renderType = this.substituteTypeWithLayer3(
+          substitutedScheme.type,
+          layer3,
+        );
       }
     }
 
+    const printCtx = { names: new Map(), next: 0 };
+    let typeStr = formatTypeWithNominalRecordDetails(
+      renderType,
+      printCtx,
+      adtEnv,
+    );
+    typeStr = typeStr.replace(/\?\([^)]+\)/g, "?");
+
     // Check for infected Result types in return type
-    let returnType = substitutedScheme.type;
+    let returnType = renderType;
     while (returnType.kind === "func") {
       returnType = returnType.to;
     }
@@ -357,10 +367,13 @@ export class WorkmanLanguageServer {
       const ctx = { names: new Map(), next: 0 };
       const fullResultStr = formatType(returnType, ctx, 0);
       const formatted = `⚡${
-        formatType(returnType.args[0], ctx, 0)
+        formatTypeWithNominalRecordDetails(returnType.args[0], ctx, adtEnv)
       } [<${summary}>]`;
       typeStr = typeStr.replace(fullResultStr, formatted);
     }
+
+    // Post-process to format remaining IResult occurrences
+    typeStr = this.replaceIResultFormats(typeStr);
 
     return typeStr;
   }
@@ -508,6 +521,195 @@ export class WorkmanLanguageServer {
     if (parts.length === 0) return null;
     return parts.join(" | ");
   }
+}
+
+const GENERIC_NAMES = ["T", "U", "V", "W", "X", "Y", "Z"];
+
+function nextName(index: number): string {
+  const base = GENERIC_NAMES[index % GENERIC_NAMES.length];
+  const suffix = Math.floor(index / GENERIC_NAMES.length);
+  return suffix === 0 ? base : `${base}${suffix + 1}`;
+}
+
+function ensureName(
+  context: { names: Map<number, string>; next: number },
+  id: number,
+): string {
+  const existing = context.names.get(id);
+  if (existing) {
+    return existing;
+  }
+  const name = nextName(context.next);
+  context.names.set(id, name);
+  context.next += 1;
+  return name;
+}
+
+export function formatTypeWithNominalRecordDetails(
+  type: Type,
+  ctx: { names: Map<number, string>; next: number },
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
+): string {
+  return formatTypeWithNominalRecordDetailsInternal(type, ctx, 0, adtEnv);
+}
+
+function formatTypeWithNominalRecordDetailsInternal(
+  type: Type,
+  ctx: { names: Map<number, string>; next: number },
+  prec: number,
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
+): string {
+  switch (type.kind) {
+    case "var":
+      return ensureName(ctx, type.id);
+    case "func": {
+      const left = formatTypeWithNominalRecordDetailsInternal(
+        type.from,
+        ctx,
+        1,
+        adtEnv,
+      );
+      const right = formatTypeWithNominalRecordDetailsInternal(
+        type.to,
+        ctx,
+        0,
+        adtEnv,
+      );
+      const result = `${left} -> ${right}`;
+      return prec > 0 ? `(${result})` : result;
+    }
+    case "constructor": {
+      const info = adtEnv.get(type.name);
+      if (info && info.alias && info.alias.kind === "record") {
+        if (info.parameters.length === 0) {
+          return `${type.name}${formatRecordAliasDetails(
+            info.alias,
+            ctx,
+            adtEnv,
+          )}`;
+        }
+      }
+      if (type.args.length === 0) {
+        return type.name;
+      }
+      const args = type.args.map((arg) =>
+        formatTypeWithNominalRecordDetailsInternal(arg, ctx, 2, adtEnv)
+      ).join(", ");
+      return `${type.name}<${args}>`;
+    }
+    case "tuple": {
+      const elements = type.elements.map((el) =>
+        formatTypeWithNominalRecordDetailsInternal(el, ctx, 0, adtEnv)
+      ).join(", ");
+      return `(${elements})`;
+    }
+    case "array":
+      return `[${type.length}]${
+        formatTypeWithNominalRecordDetailsInternal(type.element, ctx, 2, adtEnv)
+      }`;
+    case "record": {
+      const name = findNominalRecordName(type, adtEnv);
+      const details = formatRecordDetails(type, ctx, adtEnv);
+      return name ? `${name}${details}` : details;
+    }
+    case "effect_row": {
+      let flattenedType = type;
+      if (type.tail?.kind === "effect_row") {
+        flattenedType = ensureRow(type);
+      }
+      const entries = Array.from(flattenedType.cases.entries());
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      const parts = entries.map(([label, payload]) =>
+        payload
+          ? `${label}(${formatTypeWithNominalRecordDetailsInternal(
+            payload,
+            ctx,
+            0,
+            adtEnv,
+          )})`
+          : label
+      );
+      if (flattenedType.tail) {
+        const tailStr = formatTypeWithNominalRecordDetailsInternal(
+          flattenedType.tail,
+          ctx,
+          0,
+          adtEnv,
+        );
+        if (parts.length === 0) {
+          return `<${tailStr}>`;
+        }
+        parts.push(`..${tailStr}`);
+      } else if (parts.length === 0) {
+        return `<>`;
+      }
+      return `<${parts.join(" | ")}>`;
+    }
+    case "unit":
+      return "Void";
+    case "int":
+      return "Int";
+    case "bool":
+      return "Bool";
+    case "char":
+      return "Char";
+    case "string":
+      return "String";
+    default:
+      return "?";
+  }
+}
+
+function formatRecordAliasDetails(
+  alias: import("../../../src/types.ts").Type,
+  ctx: { names: Map<number, string>; next: number },
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
+): string {
+  if (alias.kind !== "record") {
+    return "";
+  }
+  return formatRecordDetails(alias, ctx, adtEnv);
+}
+
+function formatRecordDetails(
+  record: Extract<Type, { kind: "record" }>,
+  ctx: { names: Map<number, string>; next: number },
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
+): string {
+  const entries = Array.from(record.fields.entries());
+  entries.sort(([a], [b]) => a.localeCompare(b));
+  const parts = entries.map(([field, fieldType]) => {
+    const fieldStr = formatTypeWithNominalRecordDetails(fieldType, ctx, adtEnv);
+    return `${field}: ${fieldStr}`;
+  });
+  return `{ ${parts.join(", ")} }`;
+}
+
+function findNominalRecordName(
+  type: Extract<Type, { kind: "record" }>,
+  adtEnv: Map<string, import("../../../src/types.ts").TypeInfo>,
+): string | null {
+  const fieldNames = new Set(type.fields.keys());
+  const matches: string[] = [];
+  for (const [name, info] of adtEnv.entries()) {
+    if (!info.alias || info.alias.kind !== "record") continue;
+    if (info.parameters.length > 0) continue;
+    if (info.alias.fields.size !== fieldNames.size) continue;
+    let ok = true;
+    for (const aliasField of info.alias.fields.keys()) {
+      if (!fieldNames.has(aliasField)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      matches.push(name);
+      if (matches.length > 1) {
+        return null;
+      }
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
 }
 
 // Start the server
