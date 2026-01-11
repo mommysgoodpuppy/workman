@@ -15,6 +15,7 @@ type Direction = L | R;
 type Orientation = N | E | S | W;
 let start: Location = { x= 0, y= 0 };
 
+// Function to parse a string into an Operation
 let produceOp = (in) => {
   let intL = 'L' :> charToInt;
   let intR = 'R' :> charToInt;
@@ -40,6 +41,7 @@ let produceOp = (in) => {
   yoink
 };
 
+// Function to create a movement function based on orientation and distance
 let move = (orient, distance) => {
   (pos) => {
     match(orient) {
