@@ -135,6 +135,7 @@ class SurfaceParser {
       [">=", { precedence: 4, associativity: "none" }],
       [":>", { precedence: 1, associativity: "left" }],
     ]);
+    
 
     this.operators = initialOperators
       ? new Map([...defaultOperators, ...initialOperators])
@@ -424,6 +425,7 @@ class SurfaceParser {
   }
 
   private parseTypeReexport(): TypeReexport {
+    console.log()
     const nameToken = this.expectTypeName();
     let exportConstructors = false;
     let endToken: Token = nameToken;

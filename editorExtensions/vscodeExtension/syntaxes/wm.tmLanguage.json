@@ -6,13 +6,22 @@
 			"include": "#comments"
 		},
 		{
+			"include": "#bindings"
+		},
+		{
 			"include": "#keywords"
 		},
 		{
-			"include": "#types"
+			"include": "#constructors"
 		},
 		{
-			"include": "#constructors"
+			"include": "#functions"
+		},
+		{
+			"include": "#fields"
+		},
+		{
+			"include": "#types"
 		},
 		{
 			"include": "#constants"
@@ -40,7 +49,11 @@
 			"patterns": [
 				{
 					"name": "keyword.control.wm",
-					"match": "\\b(let|mut|rec|and|type|record|carrier|if|else|match|from|import|export|as|infix|infixl|infixr|prefix|infectious|domain|op|policy|annotate)\\b"
+					"match": "\\b(if|else|match|from|import|export)\\b"
+				},
+				{
+					"name": "keyword.declaration.wm",
+					"match": "\\b(let|mut|rec|and|type|record|carrier|as|infix|infixl|infixr|prefix|infectious|domain|op|policy|annotate)\\b"
 				}
 			]
 		},
@@ -48,19 +61,57 @@
 			"patterns": [
 				{
 					"name": "entity.name.type.wm",
-					"match": "\\b[A-Z][a-zA-Z0-9_]*\\b(?!\\s*<)"
+					"match": "\\b(Int|Bool|Unit)\\b"
 				},
 				{
-					"name": "support.type.primitive.wm",
-					"match": "\\b(Int|Bool|Unit)\\b"
+					"name": "entity.name.type.wm",
+					"match": "\\b[A-Z][a-zA-Z0-9_]*\\b(?!\\s*<)"
 				}
 			]
 		},
 		"constructors": {
 			"patterns": [
 				{
-					"name": "entity.name.function.constructor.wm",
+					"name": "entity.name.function.wm",
 					"match": "\\b[A-Z][a-zA-Z0-9_]*\\b(?=\\s*(<|\\())"
+				}
+			]
+		},
+		"bindings": {
+			"patterns": [
+				{
+					"match": "\\b(let)\\s+(?:(rec)\\s+)?([a-z][a-zA-Z0-9_]*)\\b",
+					"captures": {
+						"1": {
+							"name": "keyword.declaration.wm"
+						},
+						"2": {
+							"name": "keyword.declaration.wm"
+						},
+						"3": {
+							"name": "variable.other.constant.wm"
+						}
+					}
+				}
+			]
+		},
+		"functions": {
+			"patterns": [
+				{
+					"name": "entity.name.function.wm",
+					"match": "\\b[a-z][a-zA-Z0-9_]*\\b(?=\\s*=\\s*\\()"
+				},
+				{
+					"name": "entity.name.function.wm",
+					"match": "\\b[a-z][a-zA-Z0-9_]*\\b(?=\\s*\\()"
+				}
+			]
+		},
+		"fields": {
+			"patterns": [
+				{
+					"name": "variable.object.property.wm",
+					"match": "\\b[a-z][a-zA-Z0-9_]*\\b(?=\\s*:)"
 				}
 			]
 		},

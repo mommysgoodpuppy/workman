@@ -6,11 +6,19 @@ from "std/nativeString" import { stringConcat, stringEq, intToString };
 from "./parser.wm" import { parseProgram };
 from "./ast.wm" import {
   Expr,
+  ExprKind,
   IdentifierExpr,
   NumberExpr,
   StringExpr,
   CallExpr,
-  ParseError
+  ParseError,
+  exprKind
+};
+
+record frame = {
+  pixels: Int,
+  width: Int,
+  height: Int
 };
 
 let printHeader = (title) => {
@@ -26,16 +34,19 @@ let fail = (label, message) => {
   print(stringConcat("FAIL: ", stringConcat(label, message)))
 };
 
-let expectLetValueKind = (label, source, expectedKind) => {
+let expectLetValueKind = (label, source, expectedKind: ExprKind) => {
   match (parseProgram(source)) {
     IOk(program) => {
       match (program.declarations) {
         Link(decl, _) => {
-          match (stringEq(decl.value.kind, expectedKind)) {
-            true => { pass(label) },
-            false => {
-              let msg = stringConcat("expected value kind ", expectedKind);
-              fail(label, stringConcat(" but got ", decl.value.kind))
+          let actualKind = exprKind(decl.value);
+          match (actualKind, expectedKind) {
+            (Identifier, Identifier) => { pass(label) },
+            (Number, Number) => { pass(label) },
+            (String, String) => { pass(label) },
+            (Call, Call) => { pass(label) },
+            _ => {
+              fail(label, " unexpected value kind")
             }
           }
         },
@@ -69,25 +80,25 @@ let main = => {
   expectLetValueKind(
     "identifier literal",
     "let name = foo;\n",
-    "identifier"
+    Identifier
   );
 
   expectLetValueKind(
     "number literal",
     "let count = 123;",
-    "number"
+    Number
   );
 
   expectLetValueKind(
     "string literal",
     "let greeting = \"hi\";",
-    "string"
+    String
   );
 
   expectLetValueKind(
     "call expression",
     "let answer = compute(1, helper());",
-    "call"
+    Call
   );
 
   expectParseError(

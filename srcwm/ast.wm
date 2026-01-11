@@ -19,6 +19,12 @@ export type Expr =
   | StringExpr<String, Span>
   | CallExpr<Expr, List<Expr>, Span>;
 
+export type ExprKind =
+  | Identifier
+  | Number
+  | String
+  | Call;
+
 export let exprSpan = match(expr) => {
   IdentifierExpr(_, sp) => { sp },
   NumberExpr(_, sp) => { sp },
@@ -31,6 +37,13 @@ export let exprWithSpan = match(expr, sp) => {
   (NumberExpr(value, _), sp) => { NumberExpr(value, sp) },
   (StringExpr(value, _), sp) => { StringExpr(value, sp) },
   (CallExpr(callee, args, _), sp) => { CallExpr(callee, args, sp) }
+};
+
+export let exprKind = match(expr) => {
+  IdentifierExpr(_, _) => { Identifier },
+  NumberExpr(_, _) => { Number },
+  StringExpr(_, _) => { String },
+  CallExpr(_, _, _) => { Call }
 };
 
 -- =============================================================================

@@ -13,7 +13,7 @@ record Location = { x: Int, y: Int };
 record Operation = { direction: Direction, distance: Int };
 type Direction = L | R;
 type Orientation = N | E | S | W;
-let start: Location = { x = 0, y = 0 };
+let start: Location = { x= 0, y= 0 };
 
 let produceOp = (in) => {
   let intL = 'L' :> charToInt;
@@ -26,8 +26,7 @@ let produceOp = (in) => {
       _ => { IErr(Error) }
     }
   );
-  let distance = 
-    (isDigit, in) 
+  let distance = (isDigit, in) 
     :> list.filter 
     :> posIntStringToInt;
   let yoink = match(direction, distance) {

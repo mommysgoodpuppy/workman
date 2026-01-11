@@ -3387,6 +3387,16 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
   }
 }
 
+function seedConstructorsFromAdtEnv(ctx: Context): void {
+  for (const info of ctx.adtEnv.values()) {
+    for (const ctor of info.constructors) {
+      if (ctx.env.has(ctor.name)) continue;
+      ctx.env.set(ctor.name, cloneTypeScheme(ctor.scheme));
+    }
+  }
+}
+
+
 function inferRecordLiteralWithExpectedType(
   ctx: Context,
   expr: Extract<Expr, { kind: "record_literal" }>,
@@ -3516,6 +3526,7 @@ export function inferProgram(
       registerPrelude(ctx);
     }
   }
+  seedConstructorsFromAdtEnv(ctx);
 
   // Pass 0: Collect infectious declarations (before type registration)
   const seenTypeDeclsPass0 = new Set<number>();
