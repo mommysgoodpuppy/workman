@@ -1,10 +1,8 @@
 import { lex } from "../src/lexer.ts";
 import { parseSurfaceProgram } from "../src/parser.ts";
 import { formatScheme } from "../src/type_printer.ts";
-import { formatRuntimeValue } from "../src/value_printer.ts";
 import { analyzeAndPresent } from "../src/pipeline.ts";
 import { LexError, ParseError } from "../src/error.ts";
-import type { RuntimeValue } from "../src/value.ts";
 import type { TypeScheme } from "../src/types.ts";
 import { isHoleType } from "../src/types.ts";
 import { holeIdFromUnknown } from "./type_utils.ts";
@@ -100,7 +98,7 @@ export function runFile(source: string, options: RunOptions = {}): RunResult {
       }
     }
 
-    let values: ValueSummary[] = [];
+    const values: ValueSummary[] = [];
     const runtimeLogs: string[] = [];
 
     if (!options.skipEvaluation) {

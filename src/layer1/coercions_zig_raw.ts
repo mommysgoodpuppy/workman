@@ -4,7 +4,9 @@ import { unify } from "./context.ts";
 
 export type ZigRawCoercionKind =
   | "comptime_int_to_numeric"
-  | "slice_to_ptr";
+  | "slice_to_ptr"
+  | "string_to_slice"
+  | "string_to_ptr";
 
 const RAW_NUMERIC_CONSTRUCTORS = new Set<string>([
   "ComptimeInt",
@@ -45,22 +47,40 @@ export function getZigRawCoercion(
   actual: Type,
   ctx?: Context,
 ): ZigRawCoercionKind | null {
-  if (expected.kind !== "constructor" || actual.kind !== "constructor") {
-    return null;
-  }
-  if (actual.name === "ComptimeInt" && isNumericConstructorName(expected.name)) {
-    return "comptime_int_to_numeric";
-  }
-  if (actual.name === "Slice" && (expected.name === "Ptr" || expected.name === "ManyPtr")) {
-    if (ctx) {
-      if (expected.args.length > 0 && actual.args.length > 0) {
-        unify(ctx, expected.args[0], actual.args[0]);
-      }
-      if (expected.args.length > 1 && actual.args.length > 1) {
-        unify(ctx, expected.args[1], actual.args[1]);
-      }
+  if (actual.kind === "constructor" && expected.kind === "constructor") {
+    if (
+      actual.name === "ComptimeInt" && isNumericConstructorName(expected.name)
+    ) {
+      return "comptime_int_to_numeric";
     }
-    return "slice_to_ptr";
+    if (
+      actual.name === "Slice" &&
+      (expected.name === "Ptr" || expected.name === "ManyPtr")
+    ) {
+      if (ctx) {
+        if (expected.args.length > 0 && actual.args.length > 0) {
+          unify(ctx, expected.args[0], actual.args[0]);
+        }
+        if (expected.args.length > 1 && actual.args.length > 1) {
+          unify(ctx, expected.args[1], actual.args[1]);
+        }
+      }
+      return "slice_to_ptr";
+    }
+  }
+  if (
+    expected.kind === "constructor" &&
+    expected.name === "Slice" &&
+    actual.kind === "string"
+  ) {
+    return "string_to_slice";
+  }
+  if (
+    expected.kind === "constructor" &&
+    (expected.name === "Ptr" || expected.name === "ManyPtr") &&
+    actual.kind === "string"
+  ) {
+    return "string_to_ptr";
   }
   return null;
 }

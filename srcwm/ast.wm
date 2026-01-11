@@ -19,25 +19,25 @@ export type Expr =
   | StringExpr
   | CallExpr;
 
-export record IdentifierExpr = {
+record IdentifierExpr = {
   kind: String,
   name: String,
   span: Span
 };
 
-export record NumberExpr = {
+record NumberExpr = {
   kind: String,
   value: String,
   span: Span
 };
 
-export record StringExpr = {
+record StringExpr = {
   kind: String,
   value: String,
   span: Span
 };
 
-export record CallExpr = {
+record CallExpr = {
   kind: String,
   callee: Expr,
   args: List<Expr>,

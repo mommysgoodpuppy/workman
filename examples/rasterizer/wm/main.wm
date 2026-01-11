@@ -16,11 +16,13 @@ from "SDL3/SDL.h" import {
   SDL_EVENT_QUIT
 };
 from "std/zig/rawmem" import { allocStruct, allocArrayUninit, free };
+from "std/coretypes" import { IOk, IErr };
+
 
 let main = ():U8 => {
   std.debug.print("SDL3 version: {}\n", .{ sdl_getVersion() });
 
-  let screenWidth = 800;
+  let screenWidth = 800; 
   let screenHeight = 600;
 
   if (sdl_init(SDL_INIT_VIDEO) == false) {
@@ -40,13 +42,12 @@ let main = ():U8 => {
     Null => {
       std.debug.print("SDL_CreateWindow failed: {s}\n", .{ sdl_getError() });
       sdl_Quit();
-      1
+      IErr("window is null")
     },
     NonNull(win) => {
-      win
+      IOk(win)
     }
   };
-  
   
   -- Event loop using recursion
   let rec eventLoop = (running, event) => {
@@ -83,6 +84,11 @@ let main = ():U8 => {
 
   let e = allocStruct(SDL_Event);
   free(eventLoop(true, e));
+
+  let win = match (win) {
+    IErr(e) => {Panic(e)},
+    IOk(win) => {win}
+  };
 
   sdl_DestroyWindow(win);
   sdl_Quit();

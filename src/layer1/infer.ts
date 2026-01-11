@@ -1742,17 +1742,7 @@ export function inferExpr(ctx: Context, expr: Expr): Type {
       if (ctx.rawMode && expr.literal.kind === "int") {
         litType = { kind: "constructor", name: "ComptimeInt", args: [] };
       }
-      // In raw mode, treat string literals as Zig slices (u8 + len).
-      if (ctx.rawMode && expr.literal.kind === "string") {
-        litType = {
-          kind: "constructor",
-          name: "Slice",
-          args: [
-            { kind: "constructor", name: "U8", args: [] },
-            freshTypeVar(),
-          ],
-        };
-      }
+        // In raw mode, keep string literals as String and use coercions when a Slice is expected.
       // Check if it's an incomplete hole for unsupported literal
       const holeInfo = isHoleType(litType) ? splitCarrier(litType) : null;
       if (holeInfo) {

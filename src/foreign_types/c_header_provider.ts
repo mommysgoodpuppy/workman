@@ -412,16 +412,23 @@ function mapTypeDesc(
     case "float":
       return mapFloatType(desc, types);
     case "pointer":
-      return {
-        kind: "constructor",
-        name: "Ptr",
-        args: [
-          desc.child
-            ? mapTypeDesc(desc.child, types, { position: options.position })
-            : unknownForeignType(),
-          freshTypeVar(),
-        ],
-      };
+      {
+        const childType = desc.child
+          ? mapTypeDesc(desc.child, types, { position: options.position })
+          : unknownForeignType();
+        if (isCStringPointerTarget(childType)) {
+          return {
+            kind: "constructor",
+            name: "ManyPtr",
+            args: [childType, freshTypeVar()],
+          };
+        }
+        return {
+          kind: "constructor",
+          name: "Ptr",
+          args: [childType, freshTypeVar()],
+        };
+      }
     case "optional":
       if (desc.child?.kind === "pointer") {
         const childType = mapTypeDesc(desc.child, types, {
@@ -522,6 +529,11 @@ function mapNamedType(
     default:
       return buildNamedConstructorType(name, types);
   }
+}
+
+function isCStringPointerTarget(type: Type): boolean {
+  if (type.kind !== "constructor") return false;
+  return type.name === "CChar" || type.name === "U8" || type.name === "I8";
 }
 
 function normalizeZigPrimitiveName(name: string): string {

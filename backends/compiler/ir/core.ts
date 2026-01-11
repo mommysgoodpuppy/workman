@@ -263,6 +263,8 @@ export interface CoreTypeConstructor {
   readonly arity: number;
   readonly exported: boolean;
   readonly span?: SourceSpan;
+  /** Constructor field types (unsubstituted type params). */
+  readonly fields?: readonly Type[];
 }
 
 export interface CoreTypeRecordField {
@@ -275,6 +277,12 @@ export interface CoreTypeDeclaration {
   readonly constructors: readonly CoreTypeConstructor[];
   readonly exported: boolean;
   readonly span?: SourceSpan;
+  /** Type parameter IDs for generic ADTs (unsubstituted). */
+  readonly typeParams?: readonly number[];
+  /** True when this declaration is a raw-mode monomorphized specialization. */
+  readonly monomorphized?: boolean;
+  /** Alias type for type declarations like `type Foo<T> = { ... }`. */
+  readonly aliasType?: Type;
   readonly origin?: NodeId;
   readonly infectious?: {
     readonly domain: string;

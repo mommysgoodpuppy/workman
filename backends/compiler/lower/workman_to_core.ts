@@ -14,6 +14,7 @@ import { InferError } from "../../../src/error.ts";
 import type { ConstraintDiagnostic } from "../../../src/diagnostics.ts";
 import { isHoleType, splitCarrier, typeToString } from "../../../src/types.ts";
 import type { Type } from "../../../src/types.ts";
+import { applySubstitution, cloneType } from "../../../src/types.ts";
 import type { NodeId, SourceSpan } from "../../../src/ast.ts";
 import type { MProgram } from "../../../src/ast_marked.ts";
 
@@ -63,7 +64,7 @@ export function lowerAnalyzedModule(
   return {
     path: node.path,
     imports: convertImports(node, input.summary),
-    typeDeclarations: extractTypeDeclarations(node),
+    typeDeclarations: extractTypeDeclarations(node, analysis.layer1.adtEnv),
     values: lowerProgramToValues(
       program,
       analysis.layer2.resolvedNodeTypes,
@@ -187,21 +188,37 @@ function convertImports(
   return imports;
 }
 
-function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
+function extractTypeDeclarations(
+  node: ModuleNode,
+  adtEnv: import("../../../src/types.ts").TypeEnvADT,
+): CoreTypeDeclaration[] {
   const decls: CoreTypeDeclaration[] = [];
   for (const topLevel of node.program.declarations) {
     // Handle ADT-style type declarations
     if (topLevel.kind === "type") {
       const constructors: CoreTypeConstructor[] = [];
+      const typeInfo = adtEnv.get(topLevel.name);
+      const ctorInfoByName = new Map<string, import("../../../src/types.ts").ConstructorInfo>();
+      if (typeInfo) {
+        for (const ctor of typeInfo.constructors) {
+          ctorInfoByName.set(ctor.name, ctor);
+        }
+      }
       for (const member of topLevel.members) {
         if (member.kind !== "constructor") continue;
+        const ctorInfo = ctorInfoByName.get(member.name);
+        const fieldTypes = ctorInfo
+          ? extractConstructorFieldTypes(ctorInfo.scheme.type)
+          : [];
         constructors.push({
           name: member.name,
           arity: member.typeArgs.length,
           exported: Boolean(topLevel.export),
           span: member.span,
+          fields: fieldTypes.length > 0 ? fieldTypes : undefined,
         });
       }
+      const aliasType = typeInfo?.alias ? cloneType(typeInfo.alias) : undefined;
 
       // Extract infectious metadata if present
       let infectious: CoreTypeDeclaration["infectious"] = undefined;
@@ -232,6 +249,8 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
         exported: Boolean(topLevel.export),
         infectious,
         span: topLevel.span,
+        typeParams: typeInfo?.parameters,
+        aliasType,
       });
     }
 
@@ -262,6 +281,16 @@ function extractTypeDeclarations(node: ModuleNode): CoreTypeDeclaration[] {
     }
   }
   return decls;
+}
+
+function extractConstructorFieldTypes(type: Type): Type[] {
+  const fields: Type[] = [];
+  let current = type;
+  while (current.kind === "func") {
+    fields.push(current.from);
+    current = current.to;
+  }
+  return fields.map((field) => applySubstitution(field, new Map()));
 }
 
 /** Convert a TypeExpr AST node to a Zig type string for raw mode emission */

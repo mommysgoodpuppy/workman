@@ -439,6 +439,7 @@ function formatSolverDiagnostic(
   layer3: Layer3Result,
 ): string {
   let base: string;
+  let shouldAppendDetails = true;
   switch (diag.reason) {
     case "not_function":
       base = "Expected a function but found a non-function value";
@@ -666,11 +667,48 @@ function formatSolverDiagnostic(
         `Memory state error: operation requires ${verb} [${expected}] but value has state ${actual}`;
       break;
     }
+    case "ambiguous_record": {
+      shouldAppendDetails = false;
+      const explicitMessage = typeof diag.details?.message === "string"
+        ? diag.details.message
+        : null;
+      if (explicitMessage) {
+        base = explicitMessage;
+        break;
+      }
+      const matches = typeof diag.details?.matches === "number"
+        ? diag.details.matches
+        : null;
+      const candidates = Array.isArray(diag.details?.candidates)
+        ? (diag.details?.candidates as unknown[]).filter((name): name is string =>
+          typeof name === "string"
+        )
+        : [];
+      const matchLabel = matches && matches > 1
+        ? `${matches} record definitions`
+        : candidates.length > 1
+        ? `${candidates.length} record definitions`
+        : "multiple record definitions";
+      base = `Record is ambiguous (${matchLabel} match the visible fields).`;
+      if (candidates.length > 0) {
+        const maxToShow = 5;
+        const rendered = candidates.slice(0, maxToShow).join(", ");
+        const remaining = candidates.length - maxToShow;
+        base += `\nCandidates: ${rendered}`;
+        if (remaining > 0) {
+          base += `, … (+${remaining} more)`;
+        }
+      }
+      base += "\nHint: add a type annotation to pick the intended record.";
+      break;
+    }
     default:
       base = `Solver diagnostic: ${diag.reason}`;
       break;
   }
-  if (diag.details && Object.keys(diag.details).length > 0) {
+  if (
+    shouldAppendDetails && diag.details && Object.keys(diag.details).length > 0
+  ) {
     try {
       // Safely stringify details, avoiding circular references
       const safeDetails: Record<string, any> = {};
@@ -715,6 +753,7 @@ function tryFormatDiagnosticValue(
   value: unknown,
   ctx: LspServerContext,
   layer3: Layer3Result,
+  depth = 0,
 ): string | null {
   if (value === undefined || value === null) {
     return null;
@@ -727,13 +766,65 @@ function tryFormatDiagnosticValue(
   }
   if (typeof value === "object") {
     if (Array.isArray(value)) {
-      return `[Array with ${value.length} items]`;
+      if (value.length === 0) return "[]";
+      const maxDepth = 3;
+      if (depth >= maxDepth) {
+        return `[Array(${value.length})]`;
+      }
+      const maxItems = 5;
+      const rendered = value.slice(0, maxItems).map((item) => {
+        const formatted = tryFormatDiagnosticValue(
+          item,
+          ctx,
+          layer3,
+          depth + 1,
+        );
+        if (formatted === null) {
+          if (typeof item === "string") return `"${item}"`;
+          if (typeof item === "number" || typeof item === "boolean") {
+            return String(item);
+          }
+          return "[?]";
+        }
+        return formatted;
+      });
+      if (value.length > maxItems) {
+        rendered.push(`… (+${value.length - maxItems} more)`);
+      }
+      return `[${rendered.join(", ")}]`;
     }
     const typeStr = tryFormatType(value, ctx, layer3);
     if (typeStr) {
       return typeStr;
     }
-    return "[Object]";
+    const maxDepth = 2;
+    if (depth >= maxDepth) {
+      return "[Object]";
+    }
+    try {
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.length === 0) {
+        return "{}";
+      }
+      const maxEntries = 5;
+      const renderedEntries = entries.slice(0, maxEntries).map(
+        ([key, entryValue]) => {
+          const formatted = tryFormatDiagnosticValue(
+            entryValue,
+            ctx,
+            layer3,
+            depth + 1,
+          );
+          return `${key}: ${formatted ?? "[?]"}`;
+        },
+      );
+      if (entries.length > maxEntries) {
+        renderedEntries.push(`… (+${entries.length - maxEntries} more)`);
+      }
+      return `{ ${renderedEntries.join(", ")} }`;
+    } catch {
+      return "[Object]";
+    }
   }
   return String(value);
 }

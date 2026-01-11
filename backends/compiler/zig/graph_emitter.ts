@@ -13,6 +13,7 @@ import type { SourceSpan } from "../../../src/ast.ts";
 import type { CoreModule, CoreModuleGraph } from "../ir/core.ts";
 import { elaborateCarrierOpsGraph } from "../passes/elaborate_carriers.ts";
 import { lowerRawTypesGraph } from "../passes/lower_raw_types.ts";
+import { monomorphizeRawAdtsGraph } from "../passes/monomorphize_raw_adts.ts";
 import { emitModule } from "./emitter.ts";
 import { emitRawModule } from "./raw_emitter.ts";
 
@@ -45,6 +46,8 @@ export interface EmitGraphOptions {
   readonly commonRoot?: string;
   /** Trace configuration propagated to entry module runtime */
   readonly traceOptions?: TraceOptions;
+  /** If true, rebuild with -fno-incremental and fresh cache */
+  readonly rebuild?: boolean;
 }
 
 export interface EmitGraphResult {
@@ -60,7 +63,9 @@ export async function emitModuleGraph(
   graph: CoreModuleGraph,
   options: EmitGraphOptions,
 ): Promise<EmitGraphResult> {
-  const elaboratedGraph = lowerRawTypesGraph(elaborateCarrierOpsGraph(graph));
+  const elaboratedGraph = monomorphizeRawAdtsGraph(
+    lowerRawTypesGraph(elaborateCarrierOpsGraph(graph)),
+  );
   const outDir = resolve(options.outDir);
   //console.log(`emitModuleGraph: outDir=${outDir}`);
   const extension = options.extension ?? ".zig";

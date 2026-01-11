@@ -78,6 +78,7 @@ async function runCli(): Promise<void> {
         force,
         debug,
         traceOptions,
+        rebuild,
       } = parseCompileArgs(args.slice(1), false, globalTrace);
       await compileToDirectory(
         entryPath,
@@ -86,6 +87,7 @@ async function runCli(): Promise<void> {
         force,
         debug,
         traceOptions,
+        rebuild,
       );
     } catch (error) {
       handleCliError(error);

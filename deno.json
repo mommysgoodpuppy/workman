@@ -1,6 +1,8 @@
 {
   "imports": {
     "@mommysgoodpuppy/logchannel": "jsr:@mommysgoodpuppy/logchannel@^0.1.0",
+    "@sigma/pty-ffi": "jsr:@sigma/pty-ffi@^0.39.1",
+    "@std/io": "jsr:@std/io@^0.225.2",
     "std/": "https://deno.land/std@0.224.0/"
   },
   "tasks": {

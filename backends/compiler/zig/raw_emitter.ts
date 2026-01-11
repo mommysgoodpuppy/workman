@@ -37,10 +37,14 @@ interface EmitContext {
   state: NameState;
   scope: Map<string, VarRef>;
   typeBindings: Map<string, string>;
+  typeNames: Set<string>;
   captureInfo?: Map<string, string[]>;
   options: EmitModuleOptions;
   modulePath: string;
   hoisted: string[];
+  commentState: {
+    lastKey?: string;
+  };
   /** Collected .wm source file paths referenced in string literals */
   wmSourcePaths: Set<string>;
   /** Module-level names (imports and top-level bindings) - these don't need to be captured */
@@ -167,6 +171,7 @@ export function emitRawModule(
   
   // Collect module-level names (imports and top-level bindings)
   const moduleNames = new Set<string>();
+  const typeNames = new Set<string>();
   for (const imp of module.imports) {
     for (const spec of imp.specifiers) {
       if (spec.kind === "value") {
@@ -177,14 +182,19 @@ export function emitRawModule(
   for (const binding of module.values) {
     moduleNames.add(binding.name);
   }
+  for (const decl of module.typeDeclarations) {
+    typeNames.add(decl.name);
+  }
   
   const ctx: EmitContext = {
     state,
     scope,
     typeBindings: new Map(),
+    typeNames,
     options: { ...options, extension },
     modulePath: module.path,
     hoisted: [],
+    commentState: {},
     wmSourcePaths: new Set(),
     moduleNames,
     capturedVarsMap: new Map(),
@@ -269,14 +279,8 @@ export function emitRawModule(
         );
       }
     } else {
-      const expr = emitExprInner(binding.value, ctx);
-      lines.push(
-        emitWithSpan(
-          binding.value.span,
-          `${isExported ? "pub " : ""}const ${bindingRef} = ${expr};`,
-          ctx,
-        ),
-      );
+      const expr = emitExpr(binding.value, ctx);
+      lines.push(`${isExported ? "pub " : ""}const ${bindingRef} = ${expr};`);
     }
   }
 
@@ -405,6 +409,17 @@ function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): strin
     lines.push(emitDeclLine(`${pub}const ${decl.name} = struct { ${fields} };`));
     return lines;
   }
+  if (decl.aliasType?.kind === "record") {
+    if (decl.typeParams && decl.typeParams.length > 0 && !decl.monomorphized) {
+      return lines;
+    }
+    const fields = Array.from(decl.aliasType.fields.entries())
+      .map(([name, fieldType]) => `${name}: ${emitType(fieldType, ctx)}`)
+      .join(", ");
+    const pub = decl.exported ? "pub " : "";
+    lines.push(emitDeclLine(`${pub}const ${decl.name} = struct { ${fields} };`));
+    return lines;
+  }
   
   // For opaque types, just emit a type alias placeholder
   if (decl.constructors.length === 0) {
@@ -428,25 +443,39 @@ function emitTypeDeclaration(decl: CoreTypeDeclaration, ctx: EmitContext): strin
     return lines;
   }
   // For ADTs in raw mode, we can't emit proper generic types
-  // Instead, export constructor names as simple marker types
-  // The actual values use anonymous structs like .{ .IOk = value }
+  // Instead, emit concrete union(enum) types for monomorphized ADTs.
   const pub = decl.exported ? "pub " : "";
   if (decl.constructors.length > 0) {
-    // Export the type name as a function that returns anytype (for type annotations)
+    if (decl.typeParams && decl.typeParams.length > 0) {
+      return lines;
+    }
+    const constructorFields = decl.constructors.map((ctor) => {
+      const ctorName = sanitizeIdentifier(ctor.name, ctx.state);
+      if (!ctor.fields || ctor.fields.length === 0) {
+        return `${ctorName}`;
+      }
+      if (ctor.fields.length === 1) {
+        return `${ctorName}: ${emitType(ctor.fields[0], ctx)}`;
+      }
+      const tuple = ctor.fields.map((field) => emitType(field, ctx)).join(", ");
+      return `${ctorName}: struct { ${tuple} }`;
+    }).join(", ");
     lines.push(
       emitDeclLine(
-        `${pub}fn ${decl.name}(comptime T: type, comptime E: type) type { return union(enum) { IOk: T, IErr: E }; }`,
+        `${pub}const ${decl.name} = union(enum) { ${constructorFields} };`,
       ),
     );
-    // Export constructor names as marker constants
-    for (const ctor of decl.constructors) {
-      const ctorName = sanitizeIdentifier(ctor.name, ctx.state);
-      lines.push(
-        emitDeclLine(
-          `${pub}const ${ctorName} = .${ctorName};`,
-          ctor.span,
-        ),
-      );
+    if (!decl.monomorphized) {
+      // Export constructor names as marker constants
+      for (const ctor of decl.constructors) {
+        const ctorName = sanitizeIdentifier(ctor.name, ctx.state);
+        lines.push(
+          emitDeclLine(
+            `${pub}const ${ctorName} = .${ctorName};`,
+            ctor.span,
+          ),
+        );
+      }
     }
   }
   return lines;
@@ -460,6 +489,10 @@ function getWmComment(span: SourceSpan | undefined, ctx: EmitContext): string | 
 }
 
 function emitExpr(expr: CoreExpr, ctx: EmitContext): string {
+  return emitWithSpan(expr.span, emitExprInner(expr, ctx), ctx);
+}
+
+function emitExprInline(expr: CoreExpr, ctx: EmitContext): string {
   return emitExprInner(expr, ctx);
 }
 
@@ -468,9 +501,15 @@ function emitWithSpan(
   code: string,
   ctx: EmitContext,
 ): string {
-  const comment = getWmComment(span, ctx);
-  if (!comment) return code;
-  return `${comment}\n${code}`;
+  if (!span || !ctx.options.getSourceLocation) return code;
+  const loc = ctx.options.getSourceLocation(span);
+  if (!loc) return code;
+  const key = `${loc.file}:${loc.line}:${loc.column}`;
+  if (ctx.commentState.lastKey === key) {
+    return code;
+  }
+  ctx.commentState.lastKey = key;
+  return `// wm: ${formatSourceLocation(loc)}\n${code}`;
 }
 
 function emitExprInner(expr: CoreExpr, ctx: EmitContext): string {
@@ -507,15 +546,30 @@ function emitExprInner(expr: CoreExpr, ctx: EmitContext): string {
     case "record":
       return emitRecord(expr, ctx);
     case "tuple_get":
-      return `${emitExpr(expr.target, ctx)}[${expr.index}]`;
+      return `${emitExprInline(expr.target, ctx)}[${expr.index}]`;
     case "data":
       return emitData(expr, ctx);
     case "tuple":
       return emitTuple(expr, ctx);
     case "coerce": {
       const targetType = emitType(expr.toType, ctx);
-      const inner = emitExpr(expr.expr, ctx);
-      return `@as(${targetType}, ${inner})`;
+      if (expr.coercion === "string_to_slice") {
+        const inner = emitExprInline(expr.expr, ctx);
+        const tempName = allocateTempName(ctx.state, "__str");
+        return `blk: { const ${tempName} = @as([]const u8, ${inner}); break :blk @as(${targetType}, .{ .ptr = @constCast(${tempName}.ptr), .len = ${tempName}.len }); }`;
+      }
+      if (expr.coercion === "string_to_ptr") {
+        const inner = emitExprInline(expr.expr, ctx);
+        return `@as(${targetType}, @ptrCast(@constCast(${inner}.ptr)))`;
+      }
+      if (expr.coercion === "slice_to_ptr") {
+        const inner = emitExprInline(expr.expr, ctx);
+        return `@as(${targetType}, @ptrCast(@constCast(${inner}.ptr)))`;
+      }
+      {
+        const inner = emitExprInline(expr.expr, ctx);
+        return `@as(${targetType}, ${inner})`;
+      }
     }
     case "enum_literal":
       return `.${expr.name}`;
@@ -574,7 +628,7 @@ function emitRecord(
   }
   
   const fields = expr.fields.map((field) => {
-    const value = emitExpr(field.value, ctx);
+    const value = emitExprInline(field.value, ctx);
     return `.${sanitizeIdentifier(field.name, ctx.state)} = ${value}`;
   }).join(", ");
   const literal = expr.fields.length === 0 ? ".{}" : `.{ ${fields} }`;
@@ -609,7 +663,7 @@ function emitRecordWithMethods(
       const fnCode = emitNamedLambda(lambda, methodName, ctx);
       methods.push(`pub ${fnCode}`);
     } else {
-      const value = emitExpr(field.value, ctx);
+      const value = emitExprInline(field.value, ctx);
       dataFields.push(`${sanitizeIdentifier(field.name, ctx.state)}: @TypeOf(${value}) = ${value}`);
     }
   }
@@ -723,42 +777,42 @@ function emitCall(
   if (expr.callee.kind === "var" && RAW_OPERATOR_MAP.has(expr.callee.name)) {
     const op = RAW_OPERATOR_MAP.get(expr.callee.name)!;
     if (expr.args.length === 2) {
-      const left = emitExpr(expr.args[0], ctx);
-      const right = emitExpr(expr.args[1], ctx);
+      const left = emitExprInline(expr.args[0], ctx);
+      const right = emitExprInline(expr.args[1], ctx);
       return `(${left} ${op} ${right})`;
     }
   }
 
     if (expr.callee.kind === "var") {
     if (expr.callee.name === "zig_alloc_struct" && expr.args.length === 1) {
-      const typeExpr = emitExpr(expr.args[0], ctx);
+      const typeExpr = emitExprInline(expr.args[0], ctx);
       return emitRawAllocStruct(typeExpr, ctx, "allocStruct");
     }
     if (expr.callee.name === "zig_alloc_struct_uninit" && expr.args.length === 1) {
-      const typeExpr = emitExpr(expr.args[0], ctx);
+      const typeExpr = emitExprInline(expr.args[0], ctx);
       return `@import("std").heap.page_allocator.create(${typeExpr}) catch @panic("allocStructUninit failed")`;
     }
     if (expr.callee.name === "zig_alloc_struct_init" && expr.args.length === 2) {
-      const typeExpr = emitExpr(expr.args[0], ctx);
-      const valueExpr = emitExpr(expr.args[1], ctx);
+      const typeExpr = emitExprInline(expr.args[0], ctx);
+      const valueExpr = emitExprInline(expr.args[1], ctx);
       return emitRawAllocStruct(typeExpr, ctx, "allocStructInit", valueExpr);
     }
     if (expr.callee.name === "zig_alloc_slice" && expr.args.length === 2) {
-      const typeExpr = emitExpr(expr.args[0], ctx);
-      const lenExpr = emitExpr(expr.args[1], ctx);
+      const typeExpr = emitExprInline(expr.args[0], ctx);
+      const lenExpr = emitExprInline(expr.args[1], ctx);
       return emitRawAllocSlice(typeExpr, lenExpr, ctx);
     }
     if (expr.callee.name === "zig_alloc_array_uninit" && expr.args.length === 2) {
-      const typeExpr = emitExpr(expr.args[0], ctx);
-      const lenExpr = emitExpr(expr.args[1], ctx);
+      const typeExpr = emitExprInline(expr.args[0], ctx);
+      const lenExpr = emitExprInline(expr.args[1], ctx);
       return `@as([${lenExpr}]${typeExpr}, undefined)`;
     }
     if (expr.callee.name === "zig_free" && expr.args.length === 1) {
-      const ptrExpr = emitExpr(expr.args[0], ctx);
+      const ptrExpr = emitExprInline(expr.args[0], ctx);
       return `@import("std").heap.page_allocator.destroy(${ptrExpr})`;
     }
     if (expr.callee.name === "zig_free_slice" && expr.args.length === 1) {
-      const sliceExpr = emitExpr(expr.args[0], ctx);
+      const sliceExpr = emitExprInline(expr.args[0], ctx);
       return `@import("std").heap.page_allocator.free(@as([*]@TypeOf(${sliceExpr}.ptr.*), @ptrCast(${sliceExpr}.ptr))[0..${sliceExpr}.len])`;
     }
     // GPA (DebugAllocator) intrinsics
@@ -766,76 +820,80 @@ function emitCall(
       return emitGpaInit(ctx);
     }
     if (expr.callee.name === "zig_gpa_get" && expr.args.length === 1) {
-      const handleExpr = emitExpr(expr.args[0], ctx);
+      const handleExpr = emitExprInline(expr.args[0], ctx);
       return `${handleExpr}.allocator()`;
     }
     if (expr.callee.name === "zig_gpa_deinit" && expr.args.length === 1) {
-      const handleExpr = emitExpr(expr.args[0], ctx);
+      const handleExpr = emitExprInline(expr.args[0], ctx);
       // Use a block to discard the result and return void
       return `{ _ = ${handleExpr}.deinit(); }`;
     }
     if (expr.callee.name === "zig_gpa_create" && expr.args.length === 2) {
-      const handleExpr = emitExpr(expr.args[0], ctx);
-      const typeExpr = emitExpr(expr.args[1], ctx);
+      const handleExpr = emitExprInline(expr.args[0], ctx);
+      const typeExpr = emitExprInline(expr.args[1], ctx);
       return emitGpaCreate(handleExpr, typeExpr, ctx, "create");
     }
     if (expr.callee.name === "zig_gpa_create_uninit" && expr.args.length === 2) {
-      const handleExpr = emitExpr(expr.args[0], ctx);
-      const typeExpr = emitExpr(expr.args[1], ctx);
+      const handleExpr = emitExprInline(expr.args[0], ctx);
+      const typeExpr = emitExprInline(expr.args[1], ctx);
       return `${handleExpr}.allocator().create(${typeExpr}) catch @panic("gpa.createUninit failed")`;
     }
     if (expr.callee.name === "zig_gpa_create_init" && expr.args.length === 3) {
-      const handleExpr = emitExpr(expr.args[0], ctx);
-      const typeExpr = emitExpr(expr.args[1], ctx);
-      const valueExpr = emitExpr(expr.args[2], ctx);
+      const handleExpr = emitExprInline(expr.args[0], ctx);
+      const typeExpr = emitExprInline(expr.args[1], ctx);
+      const valueExpr = emitExprInline(expr.args[2], ctx);
       return emitGpaCreate(handleExpr, typeExpr, ctx, "createInit", valueExpr);
     }
     if (expr.callee.name === "zig_gpa_destroy" && expr.args.length === 2) {
-      const handleExpr = emitExpr(expr.args[0], ctx);
-      const ptrExpr = emitExpr(expr.args[1], ctx);
+      const handleExpr = emitExprInline(expr.args[0], ctx);
+      const ptrExpr = emitExprInline(expr.args[1], ctx);
       return `${handleExpr}.allocator().destroy(${ptrExpr})`;
     }
     if (expr.callee.name === "zig_gpa_alloc" && expr.args.length === 3) {
-      const handleExpr = emitExpr(expr.args[0], ctx);
-      const typeExpr = emitExpr(expr.args[1], ctx);
-      const lenExpr = emitExpr(expr.args[2], ctx);
+      const handleExpr = emitExprInline(expr.args[0], ctx);
+      const typeExpr = emitExprInline(expr.args[1], ctx);
+      const lenExpr = emitExprInline(expr.args[2], ctx);
       return emitGpaAlloc(handleExpr, typeExpr, lenExpr, ctx);
     }
     if (expr.callee.name === "zig_gpa_free" && expr.args.length === 2) {
-      const handleExpr = emitExpr(expr.args[0], ctx);
-      const sliceExpr = emitExpr(expr.args[1], ctx);
+      const handleExpr = emitExprInline(expr.args[0], ctx);
+      const sliceExpr = emitExprInline(expr.args[1], ctx);
       return `${handleExpr}.allocator().free(@as([*]@TypeOf(${sliceExpr}.ptr.*), @ptrCast(${sliceExpr}.ptr))[0..${sliceExpr}.len])`;
     }
     if (expr.callee.name === "zig_optional_is_non_null" && expr.args.length === 1) {
-      const value = emitExpr(expr.args[0], ctx);
+      const value = emitExprInline(expr.args[0], ctx);
       return `(${value} != null)`;
     }
     if (expr.callee.name === "zig_optional_unwrap" && expr.args.length === 1) {
-      const value = emitExpr(expr.args[0], ctx);
+      const value = emitExprInline(expr.args[0], ctx);
       return `(${value}).?`;
     }
     if (expr.callee.name === "zig_optional_unwrap_or" && expr.args.length === 2) {
-      const value = emitExpr(expr.args[0], ctx);
-      const fallback = emitExpr(expr.args[1], ctx);
+      const value = emitExprInline(expr.args[0], ctx);
+      const fallback = emitExprInline(expr.args[1], ctx);
       return `(${value} orelse ${fallback})`;
     }
   }
   
   // Handle zigImport("module") -> @import("module")
   if (expr.callee.kind === "var" && expr.callee.name === "zigImport") {
-    if (expr.args.length === 1 && expr.args[0].kind === "literal" && expr.args[0].literal.kind === "string") {
-      const moduleName = expr.args[0].literal.value;
-      return `@import("${moduleName}")`;
+    if (expr.args.length === 1) {
+      const moduleName = extractLiteralString(expr.args[0]);
+      if (moduleName) {
+        return `@import("${moduleName}")`;
+      }
     }
   }
   
   // Handle zigField(obj, "fieldname") -> @field(obj, "fieldname")
   // This is for accessing fields with reserved names like "type"
   if (expr.callee.kind === "var" && expr.callee.name === "zigField") {
-    if (expr.args.length === 2 && expr.args[1].kind === "literal" && expr.args[1].literal.kind === "string") {
-      const obj = emitExpr(expr.args[0], ctx);
-      const fieldName = expr.args[1].literal.value;
-      return `@field(${obj}, "${fieldName}")`;
+    if (expr.args.length === 2) {
+      const fieldName = extractLiteralString(expr.args[1]);
+      if (fieldName) {
+        const obj = emitExprInline(expr.args[0], ctx);
+        return `@field(${obj}, "${fieldName}")`;
+      }
     }
   }
   
@@ -844,12 +902,12 @@ function emitCall(
       expr.callee.callee.kind === "var" && 
       expr.callee.callee.name === "zigField" &&
       expr.callee.args.length === 1 &&
-      expr.args.length === 1 && 
-      expr.args[0].kind === "literal" && 
-      expr.args[0].literal.kind === "string") {
-    const obj = emitExpr(expr.callee.args[0], ctx);
-    const fieldName = expr.args[0].literal.value;
-    return `@field(${obj}, "${fieldName}")`;
+      expr.args.length === 1) {
+    const obj = emitExprInline(expr.callee.args[0], ctx);
+    const fieldName = extractLiteralString(expr.args[0]);
+    if (fieldName) {
+      return `@field(${obj}, "${fieldName}")`;
+    }
   }
   
   // Check if this is a call to a function with captured vars
@@ -858,7 +916,7 @@ function emitCall(
     const captures = ctx.captureInfo?.get(expr.callee.name) ?? ctx.capturedVarsMap.get(expr.callee.name);
     if (captures && captures.length > 0) {
       const fn = resolveName(ctx.scope, expr.callee.name, ctx.state);
-      const args = expr.args.map((arg) => emitExpr(arg, ctx));
+      const args = expr.args.map((arg) => emitExprInline(arg, ctx));
       // Add captured vars as extra args
       for (const v of captures) {
         args.push(resolveName(ctx.scope, v, ctx.state));
@@ -867,10 +925,10 @@ function emitCall(
     }
   }
   
-  const fn = emitExpr(expr.callee, ctx);
+  const fn = emitExprInline(expr.callee, ctx);
   const paramTypes = collectCallParamTypes(expr.callee.type, expr.args.length);
   const args = expr.args.map((arg, index) => {
-    const emitted = emitExpr(arg, ctx);
+    const emitted = emitExprInline(arg, ctx);
     const expected = paramTypes[index];
     if (shouldCoerceSliceToPtr(expected, arg.type)) {
       return `(${emitted}).ptr`;
@@ -934,7 +992,7 @@ function emitTypeWithTypeParams(
   switch (type.kind) {
     case "var": {
       const mapped = typeParamNames.get(type.id);
-      return mapped ?? "anytype";
+      return mapped ?? "anyopaque";
     }
     case "int":
       return "i32";
@@ -997,8 +1055,10 @@ function emitTypeWithTypeParams(
         .join(", ");
       return `struct { ${fields} }`;
     }
+    case "effect_row":
+      return "anyopaque";
     default:
-      return "anytype";
+      return "anyopaque";
   }
 }
 
@@ -1096,14 +1156,18 @@ function emitLet(
   ctx: EmitContext,
 ): string {
   const scope = new Map(ctx.scope);
-  const value = emitExpr(expr.binding.value, ctx);
-  const label = allocateTempName(ctx.state, "blk");
+  const value = emitExprInline(expr.binding.value, ctx);
   const useVar = expr.binding.isMutable || needsVarBinding(expr.body, expr.binding.name);
+  const bodyIsNoReturn = isNoReturnExpr(expr.body);
   
   // For discarded statement results (__stmt_*), use _ to avoid unused variable warning
   if (expr.binding.name.startsWith("__stmt")) {
     const innerCtx = { ...ctx, scope };
     const body = emitExpr(expr.body, innerCtx);
+    if (bodyIsNoReturn) {
+      return `{ _ = ${value}; ${body}; }`;
+    }
+    const label = allocateTempName(ctx.state, "blk");
     return `${label}: { _ = ${value}; break :${label} ${body}; }`;
   }
   
@@ -1119,6 +1183,7 @@ function emitLet(
     const payloadType = `@typeInfo(@TypeOf(${tmpName})).error_union.payload`;
     const errorType = `@typeInfo(@TypeOf(${tmpName})).error_union.error_set`;
     const wrappedValue = `if (${tmpName}) |__ok| __ZigRes(${payloadType}, ${errorType}){ .IOk = __ok } else |__err| __ZigRes(${payloadType}, ${errorType}){ .IErr = __err }`;
+    const label = allocateTempName(ctx.state, "blk");
     return `${label}: { const ${tmpName} = ${value}; const ${ref.value} = ${wrappedValue}; break :${label} ${body}; }`;
   }
   
@@ -1137,7 +1202,15 @@ function emitLet(
       bindingType !== "anyopaque"
     ? `: ${bindingType}`
     : "";
+  if (bodyIsNoReturn) {
+    return `{ ${bindingKeyword} ${ref.value}${typeAnnotation} = ${value};${unusedGuard} ${body}; }`;
+  }
+  const label = allocateTempName(ctx.state, "blk");
   return `${label}: { ${bindingKeyword} ${ref.value}${typeAnnotation} = ${value};${unusedGuard} break :${label} ${body}; }`;
+}
+
+function isNoReturnExpr(expr: CoreExpr): boolean {
+  return expr.kind === "prim" && expr.op === "panic";
 }
 
 function needsVarBinding(expr: CoreExpr, name: string): boolean {
@@ -1217,7 +1290,7 @@ function emitMatch(
   expr: CoreExpr & { kind: "match" },
   ctx: EmitContext,
 ): string {
-  const scrutinee = emitExpr(expr.scrutinee, ctx);
+  const scrutinee = emitExprInline(expr.scrutinee, ctx);
   const nullability = tryEmitNullabilityMatch(expr, scrutinee, ctx);
   if (nullability) {
     return nullability;
@@ -1399,7 +1472,7 @@ function emitIf(
   expr: CoreExpr & { kind: "if" },
   ctx: EmitContext,
 ): string {
-  const cond = emitExpr(expr.condition, ctx);
+  const cond = emitExprInline(expr.condition, ctx);
   const thenBranch = emitExpr(expr.thenBranch, ctx);
   const elseBranch = emitExpr(expr.elseBranch, ctx);
   return `if (${cond}) ${thenBranch} else ${elseBranch}`;
@@ -1408,7 +1481,7 @@ function emitIf(
 function emitPrimOp(op: CorePrimOp, args: readonly CoreExpr[], ctx: EmitContext): string {
   // Special case for record_get - extract field name from string literal
   if (op === "record_get") {
-    const target = emitExpr(args[0], ctx);
+    const target = emitExprInline(args[0], ctx);
     const fieldArg = args[1];
     // Field name is passed as a string literal
     if (fieldArg.kind === "literal" && fieldArg.literal.kind === "string") {
@@ -1421,10 +1494,10 @@ function emitPrimOp(op: CorePrimOp, args: readonly CoreExpr[], ctx: EmitContext)
       return `${target}.${fieldName}`;
     }
     // Fallback - shouldn't happen
-    return `${target}.${emitExpr(fieldArg, ctx)}`;
+    return `${target}.${emitExprInline(fieldArg, ctx)}`;
   }
   
-  const emittedArgs = [...args].map((a) => emitExpr(a, ctx));
+  const emittedArgs = [...args].map((a) => emitExprInline(a, ctx));
   
   switch (op) {
     case "int_add":
@@ -1482,31 +1555,50 @@ function emitData(
       return zigPrimitive;
     }
   }
+  const typeRef = resolveTypeReference(expr.type, ctx);
+  const hasTypeRef = typeRef !== null;
   if (expr.fields.length === 0 && expr.typeName === expr.constructor) {
-    const typeRef = resolveRecordTypeReference(expr.type, ctx);
-    if (typeRef) {
-      return typeRef;
+    if (hasTypeRef) {
+      return typeRef!;
     }
   }
   if (expr.fields.length === 0) {
     if (ctx.moduleNames.has(expr.constructor)) {
       return resolveName(ctx.scope, expr.constructor, ctx.state);
     }
-    return `.${expr.constructor}`;
+    const ctorName = sanitizeIdentifier(expr.constructor, ctx.state);
+    if (hasTypeRef) {
+      return `@as(${typeRef}, .${ctorName})`;
+    }
+    return `.${ctorName}`;
   }
-  const args = expr.fields.map((a) => emitExpr(a, ctx)).join(", ");
+  const args = expr.fields.map((a) => emitExprInline(a, ctx)).join(", ");
+  const ctorName = sanitizeIdentifier(expr.constructor, ctx.state);
+  const ctorLiteral = expr.fields.length === 1
+    ? `.{ .${ctorName} = ${args} }`
+    : `.{ .${ctorName} = .{ ${args} } }`;
   // For single-field constructors, don't wrap in extra braces
-  if (expr.fields.length === 1) {
-    return `.{ .${expr.constructor} = ${args} }`;
+  if (hasTypeRef) {
+    return `@as(${typeRef}, ${ctorLiteral})`;
   }
-  return `.{ .${expr.constructor} = .{ ${args} } }`;
+  return ctorLiteral;
+}
+
+function extractLiteralString(expr: CoreExpr): string | null {
+  if (expr.kind === "literal" && expr.literal.kind === "string") {
+    return expr.literal.value;
+  }
+  if (expr.kind === "coerce") {
+    return extractLiteralString(expr.expr);
+  }
+  return null;
 }
 
 function emitTuple(
   expr: CoreExpr & { kind: "tuple" },
   ctx: EmitContext,
 ): string {
-  const elements = expr.elements.map((e) => emitExpr(e, ctx)).join(", ");
+  const elements = expr.elements.map((e) => emitExprInline(e, ctx)).join(", ");
   return `.{ ${elements} }`;
 }
 
@@ -1517,6 +1609,9 @@ function resolveRecordTypeReference(type: Type | undefined, ctx: EmitContext): s
     if (aliased) {
       return aliased;
     }
+    if (ctx.typeNames.has(type.name)) {
+      return type.name;
+    }
     const scoped = ctx.scope.get(type.name);
     if (scoped) {
       return scoped.value;
@@ -1524,6 +1619,23 @@ function resolveRecordTypeReference(type: Type | undefined, ctx: EmitContext): s
     return sanitizeIdentifier(type.name, ctx.state);
   }
   return null;
+}
+
+function resolveTypeReference(type: Type | undefined, ctx: EmitContext): string | null {
+  if (!type || type.kind !== "constructor") return null;
+  const aliased = ctx.typeBindings.get(type.name);
+  if (aliased) {
+    return aliased;
+  }
+  if (ctx.typeNames.has(type.name)) {
+    return type.name;
+  }
+  const scoped = ctx.scope.get(type.name);
+  if (scoped) {
+    return scoped.value;
+  }
+  const name = sanitizeIdentifier(type.name, ctx.state);
+  return name === "anyopaque" || name === "anytype" ? null : name;
 }
 
 function emitLetRec(
@@ -1566,7 +1678,7 @@ function emitLetRec(
     } else {
       // Non-lambda bindings can't really be recursive, emit inline
       ctx.hoisted.push(
-        `const ${ref.value} = ${emitExprInner(binding.value, { ...ctx, scope })};`,
+        `const ${ref.value} = ${emitExprInline(binding.value, { ...ctx, scope })};`,
       );
     }
   }
@@ -1781,11 +1893,21 @@ function emitType(type: Type, ctx?: EmitContext): string {
           if (aliased) {
             return aliased;
           }
+          if (ctx.typeNames.has(type.name)) {
+            return type.name;
+          }
           // Also check scope for imported type bindings
           const scoped = ctx.scope.get(type.name);
           if (scoped) {
             return scoped.value;
           }
+          if (ctx.cImports.size > 0 && isLikelyCTypeName(type.name)) {
+            const cImportBinding = ctx.cImports.values().next().value;
+            return `${cImportBinding}.${sanitizeIdentifier(type.name, ctx.state)}`;
+          }
+        }
+        if (isLikelyTypeVarName(type.name)) {
+          return "anyopaque";
         }
         return type.name;
       }
@@ -1804,9 +1926,20 @@ function emitType(type: Type, ctx?: EmitContext): string {
       return `struct { ${fields} }`;
     case "var":
       return "anyopaque";
+    case "effect_row":
+      return "anyopaque";
     default:
-      return "anytype";
+      return "anyopaque";
   }
+}
+
+function isLikelyTypeVarName(name: string): boolean {
+  return name.length === 1 && name >= "A" && name <= "Z";
+}
+
+function isLikelyCTypeName(name: string): boolean {
+  if (/^(struct_|union_|enum_)/.test(name)) return true;
+  return /^[A-Z][A-Za-z0-9]*_[A-Za-z0-9_]+$/.test(name);
 }
 
 function mapZigPrimitive(type: Type): string | null {

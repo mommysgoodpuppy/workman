@@ -15,8 +15,13 @@ import type {
   MRecordProjectionExpr,
   MUnaryExpr,
 } from "../../../src/ast_marked.ts";
-import type { Literal } from "../../../src/ast.ts";
-import { cloneType, type Type, unknownType } from "../../../src/types.ts";
+import type { Literal, SourceSpan } from "../../../src/ast.ts";
+import {
+  applySubstitution,
+  cloneType,
+  type Type,
+  unknownType,
+} from "../../../src/types.ts";
 import type {
   CoreDataExpr,
   CoreExpr,
@@ -193,6 +198,7 @@ function lowerFunctionValue(
     params: paramNames,
     body: loweredBody,
     type: lambdaType,
+    span: decl.span,
   };
 }
 
@@ -238,6 +244,7 @@ function lowerBlockExpr(block: MBlockExpr, state: LoweringState): CoreExpr {
         statement.declaration.isRecursive,
         blockType,
         statement.declaration.isMutable,
+        statement.declaration.span,
       );
     } else if (statement.kind === "expr_statement") {
       const expr = lowerExpr(statement.expression, state);
@@ -247,6 +254,8 @@ function lowerBlockExpr(block: MBlockExpr, state: LoweringState): CoreExpr {
         current,
         false,
         blockType,
+        undefined,
+        statement.span,
       );
     } else if (statement.kind === "pattern_let_statement") {
       const initializer = lowerExpr(statement.initializer, state);
@@ -278,6 +287,8 @@ function lowerBlockExpr(block: MBlockExpr, state: LoweringState): CoreExpr {
         matchExpr,
         false,
         blockType,
+        undefined,
+        statement.span,
       );
     } else {
       const _exhaustive: never = statement;
@@ -295,18 +306,21 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
         kind: "var",
         name: expr.name,
         type: resolveNodeType(state, expr.id, expr.type),
+        span: expr.span,
       };
     case "literal":
       return {
         kind: "literal",
         literal: lowerLiteral(expr.literal),
         type: resolveNodeType(state, expr.id, expr.type),
+        span: expr.span,
       };
     case "tuple":
       return {
         kind: "tuple",
         elements: expr.elements.map((element) => lowerExpr(element, state)),
         type: resolveNodeType(state, expr.id, expr.type),
+        span: expr.span,
       };
     case "record_literal":
       return lowerRecordLiteral(expr, state);
@@ -324,6 +338,7 @@ function lowerExpr(expr: MExpr, state: LoweringState): CoreExpr {
         params: extractParameterNames(expr.parameters, state),
         body: lowerBlockExpr(expr.body, state),
         type: resolveNodeType(state, expr.id, expr.type),
+        span: expr.span,
       };
     case "block":
       return lowerBlockExpr(expr, state);
@@ -450,7 +465,12 @@ function applyRawCoercion(
   if (!state.rawMode) return expr;
   if (typesEqual(actualType, expectedType)) return expr;
   const coercion = getZigRawCoercion(expectedType, actualType);
-  if (coercion === "comptime_int_to_numeric") {
+  if (
+    coercion === "comptime_int_to_numeric" ||
+    coercion === "string_to_slice" ||
+    coercion === "slice_to_ptr" ||
+    coercion === "string_to_ptr"
+  ) {
     return {
       kind: "coerce",
       expr,
@@ -697,6 +717,7 @@ function lowerRecordProjection(
       createStringLiteralExpr(fieldName),
     ],
     type: resolveNodeType(state, expr.id, expr.type),
+    span: expr.span,
   };
 }
 
@@ -781,6 +802,7 @@ function lowerRecordLiteral(
     kind: "record",
     fields,
     type: resolvedType,
+    span: expr.span,
   };
 }
 
@@ -820,6 +842,7 @@ function lowerBinaryExpr(expr: MBinaryExpr, state: LoweringState): CoreExpr {
       op: primOp,
       args: [left, right],
       type: resultType,
+      span: expr.span,
     };
   }
   return {
@@ -831,6 +854,7 @@ function lowerBinaryExpr(expr: MBinaryExpr, state: LoweringState): CoreExpr {
     },
     args: [left, right],
     type: resultType,
+    span: expr.span,
   };
 }
 
@@ -844,6 +868,7 @@ function lowerUnaryExpr(expr: MUnaryExpr, state: LoweringState): CoreExpr {
       op: primOp,
       args: [operand],
       type: resultType,
+      span: expr.span,
     };
   }
   return {
@@ -855,6 +880,7 @@ function lowerUnaryExpr(expr: MUnaryExpr, state: LoweringState): CoreExpr {
     },
     args: [operand],
     type: resultType,
+    span: expr.span,
   };
 }
 
@@ -971,13 +997,62 @@ function lowerConstructorExpr(
       expr.id,
     );
   }
+  const ctorInfo = state.adtEnv.get(resolved.name)?.constructors.find((ctor) =>
+    ctor.name === expr.name
+  );
+  const loweredFields = expr.args.map((arg, index) => {
+    const lowered = lowerExpr(arg, state);
+    if (!state.rawMode || !ctorInfo) {
+      return lowered;
+    }
+    const expectedTypes = getConstructorFieldTypes(resolved, ctorInfo.scheme.type, state);
+    const expectedType = expectedTypes[index];
+    if (!expectedType) {
+      return lowered;
+    }
+    const actualType = resolveNodeType(state, arg.id, arg.type);
+    return applyRawCoercion(lowered, actualType, expectedType, state);
+  });
   return {
     kind: "data",
     typeName: resolved.name,
     constructor: expr.name,
-    fields: expr.args.map((arg) => lowerExpr(arg, state)),
+    fields: loweredFields,
     type: resolved,
+    span: expr.span,
   };
+}
+
+function getConstructorFieldTypes(
+  instanceType: Type,
+  schemeType: Type,
+  state: LoweringState,
+): Type[] {
+  if (instanceType.kind !== "constructor") return [];
+  const typeInfo = state.adtEnv.get(instanceType.name);
+  if (!typeInfo || typeInfo.parameters.length === 0) {
+    return extractConstructorFieldTypes(schemeType);
+  }
+  const subst = new Map<number, Type>();
+  for (let i = 0; i < typeInfo.parameters.length; i += 1) {
+    const param = typeInfo.parameters[i];
+    const arg = instanceType.args[i];
+    if (arg) {
+      subst.set(param, arg);
+    }
+  }
+  const applied = applySubstitution(cloneType(schemeType), subst);
+  return extractConstructorFieldTypes(applied);
+}
+
+function extractConstructorFieldTypes(type: Type): Type[] {
+  const fields: Type[] = [];
+  let current = type;
+  while (current.kind === "func") {
+    fields.push(current.from);
+    current = current.to;
+  }
+  return fields;
 }
 
 function lowerLiteral(literal: Literal): CoreLiteral {
@@ -1025,6 +1100,7 @@ function createLetExpression(
   isRecursive: boolean,
   resultType: Type,
   isMutable?: boolean,
+  span?: SourceSpan,
 ): CoreLetExpr {
   return {
     kind: "let",
@@ -1036,6 +1112,7 @@ function createLetExpression(
     },
     body,
     type: resultType,
+    span,
   };
 }
 

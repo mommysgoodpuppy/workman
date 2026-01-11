@@ -173,6 +173,7 @@ function parseZigErrors(stderrText: string): ZigError[] {
 }
 
 function stripAnsi(text: string): string {
+  // deno-lint-ignore no-control-regex
   return text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 

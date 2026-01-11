@@ -7,7 +7,6 @@ import { emitModuleGraph as emitZigModuleGraph } from "../backends/compiler/zig/
 import { createDefaultForeignTypeConfig } from "../src/foreign_types/c_header_provider.ts";
 import {
   collectCompiledValues,
-  invokeMainIfPresent,
 } from "../src/runtime_display.ts";
 import { formatScheme } from "../src/type_printer.ts";
 import { cloneType } from "../src/types.ts";
@@ -16,7 +15,6 @@ import {
   dirname,
   fromFileUrl,
   IO,
-  relative,
   resolve,
   toFileUrl,
 } from "../src/io.ts";
@@ -66,6 +64,7 @@ export async function runProgramCommand(
   let showErrorsOnly = false;
   let force = false;
   let backend: RunBackend = "zig";
+  let rebuild = false;
   const effectiveTrace: TraceOptions = { ...traceOptions };
 
   if (args[0] === "type") {
@@ -132,6 +131,10 @@ export async function runProgramCommand(
       }
       if (arg === "--force" || arg === "-f") {
         force = true;
+        continue;
+      }
+      if (arg === "--rebuild") {
+        rebuild = true;
         continue;
       }
       if (arg.startsWith("-")) {
@@ -211,7 +214,7 @@ export async function runProgramCommand(
           nodeLocations,
         );
       } else {
-        await executeZigModule(compileResult.coreGraph, effectiveTrace);
+        await executeZigModule(compileResult.coreGraph, effectiveTrace, rebuild);
       }
     }
   } catch (error) {
@@ -304,7 +307,7 @@ async function displayExpressionSummaries(
     const excerpt = source.substring(span.start, span.end);
 
     let typeStr = "?";
-    let resolvedType = view.finalType.kind === "concrete" && view.finalType.type
+    const resolvedType = view.finalType.kind === "concrete" && view.finalType.type
       ? view.finalType.type
       : (view.finalType.kind === "unknown" && view.finalType.type)
       ? substituteHoleSolutionsInType(view.finalType.type, layer3)
@@ -445,10 +448,10 @@ async function displayExpressionSummaries(
   }
 }
 
-async function displayTopLevelSummaries(
+function displayTopLevelSummaries(
   artifact: any,
   showTypeVarIds?: boolean,
-): Promise<void> {
+): void {
   console.log("=== Top-Level Bindings ===\n");
   const summaries = artifact.analysis.layer1.summaries;
   const adtEnv = artifact.analysis.layer1.adtEnv;
@@ -528,10 +531,10 @@ async function displayTopLevelSummaries(
   }
 }
 
-async function reportErrorsOnly(
+function reportErrorsOnly(
   _filePath: string,
   layer3: any,
-): Promise<void> {
+): void {
   // Solver diagnostics are already printed by workman_to_core.ts during lowering
   // with better formatting. This function only handles conflicts.
   const hasErrors = layer3.diagnostics.solver.length > 0;
@@ -611,6 +614,7 @@ async function executeJsModule(
 async function executeZigModule(
   coreGraph: any,
   traceOptions: TraceOptions,
+  rebuild = false,
 ): Promise<void> {
   if (typeof Deno === "undefined") {
     throw new Error("Zig backend execution requires the Deno runtime");
@@ -618,16 +622,31 @@ async function executeZigModule(
   const outDir = "dist";
   try {
     await IO.ensureDir(outDir);
+    
+    // Handle rebuild logic
+    if (rebuild) {
+      // Delete fresh cache directory if it exists
+      const freshCacheDir = resolve(outDir, ".zig-cache-fresh");
+      try {
+        await Deno.remove(freshCacheDir, { recursive: true });
+      } catch {
+        // Directory doesn't exist, that's fine
+      }
+    }
+    
     const emitResult = await emitZigModuleGraph(coreGraph, {
       outDir: outDir,
       traceOptions,
+      rebuild,
     });
     const rootPath = emitResult.rootPath;
     if (!rootPath) {
       throw new Error("Zig backend did not produce a root module to run");
     }
     const command = new Deno.Command("zig", {
-      args: ["run", rootPath],
+      args: rebuild 
+        ? ["run", "--cache-dir", resolve(outDir, ".zig-cache-fresh"), "-fno-incremental", rootPath]
+        : ["run", rootPath],
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
@@ -720,7 +739,7 @@ function findNodeLocation(
   return undefined;
 }
 
-function getLineFromOffset(source: string, offset: number): number {
+function _getLineFromOffset(source: string, offset: number): number {
   let line = 1;
   for (let i = 0; i < offset && i < source.length; i++) {
     if (source[i] === "\n") {
@@ -730,7 +749,7 @@ function getLineFromOffset(source: string, offset: number): number {
   return line;
 }
 
-function getColumnFromOffset(source: string, offset: number): number {
+function _getColumnFromOffset(source: string, offset: number): number {
   let col = 1;
   for (let i = offset - 1; i >= 0 && source[i] !== "\n"; i--) {
     col++;
