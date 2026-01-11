@@ -8,15 +8,32 @@ const PROGRESS_LINE_PATTERN =
   /^\s*(\[\d+\]\s+Compile Build Script|├─|\└─|\│|\s+Target\.|Build Summary|run\s*$|workman diagnostics:?)/i;
 const ENABLE_PRELIVE_SNAPSHOT = true; // vscode terminal pls
 
-export async function runZigBuildWithPty(
-  args: string[],
-  cwd: string,
-): Promise<{
+export interface ZigBuildResult {
   exitCode: number;
   output: string;
   rawLiveOutput: string;
   liveContentPossiblyLost: boolean;
-}> {
+}
+
+export interface RunZigBuildOptions {
+  usePty?: boolean;
+}
+
+export async function runZigBuild(
+  args: string[],
+  cwd: string,
+  options?: RunZigBuildOptions,
+): Promise<ZigBuildResult> {
+  const usePty = options?.usePty ?? true;
+  return usePty
+    ? runZigBuildWithPty(args, cwd)
+    : runZigBuildDirect(args, cwd);
+}
+
+export async function runZigBuildWithPty(
+  args: string[],
+  cwd: string,
+): Promise<ZigBuildResult> {
   const pty = new Pty("zig", { args, cwd });
   if (typeof pty.setPollingInterval === "function") {
     pty.setPollingInterval(16);
@@ -85,6 +102,52 @@ export async function runZigBuildWithPty(
     output: combinedChunks.join(""),
     rawLiveOutput: rawLiveChunks.join(""),
     liveContentPossiblyLost,
+  };
+}
+
+export async function runZigBuildDirect(
+  args: string[],
+  cwd: string,
+): Promise<ZigBuildResult> {
+  const command = new Deno.Command("zig", {
+    args,
+    cwd,
+    stdin: "inherit",
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const child = command.spawn();
+  const stdoutChunks: string[] = [];
+  const stderrChunks: string[] = [];
+  const statusPromise = child.status;
+  const stdoutPromise = pipeReadableToSink(
+    child.stdout,
+    async (chunk) => {
+      try {
+        await writeAll(Deno.stdout, chunk);
+      } catch {
+        // stdout might not be writable (e.g., piped); ignore
+      }
+    },
+    stdoutChunks,
+  );
+  const stderrPromise = pipeReadableToSink(
+    child.stderr,
+    async (chunk) => {
+      try {
+        await writeAll(Deno.stderr, chunk);
+      } catch {
+        // stderr might not be writable (e.g., piped); ignore
+      }
+    },
+    stderrChunks,
+  );
+  const [status] = await Promise.all([statusPromise, stdoutPromise, stderrPromise]);
+  return {
+    exitCode: status.success ? 0 : status.code ?? 1,
+    output: stdoutChunks.join("") + stderrChunks.join(""),
+    rawLiveOutput: "",
+    liveContentPossiblyLost: false,
   };
 }
 
@@ -237,6 +300,41 @@ function _extractDiagnosticTail(raw: string): string {
 
 function sanitizeDisplayChunk(text: string): string {
   return text.replace(DESTRUCTIVE_ANSI_PATTERN, "");
+}
+
+async function pipeReadableToSink(
+  readable: ReadableStream<Uint8Array> | null | undefined,
+  sink: (chunk: Uint8Array) => Promise<void>,
+  collector: string[],
+): Promise<void> {
+  if (!readable) {
+    return;
+  }
+  const reader = readable.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value || value.length === 0) {
+        continue;
+      }
+      collector.push(decoder.decode(value, { stream: true }));
+      try {
+        await sink(value);
+      } catch {
+        // ignore sink errors (e.g., closed stdout/stderr)
+      }
+    }
+    const trailing = decoder.decode();
+    if (trailing.length > 0) {
+      collector.push(trailing);
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function syncPtySizeToStdout(pty: Pty): (() => void) | undefined {

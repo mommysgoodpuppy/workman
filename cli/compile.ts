@@ -13,9 +13,27 @@ import {
   generateWmSourceMaps,
   reportWorkmanDiagnosticsForZig,
 } from "./zig_diagnostics.ts";
-import { runZigBuildWithPty } from "./zigPty.ts";
+import { runZigBuild } from "./zigPty.ts";
 
 const WORKMAN_ROOT = resolve(dirname(fromFileUrl(import.meta.url)), "..");
+const ZIG_PTY_ENABLED = detectZigPtyEnabled();
+
+function detectZigPtyEnabled(): boolean {
+  try {
+    const value = Deno.env.get("WORKMAN_ZIG_PTY");
+    if (!value) return false;
+    const normalized = value.trim().toLowerCase();
+    if (["0", "false", "off", "no"].includes(normalized)) {
+      return false;
+    }
+    if (["1", "true", "on", "yes"].includes(normalized)) {
+      return true;
+    }
+  } catch {
+    // Deno.env may be restricted; default to enabled
+  }
+  return false;
+}
 
 async function runZigFmt(files: string[]): Promise<void> {
   if (files.length === 0) return;
@@ -460,13 +478,9 @@ export async function runBuildCommand(
   const zigArgs = rebuild
     ? ["build", "--cache-dir", resolve(buildDir, ".zig-cache-fresh"), "-fno-incremental", "--color", "on", ...remainingArgs]
     : ["build", "--color", "on", ...remainingArgs];
-  const {
-    exitCode,
-    output
-  } = await runZigBuildWithPty(
-    zigArgs,
-    buildDir,
-  );
+  const { exitCode, output } = await runZigBuild(zigArgs, buildDir, {
+    usePty: ZIG_PTY_ENABLED,
+  });
   if (exitCode !== 0) {
     await reportWorkmanDiagnosticsForZig(output, buildDir);
     throw new Error(`zig build failed with exit code ${exitCode}`);
