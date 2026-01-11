@@ -45,10 +45,10 @@ let produceOp = (in) => {
 let move = (orient, distance) => {
   (pos) => {
     match(orient) {
-      N => { Location{ x= pos.x, y= pos.y + distance } },
-      E => { Location{ x= pos.x + distance, y= pos.y } },
-      S => { Location{ x= pos.x, y= pos.y - distance } },
-      W => { Location{ x= pos.x - distance, y= pos.y } }
+      N => { .{ x= pos.x, y= pos.y + distance } },
+      E => { .{ x= pos.x + distance, y= pos.y } },
+      S => { .{ x= pos.x, y= pos.y - distance } },
+      W => { .{ x= pos.x - distance, y= pos.y } }
     }
   }
 };
@@ -96,6 +96,6 @@ let process = (in) => {
   abs(finalLoc.x) + abs(finalLoc.y)
 };
 
-let main = () => {
+let main = => {
   print(process(input));
 }

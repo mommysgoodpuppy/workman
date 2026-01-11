@@ -31,7 +31,7 @@ export let fold = match(onErr, onOk, result) => {
 export let stripErr = match(in) => {
   IOk(stripped) => { stripped },
   IErr(_) => {
-    --noop
+    Panic("TODO: REMOVE THIS FUNCTION")
   }
 };
 
