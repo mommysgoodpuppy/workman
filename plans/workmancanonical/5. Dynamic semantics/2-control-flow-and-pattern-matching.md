@@ -123,6 +123,65 @@ Non-normative note:
 This chapter specifies only dynamic matching behavior; typing is specified in
 the static semantics chapters.
 
+### Concrete example (non-normative)
+
+Read the slogan as “destructuring binds, bare identifiers pin, `Var` binds the
+whole value.” The surface looks just like familiar `if (lhs == rhs)` checks, but
+you write them with `match`.
+
+```
+let opt_value = compute();
+let sentinel = true;
+let expected = 42;
+
+match(opt_value) {
+  Some(payload) => { log("Some payload: " ++ payload) },  -- constructor binds
+  Var(copy) => { log("Fallback copy: " ++ copy) },        -- bind whole scrutinee
+};
+
+let x = read_int();
+let y = expected;
+
+-- if (x == true) { ... } else if (x == y) { ... } else { ... }
+match(x) {
+  true => { log("literal pin: x was true") },             -- literal behaves like pin
+  y => { log("pinned compare to y") },                    -- bare identifier pins
+  Var(fresh) => { log("fresh binding: " ++ fresh) },      -- explicit binder
+};
+```
+
+`Some(payload)` binds `payload`, `Var(copy)` binds the entire scrutinee, and the
+bare identifiers (`true`, `y`) simply compare against the values already in
+scope.
+
+### Guards + tuple pins vs explicit binding (non-normative)
+
+Guards see bindings introduced earlier in the arm. Use `Var(...)` to capture
+either the whole scrutinee or just the positions you want to guard on.
+
+```
+let expectedX = 10;
+let expectedY = -4;
+let expectedZ = 0;
+let limit = 5;
+
+match(read_sensor()) {
+  Var(point) when point.distance > limit => {
+    log("far away: " ++ point.id)
+  },
+  (expectedX, expectedY, expectedZ) => {
+    log("exactly at the calibration tuple")
+  },                                            -- tuple of pins
+  (Var(x), Var(y), Var(z)) when z > limit => {
+    log("fresh tuple bindings: " ++ x ++ ", " ++ y ++ ", " ++ z)
+  },                                            -- explicit tuple binding
+  (Ok(x), Ok(y), Ok(z)) => {
+    log("triple success payload: " ++ x ++ y ++ z)
+  },                                            -- constructors keep destructuring ergonomic
+  _ => { log("fallback") }
+};
+```
+
 Normative:
 
 - Wildcard (`_`) matches any value.
