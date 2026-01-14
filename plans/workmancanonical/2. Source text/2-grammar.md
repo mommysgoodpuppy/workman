@@ -132,7 +132,7 @@ operator. `:>` is a built-in pipe operator.
 |   100 | left   | Comparison: `<`, `<=`, `>`, `>=`                        |
 |    90 | left   | Equality: `==`, `!=`                                    |
 |    60 | left   | Logical AND: `&&`                                       |
-|    50 | left   | Logical OR: `                                           |
+|    50 | left   | Logical OR: `||`                                        |
 |    30 | left   | Pipe: `:>`                                              |
 |    10 | right  | Assignment forms (see statements; not expression-level) |
 
