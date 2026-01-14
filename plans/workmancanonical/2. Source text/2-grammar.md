@@ -55,6 +55,8 @@ grammar refers to these terminal families:
 - Compound punctuators such as `=>`, `:>`, `..`, `==`, `!=`, `<=`, `>=`, `&&`,
   and `||` are single tokens emitted by the lexer; productions reference them as
   quoted terminals.
+- Unless stated otherwise, comma-separated lists permit an optional trailing
+  comma to ease multi-line editing and formatting.
 
 Whitespace and comments are insignificant except where explicitly mentioned.
 
@@ -132,7 +134,7 @@ operator. `:>` is a built-in pipe operator.
 |   100 | left   | Comparison: `<`, `<=`, `>`, `>=`                        |
 |    90 | left   | Equality: `==`, `!=`                                    |
 |    60 | left   | Logical AND: `&&`                                       |
-|    50 | left   | Logical OR: `||`                                        |
+|    50 | left   | Logical OR: `                                           |
 |    30 | left   | Pipe: `:>`                                              |
 |    10 | right  | Assignment forms (see statements; not expression-level) |
 
@@ -178,13 +180,13 @@ following declaration group.
 
 ```
 import_decl     := "from" string_literal "import" import_clause ";"
-import_clause   := "{" import_spec ("," import_spec)* "}"
+import_clause   := "{" import_spec ("," import_spec)* (","?) "}"
                 |  "*" "as" identifier
 import_spec     := import_name ("as" identifier)?
 import_name     := identifier | constructor | string_literal
 
 reexport_decl   := "export" "from" string_literal "type" type_reexport_list ";"
-type_reexport_list := type_reexport ("," type_reexport)*
+type_reexport_list := type_reexport ("," type_reexport)* (","?)
 type_reexport   := constructor ("(" ".."? ")")?
 ```
 
@@ -201,7 +203,7 @@ operator_identifier := "(" operator_token ")"
 binding_signature := parameter_list (":" type_expr)?
 initializer     := expr
 
-parameter_list  := "(" (parameter ("," parameter)*)? ")"
+parameter_list  := "(" (parameter ("," parameter)* (","?))? ")"
 parameter       := pattern (":" type_expr)?
 ```
 
@@ -222,7 +224,7 @@ type_decl       := export_modifier? "type" "rec"? type_body
                     ("and" (type_body | record_body))* ";"
 type_body       := constructor type_params?
                     ("=" (type_sum | alias_type))?
-type_params     := "<" type_param ("," type_param)* ">"
+type_params     := "<" type_param ("," type_param)* (","?) ">"
 type_param      := identifier  -- lowercase by convention
 type_sum        := type_constructor ("|" type_constructor)+
 type_constructor := constructor (type_arguments)?
@@ -241,7 +243,7 @@ record_decl     := export_modifier? "record" "rec"? record_body
                     ("and" (record_body | type_body))* ";"
 record_body     := constructor type_params?
                     "=" "{" record_member_list "}"
-record_member_list := record_member ("," record_member)*
+record_member_list := record_member ("," record_member)* (","?)
 record_member   := identifier (":" type_expr)? ("=" expr)?
                 |  identifier parameter_list (":" type_expr)? "=>" block
 ```
@@ -399,7 +401,7 @@ lambda_expr     := parameter_list "=>" block
 call_expr       := postfix_expr
 postfix_expr    := primary_expr postfix_segment*
 postfix_segment := call_suffix | projection_suffix | index_suffix
-call_suffix     := "(" (expr ("," expr)*)? ")"
+call_suffix     := "(" (expr ("," expr)* (","?))? ")"
 projection_suffix := "." identifier
 index_suffix    := "[" expr "]"
 ```
@@ -422,9 +424,9 @@ primary_expr    := literal
                 |  hole_expr
                 |  enum_literal
 
-constructor_call := constructor ("(" expr ("," expr)* ")")?
+constructor_call := constructor ("(" expr ("," expr)* (","?) ")")?
 
-tuple_expr      := "(" expr "," expr ("," expr)* ")"
+tuple_expr      := "(" expr "," expr ("," expr)* (","?) ")"
 
 record_literal  := ".{" record_field_list? "}"
 record_field_list := record_field ("," record_field)* (","?)
@@ -432,7 +434,7 @@ record_field    := identifier ("=" expr)?
                 |  ".." expr                      -- spread
 
 list_literal    := "[" list_element_list? "]"
-list_element_list := list_element ("," list_element)*
+list_element_list := list_element ("," list_element)* (","?)
 list_element    := expr | ".." expr                -- tail spread
 
 parenthesized_expr := "(" expr ")"
@@ -501,10 +503,10 @@ type_primary    := type_tuple
                 |  type_effect_row
 
 type_tuple      := "(" type_expr ("," type_expr)+ ")"
-type_record     := "{" type_record_field ("," type_record_field)* "}"
+type_record     := "{" type_record_field ("," type_record_field)* (","?) "}"
 type_record_field := identifier ":" type_expr
 type_reference  := constructor type_arguments?
-type_arguments  := "<" type_expr ("," type_expr)* ">"
+type_arguments  := "<" type_expr ("," type_expr)* (","?) ">"
 type_variable   := identifier         -- lowercase by convention
 type_unit       := constructor_void
 constructor_void := constructor        -- literal spelling "Void"

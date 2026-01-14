@@ -68,8 +68,8 @@ let printTwice = (msg) => {
   print(msg);  -- Semicolon here means return Void
 };
 
--- Void is also a literal value
-let nothing = () => { Void };
+-- void is also a literal value (the type is `Void`)
+let nothing = () => { void };
 ```
 
 ---

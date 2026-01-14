@@ -46,16 +46,45 @@ import {
   splitCarrier,
   type Substitution,
   type Type,
+  type TypeScheme,
+  type TypeInfo,
   unknownType,
 } from "../types.ts";
 import type {
   ConstraintDiagnostic,
   ConstraintDiagnosticReason,
 } from "../diagnostics.ts";
+import {
+  formatType,
+  formatScheme,
+  formatTypeWithCarriers,
+} from "../type_printer.ts";
 import type { NodeId } from "../ast.ts";
 import { areIncompatible, conflictMessage } from "./conflict_rules.ts";
 import { BOUNDARY_RULES } from "./boundary_rules.ts";
 import { InfectionRegistry } from "../infection_registry.ts";
+
+
+function describeType(type: Type, options?: { diagnostic?: boolean }): string {
+  return formatTypeWithCarriers(type, {
+    showVarIds: true,
+    forDiagnostic: options?.diagnostic ?? false,
+  });
+}
+
+function normalizeCarrierState(domain: string, state: Type): Type {
+  return domain === "effect" ? ensureRow(state) : state;
+}
+
+function denormalizeCarrierState(domain: string, state: Type): Type {
+  if (domain !== "effect") {
+    return state;
+  }
+  if (state.kind === "effect_row" && state.cases.size === 0 && state.tail) {
+    return state.tail;
+  }
+  return state;
+}
 
 export interface ConstraintConflict {
   holeId: HoleId;
@@ -766,25 +795,27 @@ function solveNumericConstraint(
 
     // Accumulate carrier states by domain
     if (operandCarrierInfo) {
-      const existing = accumulatedCarriers.get(operandCarrierInfo.domain);
+      const domain = operandCarrierInfo.domain;
+      const normalizedState = normalizeCarrierState(domain, operandCarrierInfo.state);
+      const existing = accumulatedCarriers.get(domain);
       if (existing) {
         // Combine states for the same domain
-        if (operandCarrierInfo.domain === "effect") {
+        if (domain === "effect") {
           const combinedError = effectRowUnion(
             existing.state as EffectRowType,
-            operandCarrierInfo.state as EffectRowType,
+            normalizedState as EffectRowType,
           );
-          accumulatedCarriers.set(operandCarrierInfo.domain, {
-            domain: operandCarrierInfo.domain,
+          accumulatedCarriers.set(domain, {
+            domain,
             state: combinedError,
             carrier: existing.carrier,
           });
         }
         // For other domains, keep the first one (or implement domain-specific logic)
       } else {
-        accumulatedCarriers.set(operandCarrierInfo.domain, {
-          domain: operandCarrierInfo.domain,
-          state: operandCarrierInfo.state,
+        accumulatedCarriers.set(domain, {
+          domain,
+          state: normalizedState,
           carrier: operandCarrierInfo.carrier,
         });
       }
@@ -803,23 +834,25 @@ function solveNumericConstraint(
 
     // Merge result's carriers with accumulated carriers
     if (resultCarrierInfo) {
-      const existing = accumulatedCarriers.get(resultCarrierInfo.domain);
+      const domain = resultCarrierInfo.domain;
+      const normalizedState = normalizeCarrierState(domain, resultCarrierInfo.state);
+      const existing = accumulatedCarriers.get(domain);
       if (existing) {
-        if (resultCarrierInfo.domain === "effect") {
+        if (domain === "effect") {
           const combinedError = effectRowUnion(
             existing.state as EffectRowType,
-            resultCarrierInfo.state as EffectRowType,
+            normalizedState as EffectRowType,
           );
-          accumulatedCarriers.set(resultCarrierInfo.domain, {
-            domain: resultCarrierInfo.domain,
+          accumulatedCarriers.set(domain, {
+            domain,
             state: combinedError,
             carrier: existing.carrier,
           });
         }
       } else {
-        accumulatedCarriers.set(resultCarrierInfo.domain, {
-          domain: resultCarrierInfo.domain,
-          state: resultCarrierInfo.state,
+        accumulatedCarriers.set(domain, {
+          domain,
+          state: normalizedState,
           carrier: resultCarrierInfo.carrier,
         });
       }
@@ -828,10 +861,15 @@ function solveNumericConstraint(
     // Build expected result type with all accumulated carriers
     let expectedResultType: Type = intType;
     for (const [_domain, carrier] of accumulatedCarriers.entries()) {
+      const normalizedState = normalizeCarrierState(carrier.domain, carrier.state);
+      const denormalizedState = denormalizeCarrierState(
+        carrier.domain,
+        normalizedState,
+      );
       const joined = joinCarrier(
         carrier.domain,
         expectedResultType,
-        carrier.state,
+        denormalizedState,
         carrier.carrier,
       );
       if (joined) {

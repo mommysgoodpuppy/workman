@@ -2,7 +2,7 @@
 -- Run with: wm run srcwm/test_lexer.wm
 
 from "std/coretypes" import { Empty, Link };
-from "std/list" import { listForEach, listLength };
+from "std/list" import { forEach, length };
 from "std/nativeString" import { stringConcat, intToString };
 from "./token.wm" import { Token, TokenKind, tokenKindToString };
 from "./lexer.wm" import { lex, lexWithComments };
@@ -20,7 +20,7 @@ let testBasic = () => {
   print("=== Test: Basic tokens ===");
   let source = "let x = 42;";
   let tokens = lex(source);
-  listForEach(printToken, tokens);
+  forEach(printToken, tokens);
   print("")
 };
 
@@ -29,7 +29,7 @@ let testKeywords = () => {
   print("=== Test: Keywords ===");
   let source = "let rec type record match if else from import export";
   let tokens = lex(source);
-  listForEach(printToken, tokens);
+  forEach(printToken, tokens);
   print("")
 };
 
@@ -38,7 +38,7 @@ let testOperators = () => {
   print("=== Test: Operators ===");
   let source = "+ - * / == != <= >= && || ++ :>";
   let tokens = lex(source);
-  listForEach(printToken, tokens);
+  forEach(printToken, tokens);
   print("")
 };
 

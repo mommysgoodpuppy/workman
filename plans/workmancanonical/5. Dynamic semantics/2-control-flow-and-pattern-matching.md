@@ -123,10 +123,33 @@ Non-normative note:
 This chapter specifies only dynamic matching behavior; typing is specified in
 the static semantics chapters.
 
+### Summary (non-normative)
+
+Workman has two different meanings for identifier-shaped patterns:
+
+- A **binding** introduces a fresh name for (part of) the scrutinee.
+- A **pin** refers to an existing name and matches only if the scrutinee equals
+  that existing value.
+
+This inversion applies specifically to `match` patterns; other binding sites
+(lambda parameters, `let` bindings, record fields, etc.) continue to treat bare
+identifiers as fresh bindings and therefore never require `Var`.
+
+In particular:
+
+- `Some(x)` binds `x` (constructor fields bind, even if `x` is already in
+  scope).
+  - `Some(Var(x))` is permitted but redundant.
+  - To compare a constructor payload to an existing value, bind it and use a
+    guard (e.g. `Some(v) when v == expected`).
+- `x` (a pattern that is exactly one identifier) is a pin: it is never a binder.
+- `(x, y, z)` and `[x, y, z]` are tuples/lists of pins; use `Var(...)` per
+  element to bind: `(Var(x), Var(y), Var(z))`, `[Var(x), Var(y), Var(z)]`.
+
 ### Concrete example (non-normative)
 
-Read the slogan as “destructuring binds, bare identifiers pin, `Var` binds the
-whole value.” The surface looks just like familiar `if (lhs == rhs)` checks, but
+Read the slogan as "destructuring binds, bare identifiers pin, `Var` binds the
+whole value." The surface looks just like familiar `if (lhs == rhs)` checks, but
 you write them with `match`.
 
 ```
@@ -134,24 +157,26 @@ let opt_value = compute();
 let sentinel = true;
 let expected = 42;
 
+let payload = "outer";
+
 match(opt_value) {
-  Some(payload) => { log("Some payload: " ++ payload) },  -- constructor binds
+  Some(payload) => { log("Some payload: " ++ payload) },  -- binds (shadows outer `payload`)
   Var(copy) => { log("Fallback copy: " ++ copy) },        -- bind whole scrutinee
 };
 
 let x = read_int();
 let y = expected;
 
--- if (x == true) { ... } else if (x == y) { ... } else { ... }
+-- if (x == sentinel) { ... } else if (x == y) { ... } else { ... }
 match(x) {
-  true => { log("literal pin: x was true") },             -- literal behaves like pin
+  sentinel => { log("pinned compare to sentinel") },      -- bare identifier pins
   y => { log("pinned compare to y") },                    -- bare identifier pins
   Var(fresh) => { log("fresh binding: " ++ fresh) },      -- explicit binder
 };
 ```
 
 `Some(payload)` binds `payload`, `Var(copy)` binds the entire scrutinee, and the
-bare identifiers (`true`, `y`) simply compare against the values already in
+bare identifiers (`sentinel`, `y`) simply compare against the values already in
 scope.
 
 ### Guards + tuple pins vs explicit binding (non-normative)
@@ -195,13 +220,15 @@ Pinned vs binding (canonical rule, normative):
 
 - Workman distinguishes **structural patterns** from **bare identifier
   patterns**.
-- Structural patterns bind “as usual” when the pattern introduces shape (a
+- Structural patterns bind "as usual" when the pattern introduces shape (a
   constructor, tuple/list delimiter, or another explicit pattern form):
   - Constructor patterns bind their field identifiers: `Some(x)` binds `x`,
     `(Ok(x), Ok(y), Ok(z))` binds all three `x/y/z`, `[head, ..tail]` binds
     `head` and `tail`.
+    - In particular, `Some(x)` binds `x` even if a value named `x` is already in
+      scope; constructor fields are not treated as pins.
   - Tuples/lists apply the rule element-wise: structural subpatterns bind, but
-    an element that is itself “just an identifier” is still treated as a pin.
+    an element that is itself "just an identifier" is still treated as a pin.
   - Writing `Var(name)` in any position forces that position to bind, regardless
     of surrounding structure.
 - A pattern that is _exactly one identifier_ is **not** a binder; it is a pinned
@@ -227,12 +254,13 @@ Pinned vs binding (canonical rule, normative):
   usual destructuring ergonomics: `(Ok(x), Ok(y), Ok(z))` binds all fields
   without extra `Var(...)`.
 
-Non-normative explanation (the “inversion”):
+Non-normative explanation (the "inversion"):
 
-- Canonical Workman chooses “`identifier` means pin” for the _bare identifier
+- Canonical Workman chooses "`identifier` means pin" for the _bare identifier
   pattern_, and uses `Var(identifier)` for the _bare binder pattern_.
-- This keeps destructuring ergonomic (`Some(x)`, `(a, b)`, etc.) while making
-  the “match a named value” case explicit and consistent with literal matching.
+- This keeps constructor destructuring ergonomic (`Some(x)`, `Ok(x)`, etc.)
+  while making the "match a named value" case explicit and consistent with
+  literal matching.
 - Users coming from more conventional `if`/`else` languages can translate mental
   models directly: `if (x == y) { body } else { other }` is desugared as
   `match(x) { y => { body }, _ => { other } }`. A bare identifier arm is just
@@ -243,56 +271,32 @@ Non-normative explanation (the “inversion”):
 
 Non-normative example (why this is consistent):
 
-- Read the slogan as “destructuring binds, bare identifiers pin, `Var` binds the
-  whole value.” The surface looks just like familiar `if (lhs == rhs)` checks,
-  but you write them with `match`.
+- Common confusion: `Some(x)` binds, it does not pin.
   ```
-  let opt_value = compute();
-  let sentinel = true;
-  let expected = 42;
+  let x = 1;
 
-  match(opt_value) {
-    Some(payload) => { log("Some payload: " ++ payload) },  -- constructor binds
-    Var(copy) => { log("Fallback copy: " ++ copy) },        -- bind whole scrutinee
+  match(Some(1)) {
+    Some(x) => { log("binds x (shadows outer x): " ++ x) },
+    _ => { log("no match") }
   };
 
-  let x = read_int();
-  let y = expected;
-
-  -- if (x == true) { ... } else if (x == y) { ... } else { ... }
-  match(x) {
-    true => { log("literal pin: x was true") },             -- literal behaves like pin
-    y => { log("pinned compare to y") },                    -- bare identifier pins
-    Var(fresh) => { log("fresh binding: " ++ fresh) },      -- explicit binder
+  match(Some(1)) {
+    Some(v) when v == x => { log("pins by guard: payload equals outer x") },
+    _ => { log("other") }
   };
   ```
-  `Some(payload)` binds `payload`, `Var(copy)` binds the entire scrutinee, and
-  the bare identifiers (`true`, `y`) simply compare against the values already
-  in scope.
 
 Non-normative example (guards + tuple pins vs explicit binding):
 
-- Guards see bindings introduced earlier in the arm. Use `Var(...)` to capture
-  either the whole scrutinee or just the positions you want to guard on.
+- Tuple/list pins vs bindings show up most often when matching against named
+  tuples/lists.
   ```
   let expectedX = 10;
   let expectedY = -4;
-  let expectedZ = 0;
-  let limit = 5;
 
-  match(read_sensor()) {
-    Var(point) when point.distance > limit => {
-      log("far away: " ++ point.id)
-    },
-    (expectedX, expectedY, expectedZ) => {
-      log("exactly at the calibration tuple")
-    },                                            -- tuple of pins
-    (Var(x), Var(y), Var(z)) when z > limit => {
-      log("fresh tuple bindings: " ++ x ++ ", " ++ y ++ ", " ++ z)
-    },                                            -- explicit tuple binding
-    (Ok(x), Ok(y), Ok(z)) => {
-      log("triple success payload: " ++ x ++ y ++ z)
-    },                                            -- constructors keep destructuring ergonomic
+  match(read_pair()) {
+    (expectedX, expectedY) => { log("tuple of pins") },
+    (Var(x), Var(y)) => { log("fresh bindings: " ++ x ++ ", " ++ y) },
     _ => { log("fallback") }
   };
   ```
