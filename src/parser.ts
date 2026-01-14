@@ -425,7 +425,6 @@ class SurfaceParser {
   }
 
   private parseTypeReexport(): TypeReexport {
-    console.log()
     const nameToken = this.expectTypeName();
     let exportConstructors = false;
     let endToken: Token = nameToken;
