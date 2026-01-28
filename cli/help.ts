@@ -1,5 +1,5 @@
 export const HELP_TEXT = `
-?? Workman - A functional programming language
+🗿 Workman - A functional programming language
 
 Usage:
   wm                    Start interactive REPL
